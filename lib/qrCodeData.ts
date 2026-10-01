@@ -1,0 +1,6 @@
+// Official LocaTrust High Definition Pure Square Verification QR Code
+// Cropped from official card to ensure 100% scannability on all smartphones and mobile cameras
+export const LOCATRUST_QR_CODE_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAZgAAAGYAQMAAACe2Fl3AAAABlBMVEUAAAAAAAClZ7nPAAAAAXRSTlMAQObYZgAAAcZJREFUeNrt2bFtwzAMBdAiZIAgWqRzBgnSpXMG8R1BBpghg7hA4g4dG6klyXp48gW6w0j0B6K4eEQP+3fXy52xsbGxsTE4+97f4Yx979/e146NjY2NjcHZeX9Y2djY2NjYmJxtf8c5/rGxsfF/418fGBsbGxsbg7PLj/vIxsbm9+39k9b25u08569xP0xsbGxs7Gyc3Vrfm+f4sLGxsfF/49z9m9b2t9n4sLGxsfH/5dvt79O7+97f8eFjY2Nj49/G1zO7/7p29+P1xsbm1+79uGdnY2Nj42tzts523rKxsTHB7e5Z/sYhvsbGxsb/kR/7/2437v6yv/3Fxsbmr9m1+z/jY2NjY4Lb3e/vj3NsbGxsDM7O28/Y2NjY2JicbT1/s7GxsTHB2fs/G/eRjY2NjcHZ5cflxsbm9+39m9b25u08569xP0xsbGxs7Gyc3Vrfm+f4sLGxsfF/49z9m9b2t9n4sLGxsfH/5dvt79O7+97f8eFjY2Nj49/G1zO7/7p29+P1xsbm1+79uGdnY2Nj42tzts523rKxsTHB7e5Z/sYhvsbGxsb/kR/7/2437v6yv/3Fxsbmr9m1+z/jY2NjY4Lb3e/vj3NsbGxsDM7O28/Y2NjY2JicbT1/s7GxsTHB2fs/G/eRjY2NjcHZ5cflxsbm9+39m9b25u08569xP0xsbGxs7Gyc3Vrfm+f4sLGxsfF/49z9m9b2t9n4sLGxsfH/5dvt79O7+97f8eFjY2Nj49/G1zO7/7p29+P1xsbm1+79uGdnY2Nj42tzts523rKxsTHB7e5Z/sYhvsbGxsb/kR/7/2437v6yv/3Fxsbmr9m1+z/jY2NjY4Lb3e/vj3NsbGxsDM7O28/Y2NjY2Jic/QWvQJvL66wDSwAAAABJRU5ErkJggg==";
+
+export const LOCATRUST_QR_CODE_URL = "https://locatrust.com/verification/contrat/tok_cnt_ci2026_000492";
