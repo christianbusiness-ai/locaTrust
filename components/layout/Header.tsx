@@ -105,6 +105,54 @@ const INITIAL_NOTIFICATIONS: NotificationItem[] = [
   }
 ];
 
+const TENANT_INITIAL_NOTIFICATIONS: NotificationItem[] = [
+  {
+    id: 'notif_t1',
+    title: 'Nouvelle quittance certifiée disponible',
+    description: 'Votre quittance de loyer d\'Août 2026 (150 000 FCFA) est disponible avec son QR Code officiel.',
+    timestamp: 'Il y a 10 min',
+    category: 'paiement',
+    read: false,
+    targetTab: 'receipts'
+  },
+  {
+    id: 'notif_t2',
+    title: 'Paiement Wave validé par le bailleur',
+    description: 'Votre virement de 150 000 FCFA pour le loyer d\'Août 2026 a été confirmé et validé avec succès.',
+    timestamp: 'Il y a 2h',
+    category: 'paiement',
+    read: false,
+    targetTab: 'payments'
+  },
+  {
+    id: 'notif_t3',
+    title: 'Contrat de bail certifié et contresigné',
+    description: 'Votre contrat de location pour Appartement 3 pièces Cocody Riviera 3 est validé et actif.',
+    timestamp: 'Hier',
+    category: 'contrat',
+    read: true,
+    targetTab: 'contracts'
+  },
+  {
+    id: 'notif_t4',
+    title: 'Séquestre de caution sécurisé',
+    description: 'Votre caution légale de 300 000 FCFA est conservée sur le compte séquestre certifié LocaTrust.',
+    timestamp: 'Il y a 3 jours',
+    category: 'caution',
+    read: true,
+    targetTab: 'guarantees'
+  },
+  {
+    id: 'notif_t5',
+    title: 'Intervention de maintenance programmée',
+    description: 'L\'artisan mandaté par votre bailleur interviendra le jeudi 15 à 14h30 pour révision plomberie.',
+    timestamp: 'Il y a 4 jours',
+    category: 'maintenance',
+    read: true,
+    targetTab: 'maintenance'
+  }
+];
+
 interface HeaderProps {
   currentUser: UserType;
   onSearch?: (term: string) => void;
@@ -134,7 +182,9 @@ export const Header: React.FC<HeaderProps> = ({
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
+    return currentUser.role === 'locataire' ? TENANT_INITIAL_NOTIFICATIONS : INITIAL_NOTIFICATIONS;
+  });
   const [selectedNotification, setSelectedNotification] = useState<NotificationItem | null>(null);
 
   const notifRef = useRef<HTMLDivElement>(null);
@@ -436,9 +486,16 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 <div className="p-2.5 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-center">
-                  <span className="text-[10px] font-bold text-slate-400">
-                    LocaTrust • Notifications temps réel
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowNotifications(false);
+                      onNavigateTab?.('notifications');
+                    }}
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Voir toutes les notifications &raquo;
+                  </button>
                 </div>
               </div>
             )}
@@ -474,43 +531,95 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="text-[10px] text-slate-400">{currentUser.email || 'koffi.nguessan@locatrust.ci'}</span>
                 </div>
 
-                <div className="py-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      onNavigateTab?.('settings');
-                    }}
-                    className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
-                  >
-                    <Settings className="w-4 h-4 text-slate-500" />
-                    <span>Paramètres du compte</span>
-                  </button>
+                {currentUser.role === 'locataire' ? (
+                  <div className="py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('profile');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <User className="w-4 h-4 text-blue-600" />
+                      <span>Mon Compte & Profil</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      onNavigateTab?.('subscription');
-                    }}
-                    className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
-                  >
-                    <CreditCard className="w-4 h-4 text-slate-500" />
-                    <span>Mon Abonnement SaaS</span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('notifications');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <Bell className="w-4 h-4 text-slate-500" />
+                      <span>Mes Notifications</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      onNavigateTab?.('bank_accounts');
-                    }}
-                    className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-slate-500" />
-                    <span>Compte de paiement</span>
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('settings');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <Settings className="w-4 h-4 text-slate-500" />
+                      <span>Paramètres</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('support');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <HelpCircle className="w-4 h-4 text-emerald-600" />
+                      <span>Aide & Support</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('settings');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <Settings className="w-4 h-4 text-slate-500" />
+                      <span>Paramètres du compte</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('subscription');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <CreditCard className="w-4 h-4 text-slate-500" />
+                      <span>Mon Abonnement SaaS</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('bank_accounts');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-slate-500" />
+                      <span>Compte de paiement</span>
+                    </button>
+                  </div>
+                )}
 
                 <div className="border-t border-slate-100 dark:border-slate-800 pt-1">
                   <button

@@ -540,42 +540,135 @@ export const AddPaymentAccountModal: React.FC<{ isOpen: boolean; onClose: () => 
   );
 };
 
-// 6. Support Modal
+// 6. Support Modal - Formulaire d'envoi de message direct au Support LocaTrust (Sans numéros directs ni coordonnées brutes)
 export const SupportModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
+  const [subject, setSubject] = React.useState('');
+  const [category, setCategory] = React.useState('Question générale');
+  const [message, setMessage] = React.useState('');
+  const [isSent, setIsSent] = React.useState(false);
+
   if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subject.trim() || !message.trim()) return;
+    setIsSent(true);
+  };
+
+  const handleResetAndClose = () => {
+    setIsSent(false);
+    setSubject('');
+    setMessage('');
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-center flex flex-col items-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
-          <Phone className="w-8 h-8" />
-        </div>
-        <div>
-          <h3 className="text-lg font-extrabold text-slate-900">Assistance Client LocaTrust 7j/7</h3>
-          <p className="text-xs text-slate-500 mt-1">Notre équipe d'experts en gestion locative est à votre disposition.</p>
-        </div>
+      <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
+        
+        {isSent ? (
+          <div className="py-6 flex flex-col items-center text-center gap-3 animate-fadeIn">
+            <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+            <h3 className="text-lg font-black text-slate-900">Message envoyé avec succès !</h3>
+            <p className="text-xs text-slate-600 max-w-sm leading-relaxed">
+              Votre demande a été attribuée à un conseiller LocaTrust dédié (Ticket <strong>TK-{Math.floor(1000 + Math.random() * 9000)}</strong>). Vous recevrez la réponse directement dans votre messagerie dans un délai garanti de moins de 2 heures.
+            </p>
+            <button
+              onClick={handleResetAndClose}
+              className="mt-3 px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/30 transition-all active:scale-95"
+            >
+              Compris, fermer
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">Assistance Client LocaTrust 7j/7</h3>
+                  <p className="text-xs text-slate-500">Transmettez votre message directement à nos conseillers certifiés.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleResetAndClose}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-        <div className="w-full bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col gap-2 text-left">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-            <span>Téléphone Direct:</span>
-            <span className="text-blue-600">+225 27 22 00 11 22</span>
-          </div>
-          <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-            <span>WhatsApp Support:</span>
-            <span className="text-emerald-600">+225 07 89 45 12 34</span>
-          </div>
-          <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-            <span>Email Support:</span>
-            <span className="text-slate-600">support@locatrust.ci</span>
-          </div>
-        </div>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-3.5 text-left">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Objet de votre demande <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Ex: Précision sur ma quittance, question sur mon bail..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  required
+                />
+              </div>
 
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/30"
-        >
-          Fermer la fenêtre
-        </button>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Catégorie
+                </label>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
+                >
+                  <option value="Paiement & Quittances">Paiement & Quittances de loyer</option>
+                  <option value="Contrat de bail">Contrat de bail & Signatures</option>
+                  <option value="Caution & Séquestre">Caution & Séquestre bancaire</option>
+                  <option value="Maintenance">Maintenance & Réparations</option>
+                  <option value="Question générale">Autre demande</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Votre Message <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Expliquez en détail votre besoin afin que nous puissions vous répondre au mieux..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none leading-relaxed"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={handleResetAndClose}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-md shadow-blue-600/30 transition-all active:scale-95 flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Envoyer mon message</span>
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+
       </div>
     </div>
   );

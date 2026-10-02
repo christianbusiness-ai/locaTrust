@@ -13,6 +13,10 @@ import { LocataireSearchView } from '@/components/locataire/LocataireSearchView'
 import { LocataireContratsView } from '@/components/locataire/LocataireContratsView';
 import { LocatairePaiementsView } from '@/components/locataire/LocatairePaiementsView';
 import { LocataireMaintenanceView } from '@/components/locataire/LocataireMaintenanceView';
+import { LocataireNotificationsView } from '@/components/locataire/LocataireNotificationsView';
+import { LocataireProfileView } from '@/components/locataire/LocataireProfileView';
+import { LocataireSettingsView } from '@/components/locataire/LocataireSettingsView';
+import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
 
 // Reused components
 import { CautionsView } from '@/components/dashboard/CautionsView';
@@ -53,7 +57,7 @@ export default function TenantDashboardPage({
         currentUser={currentUser}
         onSearch={(t) => console.log('Recherche Locataire:', t)}
         onOpenMessages={() => setActiveTab('messages')}
-        onOpenNotifications={() => setActiveTab('messages')}
+        onOpenNotifications={() => setActiveTab('notifications')}
         onNavigateTab={setActiveTab}
         onOpenRegisterModal={onOpenRegisterModal}
         onExitToLanding={onExitToLanding}
@@ -67,12 +71,12 @@ export default function TenantDashboardPage({
           currentRole="locataire"
           activeTab={activeTab}
           onSelectTab={setActiveTab}
-          onOpenSupport={() => setIsSupportOpen(true)}
+          onOpenSupport={() => setActiveTab('support')}
         />
 
         <main className="flex-1 flex flex-col min-w-0">
           
-          {/* TAB 1: Fil d'actualité (Fidèle à l'image fournie) */}
+          {/* TAB 1: Fil d'actualité */}
           {(activeTab === 'feed' || activeTab === 'overview') && (
             <LocataireFeedView
               onOpenMessages={() => setActiveTab('messages')}
@@ -110,27 +114,24 @@ export default function TenantDashboardPage({
             <MessagerieView userRole="locataire" />
           )}
 
-          {/* TAB 8: Support / Profil / Paramètres fallback */}
-          {!['feed', 'overview', 'search', 'properties', 'applications', 'visits', 'favorites', 'contracts', 'receipts', 'documents', 'payments', 'maintenance', 'guarantees', 'messages'].includes(activeTab) && (
-            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4 animate-fadeIn">
-              <div className="flex items-center justify-between border-b pb-4">
-                <h2 className="text-xl font-black text-slate-900 capitalize">
-                  Section Locataire : {activeTab.replace('_', ' ')}
-                </h2>
-                <button
-                  onClick={() => setActiveTab('feed')}
-                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-                >
-                  &laquo; Retour au fil d'actualité
-                </button>
-              </div>
+          {/* TAB 8: Notifications Locataire */}
+          {activeTab === 'notifications' && (
+            <LocataireNotificationsView onNavigateTab={setActiveTab} />
+          )}
 
-              <div className="p-6 bg-blue-50/50 rounded-xl border border-blue-100 flex flex-col gap-3">
-                <p className="text-sm font-medium text-slate-700">
-                  Cette section <strong>{activeTab}</strong> est active et enregistre vos données locatives sécurisées.
-                </p>
-              </div>
-            </div>
+          {/* TAB 9: Mon Compte / Mon Profil Locataire */}
+          {(activeTab === 'profile' || activeTab === 'account') && (
+            <LocataireProfileView />
+          )}
+
+          {/* TAB 10: Paramètres Locataire */}
+          {activeTab === 'settings' && (
+            <LocataireSettingsView />
+          )}
+
+          {/* TAB 11: Aide & Support Locataire (Direct messaging ticket) */}
+          {activeTab === 'support' && (
+            <LocataireSupportView />
           )}
 
         </main>
