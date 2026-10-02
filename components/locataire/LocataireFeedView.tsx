@@ -757,9 +757,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       </div>
 
       {/* ======================================================== */}
-      {/* RIGHT COLUMN: WIDGETS (Fidèle à l'image du locataire)     */}
+      {/* RIGHT COLUMN: WIDGETS (Masqué sur mobile, visible sur desktop) */}
       {/* ======================================================== */}
-      <div className="w-full lg:w-80 flex flex-col gap-6 shrink-0">
+      <div className="hidden lg:flex lg:w-80 flex-col gap-6 shrink-0">
         
         {/* BANNIÈRE DE CONFIANCE LOCATRUST */}
         <div className="bg-gradient-to-br from-blue-900 to-indigo-950 text-white rounded-2xl p-5 shadow-sm flex flex-col gap-3 relative overflow-hidden">
