@@ -231,7 +231,7 @@ export const BiensView: React.FC<BiensViewProps> = ({
         <select
           value={activeStatusFilter}
           onChange={(e) => setActiveStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-700 focus:outline-none"
+          className="w-full md:w-auto px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-700 focus:outline-none"
         >
           <option value="tous">Tous les statuts</option>
           <option value="disponible">Disponible</option>

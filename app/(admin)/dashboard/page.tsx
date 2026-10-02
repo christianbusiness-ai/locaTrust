@@ -13,12 +13,14 @@ interface AdminDashboardPageProps {
   currentRole?: UserRole;
   onRoleChange?: (role: UserRole) => void;
   onOpenRegisterModal?: () => void;
+  onExitToLanding?: () => void;
 }
 
 export default function AdminDashboardPage({
   currentRole = 'admin',
   onRoleChange = () => {},
   onOpenRegisterModal = () => {},
+  onExitToLanding,
 }: AdminDashboardPageProps) {
   const currentUser = MOCK_USERS.admin;
   const [activeTab, setActiveTab] = useState<string>('supervision');
@@ -28,7 +30,12 @@ export default function AdminDashboardPage({
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
       
       {/* Top Role Switcher Header */}
-      <RoleSwitcher currentRole={currentRole} onRoleChange={onRoleChange} onOpenRegister={onOpenRegisterModal} />
+      <RoleSwitcher
+        currentRole={currentRole}
+        onRoleChange={onRoleChange}
+        onOpenRegister={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+      />
 
       {/* Main App Top Header */}
       <Header
@@ -37,6 +44,8 @@ export default function AdminDashboardPage({
         onOpenMessages={() => setActiveTab('messages')}
         onOpenNotifications={() => setActiveTab('messages')}
         onOpenRegisterModal={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+        showCreateAccountBtn={false}
       />
 
       {/* Main Admin Layout */}

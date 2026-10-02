@@ -23,12 +23,14 @@ interface TenantDashboardPageProps {
   currentRole?: UserRole;
   onRoleChange?: (role: UserRole) => void;
   onOpenRegisterModal?: () => void;
+  onExitToLanding?: () => void;
 }
 
 export default function TenantDashboardPage({
   currentRole = 'locataire',
   onRoleChange = () => {},
   onOpenRegisterModal = () => {},
+  onExitToLanding,
 }: TenantDashboardPageProps) {
   const currentUser = MOCK_USERS.locataire;
   // Default to 'feed' as requested in prompt & mockup image
@@ -39,7 +41,12 @@ export default function TenantDashboardPage({
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
       
       {/* Top Role Switcher Header */}
-      <RoleSwitcher currentRole={currentRole} onRoleChange={onRoleChange} onOpenRegister={onOpenRegisterModal} />
+      <RoleSwitcher
+        currentRole={currentRole}
+        onRoleChange={onRoleChange}
+        onOpenRegister={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+      />
 
       {/* Main App Top Header */}
       <Header
@@ -49,6 +56,8 @@ export default function TenantDashboardPage({
         onOpenNotifications={() => setActiveTab('messages')}
         onNavigateTab={setActiveTab}
         onOpenRegisterModal={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+        showCreateAccountBtn={false}
       />
 
       {/* Main Tenant Layout with Dark Navy Sidebar */}

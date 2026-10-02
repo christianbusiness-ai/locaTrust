@@ -39,12 +39,14 @@ interface ProprietaireDashboardPageProps {
   currentRole?: UserRole;
   onRoleChange?: (role: UserRole) => void;
   onOpenRegisterModal?: () => void;
+  onExitToLanding?: () => void;
 }
 
 export default function ProprietaireDashboardPage({
   currentRole = 'proprietaire',
   onRoleChange = () => {},
   onOpenRegisterModal = () => {},
+  onExitToLanding,
 }: ProprietaireDashboardPageProps) {
   const currentUser = MOCK_USERS.proprietaire;
 
@@ -107,7 +109,12 @@ export default function ProprietaireDashboardPage({
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#070F1E] font-sans text-slate-900 dark:text-slate-100 transition-colors">
       
       {/* Top Role Switcher Header */}
-      <RoleSwitcher currentRole={currentRole} onRoleChange={onRoleChange} onOpenRegister={onOpenRegisterModal} />
+      <RoleSwitcher
+        currentRole={currentRole}
+        onRoleChange={onRoleChange}
+        onOpenRegister={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+      />
 
       {/* Main App Top Header */}
       <Header
@@ -117,6 +124,8 @@ export default function ProprietaireDashboardPage({
         onOpenNotifications={() => handleSelectTab('messages')}
         onNavigateTab={handleSelectTab}
         onOpenRegisterModal={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+        showCreateAccountBtn={false}
       />
 
       {/* Main Dashboard Layout with Left Navy Sidebar */}

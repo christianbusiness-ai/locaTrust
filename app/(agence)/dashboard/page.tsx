@@ -48,12 +48,14 @@ interface AgencyDashboardPageProps {
   currentRole?: UserRole;
   onRoleChange?: (role: UserRole) => void;
   onOpenRegisterModal?: () => void;
+  onExitToLanding?: () => void;
 }
 
 export default function AgencyDashboardPage({
   currentRole = 'agence',
   onRoleChange = () => {},
   onOpenRegisterModal = () => {},
+  onExitToLanding,
 }: AgencyDashboardPageProps) {
   const currentUser = MOCK_USERS.agence;
 
@@ -73,7 +75,12 @@ export default function AgencyDashboardPage({
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
       
       {/* Top Role Switcher Header */}
-      <RoleSwitcher currentRole={currentRole} onRoleChange={onRoleChange} onOpenRegister={onOpenRegisterModal} />
+      <RoleSwitcher
+        currentRole={currentRole}
+        onRoleChange={onRoleChange}
+        onOpenRegister={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+      />
 
       {/* Main App Top Header */}
       <Header
@@ -86,6 +93,8 @@ export default function AgencyDashboardPage({
           setSelectedContractId(null);
         }}
         onOpenRegisterModal={onOpenRegisterModal}
+        onExitToLanding={onExitToLanding}
+        showCreateAccountBtn={false}
       />
 
       {/* Main Agency Layout with Dark Navy Sidebar */}

@@ -6,8 +6,21 @@ import TenantDashboardPage from './(locataire)/dashboard/page';
 import AdminDashboardPage from './(admin)/dashboard/page';
 import { DocumentVerificationView } from '@/components/verification/DocumentVerificationView';
 import { RegisterModal } from '@/components/auth/RegisterModal';
+import { LandingPageView } from '@/components/landing/LandingPageView';
 
 export default function App() {
+  // Navigation view: 'landing' (public showcase) or 'saas' (authenticated SaaS space)
+  const [currentView, setCurrentView] = useState<'landing' | 'saas'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('view') === 'saas') return 'saas';
+      if (params.get('view') === 'landing') return 'landing';
+      const saved = localStorage.getItem('locatrust_view');
+      if (saved === 'saas') return 'saas';
+    }
+    return 'landing';
+  });
+
   // Active role state default to 'proprietaire', can switch to 'agence', 'locataire', 'admin'
   const [currentRole, setCurrentRole] = useState<UserRole>('proprietaire');
 
@@ -46,17 +59,46 @@ export default function App() {
     return () => window.removeEventListener('popstate', handleUrlCheck);
   }, []);
 
-  // Listen to global open register event
+  // Listen to global open register and exit landing events
   useEffect(() => {
     const handleOpenRegister = () => {
       setIsRegisterModalOpen(true);
     };
+    const handleExitLanding = () => {
+      setCurrentView('landing');
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_view', 'landing');
+      }
+    };
     window.addEventListener('locatrust_open_register', handleOpenRegister);
-    return () => window.removeEventListener('locatrust_open_register', handleOpenRegister);
+    window.addEventListener('locatrust_exit_landing', handleExitLanding);
+    return () => {
+      window.removeEventListener('locatrust_open_register', handleOpenRegister);
+      window.removeEventListener('locatrust_exit_landing', handleExitLanding);
+    };
   }, []);
 
   const handleRoleChange = (newRole: UserRole) => {
     setCurrentRole(newRole);
+  };
+
+  const handleExitToLanding = () => {
+    setCurrentView('landing');
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_view', 'landing');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleEnterSaaS = (role?: UserRole) => {
+    if (role) {
+      setCurrentRole(role);
+    }
+    setCurrentView('saas');
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_view', 'saas');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handleNavigateVerificationDocument = (type: 'contrat' | 'recu', token: string) => {
@@ -85,43 +127,76 @@ export default function App() {
     );
   }
 
+  // 1. Vue Landing Page : Showcase public avec le bouton "Créer un compte" prêt et visible
+  if (currentView === 'landing') {
+    return (
+      <>
+        <LandingPageView
+          onOpenRegister={() => setIsRegisterModalOpen(true)}
+          onEnterSaaS={handleEnterSaaS}
+        />
+
+        <RegisterModal
+          isOpen={isRegisterModalOpen}
+          onClose={() => setIsRegisterModalOpen(false)}
+          onSuccessRegister={(registeredRole) => {
+            setCurrentRole(registeredRole);
+            setCurrentView('saas');
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('locatrust_view', 'saas');
+            }
+          }}
+        />
+      </>
+    );
+  }
+
+  // 2. Vue SaaS Authentifiée : Une fois le compte créé ou connecté, le bouton "Créer un compte" NE S'AFFICHE PLUS sur l'ensemble du SaaS
   return (
     <>
       {currentRole === 'proprietaire' && (
         <ProprietaireDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
+          onOpenRegisterModal={() => {}}
+          onExitToLanding={handleExitToLanding}
         />
       )}
       {currentRole === 'agence' && (
         <AgencyDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
+          onOpenRegisterModal={() => {}}
+          onExitToLanding={handleExitToLanding}
         />
       )}
       {currentRole === 'locataire' && (
         <TenantDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
+          onOpenRegisterModal={() => {}}
+          onExitToLanding={handleExitToLanding}
         />
       )}
       {currentRole === 'admin' && (
         <AdminDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
+          onOpenRegisterModal={() => {}}
+          onExitToLanding={handleExitToLanding}
         />
       )}
 
-      {/* Global Register Modal requested by user */}
+      {/* Global Register Modal (utilisable si déclenché) */}
       <RegisterModal
         isOpen={isRegisterModalOpen}
         onClose={() => setIsRegisterModalOpen(false)}
         onSuccessRegister={(registeredRole) => {
           setCurrentRole(registeredRole);
+          setCurrentView('saas');
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('locatrust_view', 'saas');
+          }
         }}
       />
     </>

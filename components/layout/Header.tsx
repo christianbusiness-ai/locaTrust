@@ -113,6 +113,8 @@ interface HeaderProps {
   onToggleSidebar?: () => void;
   onNavigateTab?: (tabId: string) => void;
   onOpenRegisterModal?: () => void;
+  onExitToLanding?: () => void;
+  showCreateAccountBtn?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -123,6 +125,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
   onNavigateTab,
   onOpenRegisterModal,
+  onExitToLanding,
+  showCreateAccountBtn = false,
 }) => {
   // Dark mode state
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -306,24 +310,26 @@ export const Header: React.FC<HeaderProps> = ({
             <Search className="w-4 h-4" />
           </button>
 
-          {/* Bouton unique "Créer un compte" */}
-          <button
-            type="button"
-            id="header-create-account-btn"
-            onClick={() => {
-              if (onOpenRegisterModal) {
-                onOpenRegisterModal();
-              } else if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('locatrust_open_register'));
-              }
-            }}
-            className="px-2 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-[11px] sm:text-xs flex items-center gap-1 sm:gap-1.5 shadow-md shadow-blue-500/20 transition-all hover:scale-[1.02] active:scale-95 shrink-0"
-            title="Créer un nouveau compte LocaTrust"
-          >
-            <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-            <span className="hidden sm:inline">Créer un compte</span>
-            <span className="sm:hidden text-[10px]">+ Compte</span>
-          </button>
+          {/* Bouton unique "Créer un compte" - affiché uniquement si demandé (ex: landing) */}
+          {showCreateAccountBtn && (
+            <button
+              type="button"
+              id="header-create-account-btn"
+              onClick={() => {
+                if (onOpenRegisterModal) {
+                  onOpenRegisterModal();
+                } else if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('locatrust_open_register'));
+                }
+              }}
+              className="px-2 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-[11px] sm:text-xs flex items-center gap-1 sm:gap-1.5 shadow-md shadow-blue-500/20 transition-all hover:scale-[1.02] active:scale-95 shrink-0"
+              title="Créer un nouveau compte LocaTrust"
+            >
+              <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="hidden sm:inline">Créer un compte</span>
+              <span className="sm:hidden text-[10px]">+ Compte</span>
+            </button>
+          )}
 
           {/* Dark Mode Toggle */}
           <button
@@ -511,28 +517,16 @@ export const Header: React.FC<HeaderProps> = ({
                     type="button"
                     onClick={() => {
                       setShowProfileMenu(false);
-                      if (onOpenRegisterModal) {
-                        onOpenRegisterModal();
+                      if (onExitToLanding) {
+                        onExitToLanding();
                       } else if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('locatrust_open_register'));
+                        window.dispatchEvent(new CustomEvent('locatrust_exit_landing'));
                       }
                     }}
-                    className="w-full px-4 py-2 text-left text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 font-bold flex items-center gap-2.5"
-                  >
-                    <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                    <span>Créer un compte</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      alert('Déconnexion effectuée. À bientôt sur LocaTrust !');
-                    }}
-                    className="w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold flex items-center gap-2.5"
+                    className="w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold flex items-center gap-2.5 transition-colors"
                   >
                     <LogOut className="w-4 h-4 text-rose-600" />
-                    <span>Se déconnecter</span>
+                    <span>Se déconnecter (Sortir vers la Landing Page)</span>
                   </button>
                 </div>
               </div>
