@@ -620,6 +620,18 @@ export const Header: React.FC<HeaderProps> = ({
                       <ShieldCheck className="w-4 h-4 text-slate-500" />
                       <span>Compte de paiement</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('support');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <HelpCircle className="w-4 h-4 text-emerald-600" />
+                      <span>Aide & Support</span>
+                    </button>
                   </div>
                 )}
 

@@ -24,6 +24,7 @@ import { AccountingExportView } from '@/components/dashboard/AccountingExportVie
 import { SettingsView } from '@/components/dashboard/SettingsView';
 import { ContractListView } from '@/components/contracts/ContractListView';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
+import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
 import {
   AddPropertyModal,
   CreateContractModal,
@@ -277,8 +278,13 @@ export default function ProprietaireDashboardPage({
             </ErrorBoundary>
           )}
 
+          {/* TAB 18: Aide & Support LocaTrust */}
+          {activeTab === 'support' && (
+            <LocataireSupportView userRole="proprietaire" />
+          )}
+
           {/* Ultimate Fallback (Safeguard) */}
-          {!['overview', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'history', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'bank_accounts', 'stats', 'exports', 'settings'].includes(activeTab) && (
+          {!['overview', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'history', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'bank_accounts', 'stats', 'exports', 'settings', 'support'].includes(activeTab) && (
             <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4 animate-fadeIn">
               <div className="flex items-center justify-between border-b pb-4">
                 <h2 className="text-xl font-black text-slate-900 capitalize">

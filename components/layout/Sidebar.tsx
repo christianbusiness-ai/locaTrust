@@ -371,8 +371,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           Consultez notre centre d'aide et assistance LocaTrust.
         </p>
         <button
-          onClick={onOpenSupport}
-          className="w-full py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold text-center shadow-sm shadow-blue-600/30 transition-all active:scale-95 flex items-center justify-center gap-1"
+          type="button"
+          onClick={() => {
+            if (onOpenSupport) {
+              onOpenSupport();
+            } else if (onSelectTab) {
+              onSelectTab('support');
+            } else if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('locatrust:open_support'));
+            }
+          }}
+          className="w-full py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold text-center shadow-sm shadow-blue-600/30 transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
         >
           <HelpCircle className="w-3.5 h-3.5" />
           <span>Centre d'aide</span>

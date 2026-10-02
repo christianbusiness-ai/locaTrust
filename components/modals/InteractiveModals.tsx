@@ -18,7 +18,8 @@ import {
   User,
   MapPin,
   Sparkles,
-  FileCheck
+  FileCheck,
+  MessageSquare
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import jsPDF from 'jspdf';

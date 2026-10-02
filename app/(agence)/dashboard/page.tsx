@@ -23,6 +23,7 @@ import { AbonnementView } from '@/components/dashboard/AbonnementView';
 import { MessagerieView } from '@/components/dashboard/MessagerieView';
 import { ContractListView } from '@/components/contracts/ContractListView';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
+import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
 import { DemandesView } from '@/components/dashboard/DemandesView';
 import { VisitesView } from '@/components/dashboard/VisitesView';
 import { ReportsStatsView } from '@/components/dashboard/ReportsStatsView';
@@ -256,8 +257,13 @@ export default function AgencyDashboardPage({
             <MessagerieView userRole="agence" />
           )}
 
+          {/* TAB 21: Aide & Support Agence */}
+          {activeTab === 'support' && (
+            <LocataireSupportView userRole="agence" />
+          )}
+
           {/* Fallback for other tabs */}
-          {!['overview', 'owners', 'team', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'stats', 'exports', 'settings', 'history', 'bank_accounts'].includes(activeTab) && (
+          {!['overview', 'owners', 'team', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'stats', 'exports', 'settings', 'history', 'bank_accounts', 'support'].includes(activeTab) && (
             <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4 animate-fadeIn">
               <div className="flex items-center justify-between border-b pb-4">
                 <h2 className="text-xl font-black text-slate-900 capitalize">

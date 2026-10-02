@@ -51,7 +51,13 @@ const INITIAL_TICKETS: SupportTicket[] = [
   }
 ];
 
-export const LocataireSupportView: React.FC = () => {
+interface LocataireSupportViewProps {
+  userRole?: string;
+}
+
+export const LocataireSupportView: React.FC<LocataireSupportViewProps> = ({
+  userRole = 'locataire'
+}) => {
   const [tickets, setTickets] = useState<SupportTicket[]>(INITIAL_TICKETS);
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
 
@@ -87,6 +93,12 @@ export const LocataireSupportView: React.FC = () => {
     }, 4500);
   };
 
+  const getTitle = () => {
+    if (userRole === 'agence') return 'Assistance & Support Agence Immobilière';
+    if (userRole === 'proprietaire') return 'Assistance & Support Bailleur / Propriétaire';
+    return 'Assistance & Support Locataire';
+  };
+
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
       
@@ -98,7 +110,7 @@ export const LocataireSupportView: React.FC = () => {
           </div>
           <div>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Assistance & Support Locataire
+              {getTitle()}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Posez vos questions et signalez vos demandes directement à l'équipe d'experts LocaTrust.
