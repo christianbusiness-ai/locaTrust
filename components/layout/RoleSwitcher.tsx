@@ -22,15 +22,19 @@ export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({
     { role: 'locataire', label: 'Locataire', icon: User },
     { role: 'proprietaire', label: 'Propriétaire', icon: Building2 },
     { role: 'agence', label: 'Agence', icon: Building2 },
-    { role: 'admin', label: 'Admin', icon: Crown },
   ];
+
+  // Si le rôle actuel est admin et que nous sommes en session admin privée, on n'affiche pas la barre publique
+  if (currentRole === 'admin') {
+    return null;
+  }
 
   return (
     <div className="bg-slate-900 text-white text-xs py-1.5 sm:py-2 px-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800">
       <div className="flex items-center gap-2 min-w-0">
-        <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-        <span className="font-semibold text-slate-300 whitespace-nowrap">Mode Démo :</span>
-        <span className="text-slate-400 truncate hidden md:inline">Changer de rôle pour simuler les différents espaces</span>
+        <ShieldAlert className="w-4 h-4 text-blue-400 shrink-0" />
+        <span className="font-semibold text-slate-300 whitespace-nowrap">Changer d'espace :</span>
+        <span className="text-slate-400 truncate hidden md:inline">Basculez entre vos espaces locataire, propriétaire ou agence</span>
       </div>
 
       <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-0.5 sm:pb-0 scrollbar-none">

@@ -54,7 +54,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               onClick={() => onEnterSaaS('proprietaire')}
               className="px-3 sm:px-4 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition-all"
             >
-              Connexion / Démo
+              Connexion
             </button>
 
             {/* BOUTON PRÊT À SORTIR SUR LA LANDING PAGE */}
@@ -107,7 +107,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               onClick={() => onEnterSaaS('proprietaire')}
               className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-2"
             >
-              <span>Accéder à l'Espace Démo</span>
+              <span>Accéder à la plateforme</span>
               <ChevronRight className="w-4 h-4 text-slate-400" />
             </button>
           </div>

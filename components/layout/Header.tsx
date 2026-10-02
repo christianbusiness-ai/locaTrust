@@ -33,7 +33,9 @@ import {
   Wallet,
   History,
   Briefcase,
-  UserPlus
+  UserPlus,
+  Heart,
+  HelpCircle
 } from 'lucide-react';
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
@@ -766,11 +768,11 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="p-3.5 mx-3 mt-3 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center gap-3">
               <img
                 src={avatarUrl}
-                alt={currentUser.name}
+                alt={currentUser.full_name || currentUser.name}
                 className="w-10 h-10 rounded-full object-cover border-2 border-amber-500 shrink-0"
               />
               <div className="overflow-hidden">
-                <span className="text-xs font-bold text-white block truncate">{currentUser.name}</span>
+                <span className="text-xs font-bold text-white block truncate">{currentUser.full_name || currentUser.name}</span>
                 <span className="text-[11px] text-amber-400 font-semibold capitalize flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3 text-amber-400 shrink-0" />
                   <span className="truncate">
@@ -782,260 +784,352 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Navigation links */}
             <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-              {/* Section 1: Dashboard items */}
-              <div className="flex flex-col gap-1">
-                <span className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  {currentUser.role === 'agence' ? 'Gestion Agence' : 'Tableau de bord'}
-                </span>
+              
+              {/* CAS 1: LOCATAIRE (Fidèle à 100% au mobile - AUCUN rapport, AUCUN export, AUCUN bien immo, AUCUN dashboard) */}
+              {currentUser.role === 'locataire' ? (
+                <div className="flex flex-col gap-1">
+                  <span className="px-3 text-[10px] font-black uppercase tracking-wider text-blue-400">
+                    Espace Locataire
+                  </span>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('overview');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <LayoutDashboard className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Tableau de bord</span>
-                </button>
+                  {[
+                    { id: 'feed', name: "Fil d'actualité", icon: LayoutDashboard },
+                    { id: 'search', name: 'Rechercher un logement', icon: Search },
+                    { id: 'favorites', name: 'Mes Favoris', icon: Heart },
+                    { id: 'applications', name: 'Mes Demandes', icon: Eye, badge: 2 },
+                    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: 5 },
+                    { id: 'visits', name: 'Mes Visites', icon: Calendar },
+                    { id: 'contracts', name: 'Mon Contrat de bail', icon: FileText },
+                    { id: 'payments', name: 'Paiements & Loyers', icon: CreditCard },
+                    { id: 'receipts', name: 'Mes Quittances & Reçus', icon: Receipt },
+                    { id: 'guarantees', name: 'Séquestre Caution', icon: ShieldCheck },
+                    { id: 'maintenance', name: 'Maintenance & Pannes', icon: Wrench },
+                    { id: 'notifications', name: 'Notifications', icon: Bell },
+                    { id: 'profile', name: 'Mon Compte & Profil', icon: User },
+                    { id: 'settings', name: 'Paramètres', icon: Settings },
+                    { id: 'support', name: 'Aide & Support', icon: HelpCircle },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          onNavigateTab?.(item.id);
+                        }}
+                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Icon className="w-4 h-4 text-blue-400 shrink-0" />
+                          <span>{item.name}</span>
+                        </div>
+                        {item.badge && (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : currentUser.role === 'admin' ? (
+                /* CAS 2: ADMIN */
+                <div className="flex flex-col gap-1">
+                  <span className="px-3 text-[10px] font-black uppercase tracking-wider text-purple-400">
+                    Administration Système
+                  </span>
+                  {[
+                    { id: 'supervision', name: 'Supervision globale', icon: BarChart3 },
+                    { id: 'users', name: 'Gestion utilisateurs', icon: Users },
+                    { id: 'subscriptions', name: 'Gestion abonnements', icon: CreditCard },
+                    { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileText, badge: 3 },
+                    { id: 'disputes', name: 'Litiges & Fraude', icon: ShieldCheck },
+                    { id: 'settings', name: 'Paramètres système', icon: Settings },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setIsMobileMenuOpen(false);
+                          onNavigateTab?.(item.id);
+                        }}
+                        className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-purple-600/20 hover:text-white active:bg-purple-600 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Icon className="w-4 h-4 text-purple-400 shrink-0" />
+                          <span>{item.name}</span>
+                        </div>
+                        {item.badge && (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-black">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* CAS 3: PROPRIETAIRE & AGENCE */
+                <>
+                  <div className="flex flex-col gap-1">
+                    <span className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      {currentUser.role === 'agence' ? 'Gestion Agence' : 'Tableau de bord'}
+                    </span>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('properties');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Building2 className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>{currentUser.role === 'agence' ? 'Parc Immobilier' : 'Biens immobiliers'}</span>
-                </button>
-
-                {currentUser.role === 'agence' && (
-                  <>
                     <button
                       type="button"
                       onClick={() => {
                         setIsMobileMenuOpen(false);
-                        onNavigateTab?.('owners');
+                        onNavigateTab?.('overview');
                       }}
                       className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
                     >
-                      <UserPlus className="w-4 h-4 text-blue-400 shrink-0" />
-                      <span>Bailleurs Mandants</span>
+                      <LayoutDashboard className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Tableau de bord</span>
                     </button>
+
                     <button
                       type="button"
                       onClick={() => {
                         setIsMobileMenuOpen(false);
-                        onNavigateTab?.('team');
+                        onNavigateTab?.('properties');
                       }}
                       className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
                     >
-                      <Briefcase className="w-4 h-4 text-blue-400 shrink-0" />
-                      <span>Équipe Agence</span>
+                      <Building2 className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>{currentUser.role === 'agence' ? 'Parc Immobilier' : 'Biens immobiliers'}</span>
                     </button>
-                  </>
-                )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('tenants');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Users className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>{currentUser.role === 'locataire' ? 'Mon Bailleur' : 'Locataires'}</span>
-                </button>
+                    {currentUser.role === 'agence' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            onNavigateTab?.('owners');
+                          }}
+                          className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                        >
+                          <UserPlus className="w-4 h-4 text-blue-400 shrink-0" />
+                          <span>Bailleurs Mandants</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMobileMenuOpen(false);
+                            onNavigateTab?.('team');
+                          }}
+                          className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                        >
+                          <Briefcase className="w-4 h-4 text-blue-400 shrink-0" />
+                          <span>Équipe Agence</span>
+                        </button>
+                      </>
+                    )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('applications');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <div className="flex items-center gap-3">
-                    <Eye className="w-4 h-4 text-blue-400 shrink-0" />
-                    <span>Demandes de location</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('tenants');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Users className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Locataires</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('applications');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Eye className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span>Demandes de location</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
+                        8
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('contracts');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span>Contrats de bail</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
+                        5
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('payments');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <CreditCard className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Paiements & Loyers</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('guarantees');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Gestion des Cautions</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('messages');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <div className="flex items-center gap-3">
+                        <MessageSquare className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span>Messagerie & Appels</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black">
+                        6
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('receipts');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Receipt className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Reçus & Quittances</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('documents');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Documents & Pièces</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('maintenance');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Wrench className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Maintenance</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('bank_accounts');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Wallet className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span>Comptes de paiement</span>
+                    </button>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
-                    8
-                  </span>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('contracts');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <div className="flex items-center gap-3">
-                    <FileText className="w-4 h-4 text-blue-400 shrink-0" />
-                    <span>Contrats de bail</span>
+                  {/* Section 2: Rapports & Exports */}
+                  <div className="flex flex-col gap-1 pt-2 border-t border-slate-800">
+                    <span className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Rapports & Comptabilité
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('stats');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <BarChart3 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Rapports & Statistiques</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('exports');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Download className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Exports comptables</span>
+                    </button>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
-                    5
-                  </span>
-                </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('payments');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <CreditCard className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Paiements & Loyers</span>
-                </button>
+                  {/* Section 3: Configuration */}
+                  <div className="flex flex-col gap-1 pt-2 border-t border-slate-800">
+                    <span className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Configuration
+                    </span>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('guarantees');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Gestion des Cautions</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('subscription');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <CreditCard className="w-4 h-4 text-purple-400 shrink-0" />
+                      <span>Abonnement SaaS</span>
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('messages');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center justify-between text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <div className="flex items-center gap-3">
-                    <MessageSquare className="w-4 h-4 text-blue-400 shrink-0" />
-                    <span>Messagerie & Appels</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuOpen(false);
+                        onNavigateTab?.('settings');
+                      }}
+                      className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
+                    >
+                      <Settings className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span>Paramètres</span>
+                    </button>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black">
-                    6
-                  </span>
-                </button>
+                </>
+              )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('receipts');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Receipt className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Reçus & Quittances</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('documents');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Folder className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Documents & Pièces</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('maintenance');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Wrench className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Maintenance</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('bank_accounts');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Wallet className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>Comptes de paiement</span>
-                </button>
-              </div>
-
-              {/* Section 2: Rapports & Exports */}
-              <div className="flex flex-col gap-1 pt-2 border-t border-slate-800">
-                <span className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  Rapports & Comptabilité
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('stats');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <BarChart3 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Rapports & Statistiques</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('exports');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Download className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Exports comptables</span>
-                </button>
-              </div>
-
-              {/* Section 3: Paramètres & Abonnement */}
-              <div className="flex flex-col gap-1 pt-2 border-t border-slate-800">
-                <span className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  Configuration
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('subscription');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <CreditCard className="w-4 h-4 text-purple-400 shrink-0" />
-                  <span>Abonnement SaaS</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    onNavigateTab?.('settings');
-                  }}
-                  className="w-full min-h-[44px] px-3 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-3 text-slate-300 hover:bg-blue-600/20 hover:text-white active:bg-blue-600 transition-all"
-                >
-                  <Settings className="w-4 h-4 text-slate-400 shrink-0" />
-                  <span>Paramètres</span>
-                </button>
-              </div>
             </div>
 
             {/* Drawer Footer */}
