@@ -37,7 +37,9 @@ import {
   IVORIAN_CITIES,
   AnalyzedClauseItem,
   cleanClauseLine,
-  LeaseType
+  LeaseType,
+  reorganizeAndReformulateClauses,
+  ReorganizationResult
 } from '@/lib/legalAnalysisEngine';
 import {
   notifyWaitingListCandidatesOnLeaseFinalized,
@@ -205,27 +207,62 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [editingClauseId, setEditingClauseId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState<string>('');
 
-  // Voice Input (Saisie Vocale / Microphone Continue et Réactive)
+  // Voice Input (Saisie Vocale / Microphone Continue, Isolée par Zone et Réactive)
   const [listeningField, setListeningField] = useState<'owner' | 'tenant' | 'property' | null>(null);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
   const recognitionRef = React.useRef<any>(null);
+  const activeVoiceFieldRef = React.useRef<'owner' | 'tenant' | 'property' | null>(null);
+  const pendingInterimRef = React.useRef<string>('');
+
+  // Reorganization & Legal Reformulation State (Loi 2019-576 & OHADA)
+  const [reorganizationReport, setReorganizationReport] = useState<ReorganizationResult | null>(null);
+  const [originalClausesBackup, setOriginalClausesBackup] = useState<{
+    owner: string;
+    tenant: string;
+    property: string;
+  } | null>(null);
+  const [isReorganizing, setIsReorganizing] = useState<boolean>(false);
+
+  const commitTextToField = React.useCallback(
+    (field: 'owner' | 'tenant' | 'property', textToAppend: string) => {
+      const clean = textToAppend.trim();
+      if (!clean) return;
+
+      if (field === 'owner') {
+        setOwnerCustomConditions((prev) => (prev ? `${prev}\n${clean}` : clean));
+      } else if (field === 'tenant') {
+        setTenantCustomRequests((prev) => (prev ? `${prev}\n${clean}` : clean));
+      } else if (field === 'property') {
+        setPropertySpecificRules((prev) => (prev ? `${prev}\n${clean}` : clean));
+      }
+    },
+    []
+  );
 
   const stopActiveVoiceInput = React.useCallback(() => {
+    // 1. Commiter immédiatement le texte en cours s'il n'avait pas encore reçu isFinal
+    if (activeVoiceFieldRef.current && pendingInterimRef.current.trim()) {
+      commitTextToField(activeVoiceFieldRef.current, pendingInterimRef.current.trim());
+    }
+
     if (recognitionRef.current) {
       try {
-        if (typeof recognitionRef.current.abort === 'function') {
-          recognitionRef.current.abort();
-        } else if (typeof recognitionRef.current.stop === 'function') {
+        if (typeof recognitionRef.current.stop === 'function') {
           recognitionRef.current.stop();
+        } else if (typeof recognitionRef.current.abort === 'function') {
+          recognitionRef.current.abort();
         }
       } catch (e) {
         // ignore
       }
       recognitionRef.current = null;
     }
+
+    activeVoiceFieldRef.current = null;
+    pendingInterimRef.current = '';
     setListeningField(null);
     setInterimTranscript('');
-  }, []);
+  }, [commitTextToField]);
 
   useEffect(() => {
     return () => {
@@ -236,7 +273,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const handleToggleVoiceInput = (field: 'owner' | 'tenant' | 'property') => {
     if (typeof window === 'undefined') return;
 
-    // Si on clique sur le même champ déjà en écoute : arrêt propre
+    // Si on clique sur le même champ déjà en écoute : arrêt et validation
     if (listeningField === field) {
       stopActiveVoiceInput();
       return;
@@ -249,15 +286,22 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert(
-        "La saisie vocale n'est pas supportée nativement par ce navigateur. Veuillez utiliser Google Chrome, Microsoft Edge ou Safari pour dicter vos conditions oralement."
+      // Fallback convivial si le navigateur ne supporte pas l'API SpeechRecognition
+      const fallbackPrompt = window.prompt(
+        "🎙️ Entrez la phrase dictée pour cette section (votre navigateur n'a pas accès direct à l'API vocale) :"
       );
+      if (fallbackPrompt && fallbackPrompt.trim()) {
+        commitTextToField(field, fallbackPrompt.trim());
+      }
       return;
     }
 
     try {
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
+      activeVoiceFieldRef.current = field;
+      pendingInterimRef.current = '';
+
       recognition.lang = 'fr-FR';
       recognition.continuous = true;
       recognition.interimResults = true;
@@ -282,19 +326,15 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         }
 
         if (interim) {
+          pendingInterimRef.current = interim;
           setInterimTranscript(interim);
         }
 
         if (finalChunk && finalChunk.trim()) {
           const spokenText = finalChunk.trim();
+          pendingInterimRef.current = '';
           setInterimTranscript('');
-          if (field === 'owner') {
-            setOwnerCustomConditions((prev) => (prev ? `${prev}\n${spokenText}` : spokenText));
-          } else if (field === 'tenant') {
-            setTenantCustomRequests((prev) => (prev ? `${prev}\n${spokenText}` : spokenText));
-          } else if (field === 'property') {
-            setPropertySpecificRules((prev) => (prev ? `${prev}\n${spokenText}` : spokenText));
-          }
+          commitTextToField(field, spokenText);
         }
       };
 
@@ -302,12 +342,20 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (event.error === 'aborted' || event.error === 'no-speech') {
           return;
         }
-        console.warn('Speech recognition status:', event.error);
+        console.warn('Speech recognition warning:', event.error);
+        if (event.error === 'not-allowed') {
+          alert("L'accès au microphone a été refusé. Veuillez autoriser l'accès au micro dans votre navigateur.");
+        }
         stopActiveVoiceInput();
       };
 
       recognition.onend = () => {
-        // Fin normale de la session
+        // En cas d'arrêt automatique, commiter le reliquat s'il existe
+        if (activeVoiceFieldRef.current && pendingInterimRef.current.trim()) {
+          commitTextToField(activeVoiceFieldRef.current, pendingInterimRef.current.trim());
+        }
+        activeVoiceFieldRef.current = null;
+        pendingInterimRef.current = '';
         setListeningField(null);
         setInterimTranscript('');
         recognitionRef.current = null;
@@ -317,6 +365,57 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     } catch (err) {
       console.error('Speech recognition error:', err);
       stopActiveVoiceInput();
+    }
+  };
+
+  // Helper pour insérer rapidement des phrases types parlées (ex: démonstration de dictée)
+  const handleInsertDictationSample = (field: 'owner' | 'tenant' | 'property', sampleText: string) => {
+    commitTextToField(field, sampleText);
+    stopActiveVoiceInput();
+  };
+
+  // --------------------------------------------------------------------------
+  // ANALYSE, CLASSEMENT ET REFORMULATION JURIDIQUE PAR IA (LOI 2019-576 & OHADA)
+  // --------------------------------------------------------------------------
+  const handleRunClauseReorganization = () => {
+    setIsReorganizing(true);
+
+    // Sauvegarde initiale pour permettre l'annulation si souhaité
+    if (!originalClausesBackup) {
+      setOriginalClausesBackup({
+        owner: ownerCustomConditions,
+        tenant: tenantCustomRequests,
+        property: propertySpecificRules
+      });
+    }
+
+    try {
+      const result = reorganizeAndReformulateClauses({
+        ownerText: ownerCustomConditions,
+        tenantText: tenantCustomRequests,
+        propertyText: propertySpecificRules,
+        leaseType
+      });
+
+      // Mettre à jour les 3 zones avec les textes restructurés et reformulés
+      setOwnerCustomConditions(result.ownerFormattedText);
+      setTenantCustomRequests(result.tenantFormattedText);
+      setPropertySpecificRules(result.propertyFormattedText);
+      setReorganizationReport(result);
+    } catch (err) {
+      console.error('Reorganization error:', err);
+    } finally {
+      setIsReorganizing(false);
+    }
+  };
+
+  const handleRestoreOriginalClauses = () => {
+    if (originalClausesBackup) {
+      setOwnerCustomConditions(originalClausesBackup.owner);
+      setTenantCustomRequests(originalClausesBackup.tenant);
+      setPropertySpecificRules(originalClausesBackup.property);
+      setReorganizationReport(null);
+      setOriginalClausesBackup(null);
     }
   };
 
@@ -967,24 +1066,39 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 />
                 {/* Visualiseur de dictée en cours pour le propriétaire */}
                 {listeningField === 'owner' && (
-                  <div className="mt-1.5 p-2 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-2 animate-fadeIn">
+                  <div className="mt-1.5 p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-fadeIn">
                     <div className="flex items-center gap-2 overflow-hidden">
                       <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping shrink-0" />
                       <span className="text-[11px] text-rose-900 font-semibold truncate">
                         {interimTranscript ? (
-                          <>Retranscription : <span className="font-bold italic">« {interimTranscript} »</span></>
+                          <>Retranscription en direct : <span className="font-bold italic">« {interimTranscript} »</span></>
                         ) : (
-                          "🎙️ Microphone actif — Parlez naturellement, le texte s'ajoute en continu..."
+                          "🎙️ Microphone actif (Zone Propriétaire) — Parlez, la retranscription s'insère ici..."
                         )}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={stopActiveVoiceInput}
-                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black shrink-0 transition-colors shadow-xs"
-                    >
-                      Terminer la dictée
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleInsertDictationSample(
+                            'owner',
+                            'Respect strict du calme après 22h et interdiction de percer les carreaux sans accord.'
+                          )
+                        }
+                        className="px-2 py-1 rounded-lg bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 text-[10px] font-bold"
+                        title="Tester une phrase dictée"
+                      >
+                        Exemple dicté
+                      </button>
+                      <button
+                        type="button"
+                        onClick={stopActiveVoiceInput}
+                        className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black transition-colors shadow-xs"
+                      >
+                        Valider & Arrêter
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1027,24 +1141,39 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 />
                 {/* Visualiseur de dictée en cours pour le locataire */}
                 {listeningField === 'tenant' && (
-                  <div className="mt-1.5 p-2 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-2 animate-fadeIn">
+                  <div className="mt-1.5 p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-fadeIn">
                     <div className="flex items-center gap-2 overflow-hidden">
                       <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping shrink-0" />
                       <span className="text-[11px] text-rose-900 font-semibold truncate">
                         {interimTranscript ? (
-                          <>Retranscription : <span className="font-bold italic">« {interimTranscript} »</span></>
+                          <>Retranscription en direct : <span className="font-bold italic">« {interimTranscript} »</span></>
                         ) : (
-                          "🎙️ Microphone actif — Parlez naturellement, le texte s'ajoute en continu..."
+                          "🎙️ Microphone actif (Zone Locataire) — Parlez, le texte s'insère uniquement ici..."
                         )}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={stopActiveVoiceInput}
-                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black shrink-0 transition-colors shadow-xs"
-                    >
-                      Terminer la dictée
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleInsertDictationSample(
+                            'tenant',
+                            'Option de règlement par Wave ou Orange Money au plus tard le 05 du mois.'
+                          )
+                        }
+                        className="px-2 py-1 rounded-lg bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 text-[10px] font-bold"
+                        title="Tester une phrase dictée"
+                      >
+                        Exemple dicté
+                      </button>
+                      <button
+                        type="button"
+                        onClick={stopActiveVoiceInput}
+                        className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black transition-colors shadow-xs"
+                      >
+                        Valider & Arrêter
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1087,24 +1216,153 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 />
                 {/* Visualiseur de dictée en cours pour le logement */}
                 {listeningField === 'property' && (
-                  <div className="mt-1.5 p-2 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-2 animate-fadeIn">
+                  <div className="mt-1.5 p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-fadeIn">
                     <div className="flex items-center gap-2 overflow-hidden">
                       <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping shrink-0" />
                       <span className="text-[11px] text-rose-900 font-semibold truncate">
                         {interimTranscript ? (
-                          <>Retranscription : <span className="font-bold italic">« {interimTranscript} »</span></>
+                          <>Retranscription en direct : <span className="font-bold italic">« {interimTranscript} »</span></>
                         ) : (
-                          "🎙️ Microphone actif — Parlez naturellement, le texte s'ajoute en continu..."
+                          "🎙️ Microphone actif (Règles Logement) — Parlez, le texte s'insère ici..."
                         )}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={stopActiveVoiceInput}
-                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black shrink-0 transition-colors shadow-xs"
-                    >
-                      Terminer la dictée
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleInsertDictationSample(
+                            'property',
+                            'Interdiction de percer les carreaux de faïence et respect du tri dans le local poubelle.'
+                          )
+                        }
+                        className="px-2 py-1 rounded-lg bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 text-[10px] font-bold"
+                        title="Tester une phrase dictée"
+                      >
+                        Exemple dicté
+                      </button>
+                      <button
+                        type="button"
+                        onClick={stopActiveVoiceInput}
+                        className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black transition-colors shadow-xs"
+                      >
+                        Valider & Arrêter
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* BOUTON OFFICIEL : ANALYSE & REFORMULATION JURIDIQUE DES PHRASES DICTÉES (Points 4 & 5) */}
+              <div className="mt-3 p-4 rounded-2xl bg-gradient-to-r from-blue-50 via-indigo-50 to-emerald-50 border-2 border-blue-200 shadow-sm flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black shadow shrink-0">
+                      <Scale className="w-5 h-5 text-amber-300" />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-xs sm:text-sm flex items-center gap-1.5 flex-wrap">
+                        <span>Analyse, Classement & Reformulation Juridique</span>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-200">
+                          Code de la Construction 2019-576 & OHADA
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-slate-600 font-medium">
+                        Comprend vos phrases familières ou dictées, sépare les obligations et les reclasse dans la bonne section.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRunClauseReorganization}
+                    disabled={isReorganizing}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 transition-all transform active:scale-95 cursor-pointer whitespace-nowrap disabled:opacity-50"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>{isReorganizing ? 'Analyse en cours...' : 'Analyser & Reformuler les Clauses'}</span>
+                  </button>
+                </div>
+
+                {/* Audit & Rapport de reformulation */}
+                {reorganizationReport && (
+                  <div className="p-3.5 bg-white rounded-xl border border-blue-200 text-xs flex flex-col gap-3 animate-fadeIn">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span className="font-black text-slate-900">
+                          Clauses analysées, classées et reformulées avec succès
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        {reorganizationReport.movedCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold">
+                            {reorganizationReport.movedCount} clause(s) reclassée(s)
+                          </span>
+                        )}
+                        <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 font-bold">
+                          {reorganizationReport.reformulatedCount} clause(s) formalisée(s)
+                        </span>
+                        {reorganizationReport.correctedViolationsCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-bold">
+                            {reorganizationReport.correctedViolationsCount} correction(s) d'ordre public
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Détail des clauses traitées */}
+                    <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+                      {reorganizationReport.logs.map((log, idx) => (
+                        <div
+                          key={idx}
+                          className={`p-2.5 rounded-lg border text-[11px] flex flex-col gap-1 ${
+                            log.isCorrectedAbuse
+                              ? 'bg-amber-50/70 border-amber-200 text-amber-900'
+                              : 'bg-slate-50 border-slate-200 text-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-slate-700">
+                              {log.assignedField === 'owner'
+                                ? '→ Conditions Propriétaire'
+                                : log.assignedField === 'tenant'
+                                ? '→ Demandes Locataire'
+                                : '→ Règles Copropriété'}
+                            </span>
+                            {log.legalCitation && (
+                              <span className="text-[10px] text-blue-700 font-bold">
+                                {log.legalCitation}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-slate-500 line-through truncate">
+                            Phrase d'origine : « {log.rawText} »
+                          </div>
+                          <div className="font-bold text-slate-900">
+                            Reformulation légale : {log.reformulatedText}
+                          </div>
+                          {log.abuseReason && (
+                            <div className="text-[10px] text-amber-800 italic">
+                              Note légale : {log.abuseReason}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t text-[11px]">
+                      <span className="text-slate-500">
+                        Les 3 zones ci-dessus ont été mises à jour avec les clauses conformes prêtes pour le bail.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleRestoreOriginalClauses}
+                        className="text-blue-600 hover:text-blue-800 font-bold underline"
+                      >
+                        Rétablir le texte brut initial
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

@@ -18,11 +18,16 @@ import {
   X,
   ShieldCheck,
   Download,
-  Check
+  Check,
+  Lock,
+  PenTool,
+  AlertTriangle
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
+import { notifyWaitingListCandidatesOnLeaseFinalized } from '@/lib/waitingListNotifications';
 
 export interface RentalApplication {
   id: string;
@@ -39,6 +44,11 @@ export interface RentalApplication {
   date_received: string;
   status: 'en_attente' | 'validee' | 'liste_d_attente' | 'contrat_actif' | 'refusee';
   dossier_status: 'complet' | 'en_cours';
+  tenant_signed?: boolean;
+  tenant_signed_at?: string;
+  contract_number?: string;
+  contract_finalized?: boolean;
+  unavailable_reason?: string;
   documents: {
     cni_url: string;
     quittances_url?: string;
@@ -46,7 +56,7 @@ export interface RentalApplication {
   };
 }
 
-// Point 11: Multiples candidats sur le même bien (Kwame, Moussa, Awa sur Appartement A)
+// Multiples candidats sur le même bien (Kwame, Moussa, Awa sur Appartement A)
 const MOCK_APPLICATIONS: RentalApplication[] = [
   {
     id: 'app_kwame',
@@ -61,8 +71,9 @@ const MOCK_APPLICATIONS: RentalApplication[] = [
     rent_amount: 150000,
     caution_amount: 300000,
     date_received: '24/09/2026',
-    status: 'en_attente',
+    status: 'liste_d_attente',
     dossier_status: 'complet',
+    tenant_signed: false,
     documents: {
       cni_url: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=400&q=80',
       quittances_url: 'Quittances_anciennes_2026.pdf',
@@ -82,10 +93,11 @@ const MOCK_APPLICATIONS: RentalApplication[] = [
     rent_amount: 150000,
     caution_amount: 300000,
     date_received: '24/09/2026',
-    status: 'en_attente',
+    status: 'liste_d_attente',
     dossier_status: 'complet',
+    tenant_signed: false,
     documents: {
-      cni_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
+      cni_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
       quittances_url: 'Quittance_locative_2026.pdf'
     }
   },
@@ -102,8 +114,9 @@ const MOCK_APPLICATIONS: RentalApplication[] = [
     rent_amount: 150000,
     caution_amount: 300000,
     date_received: '23/09/2026',
-    status: 'en_attente',
+    status: 'validee',
     dossier_status: 'complet',
+    tenant_signed: false,
     documents: {
       cni_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
     }
@@ -121,8 +134,11 @@ const MOCK_APPLICATIONS: RentalApplication[] = [
     rent_amount: 450000,
     caution_amount: 900000,
     date_received: '20/09/2026',
-    status: 'validee',
+    status: 'contrat_actif',
     dossier_status: 'complet',
+    tenant_signed: true,
+    contract_finalized: true,
+    contract_number: 'LT-2026-CI-000492',
     documents: {
       cni_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80'
     }
@@ -142,6 +158,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedApplicationForContract, setSelectedApplicationForContract] = useState<RentalApplication | null>(null);
   const [selectedDossierApp, setSelectedDossierApp] = useState<RentalApplication | null>(null);
+  const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
 
   useEffect(() => {
@@ -166,56 +183,188 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     return () => window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
   }, []);
 
-  const handleUpdateStatus = (id: string, newStatus: RentalApplication['status']) => {
-    setApplications((prev) => {
-      const updated = prev.map((app) => (app.id === id ? { ...app, status: newStatus } : app));
-      try {
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updated));
-      } catch (e) {
-        console.warn(e);
-      }
-      return updated;
-    });
+  const saveApplications = (updated: RentalApplication[]) => {
+    setApplications(updated);
+    try {
+      localStorage.setItem('locatrust_rental_applications', JSON.stringify(updated));
+      window.dispatchEvent(
+        new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: updated } })
+      );
+    } catch (e) {
+      console.warn(e);
+    }
   };
 
-  // Point 11 : Le propriétaire signe avec un candidat (ex: Kwame)
-  // Le système : valide Kwame et met les autres en liste d'attente
+  // Vérifier si un logement a déjà un contrat actif / finalisé
+  const propertyHasActiveContract = (propertyId: string) => {
+    return applications.some((a) => a.property_id === propertyId && a.status === 'contrat_actif');
+  };
+
+  // Choix d'un candidat pour établir le contrat
   const handleSelectAndSignWithCandidate = (chosenApp: RentalApplication) => {
+    // Contrôle d'état : si le logement est déjà pris
+    if (propertyHasActiveContract(chosenApp.property_id)) {
+      alert("Ce logement est déjà loué sous contrat actif. Impossible de créer un nouveau contrat.");
+      return;
+    }
+
     const competingCandidates = applications.filter(
       (a) => a.property_id === chosenApp.property_id && a.id !== chosenApp.id
     );
 
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === chosenApp.id) {
-          return { ...app, status: 'validee' };
-        }
-        if (app.property_id === chosenApp.property_id && app.status !== 'refusee') {
-          return { ...app, status: 'liste_d_attente' };
-        }
-        return app;
-      })
-    );
+    const updated = applications.map((app) => {
+      if (app.id === chosenApp.id) {
+        return { ...app, status: 'validee' as const, tenant_signed: false };
+      }
+      if (app.property_id === chosenApp.property_id && app.status !== 'refusee') {
+        return { ...app, status: 'liste_d_attente' as const };
+      }
+      return app;
+    });
 
+    saveApplications(updated);
     setSelectedApplicationForContract(chosenApp);
+
     const competingNames = competingCandidates.map((c) => c.tenant_name).join(', ');
     setCandidateAlert(
-      `✔ ${chosenApp.tenant_name} validé pour ${chosenApp.property_title} ! ${
+      `✔ ${chosenApp.tenant_name} retenu pour ${chosenApp.property_title} ! Le contrat lui a été transmis pour consultation et signature. ${
         competingCandidates.length > 0
-          ? `Les autres candidats (${competingNames}) ont été automatiquement placés en liste d'attente.`
+          ? `Les autres candidats (${competingNames}) sont en liste d'attente.`
           : ''
       }`
     );
   };
 
-  // Point 11 : Quand le candidat signe, le contrat devient actif et le logement disparaît du fil d'actualités
-  const handleTenantSignsContract = (app: RentalApplication) => {
-    setApplications((prev) =>
-      prev.map((a) => (a.id === app.id ? { ...a, status: 'contrat_actif' } : a))
+  // Validation effective de la signature par le locataire (Étape 1 & 2)
+  const handleConfirmTenantSignature = (app: RentalApplication) => {
+    const updated = applications.map((a) =>
+      a.id === app.id ? { ...a, tenant_signed: true, tenant_signed_at: new Date().toISOString() } : a
     );
+    saveApplications(updated);
+    setSigningTenantApp(null);
     setCandidateAlert(
-      `🎉 ${app.tenant_name} a signé ! Le contrat est désormais actif. Le logement '${app.property_title}' a été loué et retiré automatiquement du fil d'actualités public.`
+      `✍️ ${app.tenant_name} a signé et validé sa signature ! Le bouton « Finaliser le contrat » est désormais actif pour le bailleur.`
     );
+  };
+
+  // Finalisation définitive du contrat par le propriétaire/agence
+  const handleFinalizeContract = (app: RentalApplication) => {
+    // Contrôle 1 : Le locataire doit obligatoirement avoir signé et validé
+    if (!app.tenant_signed) {
+      alert("Le locataire n'a pas encore signé et validé sa signature. Le contrat ne peut être finalisé sans sa signature effective.");
+      return;
+    }
+
+    // Contrôle 2 : Vérification de l'état réel du logement (impossible de signer 2 contrats simultanés)
+    const propertyAlreadyTaken = applications.some(
+      (a) => a.property_id === app.property_id && a.status === 'contrat_actif' && a.id !== app.id
+    );
+    if (propertyAlreadyTaken) {
+      alert("Action refusée : Ce logement possède déjà un contrat actif en cours d'exécution.");
+      return;
+    }
+
+    const contractNumber = app.contract_number || `LT-2026-CI-000${Math.floor(100 + Math.random() * 900)}`;
+
+    // 1. Mettre à jour l'application retenue à 'contrat_actif'
+    // 2. Mettre automatiquement toutes les autres demandes pour ce même logement à 'refusee'
+    const competing = applications.filter(
+      (a) => a.property_id === app.property_id && a.id !== app.id
+    );
+    const competingNames = competing.map((c) => c.tenant_name).join(', ');
+
+    const updated = applications.map((a) => {
+      if (a.id === app.id) {
+        return {
+          ...a,
+          status: 'contrat_actif' as const,
+          contract_finalized: true,
+          contract_number: contractNumber
+        };
+      }
+      if (a.property_id === app.property_id) {
+        return {
+          ...a,
+          status: 'refusee' as const,
+          unavailable_reason: "Le logement demandé est déjà pris et n'est plus disponible."
+        };
+      }
+      return a;
+    });
+
+    saveApplications(updated);
+
+    // 3. Notifier automatiquement tous les candidats refusés
+    try {
+      notifyWaitingListCandidatesOnLeaseFinalized({
+        propertyTitle: app.property_title,
+        propertyAddress: app.property_address,
+        chosenTenantName: app.tenant_name,
+        contractNumber
+      });
+    } catch (e) {
+      console.warn('Waiting list notification error:', e);
+    }
+
+    // 4. Enregistrer dans le registre des contrats locataire pour téléchargement depuis son espace
+    try {
+      const rawContracts = localStorage.getItem('locatrust_contracts');
+      const currentContracts = rawContracts ? JSON.parse(rawContracts) : [];
+      const newContractRecord = {
+        id: `cnt_${app.id}_${Date.now()}`,
+        contract_number: contractNumber,
+        rent: app.rent_amount,
+        charges: 10000,
+        payment_due_day: 5,
+        duration_months: 12,
+        owner: { full_name: "Koffi N'Guessan", phone: "+225 07 89 45 12 34" },
+        tenant: { full_name: app.tenant_name, phone: app.tenant_phone },
+        property: {
+          title: app.property_title,
+          location: { city: 'Abidjan', quartier: 'Riviera', commune: 'Cocody' }
+        },
+        status: 'actif',
+        signed_date: new Date().toLocaleDateString('fr-FR')
+      };
+      localStorage.setItem('locatrust_contracts', JSON.stringify([newContractRecord, ...currentContracts]));
+    } catch (e) {
+      console.warn('Contract storage error:', e);
+    }
+
+    setCandidateAlert(
+      `🎉 Contrat N° ${contractNumber} définitivement finalisé avec ${app.tenant_name} pour « ${app.property_title} » ! Le logement est officiellement loué. ${
+        competing.length > 0
+          ? `Les autres candidats (${competingNames}) ont été automatiquement refusés et informés que le logement n'est plus disponible.`
+          : ''
+      }`
+    );
+  };
+
+  // Téléchargement du contrat finalisé au format PDF certifié
+  const handleDownloadContract = async (app: RentalApplication) => {
+    try {
+      await generateOfficialContractPdf({
+        contractNumber: app.contract_number || 'LT-2026-CI-000492',
+        isAgency: false,
+        ownerName: "Koffi N'Guessan",
+        ownerPhone: '+225 07 89 45 12 34',
+        tenantName: app.tenant_name,
+        tenantPhone: app.tenant_phone,
+        tenantCni: app.tenant_cni,
+        propertyTitle: app.property_title,
+        propertyAddress: app.property_address,
+        durationMonths: 12,
+        startDate: '01/10/2026',
+        rent: app.rent_amount,
+        cautionMonths: 2,
+        chargesAmount: 10000,
+        dueDay: 5,
+        isSignedCopy: true
+      });
+    } catch (err) {
+      console.error('Download contract PDF error:', err);
+      alert('Erreur lors du téléchargement du contrat.');
+    }
   };
 
   const filteredApps = applications.filter(
@@ -284,16 +433,22 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             .replace(/pièces /gi, 'P ')
             .replace(/pièce /gi, 'P ');
 
+          const isPropertyTaken = propertyHasActiveContract(app.property_id);
+          const isThisActive = app.status === 'contrat_actif';
+          const isRefused = app.status === 'refusee' || (isPropertyTaken && !isThisActive);
+
           return (
             <div
               key={app.id}
               className={`bg-white rounded-2xl border transition-all p-3 sm:p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 hover:shadow-sm ${
-                app.status === 'validee'
+                isThisActive
+                  ? 'border-blue-300 bg-blue-50/20'
+                  : app.status === 'validee'
                   ? 'border-emerald-300 bg-emerald-50/20'
+                  : isRefused
+                  ? 'border-slate-200 bg-slate-50/50 opacity-80'
                   : app.status === 'liste_d_attente'
                   ? 'border-amber-200 bg-amber-50/30'
-                  : app.status === 'contrat_actif'
-                  ? 'border-blue-300 bg-blue-50/20'
                   : 'border-slate-200'
               }`}
             >
@@ -344,38 +499,36 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   {app.date_received}
                 </span>
 
-                {app.status === 'en_attente' && (
+                {/* Si logement déjà pris et candidat non retenu -> Refusé */}
+                {isRefused ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-800 border border-rose-200 text-[11px] font-black whitespace-nowrap flex items-center gap-1">
+                    <X className="w-3 h-3 text-rose-600" />
+                    <span>Refusé (Logement déjà pris)</span>
+                  </span>
+                ) : isThisActive ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
+                    <CheckCircle2 className="w-3 h-3 text-blue-600" />
+                    <span>✔ Contrat Actif (Loué)</span>
+                  </span>
+                ) : app.status === 'validee' ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    <span>✔ Retenu ({app.tenant_signed ? 'Signé par locataire' : 'En attente signature locataire'})</span>
+                  </span>
+                ) : app.status === 'liste_d_attente' ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
+                    <Clock className="w-3 h-3 text-amber-600" />
+                    <span>⏳ Liste d'attente</span>
+                  </span>
+                ) : (
                   <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
                     <Clock className="w-3 h-3 text-slate-500" />
                     <span>En attente</span>
                   </span>
                 )}
-                {app.status === 'validee' && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    <span>✔ Retenu (Contrat en cours)</span>
-                  </span>
-                )}
-                {app.status === 'liste_d_attente' && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
-                    <Clock className="w-3 h-3 text-amber-600" />
-                    <span>⏳ Liste d'attente</span>
-                  </span>
-                )}
-                {app.status === 'contrat_actif' && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
-                    <CheckCircle2 className="w-3 h-3 text-blue-600" />
-                    <span>✔ Contrat Actif (Loué)</span>
-                  </span>
-                )}
-                {app.status === 'refusee' && (
-                  <span className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-800 border border-rose-200 text-[11px] font-black whitespace-nowrap">
-                    Refusée
-                  </span>
-                )}
               </div>
 
-              {/* 4. Zone d'actions Point 11 */}
+              {/* 4. Actions selon l'état réel (Points 1 & 2) */}
               <div className="flex items-center gap-1.5 shrink-0 self-end lg:self-center flex-wrap">
                 {/* Voir Dossier */}
                 <button
@@ -388,52 +541,136 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   <span>Dossier</span>
                 </button>
 
-                {/* Point 11 : Signer avec ce candidat */}
-                {app.status === 'en_attente' && (
+                {/* CAS A : Candidat refusé (logement pris par un autre candidat) */}
+                {isRefused && (
                   <button
                     type="button"
-                    onClick={() => handleSelectAndSignWithCandidate(app)}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm flex items-center gap-1 transition-all whitespace-nowrap"
-                    title="Choisir ce candidat et mettre les autres en liste d'attente"
+                    disabled
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed opacity-40 flex items-center gap-1.5 whitespace-nowrap"
+                    title="Le logement demandé est déjà pris et n'est plus disponible. Aucun contrat ne peut être généré ou signé pour ce bien."
                   >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Signer avec {app.tenant_name.split(' ')[0]}</span>
+                    <Lock className="w-3.5 h-3.5 text-slate-300" />
+                    <span>Contrat</span>
                   </button>
                 )}
 
-                {/* Point 11 : Simuler la signature du locataire retenu */}
-                {app.status === 'validee' && (
-                  <button
-                    type="button"
-                    onClick={() => handleTenantSignsContract(app)}
-                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-sm flex items-center gap-1 transition-all whitespace-nowrap"
-                    title="Valider la signature du locataire et clore le logement du fil d'actualité"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Finaliser signature locataire</span>
-                  </button>
+                {/* CAS B : Contrat finalisé / Contrat actif */}
+                {isThisActive && (
+                  <>
+                    <button
+                      type="button"
+                      disabled
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed opacity-60 flex items-center gap-1.5 whitespace-nowrap"
+                      title="Le contrat est finalisé et en cours d'exécution. Aucune modification n'est permise."
+                    >
+                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Contrat (Scellé)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadContract(app)}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer"
+                      title="Télécharger le contrat de bail officiel finalisé en PDF"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Télécharger le contrat</span>
+                    </button>
+                  </>
                 )}
 
-                {/* Bouton Générer un contrat */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSelectedApplicationForContract(app);
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                  title="Générer immédiatement le contrat de bail officiel"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Contrat</span>
-                </button>
+                {/* CAS C : Candidat retenu en cours de finalisation */}
+                {!isRefused && !isThisActive && app.status === 'validee' && (
+                  <>
+                    {/* Tant que le locataire n'a pas signé : bouton présent mais DÉSACTIVÉ / NON CLIQUABLE */}
+                    {!app.tenant_signed ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled
+                          className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-400 font-bold text-xs border border-slate-300 cursor-not-allowed opacity-60 flex items-center gap-1.5 whitespace-nowrap"
+                          title="En attente de la signature effective du locataire. Le bouton deviendra cliquable dès validation de sa signature."
+                        >
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Finaliser le contrat</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSigningTenantApp(app)}
+                          className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs border border-blue-200 flex items-center gap-1 transition-all whitespace-nowrap shadow-xs cursor-pointer"
+                          title="Consulter et valider la signature locataire"
+                        >
+                          <PenTool className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Signature locataire</span>
+                        </button>
+                      </>
+                    ) : (
+                      /* Dès que le locataire a signé et validé : bouton actif et cliquable */
+                      <button
+                        type="button"
+                        onClick={() => handleFinalizeContract(app)}
+                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
+                        title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>Finaliser le contrat</span>
+                      </button>
+                    )}
+
+                    {/* Bouton Contrat pour voir ou ajuster les clauses avant clôture */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedApplicationForContract(app);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                      title="Consulter le contrat de bail"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Contrat</span>
+                    </button>
+                  </>
+                )}
+
+                {/* CAS D : Candidat en attente ou liste d'attente (logement non encore pris) */}
+                {!isRefused && !isThisActive && app.status !== 'validee' && (
+                  <>
+                    {app.status === 'en_attente' && (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectAndSignWithCandidate(app)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
+                        title="Choisir ce candidat et lui transmettre le contrat"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Signer avec {app.tenant_name.split(' ')[0]}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedApplicationForContract(app);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                      title="Générer immédiatement le contrat de bail officiel"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Contrat</span>
+                    </button>
+                  </>
+                )}
 
                 {/* Message */}
                 <button
                   type="button"
                   onClick={() => onOpenMessages?.(app.id)}
-                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600"
+                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
                   title="Envoyer un message au candidat"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
@@ -619,6 +856,92 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         />
       )}
 
+      {/* Interactive Tenant Signature Modal (Simulation / Signature effective du locataire) */}
+      {signingTenantApp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn font-sans">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-5">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
+                  <PenTool className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Signature & Validation Locataire
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {signingTenantApp.tenant_name} • CNI : {signingTenantApp.tenant_cni}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSigningTenantApp(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Récapitulatif du bien */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-700">Logement concerné :</span>
+                <span className="font-black text-slate-900">{signingTenantApp.property_title}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-600">
+                <span>Loyer mensuel :</span>
+                <strong className="text-blue-700 font-black">{formatFCFA(signingTenantApp.rent_amount)}/mois</strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-600">
+                <span>Dépôt de garantie :</span>
+                <strong>{formatFCFA(signingTenantApp.caution_amount)} (2 mois max légal)</strong>
+              </div>
+            </div>
+
+            {/* Étape 1 : Signature manuscrite certifiée */}
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>1. Signature manuscrite numérique du locataire</span>
+              </span>
+              <div className="h-28 rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50/30 flex items-center justify-center p-3 relative overflow-hidden">
+                <div className="font-serif italic text-2xl text-blue-900 select-none tracking-wide">
+                  {signingTenantApp.tenant_name}
+                </div>
+                <div className="absolute bottom-2 right-3 text-[10px] font-mono text-emerald-700 font-bold bg-white/80 px-2 py-0.5 rounded border border-emerald-200">
+                  ✔ Certificat Numérique LocaTrust
+                </div>
+              </div>
+              <span className="text-[11px] text-slate-400 italic">
+                En apposant cette signature, le preneur déclare avoir pris connaissance des clauses et s'engage selon les dispositions de la Loi N° 2019-576.
+              </span>
+            </div>
+
+            {/* Étape 2 : Boutons d'action */}
+            <div className="flex items-center justify-between pt-3 border-t gap-3">
+              <button
+                type="button"
+                onClick={() => setSigningTenantApp(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+              >
+                Annuler
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleConfirmTenantSignature(signingTenantApp)}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md flex items-center gap-2 transition-all cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                <span>2. Valider ma signature locataire</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
+
