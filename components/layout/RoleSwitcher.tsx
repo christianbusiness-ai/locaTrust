@@ -10,6 +10,7 @@ interface RoleSwitcherProps {
   onRoleChange: (role: UserRole) => void;
   onOpenRegister?: () => void;
   onExitToLanding?: () => void;
+  isDemo?: boolean;
 }
 
 export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({
@@ -17,24 +18,38 @@ export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({
   onRoleChange,
   onOpenRegister,
   onExitToLanding,
+  isDemo,
 }) => {
+  // 1. Si le rôle actuel est admin et que nous sommes en session admin privée, on n'affiche jamais la barre
+  if (currentRole === 'admin') {
+    return null;
+  }
+
+  // 2. Si un compte réel a été créé ou que l'on n'est pas en mode démo : CACHER CETTE PARTIE STRICTEMENT
+  // "Une fois un compte est créé, le propriétaire du compte ne peut pas basculer dans n'importe quel sens.
+  // Il ne peut pas aller chez le locataire, ni l'agence, ni le propriétaire. Donc il faut cacher cette partie une fois un compte est créé."
+  const hasCreatedAccount = typeof window !== 'undefined' && (
+    localStorage.getItem('locatrust_account_created') === 'true' ||
+    localStorage.getItem('locatrust_is_demo') === 'false' ||
+    Boolean(localStorage.getItem('locatrust_active_user'))
+  );
+
+  if (isDemo === false || (isDemo === undefined && hasCreatedAccount)) {
+    return null;
+  }
+
   const roles: { role: UserRole; label: string; icon: any }[] = [
     { role: 'locataire', label: 'Locataire', icon: User },
     { role: 'proprietaire', label: 'Propriétaire', icon: Building2 },
     { role: 'agence', label: 'Agence', icon: Building2 },
   ];
 
-  // Si le rôle actuel est admin et que nous sommes en session admin privée, on n'affiche pas la barre publique
-  if (currentRole === 'admin') {
-    return null;
-  }
-
   return (
     <div className="bg-slate-900 text-white text-xs py-1.5 sm:py-2 px-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800">
       <div className="flex items-center gap-2 min-w-0">
-        <ShieldAlert className="w-4 h-4 text-blue-400 shrink-0" />
-        <span className="font-semibold text-slate-300 whitespace-nowrap">Changer d'espace :</span>
-        <span className="text-slate-400 truncate hidden md:inline">Basculez entre vos espaces locataire, propriétaire ou agence</span>
+        <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+        <span className="font-semibold text-slate-300 whitespace-nowrap">Mode Démo :</span>
+        <span className="text-slate-400 truncate hidden md:inline">Données simulées • Basculez entre les rôles pour tester la plateforme</span>
       </div>
 
       <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-0.5 sm:pb-0 scrollbar-none">

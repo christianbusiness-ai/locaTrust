@@ -24,6 +24,20 @@ export default function App() {
   // Active role state default to 'proprietaire', can switch to 'agence', 'locataire', 'admin'
   const [currentRole, setCurrentRole] = useState<UserRole>('proprietaire');
 
+  // Mode Démo vs Compte Réel :
+  // "cette partie (RoleSwitcher) doit rester dans la partie démo seulement.
+  // Une fois un compte est créé, le compte ne peut pas basculer dans n'importe quel sens,
+  // il faut cacher cette partie une fois un compte est créé."
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const isAccountCreated = localStorage.getItem('locatrust_account_created') === 'true';
+      if (isAccountCreated) return false;
+      const isDemo = localStorage.getItem('locatrust_is_demo');
+      if (isDemo === 'false') return false;
+    }
+    return true; // Mode démo par défaut
+  });
+
   // Global Register Modal State
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
 
@@ -79,6 +93,8 @@ export default function App() {
   }, []);
 
   const handleRoleChange = (newRole: UserRole) => {
+    // Si un compte réel a été créé, l'utilisateur ne peut pas basculer de rôle
+    if (!isDemoMode) return;
     setCurrentRole(newRole);
   };
 
@@ -90,13 +106,15 @@ export default function App() {
     }
   };
 
-  const handleEnterSaaS = (role?: UserRole) => {
+  const handleEnterSaaS = (role?: UserRole, asDemo = true) => {
     if (role) {
       setCurrentRole(role);
     }
+    setIsDemoMode(asDemo);
     setCurrentView('saas');
     if (typeof window !== 'undefined') {
       localStorage.setItem('locatrust_view', 'saas');
+      localStorage.setItem('locatrust_is_demo', asDemo ? 'true' : 'false');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -141,9 +159,13 @@ export default function App() {
           onClose={() => setIsRegisterModalOpen(false)}
           onSuccessRegister={(registeredRole) => {
             setCurrentRole(registeredRole);
+            setIsDemoMode(false);
             setCurrentView('saas');
             if (typeof window !== 'undefined') {
               localStorage.setItem('locatrust_view', 'saas');
+              localStorage.setItem('locatrust_account_created', 'true');
+              localStorage.setItem('locatrust_is_demo', 'false');
+              localStorage.setItem('locatrust_registered_role', registeredRole);
             }
           }}
         />
@@ -151,38 +173,41 @@ export default function App() {
     );
   }
 
-  // 2. Vue SaaS Authentifiée : Une fois le compte créé ou connecté, le bouton "Créer un compte" NE S'AFFICHE PLUS sur l'ensemble du SaaS
+  // 2. Vue SaaS Authentifiée : Une fois le compte créé ou connecté, le bouton "Créer un compte" et le RoleSwitcher NE S'AFFICHENT PLUS
   return (
     <>
       {currentRole === 'proprietaire' && (
         <ProprietaireDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => {}}
+          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
           onExitToLanding={handleExitToLanding}
+          isDemo={isDemoMode}
         />
       )}
       {currentRole === 'agence' && (
         <AgencyDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => {}}
+          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
           onExitToLanding={handleExitToLanding}
+          isDemo={isDemoMode}
         />
       )}
       {currentRole === 'locataire' && (
         <TenantDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => {}}
+          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
           onExitToLanding={handleExitToLanding}
+          isDemo={isDemoMode}
         />
       )}
       {currentRole === 'admin' && (
         <AdminDashboardPage
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
-          onOpenRegisterModal={() => {}}
+          onOpenRegisterModal={() => setIsRegisterModalOpen(true)}
           onExitToLanding={handleExitToLanding}
         />
       )}
@@ -193,9 +218,13 @@ export default function App() {
         onClose={() => setIsRegisterModalOpen(false)}
         onSuccessRegister={(registeredRole) => {
           setCurrentRole(registeredRole);
+          setIsDemoMode(false);
           setCurrentView('saas');
           if (typeof window !== 'undefined') {
             localStorage.setItem('locatrust_view', 'saas');
+            localStorage.setItem('locatrust_account_created', 'true');
+            localStorage.setItem('locatrust_is_demo', 'false');
+            localStorage.setItem('locatrust_registered_role', registeredRole);
           }
         }}
       />

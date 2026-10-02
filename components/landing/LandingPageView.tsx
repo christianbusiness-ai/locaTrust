@@ -25,13 +25,22 @@ import { UserRole } from '@/types/database.types';
 
 interface LandingPageViewProps {
   onOpenRegister: () => void;
-  onEnterSaaS: (role?: UserRole) => void;
+  onEnterSaaS: (role?: UserRole, asDemo?: boolean) => void;
 }
 
 export const LandingPageView: React.FC<LandingPageViewProps> = ({
   onOpenRegister,
   onEnterSaaS
 }) => {
+  const handleLoginClick = () => {
+    if (typeof window !== 'undefined' && localStorage.getItem('locatrust_account_created') === 'true') {
+      const savedRole = (localStorage.getItem('locatrust_registered_role') as UserRole) || 'proprietaire';
+      onEnterSaaS(savedRole, false);
+    } else {
+      onOpenRegister();
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-blue-600 selection:text-white">
       {/* 1. TOP NAVBAR */}
@@ -51,7 +60,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           <div className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
-              onClick={() => onEnterSaaS('proprietaire')}
+              onClick={handleLoginClick}
               className="px-3 sm:px-4 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 transition-all"
             >
               Connexion

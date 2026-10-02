@@ -28,6 +28,7 @@ interface TenantDashboardPageProps {
   onRoleChange?: (role: UserRole) => void;
   onOpenRegisterModal?: () => void;
   onExitToLanding?: () => void;
+  isDemo?: boolean;
 }
 
 export default function TenantDashboardPage({
@@ -35,6 +36,7 @@ export default function TenantDashboardPage({
   onRoleChange = () => {},
   onOpenRegisterModal = () => {},
   onExitToLanding,
+  isDemo,
 }: TenantDashboardPageProps) {
   const currentUser = MOCK_USERS.locataire;
   // Default to 'feed' as requested in prompt & mockup image
@@ -44,12 +46,13 @@ export default function TenantDashboardPage({
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
       
-      {/* Top Role Switcher Header */}
+      {/* Top Role Switcher Header (Uniquement en mode Démo, masqué une fois compte créé) */}
       <RoleSwitcher
         currentRole={currentRole}
         onRoleChange={onRoleChange}
         onOpenRegister={onOpenRegisterModal}
         onExitToLanding={onExitToLanding}
+        isDemo={isDemo}
       />
 
       {/* Main App Top Header */}

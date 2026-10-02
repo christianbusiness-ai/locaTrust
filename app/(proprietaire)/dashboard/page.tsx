@@ -40,6 +40,7 @@ interface ProprietaireDashboardPageProps {
   onRoleChange?: (role: UserRole) => void;
   onOpenRegisterModal?: () => void;
   onExitToLanding?: () => void;
+  isDemo?: boolean;
 }
 
 export default function ProprietaireDashboardPage({
@@ -47,6 +48,7 @@ export default function ProprietaireDashboardPage({
   onRoleChange = () => {},
   onOpenRegisterModal = () => {},
   onExitToLanding,
+  isDemo,
 }: ProprietaireDashboardPageProps) {
   const currentUser = MOCK_USERS.proprietaire;
 
@@ -108,12 +110,13 @@ export default function ProprietaireDashboardPage({
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#070F1E] font-sans text-slate-900 dark:text-slate-100 transition-colors">
       
-      {/* Top Role Switcher Header */}
+      {/* Top Role Switcher Header (Uniquement en mode Démo, masqué une fois compte créé) */}
       <RoleSwitcher
         currentRole={currentRole}
         onRoleChange={onRoleChange}
         onOpenRegister={onOpenRegisterModal}
         onExitToLanding={onExitToLanding}
+        isDemo={isDemo}
       />
 
       {/* Main App Top Header */}
