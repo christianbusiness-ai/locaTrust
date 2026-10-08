@@ -49,7 +49,7 @@ export default function InscriptionProprietairePage() {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Aicha Diallo"
+                placeholder="Bailleur Partenaire"
                 className="p-3 bg-slate-50 border rounded-xl text-xs"
                 required
               />
@@ -60,7 +60,7 @@ export default function InscriptionProprietairePage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="aicha@locatrust.ci"
+                placeholder="contact@locatrust.ci"
                 className="p-3 bg-slate-50 border rounded-xl text-xs"
                 required
               />

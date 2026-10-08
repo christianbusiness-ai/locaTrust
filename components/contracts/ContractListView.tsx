@@ -19,6 +19,9 @@ import {
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
 import { sendContractReminderToTenant } from '@/lib/messagingStore';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
+import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 
 interface ContractListViewProps {
   onSelectContract?: (contractNumber: string) => void;
@@ -29,6 +32,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   onSelectContract,
   onCreateContract,
 }) => {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [isLocalCreateOpen, setIsLocalCreateOpen] = useState(false);
@@ -69,234 +73,87 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
     });
   };
 
-  const contracts = [
-    {
-      id: 'CT-2026-00059',
-      locataire: 'Kouamé Yves',
-      role: 'Locataire (Nouveau)',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      bien: 'Villa Duplex 4 pièces',
-      quartier: 'Cocody Angré 8ème Tranche',
-      periode: '01/10/2026 - 30/09/2027',
-      statut: 'En attente signature locataire',
-      dateSignature: 'Signé par le bailleur le 24/09/2026',
-      bailleurSigne: true,
-      locataireSigne: false,
-      telephone: '+225 07 45 89 12 00',
-    },
-    {
-      id: 'CT-2026-00060',
-      locataire: 'Touré Moussa',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-      bien: 'Appartement 3 pièces Standing',
-      quartier: 'Cocody Riviera Palmeraie',
-      periode: '15/10/2026 - 14/10/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 28/09/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 07 12 34 56 78',
-    },
-    {
-      id: 'CT-2026-00061',
-      locataire: 'Bamba Fatou',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-      bien: 'Studio meublé moderne',
-      quartier: 'Marcory Zone 4',
-      periode: '01/11/2026 - 31/10/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 30/09/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 05 98 76 54 32',
-    },
-    {
-      id: 'CT-2026-00058',
-      locataire: 'Kouadio Jean',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      bien: 'Appartement 3 pièces',
-      quartier: 'Cocody Riviera 3',
-      periode: '01/07/2026 - 30/06/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 01/07/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 05 67 89 45 12',
-    },
-    {
-      id: 'CT-2026-00057',
-      locataire: 'Awa Diallo',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-      bien: 'Studio meublé',
-      quartier: 'Marcory Zone 4',
-      periode: '15/06/2026 - 14/06/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 15/06/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 01 23 45 67 89',
-    },
-    {
-      id: 'CT-2026-00056',
-      locataire: 'Bamba Moussa',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-      bien: 'Appartement 2 pièces',
-      quartier: 'Yopougon Andokoi',
-      periode: '20/05/2026 - 19/05/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 20/05/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 07 12 34 56 78',
-    },
-    {
-      id: 'CT-2026-00055',
-      locataire: "N'Guessan Aya",
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      bien: 'Appartement 2 pièces',
-      quartier: 'Cocody Angré',
-      periode: '10/05/2026 - 09/05/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 10/05/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 05 98 76 54 32',
-    },
-    {
-      id: 'CT-2026-00054',
-      locataire: 'Traoré Aminata',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80',
-      bien: 'Studio',
-      quartier: 'Treichville',
-      periode: '05/04/2026 - 04/04/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 05/04/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 07 65 43 21 09',
-    },
-    {
-      id: 'CT-2026-00053',
-      locataire: 'Zoumana Coulibaly',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=150&q=80',
-      bien: 'Villa 4 pièces',
-      quartier: 'Plateau Dokui',
-      periode: '01/03/2026 - 28/02/2027',
-      statut: 'Fin bientôt',
-      dateSignature: 'Signé le 01/03/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 01 98 12 34 56',
-    },
-    {
-      id: 'CT-2026-00052',
-      locataire: 'Fatou Koné',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&w=150&q=80',
-      bien: 'Appartement 3 pièces',
-      quartier: 'Koumassi',
-      periode: '18/01/2026 - 17/01/2027',
-      statut: 'Terminé',
-      dateSignature: 'Signé le 18/01/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 05 11 22 33 44',
-    },
-    {
-      id: 'CT-2026-00051',
-      locataire: 'Serge Koffi',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      bien: 'Duplex 5 pièces',
-      quartier: 'Cocody Mermoz',
-      periode: '01/02/2026 - 31/01/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 01/02/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 07 88 99 00 11',
-    },
-    {
-      id: 'CT-2026-00050',
-      locataire: 'Mariam Sanogo',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-      bien: 'Chambre-salon',
-      quartier: 'Abobo Baoulé',
-      periode: '15/01/2026 - 14/01/2027',
-      statut: 'Actif',
-      dateSignature: 'Signé le 15/01/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 05 22 33 44 55',
-    },
-    {
-      id: 'CT-2026-00049',
-      locataire: 'Paul Henri Dago',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-      bien: 'Entrepôt commercial',
-      quartier: 'Vridi Zone Industrielle',
-      periode: '01/01/2026 - 31/12/2026',
-      statut: 'Actif',
-      dateSignature: 'Signé le 01/01/2026',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 01 44 55 66 77',
-    },
-    {
-      id: 'CT-2026-00048',
-      locataire: 'Clarisse Gnahoré',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80',
-      bien: 'Boutique commerciale',
-      quartier: 'Adjamé 220 Logements',
-      periode: '10/12/2025 - 09/12/2026',
-      statut: 'Actif',
-      dateSignature: 'Signé le 10/12/2025',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 07 33 22 11 00',
-    },
-    {
-      id: 'CT-2026-00047',
-      locataire: 'Ibrahim Diarra',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=150&q=80',
-      bien: 'Bureau 3 pièces',
-      quartier: 'Plateau Centre',
-      periode: '01/11/2025 - 31/10/2026',
-      statut: 'Fin bientôt',
-      dateSignature: 'Signé le 01/11/2025',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 05 77 88 99 00',
-    },
-    {
-      id: 'CT-2026-00046',
-      locataire: 'Élodie Brou',
-      role: 'Locataire',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      bien: 'Appartement 4 pièces',
-      quartier: 'Cocody Attoban',
-      periode: '15/10/2025 - 14/10/2026',
-      statut: 'Actif',
-      dateSignature: 'Signé le 15/10/2025',
-      bailleurSigne: true,
-      locataireSigne: true,
-      telephone: '+225 07 99 88 77 66',
-    },
-  ];
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  const loadContracts = async () => {
+    setLoading(true);
+    try {
+      let query = supabase.from('contracts').select('*, property:properties(*), tenant:users!tenant_id(*)').order('created_at', { ascending: false });
+      if (user?.id) {
+        query = query.eq('owner_id', user.id);
+      }
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        const mapped = data.map((c: any) => ({
+          id: c.contract_number || c.id || 'CT-2026-0001',
+          locataire: c.tenant?.full_name || c.tenant_name || 'Locataire',
+          role: 'Locataire',
+          avatar: c.tenant?.avatar_url || c.tenant_avatar || '',
+          bien: c.property?.title || c.property_title || 'Bien immobilier',
+          quartier: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`,
+          periode: c.periode || `${new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
+          statut: c.status === 'actif' || c.status === 'signe' ? 'Actif' : c.status === 'en_attente' ? 'En attente signature locataire' : c.status === 'termine' ? 'Terminé' : 'Actif',
+          dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
+          bailleurSigne: Boolean(c.owner_signature || true),
+          locataireSigne: Boolean(c.tenant_signature),
+          telephone: c.tenant?.phone || c.tenant_phone || '+225 07 00 00 00 00',
+          raw: c
+        }));
+        setContracts(mapped);
+        setLoading(false);
+        return;
+      }
+
+      // Si base vide, vérifier si un contrat a été créé localement dans cette session
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem('locatrust_contracts');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list) && list.length > 0) {
+            const mapped = list.map((c: any) => ({
+              id: c.contract_number || c.id || 'CT-2026-0001',
+              locataire: c.tenant_name || 'Locataire',
+              role: 'Locataire',
+              avatar: c.tenant_avatar || '',
+              bien: c.property_title || 'Bien immobilier',
+              quartier: c.property_address || c.property_city || 'Abidjan',
+              periode: c.periode || `${new Date().toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
+              statut: c.status === 'actif' || c.status === 'signe' ? 'Actif' : c.status === 'en_attente' ? 'En attente signature locataire' : 'Actif',
+              dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
+              bailleurSigne: Boolean(c.owner_signature || true),
+              locataireSigne: Boolean(c.tenant_signature),
+              telephone: c.tenant_phone || '+225 07 00 00 00 00',
+              raw: c
+            }));
+            setContracts(mapped);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Contracts read error:', e);
+    }
+    setContracts([]);
+    setLoading(false);
+  };
+
+  React.useEffect(() => {
+    loadContracts();
+    const handleUpdate = () => loadContracts();
+    window.addEventListener('locatrust:contracts-updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:contracts-updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, [user]);
+
+  const activeContractsCount = contracts.filter((c) => c.statut === 'Actif' || c.statut === 'Signé').length;
   const pendingSignatureCount = contracts.filter((c) => c.statut === 'En attente signature locataire').length;
+  const finBientotCount = contracts.filter((c) => c.statut === 'Fin bientôt' || c.statut === 'Fin de contrat').length;
+  const terminesCount = contracts.filter((c) => c.statut === 'Terminé').length;
 
   const filteredContracts = contracts.filter((c) => {
     const matchesSearch =
@@ -305,9 +162,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
       c.quartier.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus =
       selectedStatus === 'all' ||
-      (selectedStatus === 'actif' && c.statut === 'Actif') ||
+      (selectedStatus === 'actif' && (c.statut === 'Actif' || c.statut === 'Signé')) ||
       (selectedStatus === 'attente_signature' && c.statut === 'En attente signature locataire') ||
-      (selectedStatus === 'fin' && c.statut === 'Fin bientôt') ||
+      (selectedStatus === 'fin' && (c.statut === 'Fin bientôt' || c.statut === 'Fin de contrat')) ||
       (selectedStatus === 'termine' && c.statut === 'Terminé');
     return matchesSearch && matchesStatus;
   });
@@ -336,122 +193,132 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
       </div>
 
       {/* Alert banner: Tenant pending signature */}
-      {pendingSignatureCount > 0 && (
-        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
+      {pendingSignatureCount > 0 && (() => {
+        const pendingContract = contracts.find((c) => c.statut === 'En attente signature locataire');
+        if (!pendingContract) return null;
+        return (
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                    Action Requise
+                  </span>
+                  <h4 className="text-sm font-extrabold text-slate-900">
+                    {pendingSignatureCount} contrat en attente de signature du locataire
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-600 mt-1">
+                  Le contrat <strong>{pendingContract.id}</strong> ({pendingContract.locataire}) est en attente. Le locataire n'a pas encore apposé sa signature pour officialiser le bail.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+              <button
+                onClick={() => handleRelance(pendingContract.id, pendingContract.locataire, pendingContract.telephone, pendingContract.bien)}
+                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Relancer le locataire</span>
+              </button>
+              <button
+                onClick={() => onSelectContract?.(pendingContract.id)}
+                className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+              >
+                Consulter contrat
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Summary KPI Cards (Compact, pixel-perfect, and clickable status filters) */}
+      {loading ? (
+        <KpiGridSkeleton />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* KPI 1 : Contrats actifs */}
+          <div
+            onClick={() => setSelectedStatus(selectedStatus === 'actif' ? 'all' : 'actif')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              selectedStatus === 'actif'
+                ? 'bg-blue-50/70 border-blue-500 shadow-md ring-2 ring-blue-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-blue-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xl font-black text-slate-900 leading-none">{activeContractsCount}</span>
+              <span className="text-xs font-semibold text-slate-500 mt-1">Contrats actifs</span>
+            </div>
+          </div>
+
+          {/* KPI 2 : En attente signature locataire */}
+          <div
+            onClick={() => setSelectedStatus(selectedStatus === 'attente_signature' ? 'all' : 'attente_signature')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              selectedStatus === 'attente_signature'
+                ? 'bg-orange-50 border-orange-500 shadow-md ring-2 ring-orange-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-orange-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div className="flex flex-col">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-md">
-                  Action Requise
-                </span>
-                <h4 className="text-sm font-extrabold text-slate-900">
-                  {pendingSignatureCount} contrat en attente de signature du locataire
-                </h4>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xl font-black text-slate-900 leading-none">{pendingSignatureCount}</span>
+                {pendingSignatureCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-100 text-orange-700">À relancer</span>
+                )}
               </div>
-              <p className="text-xs text-slate-600 mt-1">
-                Vous avez signé et validé le contrat <strong>CT-2026-00059</strong> (Kouamé Yves). Le locataire n'a pas encore apposé sa signature pour officialiser le bail.
-              </p>
+              <span className="text-xs font-semibold text-slate-500 mt-1">Attente sign. locataire</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
-            <button
-              onClick={() => handleRelance('Kouamé Yves', '+225 07 45 89 12 00')}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
-            >
-              <MessageCircle className="w-3.5 h-3.5" />
-              <span>Relancer SMS & WhatsApp</span>
-            </button>
-            <button
-              onClick={() => onSelectContract?.('CT-2026-00059')}
-              className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-extrabold shadow-sm transition-all"
-            >
-              Consulter contrat
-            </button>
+          {/* KPI 3 : En fin de contrat */}
+          <div
+            onClick={() => setSelectedStatus(selectedStatus === 'fin' ? 'all' : 'fin')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              selectedStatus === 'fin'
+                ? 'bg-amber-50/70 border-amber-500 shadow-md ring-2 ring-amber-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-amber-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center shrink-0">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xl font-black text-slate-900 leading-none">{finBientotCount}</span>
+              <span className="text-xs font-semibold text-slate-500 mt-1">En fin de contrat</span>
+            </div>
+          </div>
+
+          {/* KPI 4 : Contrats terminés */}
+          <div
+            onClick={() => setSelectedStatus(selectedStatus === 'termine' ? 'all' : 'termine')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              selectedStatus === 'termine'
+                ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-emerald-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xl font-black text-slate-900 leading-none">{terminesCount}</span>
+              <span className="text-xs font-semibold text-slate-500 mt-1">Contrats terminés</span>
+            </div>
           </div>
         </div>
       )}
-
-      {/* Summary KPI Cards (Compact, pixel-perfect, and clickable status filters) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* KPI 1 : Contrats actifs */}
-        <div
-          onClick={() => setSelectedStatus(selectedStatus === 'actif' ? 'all' : 'actif')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            selectedStatus === 'actif'
-              ? 'bg-blue-50/70 border-blue-500 shadow-md ring-2 ring-blue-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-blue-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xl font-black text-slate-900 leading-none">18</span>
-            <span className="text-xs font-semibold text-slate-500 mt-1">Contrats actifs</span>
-          </div>
-        </div>
-
-        {/* KPI 2 : En attente signature locataire */}
-        <div
-          onClick={() => setSelectedStatus(selectedStatus === 'attente_signature' ? 'all' : 'attente_signature')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            selectedStatus === 'attente_signature'
-              ? 'bg-orange-50 border-orange-500 shadow-md ring-2 ring-orange-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-orange-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xl font-black text-slate-900 leading-none">{pendingSignatureCount}</span>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-100 text-orange-700">À relancer</span>
-            </div>
-            <span className="text-xs font-semibold text-slate-500 mt-1">Attente sign. locataire</span>
-          </div>
-        </div>
-
-        {/* KPI 3 : En fin de contrat */}
-        <div
-          onClick={() => setSelectedStatus(selectedStatus === 'fin' ? 'all' : 'fin')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            selectedStatus === 'fin'
-              ? 'bg-amber-50/70 border-amber-500 shadow-md ring-2 ring-amber-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-amber-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center shrink-0">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xl font-black text-slate-900 leading-none">3</span>
-            <span className="text-xs font-semibold text-slate-500 mt-1">En fin de contrat</span>
-          </div>
-        </div>
-
-        {/* KPI 4 : Contrats terminés */}
-        <div
-          onClick={() => setSelectedStatus(selectedStatus === 'termine' ? 'all' : 'termine')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            selectedStatus === 'termine'
-              ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-emerald-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xl font-black text-slate-900 leading-none">25</span>
-            <span className="text-xs font-semibold text-slate-500 mt-1">Contrats terminés</span>
-          </div>
-        </div>
-      </div>
 
       {/* Search & Filters Controls (Exact match user screenshot) */}
       <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-3">
@@ -513,14 +380,36 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginatedContracts.map((c) => (
-                <tr
-                  key={c.id}
-                  onClick={() => onSelectContract?.(c.id)}
-                  className={`hover:bg-slate-50/80 cursor-pointer transition-colors group ${
-                    c.statut === 'En attente signature locataire' ? 'bg-amber-50/20' : ''
-                  }`}
-                >
+              {paginatedContracts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center">
+                    <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-inner">
+                        <FileText className="w-6 h-6" />
+                      </div>
+                      <h4 className="text-sm font-black text-slate-800">Aucun contrat de bail enregistré</h4>
+                      <p className="text-xs text-slate-500">
+                        Vous n'avez aucun contrat actif pour l'instant. Vous pouvez créer un contrat directement ou finaliser une candidature locataire.
+                      </p>
+                      <button
+                        onClick={handleCreateClick}
+                        className="mt-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Générer un contrat certifié</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                paginatedContracts.map((c) => (
+                  <tr
+                    key={c.id}
+                    onClick={() => onSelectContract?.(c.id)}
+                    className={`hover:bg-slate-50/80 cursor-pointer transition-colors group ${
+                      c.statut === 'En attente signature locataire' ? 'bg-amber-50/20' : ''
+                    }`}
+                  >
                   <td className="py-4 px-5">
                     <div className="flex items-center gap-3">
                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
@@ -604,7 +493,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                     </div>
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>

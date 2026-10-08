@@ -1,5 +1,5 @@
 export type UserRole = 'locataire' | 'proprietaire' | 'agence' | 'admin';
-export type VerificationStatus = 'non_verifie' | 'en_attente' | 'verifie';
+export type VerificationStatus = 'non_verifie' | 'en_attente' | 'verifie' | 'rejete';
 export type PropertyType =
   | 'maison'
   | 'appartement'
@@ -77,6 +77,10 @@ export interface Property {
   type: PropertyType;
   title: string;
   description: string;
+  country?: string;
+  city?: string;
+  commune?: string;
+  quartier?: string;
   gps_lat?: number;
   gps_lng?: number;
   surface: number;
@@ -88,6 +92,9 @@ export interface Property {
   charges: number;
   furnished: boolean;
   equipments: string[];
+  usage_destination?: 'habitation' | 'professionnel';
+  authorized_activity?: string;
+  owner_destination_authorized?: boolean;
   status: PropertyStatus;
   admin_validation_status?: 'en_attente' | 'validee' | 'refusee';
   admin_refusal_reason?: string;
@@ -112,6 +119,9 @@ export interface Contract {
   property_id: string;
   tenant_id: string;
   owner_id: string;
+  lease_type?: 'habitation' | 'professionnel';
+  usage_destination?: 'habitation' | 'professionnel';
+  authorized_activity?: string;
   duration_months: number;
   rent: number;
   caution: number;

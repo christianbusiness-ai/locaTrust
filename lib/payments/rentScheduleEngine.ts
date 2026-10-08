@@ -44,99 +44,8 @@ export interface AllocationResult {
   totalRemainingUnpaid: number;
 }
 
-// Initial mock schedule for testing the exact user scenarios
-export const MOCK_TENANT_RENT_SCHEDULE: MonthlyScheduleItem[] = [
-  {
-    id: 'sch_mars_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Mars 2026',
-    due_date: '2026-03-05',
-    amount_due: 150000,
-    amount_paid: 150000,
-    status: 'paye',
-    payment_date: '2026-03-04',
-    receipt_number: 'REC-2026-000301'
-  },
-  {
-    id: 'sch_avril_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Avril 2026',
-    due_date: '2026-04-05',
-    amount_due: 150000,
-    amount_paid: 150000,
-    status: 'paye',
-    payment_date: '2026-04-03',
-    receipt_number: 'REC-2026-000402'
-  },
-  {
-    id: 'sch_mai_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Mai 2026',
-    due_date: '2026-05-05',
-    amount_due: 150000,
-    amount_paid: 150000,
-    status: 'paye',
-    payment_date: '2026-05-04',
-    receipt_number: 'REC-2026-000503'
-  },
-  {
-    id: 'sch_juin_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Juin 2026',
-    due_date: '2026-06-05',
-    amount_due: 150000,
-    amount_paid: 150000,
-    status: 'paye',
-    payment_date: '2026-06-02',
-    receipt_number: 'REC-2026-000604'
-  },
-  {
-    id: 'sch_juillet_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Juillet 2026',
-    due_date: '2026-07-05',
-    amount_due: 150000,
-    amount_paid: 150000,
-    status: 'paye',
-    payment_date: '2026-07-03',
-    receipt_number: 'REC-2026-000705'
-  },
-  {
-    id: 'sch_aout_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Août 2026',
-    due_date: '2026-08-05',
-    amount_due: 150000,
-    amount_paid: 0,
-    status: 'impaye'
-  },
-  {
-    id: 'sch_sept_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Septembre 2026',
-    due_date: '2026-09-05',
-    amount_due: 150000,
-    amount_paid: 0,
-    status: 'a_payer'
-  },
-  {
-    id: 'sch_oct_2026',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    target_month: 'Octobre 2026',
-    due_date: '2026-10-05',
-    amount_due: 150000,
-    amount_paid: 0,
-    status: 'a_payer'
-  }
-];
+// Initial schedule: empty by default, populated dynamically from active leases
+export const MOCK_TENANT_RENT_SCHEDULE: MonthlyScheduleItem[] = [];
 
 /**
  * Core Chronological Allocation Function
@@ -153,9 +62,9 @@ export function processChronologicalRentPayment(
   paymentAmount: number,
   paymentMethod: string = 'Orange Money',
   referenceTxn: string = `TXN-${Date.now().toString().slice(-6)}`,
-  tenantName: string = "Koffi N'Guessan",
-  contractNumber: string = 'LT-2026-CI-000492',
-  propertyTitle: string = 'Appartement 3 pièces Cocody Riviera 3'
+  tenantName: string = 'Locataire',
+  contractNumber: string = 'Bail LocaTrust',
+  propertyTitle: string = 'Logement certifié'
 ): AllocationResult {
   let remainingMoney = paymentAmount;
   const newSchedule = currentSchedule.map((item) => ({ ...item }));

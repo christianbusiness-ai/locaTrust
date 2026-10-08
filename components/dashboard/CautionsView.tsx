@@ -44,6 +44,9 @@ import {
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
+import { KpiGridSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
 
 interface CautionsViewProps {
   isAgency?: boolean;
@@ -51,13 +54,19 @@ interface CautionsViewProps {
 }
 
 export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, userRole = 'proprietaire' }) => {
+  const { user, profile } = useAuth();
   const [deposits, setDeposits] = useState<Deposit[]>(() => getStoredDeposits());
   const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Determine active actor (Propriétaire ou Agence)
   const isActuallyAgency = isAgency || userRole === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_current_role') === 'agence');
   const isTenant = userRole === 'locataire';
-  const actorName = isActuallyAgency ? "Immobilière du Golf (Agence Agréée)" : "Koffi N'Guessan (Bailleur)";
+  const actorName = isActuallyAgency 
+    ? "Immobilière du Golf (Agence Agréée)" 
+    : profile?.full_name || user?.user_metadata?.full_name 
+    ? `${profile?.full_name || user?.user_metadata?.full_name} (Bailleur)` 
+    : "Bailleur Propriétaire";
 
   // Restitution Modal State (3 modes demandés par l'utilisateur dans l'audio)
   const [depositToRestitute, setDepositToRestitute] = useState<Deposit | null>(null);
@@ -105,8 +114,32 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   // Success Feedback
   const [successFeedback, setSuccessFeedback] = useState<string | null>(null);
 
-  const reloadDeposits = () => {
-    setDeposits(getStoredDeposits());
+  const reloadDeposits = async () => {
+    setIsLoading(true);
+    try {
+      let query = supabase
+        .from('cautions')
+        .select('*, property:properties(*), tenant:users!tenant_id(*)')
+        .order('created_at', { ascending: false });
+
+      if (user?.id) {
+        query = query.eq('owner_id', user.id);
+      }
+
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        setDeposits(data as any);
+      } else {
+        // Si base vide, purger tout ancien cache fictif et afficher 0 dossier
+        const local = getStoredDeposits();
+        setDeposits(local || []);
+      }
+    } catch (e) {
+      console.warn('Sync cautions error:', e);
+      setDeposits([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -114,7 +147,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     const handleCautionsUpdated = () => reloadDeposits();
     window.addEventListener('locatrust:cautions_updated', handleCautionsUpdated);
     return () => window.removeEventListener('locatrust:cautions_updated', handleCautionsUpdated);
-  }, []);
+  }, [user]);
 
   // Metrics
   const totalRequested = deposits.reduce((sum, d) => sum + d.amount_requested, 0);
@@ -192,7 +225,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     }
     const targetContract = deposits[0]?.contract_id || 'LT-2026-CI-000492';
     const targetTenant = deposits[0]?.tenant?.id || 'usr_tenant_1';
-    const targetName = deposits[0]?.tenant?.full_name || "Koffi N'Guessan";
+    const targetName = deposits[0]?.tenant?.full_name || "Locataire";
     const autoRef = isEspeces ? `ESP-${Date.now()}` : declareReference;
 
     declareCautionPayment({
@@ -401,11 +434,16 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     setSuccessFeedback("Signature apposée et enregistrée avec succès sur le document certifié !");
   };
 
-  const filteredDeposits = deposits.filter(
-    (d) =>
-      d.tenant?.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.property?.title.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredDeposits = deposits.filter((d) => {
+    if (!searchTerm.trim()) return true;
+    const q = searchTerm.toLowerCase();
+    const matchTenant = (d.tenant?.full_name || '').toLowerCase().includes(q);
+    const matchProperty = (d.property?.title || '').toLowerCase().includes(q);
+    const matchContract = (d.contract_id || '').toLowerCase().includes(q);
+    const matchRef = (d.declared_reference || '').toLowerCase().includes(q);
+    const matchAmount = String(d.amount_requested || d.amount_paid || '').includes(q);
+    return matchTenant || matchProperty || matchContract || matchRef || matchAmount;
+  });
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
@@ -496,43 +534,47 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Total Exigé */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">Montant total exigé</span>
-            <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <ShieldCheck className="w-4 h-4" />
+      {isLoading ? (
+        <KpiGridSkeleton count={3} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Total Exigé */}
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">Montant total exigé</span>
+              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
             </div>
+            <span className="text-2xl font-black text-slate-900 dark:text-white mt-2">{formatFCFA(totalRequested)}</span>
+            <span className="text-[11px] text-slate-400 mt-1">Totalité des contrats actifs</span>
           </div>
-          <span className="text-2xl font-black text-slate-900 dark:text-white mt-2">{formatFCFA(totalRequested)}</span>
-          <span className="text-[11px] text-slate-400 mt-1">Totalité des contrats actifs</span>
-        </div>
 
-        {/* Cautions Encaissées */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">Cautions encaissées</span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <CheckCircle2 className="w-4 h-4" />
+          {/* Cautions Encaissées */}
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">Cautions encaissées</span>
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
             </div>
+            <span className="text-2xl font-black text-emerald-600 mt-2">{formatFCFA(totalCollected)}</span>
+            <span className="text-[11px] text-slate-400 mt-1">Fonds conservés en garantie</span>
           </div>
-          <span className="text-2xl font-black text-emerald-600 mt-2">{formatFCFA(totalCollected)}</span>
-          <span className="text-[11px] text-slate-400 mt-1">Fonds conservés en garantie</span>
-        </div>
 
-        {/* Solde en attente */}
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500">Solde de caution en attente</span>
-            <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-              <AlertTriangle className="w-4 h-4" />
+          {/* Solde en attente */}
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500">Solde de caution en attente</span>
+              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
             </div>
+            <span className="text-2xl font-black text-amber-600 mt-2">{formatFCFA(totalPending)}</span>
+            <span className="text-[11px] text-slate-400 mt-1">Versements à confirmer / restants</span>
           </div>
-          <span className="text-2xl font-black text-amber-600 mt-2">{formatFCFA(totalPending)}</span>
-          <span className="text-[11px] text-slate-400 mt-1">Versements à confirmer / restants</span>
         </div>
-      </div>
+      )}
 
       {/* LISTE DES DOSSIERS DE CAUTION (Cartes épurées, modernes et réactives) */}
       <div className="flex flex-col gap-4">
@@ -547,7 +589,13 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           </div>
         </div>
 
-        {filteredDeposits.length === 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <TenantCardSkeleton key={i} />
+            ))}
+          </div>
+        ) : filteredDeposits.length === 0 ? (
           <div className="p-10 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center flex flex-col items-center gap-2">
             <ShieldCheck className="w-10 h-10 text-slate-300" />
             <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Aucun dossier de caution trouvé</p>

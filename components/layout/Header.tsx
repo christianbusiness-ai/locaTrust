@@ -35,10 +35,13 @@ import {
   Briefcase,
   UserPlus,
   Heart,
-  HelpCircle
+  HelpCircle,
+  Clock,
+  Trash2
 } from 'lucide-react';
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
+import { supabase } from '@/src/lib/supabase';
 
 interface NotificationItem {
   id: string;
@@ -50,110 +53,7 @@ interface NotificationItem {
   targetTab: string;
 }
 
-const INITIAL_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: 'notif_1',
-    title: 'Nouvelle demande de location',
-    description: 'Kouadio Jean a envoyé un dossier complet pour Appartement 3 pièces Cocody.',
-    timestamp: 'Il y a 10 min',
-    category: 'demande',
-    read: false,
-    targetTab: 'applications'
-  },
-  {
-    id: 'notif_2',
-    title: 'Demande de visite reçue',
-    description: 'Amina Diabaté souhaite visiter la Villa 4 pièces le samedi 28/09 à 15h00.',
-    timestamp: 'Il y a 45 min',
-    category: 'visite',
-    read: false,
-    targetTab: 'visits'
-  },
-  {
-    id: 'notif_3',
-    title: 'Paiement de loyer à valider',
-    description: 'Koffi N\'Guessan a déclaré son loyer d\'Août (150 000 FCFA via Orange Money).',
-    timestamp: 'Il y a 2h',
-    category: 'paiement',
-    read: false,
-    targetTab: 'payments'
-  },
-  {
-    id: 'notif_4',
-    title: 'Contrat de bail prêt à signer',
-    description: 'Le locataire a apposé sa signature manuscrite sur le contrat LT-2026-CI-000492.',
-    timestamp: 'Il y a 4h',
-    category: 'contrat',
-    read: true,
-    targetTab: 'contracts'
-  },
-  {
-    id: 'notif_5',
-    title: 'Demande de maintenance signalée',
-    description: 'Fuite légère sous l\'évier de la cuisine - Appartement Riviera Bonoumin.',
-    timestamp: 'Hier',
-    category: 'maintenance',
-    read: true,
-    targetTab: 'maintenance'
-  },
-  {
-    id: 'notif_6',
-    title: 'Abonnement LocaTrust actif',
-    description: 'Votre formule 2 à 10 biens (2 000 FCFA/mois) est à jour. Prochaine échéance le 30/10.',
-    timestamp: 'Il y a 2 jours',
-    category: 'abonnement',
-    read: true,
-    targetTab: 'subscription'
-  }
-];
 
-const TENANT_INITIAL_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: 'notif_t1',
-    title: 'Nouvelle quittance certifiée disponible',
-    description: 'Votre quittance de loyer d\'Août 2026 (150 000 FCFA) est disponible avec son QR Code officiel.',
-    timestamp: 'Il y a 10 min',
-    category: 'paiement',
-    read: false,
-    targetTab: 'receipts'
-  },
-  {
-    id: 'notif_t2',
-    title: 'Paiement Wave validé par le bailleur',
-    description: 'Votre virement de 150 000 FCFA pour le loyer d\'Août 2026 a été confirmé et validé avec succès.',
-    timestamp: 'Il y a 2h',
-    category: 'paiement',
-    read: false,
-    targetTab: 'payments'
-  },
-  {
-    id: 'notif_t3',
-    title: 'Contrat de bail certifié et contresigné',
-    description: 'Votre contrat de location pour Appartement 3 pièces Cocody Riviera 3 est validé et actif.',
-    timestamp: 'Hier',
-    category: 'contrat',
-    read: true,
-    targetTab: 'contracts'
-  },
-  {
-    id: 'notif_t4',
-    title: 'Séquestre de caution sécurisé',
-    description: 'Votre caution légale de 300 000 FCFA est conservée sur le compte séquestre certifié LocaTrust.',
-    timestamp: 'Il y a 3 jours',
-    category: 'caution',
-    read: true,
-    targetTab: 'guarantees'
-  },
-  {
-    id: 'notif_t5',
-    title: 'Intervention de maintenance programmée',
-    description: 'L\'artisan mandaté par votre bailleur interviendra le jeudi 15 à 14h30 pour révision plomberie.',
-    timestamp: 'Il y a 4 jours',
-    category: 'maintenance',
-    read: true,
-    targetTab: 'maintenance'
-  }
-];
 
 interface HeaderProps {
   currentUser: UserType;
@@ -185,9 +85,21 @@ export const Header: React.FC<HeaderProps> = ({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    return currentUser.role === 'locataire' ? TENANT_INITIAL_NOTIFICATIONS : INITIAL_NOTIFICATIONS;
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_notifications');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch (e) {}
+    }
+    return [];
   });
   const [selectedNotification, setSelectedNotification] = useState<NotificationItem | null>(null);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState<number>(0);
+  const [appCount, setAppCount] = useState<number>(0);
+  const [contractCount, setContractCount] = useState<number>(0);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -205,15 +117,110 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [avatarUrl, setAvatarUrl] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('locatrust_user_avatar') || currentUser.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80';
+      const stored = localStorage.getItem('locatrust_user_avatar');
+      if (stored && !stored.includes('images.unsplash.com')) return stored;
     }
-    return currentUser.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80';
+    const curr = currentUser.avatar_url;
+    if (curr && !curr.includes('images.unsplash.com')) return curr;
+    return '';
   });
+
+  const getInitials = (name?: string, email?: string): string => {
+    if (name && name.trim()) {
+      const parts = name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+      }
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    if (email && email.trim()) {
+      return email.trim().slice(0, 2).toUpperCase();
+    }
+    return 'LT';
+  };
+
+  // Listen for unread messages dynamically
+  useEffect(() => {
+    const updateUnread = () => {
+      try {
+        const raw = localStorage.getItem('locatrust_chat_messages_v4');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            const count = parsed.filter((m: any) => m.status === 'sent' || m.status === 'delivered').length;
+            setUnreadMessagesCount(count);
+            return;
+          }
+        }
+      } catch (e) {}
+      setUnreadMessagesCount(0);
+    };
+
+    updateUnread();
+    window.addEventListener('locatrust:messages_updated', updateUnread);
+    return () => window.removeEventListener('locatrust:messages_updated', updateUnread);
+  }, []);
+
+  // Synchronisation dynamique des compteurs de candidatures et de contrats
+  useEffect(() => {
+    const updateDynamicBadges = () => {
+      try {
+        const appsRaw = localStorage.getItem('locatrust_rental_applications');
+        let countApps = 0;
+        if (appsRaw) {
+          const apps = JSON.parse(appsRaw);
+          if (Array.isArray(apps)) {
+            const validApps = apps.filter((a: any) => a.id !== 'app_kwame' && a.id !== 'app_moussa' && a.id !== 'app_awa' && a.id !== 'app_bamba');
+            if (currentUser.role === 'locataire') {
+              countApps = validApps.filter((a: any) =>
+                (currentUser.email && a.tenant_email?.toLowerCase() === currentUser.email.toLowerCase()) ||
+                (currentUser.id && a.tenant_id === currentUser.id)
+              ).length;
+            } else {
+              countApps = validApps.filter((a: any) =>
+                a.status === 'en_attente' &&
+                (!currentUser.id || a.owner_id === currentUser.id || a.property_owner_id === currentUser.id)
+              ).length;
+            }
+          }
+        }
+        setAppCount(countApps);
+
+        const contractsRaw = localStorage.getItem('locatrust_contracts');
+        let countContracts = 0;
+        if (contractsRaw) {
+          const cnts = JSON.parse(contractsRaw);
+          if (Array.isArray(cnts)) {
+            if (currentUser.role === 'locataire') {
+              countContracts = cnts.filter((c: any) =>
+                (currentUser.email && (c.tenant?.email?.toLowerCase() === currentUser.email.toLowerCase() || c.tenant_email?.toLowerCase() === currentUser.email.toLowerCase())) ||
+                (currentUser.id && (c.tenant_id === currentUser.id || c.tenant?.id === currentUser.id))
+              ).length;
+            } else {
+              countContracts = cnts.filter((c: any) =>
+                c.status === 'actif' &&
+                (!currentUser.id || c.owner_id === currentUser.id || c.owner?.id === currentUser.id)
+              ).length;
+            }
+          }
+        }
+        setContractCount(countContracts);
+      } catch (e) {}
+    };
+
+    updateDynamicBadges();
+    window.addEventListener('locatrust:applications-updated', updateDynamicBadges);
+    window.addEventListener('locatrust:contracts-updated', updateDynamicBadges);
+    return () => {
+      window.removeEventListener('locatrust:applications-updated', updateDynamicBadges);
+      window.removeEventListener('locatrust:contracts-updated', updateDynamicBadges);
+    };
+  }, [currentUser]);
 
   // Initialize theme and avatar listener from localStorage
   useEffect(() => {
     const handleAvatarUpdated = (e: any) => {
-      if (e.detail?.avatarUrl) {
+      if (e.detail?.avatarUrl && !e.detail.avatarUrl.includes('images.unsplash.com')) {
         setAvatarUrl(e.detail.avatarUrl);
       }
     };
@@ -234,19 +241,41 @@ export const Header: React.FC<HeaderProps> = ({
         const raw = localStorage.getItem('locatrust_notifications');
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setNotifications(parsed);
+          if (Array.isArray(parsed)) {
+            // Filtrer les fausses notifications mock générées ou résiduelles
+            const cleaned = parsed.filter((n: any) => {
+              if (!n) return false;
+              const id = String(n.id || '');
+              if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
+              if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
+              if (n.description && (n.description.includes('Kwame Koffi') || n.description.includes('Moussa Touré'))) return false;
+              return true;
+            });
+            if (cleaned.length !== parsed.length) {
+              localStorage.setItem('locatrust_notifications', JSON.stringify(cleaned));
+            }
+            setNotifications(cleaned);
+            return;
           }
         }
       } catch (e) {
         console.warn('Error reading notifications:', e);
       }
+      setNotifications([]);
     };
     loadStoredNotifs();
 
     const handleNotifsUpdated = (e: any) => {
       if (e.detail?.notifications && Array.isArray(e.detail.notifications)) {
-        setNotifications(e.detail.notifications);
+        const cleaned = e.detail.notifications.filter((n: any) => {
+          if (!n) return false;
+          const id = String(n.id || '');
+          if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
+          if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
+          if (n.description && (n.description.includes('Kwame Koffi') || n.description.includes('Moussa Touré'))) return false;
+          return true;
+        });
+        setNotifications(cleaned);
       } else {
         loadStoredNotifs();
       }
@@ -297,6 +326,16 @@ export const Header: React.FC<HeaderProps> = ({
       }
       return updated;
     });
+  };
+
+  const clearAllNotifications = () => {
+    setNotifications([]);
+    try {
+      localStorage.setItem('locatrust_notifications', JSON.stringify([]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [] } }));
+    } catch (e) {
+      console.warn(e);
+    }
   };
 
   const handleNotificationClick = (item: NotificationItem) => {
@@ -410,9 +449,11 @@ export const Header: React.FC<HeaderProps> = ({
             title="Messagerie"
           >
             <MessageSquare className="w-4 h-4" />
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] font-extrabold flex items-center justify-center border-2 border-white dark:border-slate-900">
-              2
-            </span>
+            {unreadMessagesCount > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] font-extrabold flex items-center justify-center border-2 border-white dark:border-slate-900">
+                {unreadMessagesCount}
+              </span>
+            )}
           </button>
 
           {/* Notifications Button with Dropdown Panel */}
@@ -441,18 +482,39 @@ export const Header: React.FC<HeaderProps> = ({
                       Notifications LocaTrust
                     </h3>
                   </div>
-                  {unreadCount > 0 && (
-                    <button
-                      onClick={markAllAsRead}
-                      className="text-[10px] font-extrabold text-blue-600 dark:text-blue-400 hover:underline"
-                    >
-                      Tout marquer comme lu
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={markAllAsRead}
+                        className="text-[10px] font-extrabold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                      >
+                        Tout marquer comme lu
+                      </button>
+                    )}
+                    {notifications.length > 0 && (
+                      <button
+                        onClick={clearAllNotifications}
+                        className="text-[10px] font-extrabold text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Vider toutes les notifications"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Effacer tout</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-                  {notifications.map((item) => (
+                  {notifications.length === 0 ? (
+                    <div className="p-8 text-center flex flex-col items-center justify-center gap-2">
+                      <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center">
+                        <Bell className="w-5 h-5" />
+                      </div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Aucune notification</p>
+                      <span className="text-[11px] text-slate-400">Vos alertes de baux, loyers et documents apparaîtront ici.</span>
+                    </div>
+                  ) : (
+                    notifications.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => handleNotificationClick(item)}
@@ -484,7 +546,7 @@ export const Header: React.FC<HeaderProps> = ({
                         </p>
                       </div>
                     </div>
-                  ))}
+                  )))}
                 </div>
 
                 <div className="p-2.5 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 text-center">
@@ -509,18 +571,45 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setShowProfileMenu(!showProfileMenu)}
               className="flex items-center gap-1.5 sm:gap-2.5 pl-2 sm:pl-3 border-l border-slate-200 dark:border-slate-800 cursor-pointer group shrink-0"
             >
-              <img
-                src={avatarUrl}
-                alt={currentUser.full_name}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover ring-2 ring-blue-600/30 group-hover:ring-blue-600 transition-all shrink-0"
-              />
+              {avatarUrl && !avatarUrl.includes('images.unsplash.com') ? (
+                <img
+                  src={avatarUrl}
+                  alt={currentUser.full_name}
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover ring-2 ring-blue-600/30 group-hover:ring-blue-600 transition-all shrink-0"
+                />
+              ) : (
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-xs flex items-center justify-center ring-2 ring-blue-600/30 group-hover:ring-blue-600 transition-all shrink-0 select-none shadow-sm">
+                  {getInitials(currentUser.full_name, currentUser.email)}
+                </div>
+              )}
               <div className="hidden md:flex flex-col text-left">
                 <span className="text-xs font-bold text-slate-900 dark:text-white leading-tight truncate max-w-[120px]">
                   {currentUser.full_name}
                 </span>
-                <span className="text-[10px] text-amber-500 font-extrabold capitalize truncate max-w-[120px]">
-                  {currentUser.role === 'proprietaire' ? 'Propriétaire Vérifié' : currentUser.role === 'agence' ? 'Agence Agréée' : 'Locataire Vérifié'}
-                </span>
+                {currentUser.verification_status === 'verifie' ? (
+                  <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 capitalize truncate max-w-[140px] flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-500 shrink-0" />
+                    <span>
+                      {currentUser.role === 'proprietaire'
+                        ? 'Propriétaire Certifié'
+                        : currentUser.role === 'agence'
+                        ? 'Agence Agréée'
+                        : currentUser.role === 'admin'
+                        ? 'Administrateur'
+                        : 'Locataire Certifié'}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 capitalize truncate max-w-[140px]">
+                    {currentUser.role === 'proprietaire'
+                      ? 'Propriétaire'
+                      : currentUser.role === 'agence'
+                      ? 'Agence Immobilière'
+                      : currentUser.role === 'admin'
+                      ? 'Administrateur'
+                      : 'Locataire'}
+                  </span>
+                )}
               </div>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition-colors hidden md:block shrink-0" />
             </div>
@@ -530,7 +619,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="absolute right-0 mt-3 w-56 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 py-2 z-50 animate-fadeIn text-xs">
                 <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
                   <span className="font-extrabold text-slate-900 dark:text-white block">{currentUser.full_name}</span>
-                  <span className="text-[10px] text-slate-400">{currentUser.email || 'koffi.nguessan@locatrust.ci'}</span>
+                  <span className="text-[10px] text-slate-400">{currentUser.email || ''}</span>
                 </div>
 
                 {currentUser.role === 'locataire' ? (
@@ -539,12 +628,16 @@ export const Header: React.FC<HeaderProps> = ({
                       type="button"
                       onClick={() => {
                         setShowProfileMenu(false);
-                        onNavigateTab?.('profile');
+                        if (onNavigateTab) {
+                          onNavigateTab('profile');
+                        } else {
+                          window.location.href = '/profile';
+                        }
                       }}
-                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold flex items-center gap-2.5 text-blue-600 dark:text-blue-400"
                     >
-                      <User className="w-4 h-4 text-blue-600" />
-                      <span>Mon Compte & Profil</span>
+                      <User className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Mon Profil & Dossier KYC</span>
                     </button>
 
                     <button
@@ -585,6 +678,22 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 ) : (
                   <div className="py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        if (onNavigateTab) {
+                          onNavigateTab('profile');
+                        } else {
+                          window.location.href = '/profile';
+                        }
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold flex items-center gap-2.5 text-blue-600 dark:text-blue-400"
+                    >
+                      <User className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Mon Profil & Pièces d'identité</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => {
@@ -638,15 +747,27 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="border-t border-slate-100 dark:border-slate-800 pt-1">
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setShowProfileMenu(false);
+                      try {
+                        await supabase.auth.signOut();
+                      } catch (e) {
+                        console.warn('SignOut error:', e);
+                      }
+                      if (typeof window !== 'undefined') {
+                        localStorage.removeItem('locatrust_active_user');
+                        localStorage.removeItem('locatrust_registered_role');
+                        localStorage.removeItem('locatrust_user_avatar');
+                        localStorage.removeItem('locatrust_tenant_active_tab');
+                        window.dispatchEvent(new CustomEvent('locatrust_exit_landing'));
+                      }
                       if (onExitToLanding) {
                         onExitToLanding();
                       } else if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('locatrust_exit_landing'));
+                        window.location.href = '/';
                       }
                     }}
-                    className="w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold flex items-center gap-2.5 transition-colors"
+                    className="w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
                   >
                     <LogOut className="w-4 h-4 text-rose-600" />
                     <span>Se déconnecter (Sortir vers la Landing Page)</span>
@@ -781,14 +902,28 @@ export const Header: React.FC<HeaderProps> = ({
               <img
                 src={avatarUrl}
                 alt={currentUser.full_name || currentUser.name}
-                className="w-10 h-10 rounded-full object-cover border-2 border-amber-500 shrink-0"
+                className={`w-10 h-10 rounded-full object-cover border-2 shrink-0 ${
+                  currentUser.verification_status === 'verifie' ? 'border-emerald-500' : 'border-amber-500'
+                }`}
               />
               <div className="overflow-hidden">
                 <span className="text-xs font-bold text-white block truncate">{currentUser.full_name || currentUser.name}</span>
-                <span className="text-[11px] text-amber-400 font-semibold capitalize flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-amber-400 shrink-0" />
+                <span className={`text-[11px] font-semibold capitalize flex items-center gap-1 ${
+                  currentUser.verification_status === 'verifie' ? 'text-emerald-400' : 'text-amber-400'
+                }`}>
+                  {currentUser.verification_status === 'verifie' ? (
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                  )}
                   <span className="truncate">
-                    {currentUser.role === 'agence' ? 'Agence Immobilière' : currentUser.role === 'proprietaire' ? 'Propriétaire certifié' : 'Locataire vérifié'}
+                    {currentUser.role === 'agence'
+                      ? (currentUser.verification_status === 'verifie' ? 'Agence Agréée' : 'Agence (En attente)')
+                      : currentUser.role === 'proprietaire'
+                      ? (currentUser.verification_status === 'verifie' ? 'Propriétaire Certifié' : 'Propriétaire (En attente)')
+                      : currentUser.role === 'admin'
+                      ? 'Administrateur'
+                      : (currentUser.verification_status === 'verifie' ? 'Locataire Certifié' : 'Locataire (En attente)')}
                   </span>
                 </span>
               </div>
@@ -808,10 +943,10 @@ export const Header: React.FC<HeaderProps> = ({
                     { id: 'feed', name: "Fil d'actualité", icon: LayoutDashboard },
                     { id: 'search', name: 'Rechercher un logement', icon: Search },
                     { id: 'favorites', name: 'Mes Favoris', icon: Heart },
-                    { id: 'applications', name: 'Mes Demandes', icon: Eye, badge: 2 },
-                    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: 5 },
+                    { id: 'applications', name: 'Mes Demandes', icon: Eye, badge: appCount > 0 ? appCount : undefined },
+                    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: unreadMessagesCount > 0 ? unreadMessagesCount : undefined },
                     { id: 'visits', name: 'Mes Visites', icon: Calendar },
-                    { id: 'contracts', name: 'Mon Contrat de bail', icon: FileText },
+                    { id: 'contracts', name: 'Mon Contrat de bail', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
                     { id: 'payments', name: 'Paiements & Loyers', icon: CreditCard },
                     { id: 'receipts', name: 'Mes Quittances & Reçus', icon: Receipt },
                     { id: 'guarantees', name: 'Séquestre Caution', icon: ShieldCheck },
@@ -855,7 +990,7 @@ export const Header: React.FC<HeaderProps> = ({
                     { id: 'supervision', name: 'Supervision globale', icon: BarChart3 },
                     { id: 'users', name: 'Gestion utilisateurs', icon: Users },
                     { id: 'subscriptions', name: 'Gestion abonnements', icon: CreditCard },
-                    { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileText, badge: 3 },
+                    { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileText },
                     { id: 'disputes', name: 'Litiges & Fraude', icon: ShieldCheck },
                     { id: 'settings', name: 'Paramètres système', icon: Settings },
                   ].map((item) => {
@@ -966,9 +1101,11 @@ export const Header: React.FC<HeaderProps> = ({
                         <Eye className="w-4 h-4 text-blue-400 shrink-0" />
                         <span>Demandes de location</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
-                        8
-                      </span>
+                      {appCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
+                          {appCount}
+                        </span>
+                      )}
                     </button>
 
                     <button
@@ -983,9 +1120,11 @@ export const Header: React.FC<HeaderProps> = ({
                         <FileText className="w-4 h-4 text-blue-400 shrink-0" />
                         <span>Contrats de bail</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
-                        5
-                      </span>
+                      {contractCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black">
+                          {contractCount}
+                        </span>
+                      )}
                     </button>
 
                     <button
@@ -1024,9 +1163,11 @@ export const Header: React.FC<HeaderProps> = ({
                         <MessageSquare className="w-4 h-4 text-blue-400 shrink-0" />
                         <span>Messagerie & Appels</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black">
-                        6
-                      </span>
+                      {unreadMessagesCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black">
+                          {unreadMessagesCount}
+                        </span>
+                      )}
                     </button>
 
                     <button

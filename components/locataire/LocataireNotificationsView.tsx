@@ -29,69 +29,6 @@ export interface TenantNotification {
   targetTab?: string;
 }
 
-const DEFAULT_TENANT_NOTIFICATIONS: TenantNotification[] = [
-  {
-    id: 'tnotif_1',
-    title: 'Quittance officielle d\'Août 2026 émise',
-    description: 'Votre quittance de loyer certifiée avec QR Code infalsifiable pour Appartement 3 pièces Cocody Riviera 3 est disponible en téléchargement.',
-    category: 'quittance',
-    timestamp: 'Aujourd\'hui à 08:30',
-    read: false,
-    actionText: 'Voir la quittance',
-    targetTab: 'receipts',
-  },
-  {
-    id: 'tnotif_2',
-    title: 'Paiement de loyer validé par votre bailleur',
-    description: 'Votre virement Wave de 150 000 FCFA référence TX-WAVE-89241 a été approuvé par M. Koffi N\'Guessan.',
-    category: 'paiement',
-    timestamp: 'Hier à 16:45',
-    read: false,
-    actionText: 'Détails du paiement',
-    targetTab: 'payments',
-  },
-  {
-    id: 'tnotif_3',
-    title: 'Contrat de bail certifié et contresigné',
-    description: 'Le contrat de bail conforme Loi N° 2019-576 a été enregistré avec signatures électroniques bilatérales.',
-    category: 'contrat',
-    timestamp: '28 Septembre 2026',
-    read: true,
-    actionText: 'Consulter le bail',
-    targetTab: 'contracts',
-  },
-  {
-    id: 'tnotif_4',
-    title: 'Séquestre de votre caution locative',
-    description: 'Votre dépôt de garantie de 300 000 FCFA est sécurisé sous séquestre bancaire certifié LocaTrust.',
-    category: 'caution',
-    timestamp: '25 Septembre 2026',
-    read: true,
-    actionText: 'Voir ma caution',
-    targetTab: 'guarantees',
-  },
-  {
-    id: 'tnotif_5',
-    title: 'Intervention plomberie programmée',
-    description: 'L\'artisan partenaire a confirmé son passage le jeudi 15 à 14h30 pour la révision du mitigeur.',
-    category: 'maintenance',
-    timestamp: '22 Septembre 2026',
-    read: true,
-    actionText: 'Suivi intervention',
-    targetTab: 'maintenance',
-  },
-  {
-    id: 'tnotif_6',
-    title: 'Rappel : Échéance du loyer le 05 du mois',
-    description: 'Pensez à effectuer votre paiement de loyer avant le 5 du mois pour maintenir votre score de ponctualité locative.',
-    category: 'rappel',
-    timestamp: '20 Septembre 2026',
-    read: true,
-    actionText: 'Déclarer un paiement',
-    targetTab: 'payments',
-  },
-];
-
 interface LocataireNotificationsViewProps {
   onNavigateTab?: (tabId: string) => void;
 }
@@ -111,7 +48,7 @@ export const LocataireNotificationsView: React.FC<LocataireNotificationsViewProp
         console.warn('Error reading notifications', e);
       }
     }
-    return DEFAULT_TENANT_NOTIFICATIONS;
+    return [];
   });
 
   const [activeCategory, setActiveCategory] = useState<string>('all');

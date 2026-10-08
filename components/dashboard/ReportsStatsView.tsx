@@ -35,19 +35,51 @@ import {
 } from '@/lib/reports/accountingHistoryStore';
 import { generateManagementReportPDF } from '@/lib/reports/managementReportPdfGenerator';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
+import { useAuth } from '@/src/context/AuthContext';
+import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
+import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 
 export type ReportPeriod = 'ce_mois' | 'mois_precedent' | 'trimestre' | 'annee';
 
 export const ReportsStatsView: React.FC = () => {
+  const { user } = useAuth();
   const [period, setPeriod] = useState<ReportPeriod>('ce_mois');
   const [selectedYear, setSelectedYearState] = useState<string>('2026');
   const [selectedHistoricalMonth, setSelectedHistoricalMonth] = useState<string>('2026-08');
   const [selectedQuarter, setSelectedQuarter] = useState<'T1' | 'T2' | 'T3' | 'T4'>('T3');
+  const [realDataset, setRealDataset] = useState<RealAccountingDataset | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Sub-tab detail navigation (Point 13 & 14)
   const [activeReportSection, setActiveReportSection] = useState<
     'synthese' | 'loyers' | 'biens' | 'contrats' | 'cautions' | 'maintenance' | 'finance'
   >('synthese');
+
+  // Chargement des données réelles depuis la base de données
+  const loadRealAccounting = async () => {
+    setIsLoading(true);
+    try {
+      const data = await fetchRealAccountingData(user?.id, selectedYear);
+      setRealDataset(data);
+    } catch (e) {
+      console.warn('Erreur chargement données comptables réelles:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRealAccounting();
+    const handleUpdate = () => loadRealAccounting();
+    window.addEventListener('locatrust:payments-updated', handleUpdate);
+    window.addEventListener('locatrust:contracts-updated', handleUpdate);
+    window.addEventListener('locatrust:properties-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:payments-updated', handleUpdate);
+      window.removeEventListener('locatrust:contracts-updated', handleUpdate);
+      window.removeEventListener('locatrust:properties-updated', handleUpdate);
+    };
+  }, [user, selectedYear]);
 
   // Initialisation et synchronisation de l'année de référence
   useEffect(() => {
@@ -71,17 +103,65 @@ export const ReportsStatsView: React.FC = () => {
     }
   };
 
-  // Calcul dynamique et centralisé de la période sélectionnée
-  const currentPeriodSummary: PeriodSummary = useMemo(() => {
-    return calculatePeriodStats({
-      periodType: period,
-      selectedYear,
-      selectedMonthKey: selectedHistoricalMonth,
-      selectedQuarter
-    });
-  }, [period, selectedYear, selectedHistoricalMonth, selectedQuarter]);
+  const yearRecords = useMemo(() => {
+    if (realDataset?.monthlyBreakdown && realDataset.monthlyBreakdown.length > 0) {
+      return realDataset.monthlyBreakdown;
+    }
+    return [];
+  }, [realDataset]);
 
-  const yearRecords = useMemo(() => getYearRecords(selectedYear), [selectedYear]);
+  // Calcul dynamique et centralisé de la période sélectionnée basé sur les données réelles
+  const currentPeriodSummary: PeriodSummary = useMemo(() => {
+    if (!realDataset) {
+      return {
+        periodLabel: 'Période en cours',
+        expectedRent: 0,
+        collectedRent: 0,
+        lateRent: 0,
+        unpaidRent: 0,
+        recoveryRate: 0,
+        otherIncome: 0,
+        totalIncome: 0,
+        maintenanceExpense: 0,
+        cautionReceived: 0,
+        cautionRefunded: 0,
+        otherExpenses: 0,
+        totalExpenses: 0,
+        netResult: 0,
+        annualCumulativeResult: 0,
+        activeProperties: 0,
+        activeTenants: 0,
+        activeContracts: 0,
+        maintenanceTickets: 0,
+        monthlyBreakdown: []
+      };
+    }
+
+    const synth = realDataset.synthesis;
+    return {
+      periodLabel: period === 'ce_mois' ? `Mois en cours (${selectedYear})` : period === 'annee' ? `Exercice Annuel ${selectedYear}` : `Période ${selectedYear}`,
+      expectedRent: synth.loyersAttendus,
+      collectedRent: synth.loyersEncaisses,
+      lateRent: synth.loyersEnRetard,
+      unpaidRent: synth.loyersImpayes,
+      recoveryRate: synth.tauxRecouvrement,
+      otherIncome: synth.autresDepenses,
+      totalIncome: synth.totalEncaisse,
+      maintenanceExpense: synth.depensesMaintenance,
+      cautionReceived: synth.cautionsRecues,
+      cautionRefunded: synth.cautionsRemboursees,
+      otherExpenses: 0,
+      totalExpenses: synth.totalDepense,
+      netResult: synth.resultatNet,
+      annualCumulativeResult: synth.resultatNet,
+      activeProperties: realDataset.activePropertiesCount,
+      activeTenants: realDataset.activeTenantsCount,
+      activeContracts: realDataset.activeContractsCount,
+      maintenanceTickets: realDataset.maintenance.length,
+      monthlyBreakdown: yearRecords
+    };
+  }, [realDataset, period, selectedYear, yearRecords]);
+
   const availableMonths = useMemo(() => getAvailableHistoricalMonths(selectedYear), [selectedYear]);
 
   const annualTotals = useMemo(() => {
@@ -142,7 +222,7 @@ export const ReportsStatsView: React.FC = () => {
     } else {
       generateManagementReportPDF({
         periodSummary: currentPeriodSummary,
-        ownerName: "Koffi N'Guessan",
+        ownerName: user?.user_metadata?.full_name || 'Bailleur',
         propertyCount: currentPeriodSummary.activeProperties,
         activeContractsCount: currentPeriodSummary.activeContracts,
         activeTenantsCount: currentPeriodSummary.activeTenants

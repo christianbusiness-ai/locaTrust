@@ -26,47 +26,25 @@ export interface AgencyMemberItem {
   joined_date: string;
 }
 
-const INITIAL_TEAM_MEMBERS: AgencyMemberItem[] = [
-  {
-    id: 'mem_1',
-    full_name: "Yao Koffi (Directeur)",
-    email: 'y.koffi@immogolf.ci',
-    phone: '+225 27 22 44 55 66',
-    agency_role: 'gestionnaire',
-    status: 'actif',
-    joined_date: '2024-09-01'
-  },
-  {
-    id: 'mem_2',
-    full_name: 'Esther Bamba',
-    email: 'e.bamba@immogolf.ci',
-    phone: '+225 07 11 22 33 44',
-    agency_role: 'gestionnaire',
-    status: 'actif',
-    joined_date: '2025-01-15'
-  },
-  {
-    id: 'mem_3',
-    full_name: 'Marc Zadi',
-    email: 'm.zadi@immogolf.ci',
-    phone: '+225 05 99 88 77 66',
-    agency_role: 'comptable',
-    status: 'actif',
-    joined_date: '2025-02-01'
-  },
-  {
-    id: 'mem_4',
-    full_name: 'Clarisse N\'Dri',
-    email: 'c.ndri@immogolf.ci',
-    phone: '+225 01 44 55 66 77',
-    agency_role: 'lecture_seule',
-    status: 'invite',
-    joined_date: '2026-09-10'
-  }
-];
+const INITIAL_TEAM_MEMBERS: AgencyMemberItem[] = [];
 
 export const AgenceEquipeView: React.FC = () => {
-  const [team, setTeam] = useState<AgencyMemberItem[]>(INITIAL_TEAM_MEMBERS);
+  const [team, setTeam] = useState<AgencyMemberItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_agency_team');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            return parsed.filter((m: any) => m.id !== 'mem_1' && m.id !== 'mem_2' && m.id !== 'mem_3' && m.id !== 'mem_4');
+          }
+        }
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
 
   // Form states
@@ -89,7 +67,11 @@ export const AgenceEquipeView: React.FC = () => {
       joined_date: new Date().toISOString().split('T')[0]
     };
 
-    setTeam((prev) => [...prev, newMember]);
+    const updated = [...team, newMember];
+    setTeam(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_agency_team', JSON.stringify(updated));
+    }
     setShowInviteModal(false);
     setNameInput('');
     setEmailInput('');
@@ -99,7 +81,11 @@ export const AgenceEquipeView: React.FC = () => {
 
   const handleRemoveMember = (id: string) => {
     if (confirm('Voulez-vous révoquer l\'accès de ce collaborateur de l\'agence ?')) {
-      setTeam((prev) => prev.filter((m) => m.id !== id));
+      const updated = team.filter((m) => m.id !== id);
+      setTeam(updated);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_agency_team', JSON.stringify(updated));
+      }
     }
   };
 
@@ -197,42 +183,65 @@ export const AgenceEquipeView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {team.map((member) => (
-                <tr key={member.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-black text-xs flex items-center justify-center">
-                        {member.full_name.substring(0, 2).toUpperCase()}
+              {team.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-12 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                        <Users className="w-6 h-6" />
                       </div>
-                      <span className="font-extrabold text-slate-900">{member.full_name}</span>
+                      <span className="font-extrabold text-slate-900 text-sm">Aucun collaborateur invité pour le moment</span>
+                      <span className="text-xs text-slate-500 max-w-sm">
+                        Constituez votre équipe d'agence en invitant des gestionnaires et comptables avec des droits d'accès sur mesure.
+                      </span>
+                      <button
+                        onClick={() => setShowInviteModal(true)}
+                        className="mt-2 flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all shadow-sm"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>Inviter un premier collaborateur</span>
+                      </button>
                     </div>
-                  </td>
-                  <td className="p-4 text-slate-600">
-                    <div className="flex flex-col">
-                      <span>{member.email}</span>
-                      <span className="text-[10px] text-slate-400">{member.phone}</span>
-                    </div>
-                  </td>
-                  <td className="p-4">{getRoleBadge(member.agency_role)}</td>
-                  <td className="p-4">
-                    {member.status === 'actif' ? (
-                      <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">Actif</span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-extrabold">Invitation envoyée</span>
-                    )}
-                  </td>
-                  <td className="p-4 text-slate-500">{member.joined_date}</td>
-                  <td className="p-4 text-right">
-                    <button
-                      onClick={() => handleRemoveMember(member.id)}
-                      className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-all"
-                      title="Révoquer le collaborateur"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                team.map((member) => (
+                  <tr key={member.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-blue-600 text-white font-black text-xs flex items-center justify-center">
+                          {member.full_name.substring(0, 2).toUpperCase()}
+                        </div>
+                        <span className="font-extrabold text-slate-900">{member.full_name}</span>
+                      </div>
+                    </td>
+                    <td className="p-4 text-slate-600">
+                      <div className="flex flex-col">
+                        <span>{member.email}</span>
+                        <span className="text-[10px] text-slate-400">{member.phone}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">{getRoleBadge(member.agency_role)}</td>
+                    <td className="p-4">
+                      {member.status === 'actif' ? (
+                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">Actif</span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-extrabold">Invitation envoyée</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-slate-500">{member.joined_date}</td>
+                    <td className="p-4 text-right">
+                      <button
+                        onClick={() => handleRemoveMember(member.id)}
+                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-all"
+                        title="Révoquer le collaborateur"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

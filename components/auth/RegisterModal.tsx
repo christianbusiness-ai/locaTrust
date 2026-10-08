@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   User,
@@ -23,7 +23,9 @@ import {
   Crown,
   KeyRound,
   Check,
-  AlertTriangle
+  AlertTriangle,
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import { UserRole } from '@/types/database.types';
 import { triggerCelebration } from '@/lib/celebration';
@@ -32,8 +34,10 @@ import {
   getSingleAdminInfo,
   registerSingleAdmin,
   registerUserAccount,
+  saveActiveUser,
   RegisterUserData
 } from '@/lib/authStore';
+import { signUpUser, sendEmailOtp, verifyEmailOtp } from '@/lib/supabase/services';
 import { IVORIAN_CITIES } from '@/lib/legalAnalysisEngine';
 
 
@@ -43,7 +47,7 @@ interface RegisterModalProps {
   onSuccessRegister: (role: UserRole) => void;
 }
 
-type RegistrationStep = 'choose_role' | 'fill_form' | 'admin_setup' | 'success';
+type RegistrationStep = 'choose_role' | 'fill_form' | 'email_verification' | 'admin_setup' | 'success';
 
 export const RegisterModal: React.FC<RegisterModalProps> = ({
   isOpen,
@@ -100,6 +104,36 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdRoleSummary, setCreatedRoleSummary] = useState<string>('');
 
+  // Email OTP Verification State
+  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [resendCountdown, setResendCountdown] = useState<number>(30);
+  const [isVerifyingCode, setIsVerifyingCode] = useState<boolean>(false);
+  const [isSendingEmail, setIsSendingEmail] = useState<boolean>(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<RegisterUserData | null>(null);
+  const [pendingAuthUserId, setPendingAuthUserId] = useState<string | undefined>(undefined);
+
+  const otp0Ref = useRef<HTMLInputElement>(null);
+  const otp1Ref = useRef<HTMLInputElement>(null);
+  const otp2Ref = useRef<HTMLInputElement>(null);
+  const otp3Ref = useRef<HTMLInputElement>(null);
+  const otp4Ref = useRef<HTMLInputElement>(null);
+  const otp5Ref = useRef<HTMLInputElement>(null);
+  const otpInputRefs = [otp0Ref, otp1Ref, otp2Ref, otp3Ref, otp4Ref, otp5Ref];
+
+  // OTP Countdown Timer
+  useEffect(() => {
+    let timer: any;
+    if (step === 'email_verification' && resendCountdown > 0) {
+      timer = setInterval(() => {
+        setResendCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [step, resendCountdown]);
+
   // Check admin registration status whenever modal opens
   useEffect(() => {
     if (isOpen) {
@@ -111,6 +145,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       setStep('choose_role');
       setSelectedRole(null);
       setErrorMessage(null);
+      setCodeError(null);
     }
   }, [isOpen]);
 
@@ -168,8 +203,8 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     const payload: RegisterUserData = {
       role: selectedRole,
       name: selectedRole === 'agence' ? formData.agencyName : formData.name,
-      email: formData.email,
-      phone: formData.phone,
+      email: formData.email.trim(),
+      phone: formData.phone.trim(),
       cniOrRccm: selectedRole === 'agence' ? formData.rccmNumber : formData.cniNumber,
       city: formData.city,
       commune: formData.commune,
@@ -182,31 +217,154 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       password: formData.password
     };
 
-    const result = registerUserAccount(payload);
-    if (!result.success) {
-      setErrorMessage(result.error || 'Erreur lors de l\'enregistrement.');
+    setOtpDigits(['', '', '', '', '', '']);
+    setResendCountdown(30);
+    setCodeError(null);
+    setPendingPayload(payload);
+    setIsSendingEmail(true);
+
+    // 1. Déclenchement de l'inscription Supabase Auth
+    signUpUser({
+      email: payload.email,
+      password: payload.password,
+      full_name: payload.name,
+      role: payload.role,
+      phone: payload.phone,
+      cni_number: payload.cniOrRccm
+    }).then(({ data: authData, error: authError }) => {
+      if (authError) {
+        console.warn('Supabase signup notice:', authError);
+      }
+      if (authData?.user?.id) {
+        setPendingAuthUserId(authData.user.id);
+      }
+    }).catch((err) => {
+      console.warn('Supabase signup error:', err);
+    });
+
+    // 2. Envoi réel du code OTP à 6 chiffres par la base de données vers la boîte mail
+    sendEmailOtp(payload.email)
+      .then(({ data: otpData, error: otpError }) => {
+        if (otpError) {
+          console.warn('Notice envoi OTP Supabase:', otpError);
+        }
+      })
+      .catch((err) => {
+        console.warn('Erreur envoi OTP Supabase:', err);
+      })
+      .finally(() => {
+        setIsSendingEmail(false);
+        // Basculement vers l'étape de validation email par code
+        setStep('email_verification');
+        setTimeout(() => {
+          otp0Ref.current?.focus();
+        }, 150);
+      });
+  };
+
+  const handleOtpChange = (index: number, value: string) => {
+    const clean = value.replace(/\D/g, '');
+    const newDigits = [...otpDigits];
+    newDigits[index] = clean.slice(-1);
+    setOtpDigits(newDigits);
+    setCodeError(null);
+
+    if (clean && index < 5) {
+      otpInputRefs[index + 1]?.current?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpInputRefs[index - 1]?.current?.focus();
+    }
+  };
+
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pasted.length > 0) {
+      const nextDigits = ['', '', '', '', '', ''];
+      for (let i = 0; i < pasted.length; i++) {
+        nextDigits[i] = pasted[i];
+      }
+      setOtpDigits(nextDigits);
+      setCodeError(null);
+      const focusIndex = Math.min(pasted.length, 5);
+      otpInputRefs[focusIndex]?.current?.focus();
+    }
+  };
+
+  const handleResendCode = async () => {
+    if (resendCountdown > 0) return;
+    setResendCountdown(30);
+    setCodeError(null);
+
+    const targetEmail = pendingPayload?.email || formData.email;
+    if (targetEmail) {
+      try {
+        await sendEmailOtp(targetEmail);
+      } catch (err) {
+        console.warn('Erreur renvoi OTP Supabase:', err);
+      }
+    }
+  };
+
+  const handleVerifyEmailCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setCodeError(null);
+
+    const enteredCode = otpDigits.join('').trim();
+    if (enteredCode.length < 6) {
+      setCodeError('Veuillez saisir les 6 chiffres du code de validation.');
       return;
     }
 
-    // Success celebration
-    triggerCelebration('success');
-    setCreatedRoleSummary(
-      selectedRole === 'locataire'
-        ? 'Compte Locataire Vérifié'
-        : selectedRole === 'proprietaire'
-        ? 'Compte Bailleur Propriétaire'
-        : 'Compte Agence Immobilière Agréée'
-    );
-    setStep('success');
+    if (!pendingPayload || !selectedRole) return;
+    setIsVerifyingCode(true);
 
-    // Automatic redirect after 2.5s
-    setTimeout(() => {
-      onSuccessRegister(selectedRole);
-      onClose();
-    }, 2500);
+    // 1. Validation du code OTP directement par la base de données Supabase Auth
+    const otpValidation = await verifyEmailOtp(formData.email, enteredCode);
+    if (!otpValidation.success) {
+      setCodeError(
+        otpValidation.error?.message ||
+        'Code de validation incorrect ou expiré. Veuillez vérifier votre boîte mail ou cliquer sur Renvoyer un code.'
+      );
+      setIsVerifyingCode(false);
+      return;
+    }
+
+    // 2. Enregistrement du compte utilisateur dans le store local
+    const result = registerUserAccount({
+      ...pendingPayload,
+      id: otpValidation.data?.user?.id || pendingAuthUserId
+    });
+
+    if (!result.success) {
+      setCodeError(result.error || 'Erreur lors de la création du compte.');
+      setIsVerifyingCode(false);
+      return;
+    }
+
+    // Le compte créé est initialement sans badge vérifié tant que l'administrateur n'a pas validé
+    if (result.user) {
+      result.user.verification_status = 'en_attente';
+      saveActiveUser(result.user);
+    }
+
+    localStorage.setItem('locatrust_registered_role', selectedRole);
+    localStorage.setItem('locatrust_account_created', 'true');
+    localStorage.setItem('locatrust_is_demo', 'false');
+
+    triggerCelebration('success');
+    setIsVerifyingCode(false);
+
+    // Redirection directe vers le tableau de bord / profil du rôle sans écran blanc d'attente
+    onSuccessRegister(selectedRole);
+    onClose();
   };
 
-  const handleAdminSubmit = (e: React.FormEvent) => {
+  const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
@@ -227,6 +385,15 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       setErrorMessage('Les mots de passe ne correspondent pas.');
       return;
     }
+
+    // Inscription Supabase Admin
+    await signUpUser({
+      email: adminFormData.email,
+      password: adminFormData.password,
+      full_name: adminFormData.name,
+      role: 'admin',
+      phone: adminFormData.phone
+    });
 
     const result = registerSingleAdmin({
       name: adminFormData.name,
@@ -250,7 +417,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     setTimeout(() => {
       onSuccessRegister('admin');
       onClose();
-    }, 2500);
+    }, 2000);
   };
 
   return (
@@ -429,20 +596,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
             </div>
 
             {/* Bouton de validation pour continuer */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-100">
-              {/* Option Single Admin Setup discret */}
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMessage(null);
-                  setStep('admin_setup');
-                }}
-                className="text-[11px] font-extrabold text-slate-400 hover:text-slate-700 flex items-center gap-1.5 transition-colors"
-              >
-                <KeyRound className="w-3.5 h-3.5" />
-                <span>Configuration Administrateur Unique</span>
-              </button>
-
+            <div className="flex items-center justify-end pt-4 border-t border-slate-100">
               <button
                 type="button"
                 onClick={handleSelectRoleAndProceed}
@@ -582,7 +736,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
                     <input
                       type="text"
                       required
-                      placeholder="Ex: Aïcha Diallo ou Koffi N'Guessan"
+                      placeholder="Ex: Bailleur Partenaire ou LocaTrust Utilisateur"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       className="p-3 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
@@ -771,10 +925,20 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center gap-2 shadow-md transition-all active:scale-95"
+                disabled={isSendingEmail}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-extrabold text-xs flex items-center gap-2 shadow-md transition-all active:scale-95"
               >
-                <Sparkles className="w-4 h-4" />
-                <span>Créer mon Compte {selectedRole === 'locataire' ? 'Locataire' : selectedRole === 'proprietaire' ? 'Propriétaire' : 'Agence'}</span>
+                {isSendingEmail ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Envoi du code par la base de données...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Créer mon Compte {selectedRole === 'locataire' ? 'Locataire' : selectedRole === 'proprietaire' ? 'Propriétaire' : 'Agence'}</span>
+                  </>
+                )}
               </button>
             </div>
 
@@ -797,6 +961,130 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
           </form>
         )}
 
+        {/* ===================================================================== */}
+        {/* ÉTAPE VÉRIFICATION DE L'EMAIL PAR CODE (OTP 6 CHIFFRES)              */}
+        {/* ===================================================================== */}
+        {step === 'email_verification' && (
+          <div className="p-6 sm:p-8 flex flex-col items-center text-center gap-6 animate-fadeIn">
+            
+            {/* Icône enveloppe & sécurité */}
+            <div className="relative">
+              <div className="w-16 h-16 rounded-3xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-md">
+                <Mail className="w-8 h-8" />
+              </div>
+              <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-black shadow">
+                <Check className="w-3.5 h-3.5" />
+              </span>
+            </div>
+
+            {/* Titre & Explication */}
+            <div className="flex flex-col gap-1.5 max-w-md">
+              <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                Vérification de votre adresse email
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Un code officiel de validation à 6 chiffres a été expédié par la base de données vers <strong>{formData.email}</strong>. Saisissez-le ci-dessous pour confirmer votre email et activer votre compte.
+              </p>
+            </div>
+
+            {/* Notification envoi réel par la base de données */}
+            <div className="w-full max-w-sm p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-950 text-xs flex items-center gap-3 shadow-sm text-left">
+              <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+                <Mail className="w-4 h-4" />
+              </div>
+              <div className="flex flex-col">
+                <span className="font-bold text-blue-900">Code expédié par la base de données</span>
+                <span className="text-[11px] text-blue-800 leading-tight mt-0.5">
+                  Vérifiez votre boîte de réception (et le dossier Spams / Courriers indésirables).
+                </span>
+              </div>
+            </div>
+
+            {/* Message d'erreur de code */}
+            {codeError && (
+              <div className="w-full max-w-sm p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2 text-left animate-shake">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{codeError}</span>
+              </div>
+            )}
+
+            {/* Grille des 6 chiffres OTP */}
+            <div className="flex items-center justify-center gap-2 sm:gap-3 my-1">
+              {otpDigits.map((digit, index) => (
+                <input
+                  key={index}
+                  ref={otpInputRefs[index]}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={1}
+                  value={digit}
+                  onChange={(e) => handleOtpChange(index, e.target.value)}
+                  onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                  onPaste={index === 0 ? handleOtpPaste : undefined}
+                  className="w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-black text-slate-900 bg-slate-50 border-2 border-slate-300 rounded-2xl focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-600/20 transition-all shadow-sm"
+                />
+              ))}
+            </div>
+
+            {/* Bouton de validation du code */}
+            <div className="w-full max-w-sm flex flex-col gap-3">
+              <button
+                type="button"
+                disabled={isVerifyingCode || otpDigits.join('').length < 6}
+                onClick={() => handleVerifyEmailCode()}
+                className={`w-full py-3.5 px-4 rounded-xl text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${
+                  otpDigits.join('').length === 6 && !isVerifyingCode
+                    ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/30'
+                    : 'bg-slate-300 cursor-not-allowed text-slate-500 shadow-none'
+                }`}
+              >
+                {isVerifyingCode ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Validation du code par la base de données...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Confirmer et Activer mon Compte</span>
+                  </>
+                )}
+              </button>
+
+              {/* Renvoyer le code ou modifier email */}
+              <div className="flex items-center justify-between text-xs pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCodeError(null);
+                    setStep('fill_form');
+                  }}
+                  className="text-slate-500 hover:text-blue-600 font-bold flex items-center gap-1 transition-colors"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Modifier l'email</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={resendCountdown > 0}
+                  onClick={handleResendCode}
+                  className={`font-black flex items-center gap-1 transition-colors ${
+                    resendCountdown > 0
+                      ? 'text-slate-400 cursor-not-allowed'
+                      : 'text-blue-600 hover:text-blue-700 hover:underline'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>
+                    {resendCountdown > 0 ? `Renvoyer le code (${resendCountdown}s)` : 'Renvoyer un code'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        )}
 
         {/* ===================================================================== */}
         {/* ÉTAPE SPÉCIALE : INSCRIPTION SUPER ADMINISTRATEUR UNIQUE             */}
@@ -968,15 +1256,21 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
               <CheckCircle2 className="w-10 h-10" />
             </div>
 
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               <h3 className="text-2xl font-black text-slate-900">
                 🎉 Compte Créé avec Succès !
               </h3>
-              <p className="text-sm font-bold text-emerald-700">
+              <p className="text-sm font-bold text-blue-700">
                 {createdRoleSummary}
               </p>
-              <p className="text-xs text-slate-500 mt-2 max-w-sm mx-auto">
-                Vos informations ont été enregistrées en toute sécurité sous le cadre légal ivoirien. Redirection immédiate vers votre espace...
+              <div className="p-3 my-2 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 text-xs flex items-center gap-2.5 max-w-sm mx-auto text-left shadow-sm">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                <span className="leading-snug">
+                  Statut : <strong>En attente de validation admin</strong>. Vos pièces justificatives seront examinées avant l'attribution du badge Vérifié.
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                Redirection immédiate vers votre espace...
               </p>
             </div>
           </div>

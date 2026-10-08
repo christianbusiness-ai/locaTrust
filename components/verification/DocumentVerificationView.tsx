@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -15,14 +15,18 @@ import {
   ChevronRight,
   ArrowLeft,
   Receipt,
-  FileCheck
+  FileCheck,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 import { Logo } from '@/components/common/Logo';
+import { supabase } from '@/src/lib/supabase';
 import {
   MOCK_VERIFICATION_REGISTRY,
   ContractVerificationRecord,
   ReceiptVerificationRecord,
-  DocumentVerificationStatus
+  DocumentVerificationStatus,
+  maskPersonName
 } from '@/lib/verificationRegistry';
 import { formatFCFA } from '@/lib/utils';
 
@@ -40,61 +44,222 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
   onNavigateToDocument
 }) => {
   const [selectedTab, setSelectedTab] = useState<'details' | 'history' | 'receipts'>('details');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [contractData, setContractData] = useState<ContractVerificationRecord | undefined>(undefined);
+  const [receiptData, setReceiptData] = useState<ReceiptVerificationRecord | undefined>(undefined);
 
-  const contractData: ContractVerificationRecord | undefined =
-    type === 'contrat'
-      ? (MOCK_VERIFICATION_REGISTRY.contracts[token] ||
-         Object.values(MOCK_VERIFICATION_REGISTRY.contracts).find(
-           (c) => c.token === token || c.contractNumber === token || c.contractNumber.toLowerCase() === token.toLowerCase()
-         ) || {
-           type: 'contrat',
-           token: token,
-           contractNumber: token.startsWith('tok_') ? 'LT-CI-2026-000492' : token,
-           status: 'valide',
-           currentVersion: 1,
-           totalVersions: 1,
-           createdAt: '01/01/2026',
-           signedAt: '01/01/2026 à 14:32',
-           isRegisteredLocaTrust: true,
-           parties: {
-             ownerName: "Koffi N'Guessan",
-             tenantName: "Kouadio Jean",
-             isOwnerSigned: true,
-             isTenantSigned: true,
-             ownerSignedAt: '01/01/2026',
-             tenantSignedAt: '01/01/2026'
-           },
-           property: {
-             propertyRef: 'BIEN-2026-049',
-             type: 'Appartement 3 pièces moderne',
-             location: 'Cocody Riviera 3, Abidjan - Côte d\'Ivoire'
-           },
-           financials: {
-             rentAmount: 450000,
-             currency: 'FCFA',
-             cautionAmount: 900000
-           }
-         })
-      : undefined;
+  const fetchDocument = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      if (type === 'contrat') {
+        // 1. Registre local session
+        const local = MOCK_VERIFICATION_REGISTRY.contracts[token] ||
+          Object.values(MOCK_VERIFICATION_REGISTRY.contracts).find(
+            (c) => c.token === token || c.contractNumber === token || c.contractNumber.toLowerCase() === token.toLowerCase()
+          );
+        if (local) {
+          setContractData(local);
+          setIsLoading(false);
+          return;
+        }
 
-  const receiptData: ReceiptVerificationRecord | undefined =
-    type === 'recu'
-      ? (MOCK_VERIFICATION_REGISTRY.receipts[token] ||
-         Object.values(MOCK_VERIFICATION_REGISTRY.receipts).find(
-           (r) => r.token === token || r.receiptNumber === token || r.receiptNumber.toLowerCase() === token.toLowerCase()
-         ))
-      : undefined;
+        // 2. Base Supabase
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
+        let query = supabase
+          .from('contracts')
+          .select('*, property:property_id(*), owner:owner_id(*), tenant:tenant_id(*)');
+
+        if (isUuid) {
+          query = query.or(`id.eq.${token},contract_number.eq.${token}`);
+        } else {
+          query = query.or(`contract_number.eq.${token},qr_code.eq.${token},qr_code_hash.eq.${token}`);
+        }
+
+        const { data, error } = await query.maybeSingle();
+        if (error) {
+          console.warn('Erreur vérification contrat:', error.message);
+          setLoadError('Erreur de communication avec le registre officiel des baux.');
+        } else if (data) {
+          const rec: ContractVerificationRecord = {
+            type: 'contrat',
+            token: token,
+            contractNumber: data.contract_number,
+            status: data.status === 'resilie' ? 'revoque_annule' : 'valide',
+            currentVersion: 1,
+            totalVersions: 1,
+            createdAt: new Date(data.created_at).toLocaleDateString('fr-FR'),
+            signedAt: data.signed_at ? new Date(data.signed_at).toLocaleString('fr-FR') : 'En attente',
+            isRegisteredLocaTrust: true,
+            parties: {
+              ownerName: maskPersonName(data.owner?.full_name || 'Bailleur'),
+              tenantName: maskPersonName(data.tenant?.full_name || 'Preneur'),
+              isOwnerSigned: Boolean(data.owner_signed || data.owner_signature),
+              isTenantSigned: Boolean(data.tenant_signed || data.tenant_signature),
+              ownerSignedAt: data.owner_signed_at ? new Date(data.owner_signed_at).toLocaleDateString('fr-FR') : undefined,
+              tenantSignedAt: data.tenant_signed_at ? new Date(data.tenant_signed_at).toLocaleDateString('fr-FR') : undefined,
+            },
+            property: {
+              propertyRef: data.property?.id ? `BIEN-${data.property.id.slice(0, 6).toUpperCase()}` : 'BIEN-001',
+              type: data.property?.title || 'Logement certifié',
+              location: `${data.property?.commune || ''} ${data.property?.city || 'Abidjan'}`.trim() || 'Côte d\'Ivoire',
+            },
+            financials: {
+              rentAmount: Number(data.monthly_rent || 0),
+              currency: 'FCFA',
+              cautionAmount: Number(data.caution_amount || 0),
+            },
+            history: [
+              {
+                version: 1,
+                date: new Date(data.created_at).toLocaleDateString('fr-FR'),
+                title: 'Contrat de bail certifié original',
+                summary: 'Bail d\'habitation conforme Loi n° 2019-576 scellé par LocaTrust.',
+              }
+            ],
+            relatedReceipts: [],
+          };
+          setContractData(rec);
+        } else {
+          setContractData(undefined);
+        }
+      } else if (type === 'recu') {
+        // 1. Registre local session
+        const local = MOCK_VERIFICATION_REGISTRY.receipts[token] ||
+          Object.values(MOCK_VERIFICATION_REGISTRY.receipts).find(
+            (r) => r.token === token || r.receiptNumber === token || r.receiptNumber.toLowerCase() === token.toLowerCase()
+          );
+        if (local) {
+          setReceiptData(local);
+          setIsLoading(false);
+          return;
+        }
+
+        // 2. Base Supabase
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
+        let query = supabase
+          .from('receipts')
+          .select('*, contract:contract_id(*, property:property_id(*)), tenant:tenant_id(*), owner:owner_id(*)');
+
+        if (isUuid) {
+          query = query.or(`id.eq.${token},receipt_number.eq.${token}`);
+        } else {
+          query = query.or(`receipt_number.eq.${token},token.eq.${token},qr_code.eq.${token}`);
+        }
+
+        const { data, error } = await query.maybeSingle();
+        if (error) {
+          console.warn('Erreur vérification quittance:', error.message);
+          setLoadError('Erreur de communication avec le registre officiel des quittances.');
+        } else if (data) {
+          const rec: ReceiptVerificationRecord = {
+            type: 'recu',
+            token: token,
+            receiptNumber: data.receipt_number,
+            contractNumber: data.contract?.contract_number || 'Bail LocaTrust',
+            contractToken: data.contract?.id || '',
+            status: 'valide',
+            periodCovered: data.rent_month ? new Date(data.rent_month).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : 'Période courante',
+            amountPaid: Number(data.amount || 0),
+            paymentDate: new Date(data.created_at).toLocaleDateString('fr-FR'),
+            paymentMethod: 'Paiement Déclaré & Validé',
+            transactionReference: data.id?.slice(0, 12).toUpperCase() || 'TX-OFFICIEL',
+            parties: {
+              ownerName: maskPersonName(data.owner?.full_name || 'Bailleur'),
+              tenantName: maskPersonName(data.tenant?.full_name || 'Locataire'),
+            },
+            property: {
+              type: data.contract?.property?.title || 'Bien immobilier',
+              location: `${data.contract?.property?.commune || ''} ${data.contract?.property?.city || 'Abidjan'}`.trim() || 'Côte d\'Ivoire',
+            },
+            isValidatedByOwner: true,
+            validatedAt: new Date(data.created_at).toLocaleString('fr-FR'),
+          };
+          setReceiptData(rec);
+        } else {
+          setReceiptData(undefined);
+        }
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Erreur réseau');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [type, token]);
+
+  useEffect(() => {
+    fetchDocument();
+  }, [fetchDocument]);
 
   const isFound = Boolean(contractData || receiptData);
   const status: DocumentVerificationStatus = isFound
     ? contractData?.status || receiptData?.status || 'valide'
     : 'non_authentifie';
 
-  // Si non trouvé ou altéré
+  // 1. ÉTAT DE CHARGEMENT (LOADER)
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-16">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 sm:px-8">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <Logo size="md" variant="light" showSubtitle={true} />
+            <span className="text-[11px] font-extrabold uppercase px-2.5 py-1 rounded-md bg-blue-100 text-blue-800">
+              Vérification en cours
+            </span>
+          </div>
+        </header>
+
+        <main className="max-w-xl mx-auto px-4 py-20 flex flex-col items-center justify-center text-center gap-4 w-full">
+          <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+          <h2 className="text-lg font-black text-slate-900">Contrôle de l'empreinte cryptographique...</h2>
+          <p className="text-xs text-slate-500 max-w-sm">
+            Interrogation du registre sécurisé de conformité LocaTrust et des registres fonciers certifiés.
+          </p>
+        </main>
+      </div>
+    );
+  }
+
+  // 2. ÉTAT ERREUR RÉSEAU / REGISTRE
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-16">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 sm:px-8">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <Logo size="md" variant="light" showSubtitle={true} />
+            <span className="text-[11px] font-extrabold uppercase px-2.5 py-1 rounded-md bg-amber-100 text-amber-800">
+              Erreur Registre
+            </span>
+          </div>
+        </header>
+
+        <main className="max-w-xl mx-auto px-4 py-12 flex flex-col gap-6 w-full animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200 shadow-xl flex flex-col items-center text-center gap-5">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <h1 className="text-xl font-black text-slate-900">Impossible de joindre le registre</h1>
+              <p className="text-xs text-slate-600 leading-relaxed">{loadError}</p>
+            </div>
+            <button
+              onClick={() => fetchDocument()}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Réessayer la vérification</span>
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // 3. ÉTAT NON AUTHENTIFIÉ OU FALSIFIÉ
   if (!isFound || status === 'non_authentifie') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-16">
-        {/* Header officiel */}
         <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 sm:px-8">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <Logo size="md" variant="light" showSubtitle={true} />
@@ -159,7 +324,6 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
 
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-16">
-        {/* Header officiel */}
         <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 sm:px-8">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <Logo size="md" variant="light" showSubtitle={true} />
@@ -185,7 +349,6 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
 
           {/* Statut Banner */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xl flex flex-col gap-6">
-            
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
               <div className="flex items-start gap-4">
                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-md shrink-0 ${
@@ -225,27 +388,27 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
               </div>
             </div>
 
-            {/* Avenant Notice Box if applicable */}
+            {/* Avenant Notice */}
             {isAvenant && (
               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3 text-xs">
                 <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-1">
                   <span className="font-black text-amber-900">Avenant ultérieur actif détecté</span>
                   <p className="text-slate-700 leading-relaxed text-[11px]">
-                    Ce contrat possède une ou plusieurs modifications enregistrées après sa signature originale. La version originale reste conservée dans le registre pour préserver l'historique complet.
+                    Ce contrat possède une ou plusieurs modifications enregistrées après sa signature originale.
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Revoked Notice Box if applicable */}
+            {/* Revoked Notice */}
             {isRevoked && (
               <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-3 text-xs">
                 <XCircle className="w-5 h-5 text-rose-700 shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-1">
                   <span className="font-black text-rose-900">Document Caduc / Non Valide</span>
                   <p className="text-slate-700 leading-relaxed text-[11px]">
-                    Ce contrat de location a été résilié ou annulé conformément aux articles du bail et à la loi ivoirienne. Il n'a plus de valeur juridique active.
+                    Ce contrat de location a été résilié ou annulé conformément aux articles du bail et à la loi ivoirienne.
                   </p>
                 </div>
               </div>
@@ -271,7 +434,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                     : 'border-transparent text-slate-400 hover:text-slate-700'
                 }`}
               >
-                Historique des Versions & Avenants ({contractData.history?.length || 1})
+                Historique des Versions ({contractData.history?.length || 1})
               </button>
               {(contractData.relatedReceipts?.length || 0) > 0 && (
                 <button
@@ -290,24 +453,23 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
             {/* TAB CONTENT: DETAILS */}
             {selectedTab === 'details' && (
               <div className="flex flex-col gap-6 text-xs">
-                
-                {/* Identification des Parties (Anonymisées pour protection vie privée) */}
+                {/* Identification des Parties */}
                 <div className="flex flex-col gap-3">
                   <span className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
-                    Parties Contractantes (Identité vérifiée)
+                    Parties Contractantes (Identité certifiée)
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-extrabold uppercase text-slate-500">Bailleur</span>
                         <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                          ✓ Identité Vérifiée
+                          ✓ Vérifié
                         </span>
                       </div>
                       <span className="text-sm font-black text-slate-900">{contractData.parties.ownerName}</span>
                       <div className="flex items-center gap-1.5 text-slate-500 text-[11px] mt-1">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Signature : <strong>Vérifiée</strong> ({contractData.parties.ownerSignedAt})</span>
+                        <span>Signature : <strong>{contractData.parties.isOwnerSigned ? 'Vérifiée' : 'En attente'}</strong></span>
                       </div>
                     </div>
 
@@ -315,13 +477,13 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-extrabold uppercase text-slate-500">Locataire (Preneur)</span>
                         <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                          ✓ Identité Vérifiée
+                          ✓ Vérifié
                         </span>
                       </div>
                       <span className="text-sm font-black text-slate-900">{contractData.parties.tenantName}</span>
                       <div className="flex items-center gap-1.5 text-slate-500 text-[11px] mt-1">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Signature : <strong>Vérifiée</strong> ({contractData.parties.tenantSignedAt})</span>
+                        <span>Signature : <strong>{contractData.parties.isTenantSigned ? 'Vérifiée' : 'En attente'}</strong></span>
                       </div>
                     </div>
                   </div>
@@ -382,11 +544,10 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                     ✓ Conforme
                   </span>
                 </div>
-
               </div>
             )}
 
-            {/* TAB CONTENT: HISTORY & AVENANTS */}
+            {/* TAB CONTENT: HISTORY */}
             {selectedTab === 'history' && (
               <div className="flex flex-col gap-4 text-xs">
                 <span className="text-slate-500 text-[11px]">
@@ -412,7 +573,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
               </div>
             )}
 
-            {/* TAB CONTENT: RELATED RECEIPTS */}
+            {/* TAB CONTENT: RECEIPTS */}
             {selectedTab === 'receipts' && (
               <div className="flex flex-col gap-4 text-xs">
                 <span className="text-slate-500 text-[11px]">
@@ -456,12 +617,10 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
               </div>
             )}
 
-            {/* Footer Notice de confidentialité */}
             <div className="p-3 bg-slate-100 rounded-xl text-[10px] text-slate-500 text-center leading-relaxed">
               <strong>LocaTrust — Service Public de Contrôle & Conformité</strong><br />
               Ce service confirme l'authenticité juridique du document sans divulguer les données d'identité complètes, comptes bancaires ou numéros privés des parties.
             </div>
-
           </div>
         </main>
       </div>
@@ -472,7 +631,6 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
   if (type === 'recu' && receiptData) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-16">
-        {/* Header officiel */}
         <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 sm:px-8">
           <div className="max-w-4xl mx-auto flex items-center justify-between">
             <Logo size="md" variant="light" showSubtitle={true} />
@@ -494,7 +652,6 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
           )}
 
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xl flex flex-col gap-6">
-            
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-6">
               <div className="flex items-start gap-4">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-md shrink-0">
@@ -589,7 +746,6 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
             <div className="text-center text-[10px] text-slate-400">
               Token de sécurité : <code className="font-mono text-slate-500">{receiptData.token}</code>
             </div>
-
           </div>
         </main>
       </div>

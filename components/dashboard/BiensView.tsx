@@ -24,11 +24,15 @@ import {
 } from 'lucide-react';
 import { Property, PropertyType, PropertyStatus } from '@/types/database.types';
 import { formatFCFA } from '@/lib/utils';
-import { MOCK_PROPERTIES } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
+import { getProperties as fetchDbProperties } from '@/src/lib/db';
+import { softDeleteProperty } from '@/lib/supabase/services';
+import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 
 interface BiensViewProps {
   onOpenAddProperty: () => void;
   onSelectProperty?: (propertyId: string) => void;
+  isDemo?: boolean;
 }
 
 const PROPERTY_TYPES: { id: PropertyType | 'tous'; label: string }[] = [
@@ -53,7 +57,11 @@ export const BiensView: React.FC<BiensViewProps> = ({
   onOpenAddProperty,
   onSelectProperty,
 }) => {
-  const [properties, setProperties] = useState<Property[]>(MOCK_PROPERTIES);
+  const { user } = useAuth();
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const [activeTypeFilter, setActiveTypeFilter] = useState<string>('tous');
   const [activeStatusFilter, setActiveStatusFilter] = useState<string>('tous');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -61,6 +69,37 @@ export const BiensView: React.FC<BiensViewProps> = ({
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 6;
+
+  // Synchronisation avec la base de données Supabase
+  const loadPropertiesFromDb = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { data, error } = await fetchDbProperties(user?.id);
+      if (error) {
+        setLoadError("Impossible de récupérer la liste de vos biens immobiliers.");
+      } else {
+        setProperties(data || []);
+      }
+    } catch (err: any) {
+      setLoadError("Erreur réseau lors de la récupération des biens.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPropertiesFromDb();
+
+    const handleUpdate = () => {
+      loadPropertiesFromDb();
+    };
+
+    window.addEventListener('locatrust:properties-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:properties-updated', handleUpdate);
+    };
+  }, [user]);
 
   // Filter properties
   const filteredProperties = properties.filter((p) => {
@@ -76,30 +115,37 @@ export const BiensView: React.FC<BiensViewProps> = ({
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const matchTitle = p.title.toLowerCase().includes(q);
-      const matchCity = p.location?.city?.toLowerCase().includes(q) || false;
-      const matchCommune = p.location?.commune?.toLowerCase().includes(q) || false;
-      const matchQuartier = p.location?.quartier?.toLowerCase().includes(q) || false;
-      return matchTitle || matchCity || matchCommune || matchQuartier;
+      const matchTitle = (p.title || '').toLowerCase().includes(q);
+      const matchCity = (p.city || p.location?.city || '').toLowerCase().includes(q);
+      const matchCommune = (p.commune || p.location?.commune || '').toLowerCase().includes(q);
+      const matchQuartier = (p.quartier || p.location?.quartier || '').toLowerCase().includes(q);
+      const matchDesc = (p.description || '').toLowerCase().includes(q);
+      const matchType = (p.type || '').toLowerCase().includes(q);
+      return matchTitle || matchCity || matchCommune || matchQuartier || matchDesc || matchType;
     }
 
     return true;
   });
 
   // Handle Soft Delete
-  const handleSoftDelete = (id: string) => {
+  const handleSoftDelete = async (id: string) => {
     if (confirm('Voulez-vous placer ce bien dans la corbeille temporaire ?')) {
-      setProperties((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, deleted_at: new Date().toISOString() } : p))
-      );
+      await softDeleteProperty(id);
+      const updated = properties.map((p) => (p.id === id ? { ...p, deleted_at: new Date().toISOString() } : p));
+      setProperties(updated);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_properties', JSON.stringify(updated));
+      }
     }
   };
 
   // Handle Restore from Trash
   const handleRestore = (id: string) => {
-    setProperties((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, deleted_at: undefined } : p))
-    );
+    const updated = properties.map((p) => (p.id === id ? { ...p, deleted_at: undefined } : p));
+    setProperties(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_properties', JSON.stringify(updated));
+    }
   };
 
   // Status Badge Helper
@@ -242,8 +288,40 @@ export const BiensView: React.FC<BiensViewProps> = ({
         </select>
       </div>
 
-      {/* Main Grid View */}
-      {filteredProperties.length === 0 ? (
+      {/* ÉTATS : SKELETON LOADER, ERREUR, OU VIDE */}
+      {isLoading ? (
+        <PropertyGridSkeleton count={6} />
+      ) : loadError ? (
+        <div className="bg-rose-50 p-8 rounded-3xl border border-rose-200 text-center flex flex-col items-center gap-3">
+          <AlertCircle className="w-8 h-8 text-rose-600" />
+          <h4 className="text-sm font-black text-rose-900">Échec du chargement</h4>
+          <p className="text-xs text-rose-700">{loadError}</p>
+          <button
+            type="button"
+            onClick={loadPropertiesFromDb}
+            className="px-4 py-2 bg-rose-600 text-white text-xs font-bold rounded-xl"
+          >
+            Réessayer
+          </button>
+        </div>
+      ) : properties.length === 0 ? (
+        <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center flex flex-col items-center gap-3 shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+            <Building2 className="w-8 h-8" />
+          </div>
+          <h3 className="text-base font-black text-slate-800">Aucun bien immobilier enregistré</h3>
+          <p className="text-xs text-slate-500 max-w-md leading-relaxed font-medium">
+            Votre parc immobilier est actuellement vide. Cliquez sur le bouton ci-dessous pour ajouter votre premier bien conforme au Code de la Construction.
+          </p>
+          <button
+            type="button"
+            onClick={onOpenAddProperty}
+            className="mt-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md transition-all active:scale-95"
+          >
+            Ajouter mon premier bien
+          </button>
+        </div>
+      ) : filteredProperties.length === 0 ? (
         <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center flex flex-col items-center gap-3">
           <div className="w-14 h-14 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
             <Building2 className="w-7 h-7" />
@@ -454,14 +532,20 @@ export const BiensView: React.FC<BiensViewProps> = ({
               <div className="flex flex-col gap-2">
                 <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Galerie Photos & Médias</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  {selectedProperty.photos.map((p, idx) => (
-                    <img
-                      key={idx}
-                      src={p}
-                      alt={`Photo ${idx + 1}`}
-                      className="w-full h-28 object-cover rounded-xl border border-slate-200 hover:scale-105 transition-transform"
-                    />
-                  ))}
+                  {(selectedProperty.photos || []).length === 0 ? (
+                    <div className="col-span-full py-4 text-center text-xs text-slate-400 font-medium bg-slate-50 rounded-xl">
+                      Aucune photo additionnelle enregistrée pour ce bien.
+                    </div>
+                  ) : (
+                    (selectedProperty.photos || []).map((p, idx) => (
+                      <img
+                        key={idx}
+                        src={p}
+                        alt={`Photo ${idx + 1}`}
+                        className="w-full h-28 object-cover rounded-xl border border-slate-200 hover:scale-105 transition-transform"
+                      />
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -489,13 +573,13 @@ export const BiensView: React.FC<BiensViewProps> = ({
               <div className="p-4 rounded-2xl bg-blue-50/50 border border-blue-100 flex flex-col gap-2 text-xs">
                 <div className="flex items-center gap-2 text-blue-900 font-black">
                   <MapPin className="w-4 h-4 text-blue-600" />
-                  <span>Localisation enregistrée en base (auto-créée)</span>
+                  <span>Localisation enregistrée en base</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-700">
-                  <div><strong>Pays:</strong> {selectedProperty.location?.country}</div>
-                  <div><strong>Ville:</strong> {selectedProperty.location?.city}</div>
-                  <div><strong>Commune:</strong> {selectedProperty.location?.commune}</div>
-                  <div><strong>Quartier:</strong> {selectedProperty.location?.quartier}</div>
+                  <div><strong>Pays:</strong> {selectedProperty.location?.country || 'Côte d\'Ivoire'}</div>
+                  <div><strong>Ville:</strong> {selectedProperty.location?.city || selectedProperty.city || 'Abidjan'}</div>
+                  <div><strong>Commune:</strong> {selectedProperty.location?.commune || selectedProperty.commune || '—'}</div>
+                  <div><strong>Quartier:</strong> {selectedProperty.location?.quartier || selectedProperty.quartier || '—'}</div>
                 </div>
               </div>
 
@@ -503,12 +587,16 @@ export const BiensView: React.FC<BiensViewProps> = ({
               <div className="flex flex-col gap-2">
                 <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Équipements & Prestations</h4>
                 <div className="flex flex-wrap gap-2">
-                  {selectedProperty.equipments.map((eq, idx) => (
-                    <span key={idx} className="px-3 py-1 rounded-xl bg-slate-100 border text-slate-700 text-xs font-bold flex items-center gap-1.5">
-                      <Sparkles className="w-3 h-3 text-amber-500" />
-                      {eq}
-                    </span>
-                  ))}
+                  {(selectedProperty.equipments || []).length === 0 ? (
+                    <span className="text-xs text-slate-400 italic">Aucun équipement particulier spécifié.</span>
+                  ) : (
+                    (selectedProperty.equipments || []).map((eq, idx) => (
+                      <span key={idx} className="px-3 py-1 rounded-xl bg-slate-100 border text-slate-700 text-xs font-bold flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-amber-500" />
+                        {eq}
+                      </span>
+                    ))
+                  )}
                 </div>
               </div>
 

@@ -12,6 +12,7 @@ out/
 # Environment files
 .env.local
 .env.*.local
+.env
 
 # Logs
 npm-debug.log*
@@ -38,3 +39,5 @@ test_*.cjs
 test_*.js
 scratch_test.mjs
 find_bad_file.cjs
+dist/
+supabase/.temp/

@@ -19,36 +19,115 @@ import {
   MapPin,
   Sparkles,
   FileCheck,
-  MessageSquare
+  MessageSquare,
+  ShieldAlert,
+  ArrowRight,
+  Scale
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import jsPDF from 'jspdf';
 import confetti from 'canvas-confetti';
+import { createProperty } from '@/lib/supabase/services';
+import { useAuth } from '@/src/context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 // 1. Ajouter un bien Modal
 export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
+  const { profile } = useAuth();
+  const navigate = useNavigate();
+  const isVerified = profile?.verification_status === 'verifie';
+
+  const [title, setTitle] = useState<string>('');
   const [propertyType, setPropertyType] = useState<string>('appartement');
   const [customType, setCustomType] = useState<string>('');
+  const [usageDestination, setUsageDestination] = useState<string>('habitation');
+  const [authorizedActivity, setAuthorizedActivity] = useState<string>('');
+  const [ownerAuthorized, setOwnerAuthorized] = useState<boolean>(true);
   const [country, setCountry] = useState<string>("Côte d'Ivoire");
   const [city, setCity] = useState<string>('Abidjan');
   const [customCity, setCustomCity] = useState<string>('');
   const [commune, setCommune] = useState<string>('Cocody');
   const [customCommune, setCustomCommune] = useState<string>('');
   const [quartier, setQuartier] = useState<string>('');
+  const [rent, setRent] = useState<number>(250000);
+  const [caution, setCaution] = useState<number>(500000);
+  const [surface, setSurface] = useState<number>(75);
+  const [description, setDescription] = useState<string>('');
+  const [photosUrl, setPhotosUrl] = useState<string>('https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80');
   const [photosCount, setPhotosCount] = useState<number>(3);
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isVerified) {
+      setErrorMsg('⚠️ Publication non autorisée : votre compte propriétaire/agence doit être certifié par l\'administrateur avant de pouvoir publier une maison.');
+      return;
+    }
     if (!videoUrl.trim()) {
       setErrorMsg('⚠️ Une vidéo réelle du logement est obligatoire pour éviter les fausses annonces (Section 10).');
       return;
     }
     setErrorMsg('');
+    setLoading(true);
+
+    const finalType = propertyType === 'autre' ? (customType.trim() || 'Logement') : propertyType;
+    const finalCity = city === 'autre_ville' ? (customCity.trim() || 'Abidjan') : city;
+    const finalCommune = (commune === 'autre_commune' || city === 'autre_ville') ? (customCommune.trim() || 'Cocody') : commune;
+    const finalTitle = title.trim() || `${finalType.charAt(0).toUpperCase() + finalType.slice(1)} de standing - ${finalCommune}`;
+
+    const newPropPayload = {
+      title: finalTitle,
+      type: finalType,
+      usage_destination: usageDestination === 'habitation' ? ('habitation' as const) : ('professionnel' as const),
+      authorized_activity: usageDestination === 'habitation' ? undefined : (authorizedActivity.trim() || 'Activité professionnelle'),
+      owner_destination_authorized: ownerAuthorized,
+      country,
+      city: finalCity,
+      commune: finalCommune,
+      quartier: quartier.trim() || 'Centre',
+      surface: Number(surface) || 75,
+      rent: Number(rent) || 250000,
+      caution: Number(caution) || 500000,
+      description: description.trim(),
+      status: 'disponible',
+      photos: photosUrl.split(',').map(s => s.trim()).filter(Boolean),
+      videos: [videoUrl.trim()]
+    };
+
+    // 1. Sauvegarde dans Supabase
+    const { data: dbData, error: dbErr } = await createProperty(newPropPayload);
+    if (dbErr) {
+      console.warn('Notice Supabase createProperty:', dbErr);
+    }
+
+    // 2. Synchronisation locale immédiate
+    if (typeof window !== 'undefined') {
+      const existing = localStorage.getItem('locatrust_properties');
+      let list = [];
+      if (existing) {
+        try { list = JSON.parse(existing); } catch {}
+      }
+      const propToSave = dbData || {
+        ...newPropPayload,
+        id: 'prop_' + Date.now(),
+        created_at: new Date().toISOString(),
+        location: { city: finalCity, commune: finalCommune, quartier: quartier.trim() || 'Centre' },
+        pricing: { monthly_rent: Number(rent), deposit_months: Math.round(Number(caution) / Number(rent)) || 2 },
+        usage_destination: usageDestination === 'habitation' ? 'habitation' : 'professionnel',
+        authorized_activity: usageDestination === 'habitation' ? undefined : authorizedActivity.trim(),
+        owner_destination_authorized: ownerAuthorized
+      };
+      list.unshift(propToSave);
+      localStorage.setItem('locatrust_properties', JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: propToSave }));
+    }
+
+    setLoading(false);
     confetti({
       particleCount: 50,
       spread: 45,
@@ -59,7 +138,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
     setTimeout(() => {
       setIsSuccess(false);
       onClose();
-    }, 2000);
+    }, 1500);
   };
 
   return (
@@ -86,6 +165,46 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
           </div>
         )}
 
+        {!isVerified ? (
+          <div className="p-5 mb-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex flex-col gap-3 shadow-sm">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+              <span className="font-black text-sm">Vérification KYC requise pour publier</span>
+            </div>
+            <p className="font-medium text-amber-800 leading-relaxed">
+              Pour garantir la sécurité des locataires et éliminer les fausses annonces, la publication de logements est strictement réservée aux bailleurs et agences certifiés par l'administrateur.
+            </p>
+            <div className="text-[11px] font-bold text-amber-900 bg-white/70 p-2.5 rounded-xl border border-amber-200">
+              Statut de votre compte : {profile?.verification_status === 'en_attente' ? '⏳ Dossier en cours d\'examen par l\'administrateur' : profile?.verification_status === 'rejete' ? `❌ Dossier rejeté (${profile.rejection_reason || 'Document illisible'})` : '⚠️ Aucune pièce d\'identité soumise'}
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  navigate('/profile');
+                }}
+                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <span>Faire valider mon compte (KYC)</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs hover:bg-slate-200"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-3 mb-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>Compte Certifié par l'Administration — Publication autorisée</span>
+          </div>
+        )}
+
         {isSuccess ? (
           <div className="py-8 flex flex-col items-center justify-center gap-3 text-center animate-fadeIn">
             <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-inner">
@@ -103,6 +222,8 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               <input
                 type="text"
                 required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
                 placeholder="ex: Appartement 3 pièces standing à Cocody Riviera 3"
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
               />
@@ -114,7 +235,24 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
                 <label className="text-xs font-bold text-slate-700 block mb-1">Type de bien</label>
                 <select
                   value={propertyType}
-                  onChange={(e) => setPropertyType(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPropertyType(val);
+                    if (val === 'bureau') {
+                      setUsageDestination('bureau');
+                      if (!authorizedActivity) setAuthorizedActivity('Bureaux administratifs & commerciaux');
+                    } else if (val === 'magasin' || val === 'boutique') {
+                      setUsageDestination('boutique');
+                      if (!authorizedActivity) setAuthorizedActivity('Commerce et magasin de vente au détail');
+                    } else if (val === 'entrepot') {
+                      setUsageDestination('industriel');
+                      if (!authorizedActivity) setAuthorizedActivity('Entrepôt et stockage de marchandises');
+                    } else if (['appartement', 'maison', 'villa', 'studio', 'chambre-salon', 'entree-coucher', 'duplex'].includes(val)) {
+                      if (usageDestination === 'bureau' || usageDestination === 'boutique' || usageDestination === 'industriel') {
+                        setUsageDestination('habitation');
+                      }
+                    }
+                  }}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
                 >
                   <option value="appartement">Appartement</option>
@@ -167,7 +305,85 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               )}
             </div>
 
-            {/* LOCALITÉS SOUPLES : VILLE, COMMUNE, QUARTIER (Point 6) */}
+            {/* DESTINATION DU LOCAL (Classification juridique préparée en arrière-plan) */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Scale className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Destination d'usage du local</span>
+                </label>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  usageDestination === 'habitation' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                }`}>
+                  {usageDestination === 'habitation' ? 'Bail Habitation (Loi 2019-576)' : 'Bail Professionnel (OHADA AUDCG)'}
+                </span>
+              </div>
+
+              <select
+                value={usageDestination}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setUsageDestination(val);
+                  if (val === 'habitation') {
+                    setAuthorizedActivity('');
+                  } else if (!authorizedActivity) {
+                    if (val === 'bureau') setAuthorizedActivity('Bureaux administratifs & commerciaux');
+                    else if (val === 'boutique') setAuthorizedActivity('Commerce et vente au détail');
+                    else if (val === 'cabinet') setAuthorizedActivity('Cabinet professionnel / profession libérale');
+                    else if (val === 'atelier') setAuthorizedActivity('Atelier d\'artisanat');
+                    else if (val === 'industriel') setAuthorizedActivity('Activité industrielle et stockage');
+                    else setAuthorizedActivity('Activité professionnelle');
+                  }
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold bg-white focus:ring-2 focus:ring-blue-600 focus:outline-none"
+              >
+                <option value="habitation">Habitation (Logement principal)</option>
+                <option value="bureau">Bureau / Activité professionnelle</option>
+                <option value="boutique">Boutique / Magasin commercial</option>
+                <option value="cabinet">Cabinet / Profession libérale</option>
+                <option value="atelier">Atelier / Artisanat</option>
+                <option value="industriel">Activité industrielle / Entrepôt</option>
+                <option value="autre_pro">Autre activité professionnelle</option>
+              </select>
+
+              {usageDestination !== 'habitation' && (
+                <div className="flex flex-col gap-2 pt-1 border-t border-slate-200">
+                  <div>
+                    <label className="text-[11px] font-bold text-blue-900 block mb-1">
+                      Activité prévue autorisée dans les lieux :
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={authorizedActivity}
+                      onChange={(e) => setAuthorizedActivity(e.target.value)}
+                      placeholder="ex: Bureaux d'une société, Vente de vêtements, Cabinet dentaire..."
+                      className="w-full px-3 py-2 rounded-xl border border-blue-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer pt-0.5">
+                    <input
+                      type="checkbox"
+                      checked={ownerAuthorized}
+                      onChange={(e) => setOwnerAuthorized(e.target.checked)}
+                      className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+                    />
+                    <span className="text-[11px] font-bold text-slate-700">
+                      Le bailleur autorise expressément cette destination professionnelle (Art. 103 AUDCG)
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-500 italic">
+                {usageDestination === 'habitation'
+                  ? "• Bail d'habitation : Plafonnement légal de la caution à 2 mois (Loi 2019-576) & enregistrement fiscal DGI obligatoire."
+                  : "• Bail professionnel : Acte Uniforme OHADA AUDCG (liberté contractuelle des garanties & droit au renouvellement après 2 ans)."}
+              </p>
+            </div>
+
+            {/* LOCALITÉS SOUPLES : VILLE, COMMUNE, QUARTIER */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Ville</label>
@@ -250,7 +466,6 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
                 )}
               </div>
 
-
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Quartier</label>
                 <input
@@ -270,15 +485,23 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
                 <input
                   type="number"
                   required
+                  value={rent}
+                  onChange={(e) => {
+                    const r = Number(e.target.value);
+                    setRent(r);
+                    setCaution(r * 2);
+                  }}
                   placeholder="250000"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Caution (Max 2 mois FCFA)</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Caution (Max 2 mois Art. 414)</label>
                 <input
                   type="number"
                   required
+                  value={caution}
+                  onChange={(e) => setCaution(Number(e.target.value))}
                   placeholder="500000"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
                 />
@@ -294,7 +517,8 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               <input
                 type="text"
                 required
-                defaultValue="https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80"
+                value={photosUrl}
+                onChange={(e) => setPhotosUrl(e.target.value)}
                 placeholder="URLs ou photos réelles du bien (séparées par des virgules)"
                 className="w-full p-2.5 rounded-xl bg-white border border-blue-200 text-xs font-medium"
               />
@@ -317,6 +541,8 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               <label className="text-xs font-bold text-slate-700 block mb-1">Description & Équipements</label>
               <textarea
                 rows={3}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
                 placeholder="Climatisation, chauffe-eau, sécurité 24h/7, parking..."
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
               />
@@ -326,8 +552,18 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               <button type="button" onClick={onClose} className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100">
                 Annuler
               </button>
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-lg shadow-blue-600/30">
-                Publier le bien
+              <button 
+                type="submit" 
+                disabled={loading || !isVerified}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {loading ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : !isVerified ? (
+                  <span>🔒 Validation KYC requise pour publier</span>
+                ) : (
+                  <span>Publier le bien</span>
+                )}
               </button>
             </div>
           </form>
@@ -377,8 +613,8 @@ export const ConfirmPaymentModal: React.FC<{ isOpen: boolean; onClose: () => voi
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1">Locataire concerné</label>
             <select className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none">
-              <option>Kouadio Jean — Appartement 3 pièces Cocody (150 000 FCFA)</option>
-              <option>Awa Diallo — Studio Marcory Zone 4 (250 000 FCFA)</option>
+              <option>Candidat Locataire — Appartement 3 pièces Cocody (150 000 FCFA)</option>
+              <option>Locataire — Studio Marcory Zone 4 (250 000 FCFA)</option>
               <option>Marc Kouassi — Villa Bingerville (80 000 FCFA)</option>
             </select>
           </div>
@@ -450,7 +686,7 @@ export const SendReminderModal: React.FC<{ isOpen: boolean; onClose: () => void 
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1">Destinataire</label>
             <select className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none">
-              <option>Kouadio Jean (+225 05 67 89 45 12)</option>
+              <option>Candidat Locataire (+225 05 67 89 45 12)</option>
               <option>Marc Kouassi (+225 07 11 22 33 44)</option>
             </select>
           </div>
@@ -459,7 +695,7 @@ export const SendReminderModal: React.FC<{ isOpen: boolean; onClose: () => void 
             <label className="text-xs font-bold text-slate-700 block mb-1">Message de Relance</label>
             <textarea
               rows={4}
-              defaultValue="Bonjour M. Kouadio Jean, sauf erreur de notre part, le règlement de votre loyer du mois en cours (150 000 FCFA) est à échéance. Merci d'effectuer votre versement via LocaTrust Mobile Money."
+              defaultValue="Bonjour M. Candidat Locataire, sauf erreur de notre part, le règlement de votre loyer du mois en cours (150 000 FCFA) est à échéance. Merci d'effectuer votre versement via LocaTrust Mobile Money."
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
             />
           </div>
@@ -524,7 +760,7 @@ export const AddPaymentAccountModal: React.FC<{ isOpen: boolean; onClose: () => 
 
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1">Nom du Titulaire du Compte</label>
-            <input type="text" required defaultValue="Koffi N'Guessan" className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none" />
+            <input type="text" required defaultValue="" className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none" />
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-3 border-t">

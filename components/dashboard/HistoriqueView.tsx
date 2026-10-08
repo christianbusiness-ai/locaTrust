@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   Search,
@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Check,
   AlertCircle,
+  AlertTriangle,
   Calendar,
   Building2,
   ChevronRight,
@@ -22,15 +23,16 @@ import {
   QrCode,
   Sparkles,
   Phone,
-  Mail
+  Mail,
+  PenTool
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
-import { MOCK_USERS, MOCK_CONTRACTS, MOCK_RENT_PAYMENTS, MOCK_RECEIPTS } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
-import { PenTool } from 'lucide-react';
 
 interface TenantReceiptItem {
   id: string;
@@ -65,194 +67,15 @@ interface ComprehensiveTenant {
   receipts: TenantReceiptItem[];
 }
 
-const ALL_TENANTS_HISTORY: ComprehensiveTenant[] = [
-  // 1. M. Kouamé Patrice (Ancien locataire avec bail échu, caution restituée et historique complet des reçus)
-  {
-    id: 'usr_tenant_kouame',
-    full_name: 'Kouamé Patrice',
-    email: 'patrice.kouame@gmail.com',
-    phone: '+225 07 12 34 56 78',
-    avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=150&q=80',
-    verification_status: 'verifie',
-    property_title: 'Appartement 3 pièces Cocody Riviera',
-    property_address: 'Cocody Riviera 2, Immeuble Les Palmes',
-    contract_number: 'LT-2025-CI-000188',
-    contract_period: '01/01/2025 au 31/12/2025',
-    rent_amount: 400000,
-    caution_requested: 800000,
-    caution_paid: 800000,
-    caution_receipt_number: 'DEP-2025-CI-00090',
-    caution_status: 'restituee',
-    is_active: false,
-    ended_reason: 'Fin de contrat échue (non renouvelé)',
-    restitution_date: '05/01/2026',
-    receipts: [
-      {
-        id: 'rcp_k12',
-        receipt_number: 'REC-2025-001201',
-        target_month: 'Décembre 2025',
-        amount: 400000,
-        payment_method: 'Orange Money (+225 07 12 34 56 78)',
-        reference: 'OM-CI-99881122',
-        issued_date: '2025-12-03',
-        status: 'valide'
-      },
-      {
-        id: 'rcp_k11',
-        receipt_number: 'REC-2025-001102',
-        target_month: 'Novembre 2025',
-        amount: 400000,
-        payment_method: 'Wave CI',
-        reference: 'WAVE-CI-88771122',
-        issued_date: '2025-11-02',
-        status: 'valide'
-      },
-      {
-        id: 'rcp_k10',
-        receipt_number: 'REC-2025-001003',
-        target_month: 'Octobre 2025',
-        amount: 400000,
-        payment_method: 'Wave CI',
-        reference: 'WAVE-CI-77665544',
-        issued_date: '2025-10-01',
-        status: 'valide'
-      },
-      {
-        id: 'rcp_k09',
-        receipt_number: 'REC-2025-000904',
-        target_month: 'Septembre 2025',
-        amount: 400000,
-        payment_method: 'Orange Money',
-        reference: 'OM-CI-66554433',
-        issued_date: '2025-09-02',
-        status: 'valide'
-      }
-    ]
-  },
-  {
-    id: 'usr_tenant_1',
-    full_name: "Koffi N'Guessan",
-    email: 'koffi.nguessan@locatrust.ci',
-    phone: '+225 07 08 09 10 11',
-    avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-    verification_status: 'verifie',
-    property_title: 'Appartement 3 pièces moderne',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    contract_number: 'LT-2026-CI-000492',
-    contract_period: '01/01/2026 au 31/12/2026',
-    rent_amount: 450000,
-    caution_requested: 900000,
-    caution_paid: 900000,
-    caution_receipt_number: 'DEP-2026-CI-00109',
-    caution_status: 'totalement_payee',
-    is_active: true,
-    receipts: [
-      {
-        id: 'rcp_101',
-        receipt_number: 'REC-2026-000981',
-        target_month: 'Septembre 2026',
-        amount: 450000,
-        payment_method: 'Orange Money',
-        reference: 'OM-225-88492019',
-        issued_date: '2026-09-02',
-        status: 'valide'
-      },
-      {
-        id: 'rcp_102',
-        receipt_number: 'REC-2026-000980',
-        target_month: 'Août 2026',
-        amount: 450000,
-        payment_method: 'Wave CI',
-        reference: 'WAVE-CI-77382109',
-        issued_date: '2026-08-03',
-        status: 'envoye'
-      },
-      {
-        id: 'rcp_103',
-        receipt_number: 'REC-2026-000979',
-        target_month: 'Juillet 2026',
-        amount: 450000,
-        payment_method: 'MTN MoMo',
-        reference: 'MTN-CI-6612091',
-        issued_date: '2026-07-02',
-        status: 'envoye'
-      }
-    ]
-  },
-  {
-    id: 'usr_tenant_2',
-    full_name: 'Amina Diabaté',
-    email: 'amina.diabate@gmail.com',
-    phone: '+225 05 55 66 77 88',
-    avatar_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-    verification_status: 'verifie',
-    property_title: 'Villa 4 pièces Riviera M\'Badon',
-    property_address: 'Riviera M\'Badon, Cocody',
-    contract_number: 'LT-2026-CI-000781',
-    contract_period: '01/05/2026 au 30/04/2027',
-    rent_amount: 650000,
-    caution_requested: 1300000,
-    caution_paid: 650000,
-    caution_receipt_number: 'DEP-2026-CI-00441',
-    caution_status: 'partiellement_payee',
-    receipts: [
-      {
-        id: 'rcp_201',
-        receipt_number: 'REC-2026-000982',
-        target_month: 'Septembre 2026',
-        amount: 650000,
-        payment_method: 'Wave CI',
-        reference: 'WAVE-CI-99881122',
-        issued_date: '2026-09-01',
-        status: 'valide'
-      },
-      {
-        id: 'rcp_202',
-        receipt_number: 'REC-2026-000983',
-        target_month: 'Août 2026',
-        amount: 650000,
-        payment_method: 'Orange Money',
-        reference: 'OM-CI-33441199',
-        issued_date: '2026-08-04',
-        status: 'envoye'
-      }
-    ]
-  },
-  {
-    id: 'usr_tenant_3',
-    full_name: 'Bamba Moussa',
-    email: 'bamba.moussa@yahoo.fr',
-    phone: '+225 01 22 33 44 55',
-    avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-    verification_status: 'verifie',
-    property_title: 'Appartement 2 pièces Yopougon',
-    property_address: 'Andokoi, Yopougon',
-    contract_number: 'LT-2026-CI-000556',
-    contract_period: '20/05/2026 au 19/05/2027',
-    rent_amount: 180000,
-    caution_requested: 360000,
-    caution_paid: 360000,
-    caution_receipt_number: 'DEP-2026-CI-00332',
-    caution_status: 'totalement_payee',
-    receipts: [
-      {
-        id: 'rcp_301',
-        receipt_number: 'REC-2026-000950',
-        target_month: 'Août 2026',
-        amount: 180000,
-        payment_method: 'Wave CI',
-        reference: 'WAVE-CI-11223344',
-        issued_date: '2026-08-02',
-        status: 'envoye'
-      }
-    ]
-  }
-];
-
 export const HistoriqueView: React.FC = () => {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'locataires' | 'contrats'>('locataires');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [tenantsHistory, setTenantsHistory] = useState<ComprehensiveTenant[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // Selected Tenant for Receipt Modal
   const [selectedTenant, setSelectedTenant] = useState<ComprehensiveTenant | null>(null);
 
@@ -262,19 +85,80 @@ export const HistoriqueView: React.FC = () => {
   // Selected Contract Number for Contract Detail View
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
 
-  const filteredTenants = ALL_TENANTS_HISTORY.filter(
+  const loadHistory = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { data: dbContracts, error: cErr } = await supabase
+        .from('contracts')
+        .select('*, property:properties(*), tenant:users!tenant_id(*)')
+        .order('created_at', { ascending: false });
+
+      const finalContracts = cErr ? [] : (dbContracts || []);
+      setContracts(finalContracts);
+
+      const { data: dbReceipts } = await supabase
+        .from('receipts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      const mappedTenants: ComprehensiveTenant[] = finalContracts.map((c: any) => {
+        const cReceipts = (dbReceipts || []).filter((r: any) => r.contract_id === c.id);
+        return {
+          id: c.tenant_id || c.id,
+          full_name: c.tenant?.full_name || 'Locataire',
+          email: c.tenant?.email || '',
+          phone: c.tenant?.phone || '',
+          avatar_url: c.tenant?.avatar_url || '',
+          verification_status: 'verifie',
+          property_title: c.property?.title || 'Logement',
+          property_address: c.property?.address || 'Abidjan',
+          contract_number: c.contract_number || 'LT-2026',
+          contract_period: c.start_date ? `Depuis le ${new Date(c.start_date).toLocaleDateString('fr-FR')}` : 'En cours',
+          rent_amount: Number(c.rent_amount) || 0,
+          caution_requested: Number(c.caution_amount) || 0,
+          caution_paid: Number(c.caution_amount) || 0,
+          caution_receipt_number: `CAUT-${(c.contract_number || '').replace('LT-', '')}`,
+          caution_status: 'totalement_payee',
+          is_active: c.status === 'actif',
+          receipts: cReceipts.map((r: any) => ({
+            id: r.id,
+            receipt_number: r.receipt_number || `REC-${r.id.slice(0, 8)}`,
+            target_month: r.period_covered || 'Mois réglé',
+            amount: Number(r.amount) || 0,
+            payment_method: r.payment_method || 'Mobile Money',
+            reference: r.token || r.id.slice(0, 10),
+            issued_date: new Date(r.created_at || Date.now()).toLocaleDateString('fr-FR'),
+            status: 'valide'
+          }))
+        };
+      });
+      setTenantsHistory(mappedTenants);
+    } catch (err: any) {
+      setLoadError(err?.message || "Erreur de chargement de l'historique.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadHistory();
+  }, [user]);
+
+  const filteredTenants = tenantsHistory.filter(
     (t) =>
       t.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.phone.includes(searchQuery) ||
-      t.contract_number.toLowerCase().includes(searchQuery.toLowerCase())
+      t.contract_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (t.property_title || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const filteredContracts = MOCK_CONTRACTS.filter(
+  const filteredContracts = contracts.filter(
     (c) =>
-      c.contract_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.property?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.tenant?.full_name?.toLowerCase().includes(searchQuery.toLowerCase())
+      (c.contract_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (c.property?.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (c.tenant?.full_name || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleResendReceipt = (receiptNumber: string, tenantName: string) => {
@@ -297,7 +181,7 @@ export const HistoriqueView: React.FC = () => {
       durationMonths: 12,
       leaseStartDate: '01/01/2026',
       leaseEndDate: '31/12/2026',
-      ownerName: "Koffi N'Guessan",
+      ownerName: user?.user_metadata?.full_name || "Bailleur",
       ownerCni: 'CI987654321',
       ownerPhone: '05 05 43 21 00',
       tenantName: tenant.full_name,
@@ -353,7 +237,7 @@ export const HistoriqueView: React.FC = () => {
           }`}
         >
           <Users className="w-4 h-4" />
-          <span>Historique des Locataires ({ALL_TENANTS_HISTORY.length})</span>
+          <span>Historique des Locataires ({tenantsHistory.length})</span>
         </button>
 
         <button
@@ -365,7 +249,7 @@ export const HistoriqueView: React.FC = () => {
           }`}
         >
           <FileText className="w-4 h-4" />
-          <span>Historique des Contrats de Bail ({MOCK_CONTRACTS.length})</span>
+          <span>Historique des Contrats de Bail ({contracts.length})</span>
         </button>
       </div>
 
@@ -390,7 +274,45 @@ export const HistoriqueView: React.FC = () => {
       {/* TAB 1: HISTORIQUE GÉNÉRAL PAR PERSONNE */}
       {activeTab === 'locataires' && (
         <div className="flex flex-col gap-3">
-          {filteredTenants.map((t) => (
+          {isLoading && (
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+              <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-slate-700 font-bold text-sm">Chargement de l'historique locatif...</p>
+              <p className="text-slate-400 text-xs mt-1">Synchronisation sécurisée avec Supabase</p>
+            </div>
+          )}
+
+          {!isLoading && loadError && (
+            <div className="p-8 text-center bg-rose-50 border border-rose-200 rounded-2xl flex flex-col items-center justify-center">
+              <AlertTriangle className="w-10 h-10 text-rose-500 mb-3" />
+              <h3 className="text-slate-900 font-bold text-base">Impossible de charger l'historique</h3>
+              <p className="text-slate-600 text-xs mt-1 max-w-md">{loadError}</p>
+              <button
+                onClick={loadHistory}
+                className="mt-4 px-4 py-2 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer"
+              >
+                Réessayer
+              </button>
+            </div>
+          )}
+
+          {!isLoading && !loadError && filteredTenants.length === 0 && (
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+              <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mb-3">
+                <Users className="w-6 h-6" />
+              </div>
+              <h3 className="text-slate-800 font-bold text-base">
+                {searchQuery ? "Aucun locataire trouvé" : "Aucun historique locataire pour le moment"}
+              </h3>
+              <p className="text-slate-500 text-xs mt-1 max-w-sm">
+                {searchQuery
+                  ? "Aucun dossier ne correspond à votre recherche. Essayez avec un autre nom ou numéro."
+                  : "Dès qu'un bail est conclu avec un preneur, son historique complet apparaîtra ici."}
+              </p>
+            </div>
+          )}
+
+          {!isLoading && !loadError && filteredTenants.map((t) => (
             <div
               key={t.id}
               className={`bg-white dark:bg-slate-900 rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${
@@ -523,7 +445,52 @@ export const HistoriqueView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {filteredContracts.map((c) => (
+                {isLoading && (
+                  <tr>
+                    <td colSpan={6} className="p-12 text-center">
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
+                        <span className="text-slate-700 font-bold text-xs">Chargement des contrats de bail...</span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
+                {!isLoading && loadError && (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center bg-rose-50/50">
+                      <div className="flex flex-col items-center justify-center">
+                        <AlertTriangle className="w-8 h-8 text-rose-500 mb-2" />
+                        <span className="text-slate-800 font-bold text-xs">{loadError}</span>
+                        <button onClick={loadHistory} className="mt-3 px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer">
+                          Réessayer
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
+                {!isLoading && !loadError && filteredContracts.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-12 text-center">
+                      <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
+                          <FileText className="w-6 h-6" />
+                        </div>
+                        <span className="text-slate-800 font-bold text-sm">
+                          {searchQuery ? "Aucun contrat trouvé" : "Aucun contrat de bail enregistré pour le moment"}
+                        </span>
+                        <p className="text-slate-400 text-xs mt-1 text-center">
+                          {searchQuery
+                            ? "Aucun document ne correspond à votre recherche."
+                            : "Dès qu'un bail est finalisé, il sera archivé ici avec son certificat officiel et son QR Code."}
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
+                {!isLoading && !loadError && filteredContracts.map((c) => (
                   <tr
                     key={c.id}
                     onClick={() => setSelectedContractId(c.contract_number)}
@@ -547,8 +514,8 @@ export const HistoriqueView: React.FC = () => {
 
                     <td className="p-4">
                       <div className="flex flex-col">
-                        <span className="font-bold text-slate-900">{c.tenant?.full_name || 'Koffi N\'Guessan'}</span>
-                        <span className="text-[11px] text-slate-400">{c.tenant?.phone || '+225 07 08 09 10 11'}</span>
+                        <span className="font-bold text-slate-900">{c.tenant?.full_name || 'Locataire'}</span>
+                        <span className="text-[11px] text-slate-400">{c.tenant?.phone || ''}</span>
                       </div>
                     </td>
 
@@ -831,7 +798,7 @@ export const HistoriqueView: React.FC = () => {
                   <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du propriétaire</span>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Nom et prénom :</span>
-                    <strong className="text-slate-900">Koffi N'Guessan</strong>
+                    <strong className="text-slate-900">Bailleur</strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">CNI :</span>
@@ -950,7 +917,7 @@ export const HistoriqueView: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  <span className="font-bold text-slate-800 text-[10px]">Koffi N'Guessan</span>
+                  <span className="font-bold text-slate-800 text-[10px]">Bailleur</span>
                 </div>
 
                 {/* Locataire Signature */}
@@ -1042,7 +1009,7 @@ export const HistoriqueView: React.FC = () => {
             }
             setActiveSigningParty(null);
           }}
-          signerName={activeSigningParty === 'proprietaire' ? "Koffi N'Guessan" : (previewReceipt?.tenant?.full_name || "Kouadio Jean")}
+          signerName={activeSigningParty === 'proprietaire' ? "Bailleur" : (previewReceipt?.tenant?.full_name || "Locataire")}
           signerRole={activeSigningParty}
           documentTitle="Reçu de Paiement Officiel"
           documentNumber={previewReceipt?.receipt.receipt_number || 'REC-2026-000981'}

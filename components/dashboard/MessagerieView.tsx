@@ -55,19 +55,70 @@ import {
 } from '@/lib/messagingStore';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
+import { useAuth } from '@/src/context/AuthContext';
 
 interface MessagerieViewProps {
   userRole?: 'proprietaire' | 'locataire' | 'agence';
 }
 
 export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'proprietaire' }) => {
-  const roleContacts = React.useMemo(() => {
-    if (userRole === 'locataire') return TENANT_CHAT_CONTACTS;
-    if (userRole === 'agence') return AGENCY_CHAT_CONTACTS;
-    return OWNER_CHAT_CONTACTS;
-  }, [userRole]);
+  const { user, profile } = useAuth();
+  const currentUserId = user?.id || (userRole === 'locataire' ? 'usr_tenant' : userRole === 'agence' ? 'usr_agency' : 'usr_owner');
 
-  const currentUserId = userRole === 'locataire' ? 'usr_tenant_1' : userRole === 'agence' ? 'usr_agency_1' : 'usr_owner_1';
+  const roleContacts = React.useMemo(() => {
+    const list: ChatContact[] = [
+      {
+        id: 'usr_support',
+        name: 'Support LocaTrust',
+        phone: '+225 25 20 00 11 22',
+        role: 'Assistance Client 24/7',
+        propertyTitle: 'Support Technique & Juridique',
+        avatar: '',
+        online: true
+      }
+    ];
+
+    if (typeof window !== 'undefined') {
+      try {
+        const appsRaw = localStorage.getItem('locatrust_rental_applications');
+        if (appsRaw) {
+          const apps = JSON.parse(appsRaw);
+          if (Array.isArray(apps)) {
+            apps.forEach((app: any) => {
+              if (userRole === 'locataire') {
+                const ownerName = app.owner_name || 'Bailleur Propriétaire';
+                if (!list.some((c) => c.name === ownerName)) {
+                  list.push({
+                    id: `owner_${app.property_id || app.id}`,
+                    name: ownerName,
+                    phone: app.owner_phone || '+225 07 00 00 00 00',
+                    role: 'Propriétaire Bailleur',
+                    propertyTitle: app.property_title || 'Logement',
+                    avatar: app.owner_avatar || '',
+                    online: true
+                  });
+                }
+              } else {
+                if (app.tenant_name && !list.some((c) => c.id === `tenant_${app.id}`)) {
+                  list.push({
+                    id: `tenant_${app.id}`,
+                    name: app.tenant_name,
+                    phone: app.tenant_phone || '+225 05 00 00 00 00',
+                    role: 'Candidat Locataire',
+                    propertyTitle: app.property_title || 'Bien immobilier',
+                    avatar: app.tenant_avatar || '',
+                    online: true
+                  });
+                }
+              }
+            });
+          }
+        }
+      } catch (e) {}
+    }
+
+    return list;
+  }, [userRole]);
 
   const [selectedContactId, setSelectedContactId] = useState<string>(() => roleContacts[0]?.id || 'usr_tenant_1');
   const [inputMessage, setInputMessage] = useState<string>('');
@@ -561,47 +612,26 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Handle Send Message (with interactive reply)
   const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() || !activeContact) return;
 
     const sentText = inputMessage.trim();
     sendChatMessage(currentUserId, activeContact.id, sentText);
     setInputMessage('');
     refreshMessages();
 
-    // Auto reply simulation after 1.4s
-    setIsTyping(true);
-    setTimeout(() => {
-      setIsTyping(false);
-      let replyText = "Bien reçu, je vous remercie pour votre message !";
-      if (userRole === 'locataire') {
-        if (activeContact.id === 'usr_owner_1') {
-          replyText = "Bonjour M. Kouadio ! J'ai bien reçu votre message. Je m'en occupe et je reviens vers vous dès aujourd'hui.";
-        } else if (activeContact.id === 'usr_agency_1') {
-          replyText = "Bonjour M. Kouadio, l'agence Immobilière du Golf a bien enregistré votre message. Notre gestionnaire vous recontacte rapidement.";
-        } else if (activeContact.id === 'usr_support') {
-          replyText = "Bonjour M. Kouadio, le support technique LocaTrust a bien pris en compte votre demande.";
-        }
-      } else if (userRole === 'agence') {
-        if (activeContact.id === 'usr_owner_1') {
-          replyText = "Bien reçu cher partenaire, nous validons les éléments pour vos biens.";
-        } else {
-          replyText = "Bonjour, bien reçu votre message. L'agence reste à votre disposition.";
-        }
-      } else {
-        if (activeContact.id === 'usr_tenant_1') {
-          replyText = "Parfait M. N'Guessan ! J'ai bien noté. Merci pour votre disponibilité et votre réactivité.";
-        } else if (activeContact.id === 'usr_tenant_2') {
-          replyText = "C'est très bien noté M. N'Guessan, je serai présente à l'heure convenue pour la visite. Bonne journée !";
-        } else if (activeContact.id === 'usr_tenant_3') {
-          replyText = "Entendu, merci pour la prise en charge rapide de la serrure.";
-        } else if (activeContact.id === 'usr_agency_1') {
-          replyText = "Bien reçu M. N'Guessan. Nous traitons votre dossier d'agence en priorité.";
-        }
-      }
-
-      sendChatMessage(activeContact.id, currentUserId, replyText);
-      refreshMessages();
-    }, 1400);
+    // Réponse d'accueil de l'assistance Support LocaTrust
+    if (activeContact.id === 'usr_support') {
+      setIsTyping(true);
+      setTimeout(() => {
+        setIsTyping(false);
+        sendChatMessage(
+          activeContact.id,
+          currentUserId,
+          "Bonjour ! Notre équipe d'assistance et support juridique LocaTrust a bien pris en compte votre message. Nous vous répondrons dans les plus brefs délais."
+        );
+        refreshMessages();
+      }, 1000);
+    }
   };
 
   // Confirm Signature for either contract or receipt
@@ -871,12 +901,26 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
           {/* Messages Feed (Independent Scroll Container) */}
           <div className="flex-1 p-4 sm:p-6 flex flex-col gap-3.5 overflow-y-auto bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]">
-            {/* Date Separator */}
-            <div className="flex items-center justify-center my-1">
-              <span className="px-3 py-1 rounded-full bg-white/90 dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                Aujourd'hui
-              </span>
-            </div>
+            {currentConversationMessages.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center my-auto">
+                <div className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 flex items-center justify-center mb-2 shadow-sm">
+                  <MessageSquare className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Aucun message pour le moment</span>
+                <span className="text-[11px] text-slate-500 max-w-xs mt-0.5">
+                  Écrivez votre message ci-dessous pour échanger avec {activeContact?.name || 'votre correspondant'}.
+                </span>
+              </div>
+            ) : (
+              <>
+                {/* Date Separator */}
+                <div className="flex items-center justify-center my-1">
+                  <span className="px-3 py-1 rounded-full bg-white/90 dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                    Aujourd'hui
+                  </span>
+                </div>
+              </>
+            )}
 
             {currentConversationMessages.map((m) => {
               const isMe = m.sender_id === currentUserId;
@@ -1133,7 +1177,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                 rent: m.contract!.rentAmount,
                                 cautionMonths: 2,
                                 chargesAmount: 5000,
-                                dueDay: 5
+                                dueDay: 5,
+                                leaseType: (m.contract as any)?.usage_destination || 'habitation',
+                                usageDestination: (m.contract as any)?.usage_destination || 'habitation',
+                                authorizedActivity: (m.contract as any)?.authorized_activity || ''
                               });
                             }}
                             className="py-2 px-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95"
@@ -1224,7 +1271,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                   cautionAmount: 150000,
                                   durationMonths: 12,
                                   startDate: '01/10/2026',
-                                  ownerName: "Koffi N'Guessan",
+                                  ownerName: user?.user_metadata?.full_name || "Bailleur",
                                   tenantName: activeContact.name,
                                   ownerSigned: true,
                                   tenantSigned: false
@@ -1493,7 +1540,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     rent: previewingContract.rentAmount,
                     cautionMonths: 2,
                     chargesAmount: 5000,
-                    dueDay: 5
+                    dueDay: 5,
+                    leaseType: (previewingContract as any)?.usage_destination || 'habitation',
+                    usageDestination: (previewingContract as any)?.usage_destination || 'habitation',
+                    authorizedActivity: (previewingContract as any)?.authorized_activity || ''
                   });
                 }}
                 className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
@@ -1659,8 +1709,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         onConfirmSignature={handleConfirmSignature}
         signerName={
           signingTarget?.role === 'proprietaire'
-            ? "Koffi N'Guessan"
-            : (activeContact.name || "Kouadio Jean")
+            ? (user?.user_metadata?.full_name || "Bailleur")
+            : (activeContact.name || "Locataire")
         }
         signerRole={signingTarget?.role || 'locataire'}
         documentTitle={

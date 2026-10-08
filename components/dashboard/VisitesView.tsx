@@ -33,50 +33,7 @@ export interface VisitRequest {
   status: 'en_attente' | 'acceptee' | 'refusee' | 'visite_programmee' | 'visite_effectuee' | 'annulee';
 }
 
-const INITIAL_VISITS: VisitRequest[] = [
-  {
-    id: 'vis_1',
-    tenant_name: 'Amina Diabaté',
-    tenant_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 05 55 66 77 88',
-    tenant_email: 'amina.diabate@gmail.com',
-    property_title: 'Villa 4 pièces Riviera M\'Badon',
-    property_address: 'Riviera M\'Badon, Cocody - Abidjan',
-    request_date: '24/09/2026',
-    preferred_date: '28/09/2026',
-    preferred_time: '15:00',
-    comment: 'Bonjour, je suis très intéressée par la villa. Je suis disponible samedi après-midi pour la visite avec mon conjoint.',
-    status: 'en_attente'
-  },
-  {
-    id: 'vis_2',
-    tenant_name: 'Kouadio Jean',
-    tenant_avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 05 67 89 45 12',
-    tenant_email: 'kouadio.jean@email.com',
-    property_title: 'Appartement 3 pièces moderne à Cocody Riviera',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    request_date: '22/09/2026',
-    preferred_date: '26/09/2026',
-    preferred_time: '10:30',
-    comment: 'Disponible en matinée pour visiter l\'appartement et vérifier les équipements.',
-    status: 'visite_programmee'
-  },
-  {
-    id: 'vis_3',
-    tenant_name: 'Bamba Moussa',
-    tenant_avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 01 22 33 44 55',
-    tenant_email: 'bamba.moussa@yahoo.fr',
-    property_title: 'Studio meublé Marcory Zone 4',
-    property_address: 'Marcory Zone 4, Abidjan',
-    request_date: '18/09/2026',
-    preferred_date: '20/09/2026',
-    preferred_time: '16:00',
-    comment: 'Visite effectuée. Le bien correspond à mes critères.',
-    status: 'visite_effectuee'
-  }
-];
+const INITIAL_VISITS: VisitRequest[] = [];
 
 interface VisitesViewProps {
   onOpenMessages?: (tenantId?: string) => void;

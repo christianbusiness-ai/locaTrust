@@ -20,7 +20,7 @@ export type LeaseType = 'habitation' | 'professionnel';
 
 export type ClauseSourceParty = 'proprietaire' | 'locataire' | 'logement' | 'financier';
 
-export type AnalysisSeverity = 'conforme' | 'a_verifier' | 'non_conforme';
+export type AnalysisSeverity = 'conforme' | 'information' | 'avertissement' | 'non_conforme' | 'a_verifier';
 
 export interface LegalReference {
   law: string;
@@ -36,6 +36,7 @@ export interface AnalyzedClauseItem {
   category: string;
   categoryLabel: string;
   status: AnalysisSeverity;
+  alertLevel?: 1 | 2 | 3;
   title: string;
   explanation: string;
   legalBasis: LegalReference;
@@ -62,7 +63,9 @@ export interface AnomalyReportItem {
   problem: string;
   legalBasisText: string;
   legalReference: string;
-  severity: 'bloquante' | 'a_verifier';
+  severity: 'bloquante' | 'a_verifier' | 'information' | 'avertissement' | 'non_conforme';
+  alertLevel?: 1 | 2 | 3;
+  alertLevelLabel?: 'NIVEAU 1 — INFORMATION' | 'NIVEAU 2 — AVERTISSEMENT' | 'NIVEAU 3 — NON-CONFORMITÉ';
   recommendedAction: string;
   recommendedCorrection?: string;
   understoodMeaning?: string;
@@ -77,9 +80,13 @@ export interface LegalAnalysisReport {
   blockingCount: number;
   toVerifyCount: number;
   compliantCount: number;
+  informationCount?: number;
+  warningCount?: number;
+  nonConformityCount?: number;
   legalRegimeLabel: string;
   applicableSources: string[];
   anomalies: AnomalyReportItem[];
+  legalNotice?: string;
   canContinue: boolean;
   globalStatus: 'conforme' | 'incomplet';
 }
@@ -321,6 +328,173 @@ function analyzeSingleWrittenClause(
   const isHabitation = leaseType === 'habitation';
 
   // --------------------------------------------------------------------------
+  // DOMAINE 0A : DÉTECTION DE TEXTES JURIDIQUES ABROGÉS (LOI N° 2018-575)
+  // --------------------------------------------------------------------------
+  const mentionsObsolete2018Law =
+    /(?:2018\s*[-–]\s*575|loi\s*(?:n[°o]?)?\s*2018|loi\s*du\s*13\s*juin\s*2018)/.test(norm);
+
+  if (mentionsObsolete2018Law) {
+    return {
+      id: `issue_obsolete_law_${lineIndex}`,
+      rawText: cleaned,
+      sourceParty,
+      category: 'resiliation',
+      categoryLabel: 'Conformité légale & Textes en vigueur',
+      status: 'avertissement',
+      alertLevel: 2,
+      title: 'Référence à un texte juridique obsolète / abrogé (Loi n° 2018-575)',
+      understoodMeaning: 'Citation de l\'ancienne loi ivoirienne de 2018 sur le bail d\'habitation.',
+      explanation:
+        'La Loi n° 2018-575 du 13 juin 2018 relative au bail à usage d\'habitation a été expressément abrogée et remplacée par la Loi n° 2019-576 du 26 juin 2019 instituant le Code de la Construction et de l\'Habitat. Il est impératif de se référer exclusivement aux textes actuellement en vigueur.',
+      legalBasis: {
+        law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
+        article: 'Sous-titre Bail d\'habitation (Loi actuelle en vigueur)',
+        sourceHierarchy: 'Droit Positif Ivoirien en Vigueur',
+        verified: true
+      },
+      recommendedAction: 'Remplacer la mention obsolète par la référence à la Loi n° 2019-576 du 26 juin 2019.',
+      proposedCorrection: 'Le contrat est expressément soumis aux dispositions légales en vigueur de la Loi n° 2019-576 du 26 juin 2019.',
+      reformulatedText: 'Le présent contrat est conclu sous l\'empire des dispositions en vigueur de la Loi n° 2019-576 instituant le Code de la Construction et de l\'Habitat.',
+      fieldSource,
+      lineIndex
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // DOMAINE 0B : INCOMPATIBILITÉ DE DESTINATION (USAGE COMMERCIAL EN HABITATION - ART. 410)
+  // --------------------------------------------------------------------------
+  if (isHabitation) {
+    const mentionsProfessionalActivity =
+      /(?:bureau|bureaux|commerce|commercial|boutique|magasin|cabinet medical|cabinet dentaire|cabinet d avocat|atelier|artisan|artisanal|activite industrielle|societe|siege social|activite lucrative|vente au detail|stockage de marchandise|salle de sport commerciale)/.test(norm);
+
+    if (mentionsProfessionalActivity) {
+      return {
+        id: `issue_destination_mismatch_${lineIndex}`,
+        rawText: cleaned,
+        sourceParty,
+        category: 'regles_serenite',
+        categoryLabel: 'Destination contractuelle du local',
+        status: 'non_conforme',
+        alertLevel: 3,
+        title: 'Destination professionnelle incompatible avec le bail d\'habitation (Art. 410)',
+        understoodMeaning: 'Affectation des locaux à une activité professionnelle ou commerciale sous contrat de bail d\'habitation.',
+        explanation:
+          'L\'Article 410 du Code de la Construction et de l\'Habitat exclut formellement les immeubles affectés à un usage commercial, administratif, industriel, artisanal ou aux professions libérales du régime du bail d\'habitation. Ce bail doit obligatoirement être régi par le Bail à Usage Professionnel de l\'OHADA (AUDCG).',
+        legalBasis: {
+          law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
+          article: 'Article 410 (Exclusions d\'ordre public du bail d\'habitation)',
+          sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
+          verified: true
+        },
+        recommendedAction: 'Requalifier le contrat en Bail à Usage Professionnel (Acte Uniforme OHADA AUDCG).',
+        proposedCorrection: 'Conclure un bail à usage professionnel conformément aux dispositions de l\'AUDCG OHADA.',
+        reformulatedText: 'Le local est affecté à un usage professionnel conformément à l\'Acte Uniforme OHADA portant sur le Droit Commercial Général.',
+        fieldSource,
+        lineIndex
+      };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // DOMAINE 0C : BAIL PROFESSIONNEL — DROIT D'ORDRE PUBLIC AU RENOUVELLEMENT (ART. 123 & 134 OHADA)
+  // --------------------------------------------------------------------------
+  if (!isHabitation) {
+    const deniesRenewal =
+      /(?:aucun droit au renouvellement|pas de renouvellement|renonciation au renouvellement|renonce au renouvellement|ne pourra pas renouveler|interdit de renouveler|sans possibilite de renouvellement|aucun renouvellement)/.test(norm);
+
+    if (deniesRenewal) {
+      return {
+        id: `issue_ohada_renewal_${lineIndex}`,
+        rawText: cleaned,
+        sourceParty: 'proprietaire',
+        category: 'resiliation',
+        categoryLabel: 'Durée et résiliation',
+        status: 'non_conforme',
+        alertLevel: 3,
+        title: 'Suppression illégale du droit au renouvellement du bail commercial (Art. 123 AUDCG)',
+        understoodMeaning: 'Clause supprimant ou interdisant le droit au renouvellement du preneur professionnel.',
+        explanation:
+          'En droit commercial OHADA, l\'Article 123 de l\'AUDCG confère au preneur ayant exploité l\'activité pendant au moins 2 ans un droit au renouvellement d\'ordre public. L\'Article 134 dispose qu\'aucune clause contractuelle ne peut y déroger, sous peine d\'être réputée non écrite.',
+        legalBasis: {
+          law: 'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
+          article: 'Articles 123 et 134 (Droit impératif au renouvellement commercial)',
+          sourceHierarchy: 'Droit Communautaire OHADA (Ordre Public)',
+          verified: true
+        },
+        recommendedAction: 'Supprimer la clause et reconnaître le droit au renouvellement légal sous condition de 2 ans d\'exploitation.',
+        proposedCorrection: 'Le preneur bénéficie du droit au renouvellement conformément aux articles 123 et suivants de l\'AUDCG OHADA.',
+        reformulatedText: 'Le preneur bénéficie du droit impératif au renouvellement de son bail professionnel dans les conditions prévues par les Articles 123 et suivants de l\'AUDCG OHADA.',
+        fieldSource,
+        lineIndex
+      };
+    }
+
+    const isIllegalCommercialTermination =
+      /(?:resiliation sans mise en demeure|expulsion immediate sans delai|expulsion sans commissaire|resiliation de plein droit sans notification)/.test(norm);
+
+    if (isIllegalCommercialTermination) {
+      return {
+        id: `issue_ohada_termination_${lineIndex}`,
+        rawText: cleaned,
+        sourceParty: 'proprietaire',
+        category: 'resiliation',
+        categoryLabel: 'Durée et résiliation',
+        status: 'non_conforme',
+        alertLevel: 3,
+        title: 'Résiliation ou expulsion sans mise en demeure préalable d\'un mois (Art. 133 AUDCG)',
+        understoodMeaning: 'Clause prévoyant une expulsion ou une rupture unilatérale immédiate sans mise en demeure légale.',
+        explanation:
+          'L\'Article 133 de l\'AUDCG OHADA impose une mise en demeure préalable accordant au moins un (1) mois au preneur pour remédier au manquement avant toute action en résiliation judiciaire. En outre, l\'Article 14 de la Loi ivoirienne n° 2025-221 du 28 mars 2025 soumet toute expulsion d\'un immeuble professionnel au strict respect du commandement de libérer les lieux et au ministère d\'un commissaire de justice.',
+        legalBasis: {
+          law: 'Acte Uniforme OHADA AUDCG & Loi ivoirienne n° 2025-221 du 28 mars 2025',
+          article: 'Article 133 AUDCG & Article 14 Loi 2025-221',
+          sourceHierarchy: 'Droit OHADA et Droit National Ivoirien',
+          verified: true
+        },
+        recommendedAction: 'Insérer la procédure légale de mise en demeure d\'au moins un mois avant toute saisine judiciaire.',
+        proposedCorrection: 'En cas d\'inexécution, une mise en demeure d\'un (1) mois sera délivrée avant toute saisine judiciaire.',
+        reformulatedText: 'Toute résiliation judiciaire pour manquement est subordonnée à une mise en demeure préalable d\'au moins un (1) mois demeurée infructueuse, conformément à l\'Article 133 de l\'AUDCG OHADA et à la Loi N° 2025-221.',
+        fieldSource,
+        lineIndex
+      };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // DOMAINE 0D : VENTILATION DES CHARGES ET IMPÔT FONCIER (ART. 417 LOI 2019-576)
+  // --------------------------------------------------------------------------
+  const mentionsUnfairTaxesOrCharges =
+    /(?:locatair|locataire|preneur)\s*.*(?:paie|paye|supporte|a la charge).*(?:impot foncier|taxe fonciere|impot sur le revenu foncier)/.test(norm) ||
+    /(?:charges\s*forfaitaires?\s*sans\s*(?:detail|justificatif|decompte))/.test(norm);
+
+  if (mentionsUnfairTaxesOrCharges) {
+    return {
+      id: `issue_unfair_charges_${lineIndex}`,
+      rawText: cleaned,
+      sourceParty: 'proprietaire',
+      category: 'loyer_caution',
+      categoryLabel: 'Charges locatives et fiscalité',
+      status: 'avertissement',
+      alertLevel: 2,
+      title: 'Transfert indu de taxes foncières ou clause de charges ambiguë (Art. 417)',
+      understoodMeaning: 'Transfert au locataire de l\'impôt foncier du propriétaire ou imposition de charges non justifiées.',
+      explanation:
+        'L\'impôt foncier et les taxes grevant la propriété foncière incombent légalement au bailleur. Le locataire ne peut supporter que les charges réelles résultant de son usage des lieux (eau, énergie, menues réparations, entretien courant) conformément à l\'Article 417 de la Loi n° 2019-576.',
+      legalBasis: {
+        law: isHabitation ? 'Loi n° 2019-576 (Code de la Construction et de l\'Habitat)' : 'Acte Uniforme OHADA AUDCG',
+        article: isHabitation ? 'Article 417 (Charges locatives autorisées)' : 'Article 112 (Charges d\'exploitation)',
+        sourceHierarchy: isHabitation ? 'Droit National Ivoirien' : 'Droit Commercial OHADA',
+        verified: true
+      },
+      recommendedAction: 'Exclure les impôts fonciers de la charge du preneur et détailler les charges locatives réelles.',
+      proposedCorrection: 'Le locataire assume exclusivement les charges locatives d\'usage ; les taxes et impôts fonciers restent à la charge du bailleur.',
+      reformulatedText: 'Le preneur rembourse les charges locatives d\'usage effectif des locaux, le bailleur conservant la charge intégrale de l\'impôt foncier.',
+      fieldSource,
+      lineIndex
+    };
+  }
+
+  // --------------------------------------------------------------------------
   // DOMAINE 1 : RÉPARATIONS, TRAVAUX ET ENTRETIEN DU LOGEMENT
   // --------------------------------------------------------------------------
   // Règle d'ordre public : Les grosses réparations (clos, couvert, structure, toiture)
@@ -461,30 +635,31 @@ function analyzeSingleWrittenClause(
       category: 'resiliation',
       categoryLabel: 'Durée et résiliation',
       status: 'non_conforme',
-      title: 'Clause d\'expulsion d\'office ou de coupure de fluide illégale (Voie de fait)',
+      alertLevel: 3,
+      title: 'Clause d\'expulsion d\'office, coupure de fluide ou justice privée prohibée (Loi n° 2025-221)',
       understoodMeaning:
-        'Menace de coupure d\'eau ou d\'électricité, ou expulsion forcée sans préavis ni décision de justice en cas de loyer impayé.',
+        'Menace de coupure d\'eau ou d\'électricité, ou expulsion forcée sans décision exécutoire ni commissaire de justice en cas d\'impayé.',
       explanation:
-        'Toute résiliation exige le respect d\'une mise en demeure légale (30 jours) et d\'un préavis obligatoire de 3 mois, suivi d\'une décision judiciaire exécutoire. Couper l\'eau ou l\'électricité et changer les serrures constituent des voies de fait pénalement et civilement répréhensibles.',
+        'Toute expulsion exige impérativement un titre exécutoire et la délivrance préalable d\'un commandement de libérer les lieux exécuté exclusivement par un Commissaire de Justice conformément à la Loi n° 2025-221 du 28 mars 2025 (applicable aux baux d\'habitation et professionnels via son Article 14). Couper l\'eau ou l\'électricité et changer unilatéralement les serrures constituent des voies de fait illégales pénalement et civilement répréhensibles.',
       legalBasis: isHabitation
         ? {
-            law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
-            article: 'Article 450 (Procédure d\'expulsion et préavis légal impératif)',
-            sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
+            law: 'Loi n° 2019-576 (Art. 450) & Loi n° 2025-221 du 28 mars 2025',
+            article: 'Article 450 Loi 2019-576 & Procédures d\'expulsion Loi 2025-221',
+            sourceHierarchy: 'Droit Positif Ivoirien (Ordre Public)',
             verified: true
           }
         : {
-            law: 'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
-            article: 'Article 133 (Résiliation judiciaire du bail professionnel)',
-            sourceHierarchy: 'Droit Communautaire OHADA (Bail Professionnel)',
+            law: 'Acte Uniforme OHADA AUDCG (Art. 133) & Loi n° 2025-221 du 28 mars 2025',
+            article: 'Article 133 AUDCG & Article 14 Loi 2025-221',
+            sourceHierarchy: 'Droit Communautaire OHADA & Loi Nationale 2025-221',
             verified: true
           },
       recommendedAction:
-        'Remplacer cette clause par le rappel de la procédure légale de mise en demeure et de recours judiciaire.',
+        'Remplacer cette clause par le rappel de la procédure légale de mise en demeure et d\'exécution par Commissaire de Justice.',
       proposedCorrection:
-        'En cas d\'impayé ou de manquement contractuel, le bailleur délivrera une mise en demeure dans le respect des délais légaux avant saisine de la juridiction compétente.',
+        'En cas d\'impayé ou de manquement contractuel, le bailleur délivrera une mise en demeure puis agira par voie de justice conformément à la Loi n° 2025-221.',
       reformulatedText:
-        'En cas d\'impayé ou d\'inexécution, les parties se conformeront à la procédure légale de mise en demeure préalable avant toute saisine judiciaire.',
+        'Toute résiliation et exécution se dérouleront conformément à la législation en vigueur, dans le respect de la mise en demeure préalable et de la Loi N° 2025-221 régissant les procédures d\'expulsion.',
       fieldSource,
       lineIndex
     };
@@ -907,6 +1082,10 @@ export function runLegalAnalysisEngine(params: {
   monthlyRent?: number;
   city?: string;
   commune?: string;
+  propertyType?: string;
+  usageDestination?: 'habitation' | 'professionnel';
+  authorizedActivity?: string;
+  ownerDestinationAuthorized?: boolean;
 }): LegalAnalysisReport {
   const leaseType = params.leaseType || 'habitation';
   const ownerConditionsText = (params.ownerConditionsText || params.ownerClauses || '').trim();
@@ -917,8 +1096,131 @@ export function runLegalAnalysisEngine(params: {
 
   const analyzedClauses: AnalyzedClauseItem[] = [];
 
-  // 1. Plafonds Financiers Légaux (Loi n° 2019-576 Art. 415 & 416 pour bail d'habitation)
+  // --------------------------------------------------------------------------
+  // 1. CONTRÔLE DE LA DESTINATION DU LOCAL (HABITATION vs PROFESSIONNEL)
+  // --------------------------------------------------------------------------
+  // L'Article 410 exclut formellement les activités professionnelles du bail d'habitation.
+  if (
+    leaseType === 'habitation' &&
+    (params.usageDestination === 'professionnel' ||
+      (params.authorizedActivity && params.authorizedActivity.trim().length > 0))
+  ) {
+    analyzedClauses.push({
+      id: 'dest_incompatible_commercial_in_housing',
+      rawText: `Activité professionnelle déclarée : « ${params.authorizedActivity || 'Usage commercial'} » sous régime de bail d'habitation`,
+      sourceParty: 'logement',
+      category: 'regles_serenite',
+      categoryLabel: 'Destination contractuelle du local',
+      status: 'non_conforme',
+      alertLevel: 3,
+      title: 'Incompatibilité légale : Activité professionnelle sous bail d\'habitation (Art. 410)',
+      understoodMeaning:
+        'Tentative de soumettre un local affecté à l\'exercice d\'une activité professionnelle ou commerciale au régime du bail d\'habitation.',
+      explanation:
+        'L\'Article 410 de la Loi n° 2019-576 exclut expressément du régime du bail d\'habitation les immeubles affectés à un usage commercial, administratif, industriel, artisanal ou aux professions libérales. Ce contrat doit impérativement être requalifié en Bail à Usage Professionnel régi par l\'Acte Uniforme OHADA (AUDCG).',
+      legalBasis: {
+        law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
+        article: 'Article 410 (Exclusions d\'ordre public du bail d\'habitation)',
+        sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
+        verified: true
+      },
+      recommendedAction: 'Requalifier le bail en Bail à Usage Professionnel (Acte Uniforme OHADA AUDCG).',
+      proposedCorrection: 'Passer au modèle de Bail à Usage Professionnel OHADA.',
+      reformulatedText:
+        'Le local est donné à bail à usage professionnel conformément aux articles 101 et suivants de l\'AUDCG OHADA.',
+      fieldSource: 'propertySpecificRules'
+    });
+  }
+
+  // Cas particulier : Bâtiment physique d'origine (Maison / Villa) affecté à une activité professionnelle (Bureaux, Boutique, etc.)
+  const physicalType = (params.propertyType || '').toLowerCase();
+  const isPhysicalHouse = ['maison', 'villa', 'duplex', 'appartement', 'immeuble'].includes(physicalType);
+  if (leaseType === 'professionnel' && isPhysicalHouse) {
+    analyzedClauses.push({
+      id: 'dest_house_used_for_business',
+      rawText: `Immeuble de configuration « ${params.propertyType} » affecté à usage professionnel (« ${params.authorizedActivity || 'Bureaux / Commerce'} ») avec accord du bailleur`,
+      sourceParty: 'logement',
+      category: 'regles_serenite',
+      categoryLabel: 'Destination contractuelle du local',
+      status: 'conforme',
+      title: 'Destination professionnelle conforme (AUDCG OHADA Art. 101 & 103)',
+      understoodMeaning: `Maison ou villa louée pour un usage professionnel (« ${params.authorizedActivity || 'Bureaux'} ») avec accord exprès du propriétaire.`,
+      explanation:
+        'Conformément aux Articles 101 et 103 de l\'Acte Uniforme OHADA (AUDCG), la qualification juridique d\'un bail dépend de la destination contractuelle convenue entre les parties et non de la dénomination architecturale du bâtiment. Une maison ou villa louée pour servir de bureaux, magasin ou atelier relève valablement du bail professionnel.',
+      legalBasis: {
+        law: 'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
+        article: 'Articles 101 et 103 (Définition et champ d\'application du bail professionnel)',
+        sourceHierarchy: 'Droit Communautaire OHADA (Régime Applicable)',
+        verified: true
+      },
+      recommendedAction: 'Consigner l\'accord exprès du bailleur sur la destination autorisée dans le bail.',
+      reformulatedText: `Le bailleur autorise expressément le preneur à destiner les locaux à l'exercice exclusif de l'activité suivante : ${params.authorizedActivity || 'bureaux d\'entreprise et activités administratives'}.`,
+      fieldSource: 'propertySpecificRules'
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. FORMALITÉS OBLIGATOIRES SELON LE RÉGIME JURIDIQUE
+  // --------------------------------------------------------------------------
+  // Régime Habitation : Formalité d'enregistrement fiscal obligatoire (Art. 414 Loi 2019-576)
   if (leaseType === 'habitation') {
+    analyzedClauses.push({
+      id: 'info_tax_registration',
+      rawText: 'Enregistrement obligatoire auprès de l\'administration fiscale (Direction Générale des Impôts - DGI)',
+      sourceParty: 'logement',
+      category: 'resiliation',
+      categoryLabel: 'Formalités fiscales & Légales',
+      status: 'information',
+      alertLevel: 1,
+      title: 'Formalité impérative : Enregistrement fiscal à la DGI (Art. 414)',
+      understoodMeaning: 'Enregistrement légal obligatoire du contrat de bail auprès des services des impôts.',
+      explanation:
+        'L\'Article 414 de la Loi n° 2019-576 dispose que le contrat de bail à usage d\'habitation fait obligatoirement l\'objet d\'un enregistrement auprès de l\'administration fiscale (DGI) conformément aux modalités prévues par le Code Général des Impôts.',
+      legalBasis: {
+        law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
+        article: 'Article 414 (Formalité légale d\'enregistrement fiscal)',
+        sourceHierarchy: 'Droit National Ivoirien (Ordre Public Fiscal)',
+        verified: true
+      },
+      recommendedAction: 'Faire enregistrer le contrat auprès de la DGI dans le mois suivant la signature.',
+      reformulatedText:
+        'Le présent contrat fera obligatoirement l\'objet d\'un enregistrement auprès de l\'administration fiscale compétente (DGI) conformément à l\'Article 414 de la Loi N° 2019-576.',
+      fieldSource: 'propertySpecificRules'
+    });
+  }
+
+  // Régime Professionnel : Distinction entre autorisation contractuelle et autorisations administratives
+  if (leaseType === 'professionnel') {
+    analyzedClauses.push({
+      id: 'info_commercial_admin_permits',
+      rawText: 'Autorisations administratives et immatriculations nécessaires à la charge exclusive du preneur',
+      sourceParty: 'locataire',
+      category: 'regles_serenite',
+      categoryLabel: 'Autorisations administratives & Réglementation',
+      status: 'information',
+      alertLevel: 1,
+      title: 'Distinction légale : Accord du bailleur vs Autorisations administratives d\'exploitation',
+      understoodMeaning: 'Obtention par le locataire de ses permis d\'exploitation et inscription au registre du commerce.',
+      explanation:
+        'L\'accord du bailleur sur la destination professionnelle n\'emporte pas garantie de l\'obtention des autorisations administratives nécessaires (immatriculation au RCCM, licences d\'exploitation, conformité des établissements recevant du public ERP et sécurité incendie). Ces démarches incombent exclusivement au preneur.',
+      legalBasis: {
+        law: 'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
+        article: 'Articles 101 et 112 (Exploitation commerciale et conformité de l\'activité)',
+        sourceHierarchy: 'Droit Commercial Communautaire OHADA',
+        verified: true
+      },
+      recommendedAction: 'Vérifier la détention des autorisations requises (RCCM, patente, assurances professionnelles).',
+      reformulatedText:
+        'Le preneur fait son affaire personnelle de l\'obtention de toutes autorisations administratives, immatriculations au RCCM et conformités légales requises pour l\'exercice de son activité.',
+      fieldSource: 'propertySpecificRules'
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. PLAFONDS FINANCIERS LÉGAUX
+  // --------------------------------------------------------------------------
+  if (leaseType === 'habitation') {
+    // Avance (Art. 415 : Plafonnée à 2 mois)
     if (advanceMonths > 2) {
       analyzedClauses.push({
         id: 'fin_advance_cap',
@@ -927,23 +1229,26 @@ export function runLegalAnalysisEngine(params: {
         category: 'loyer_caution',
         categoryLabel: 'Loyer et paiement',
         status: 'non_conforme',
-        title: 'Plafond légal des loyers d\'avance dépassé (Max 2 mois)',
+        alertLevel: 3,
+        title: 'Plafond légal des loyers d\'avance dépassé (Max 2 mois - Art. 415)',
         understoodMeaning: `Exigence de ${advanceMonths} mois de loyers d'avance lors de la conclusion du bail.`,
         explanation:
-          'En Côte d\'Ivoire, dans les baux d\'habitation, le bailleur ne peut pas exiger plus de deux (2) mois de loyers d\'avance lors de la conclusion du contrat.',
+          'En Côte d\'Ivoire, dans les baux d\'habitation, le bailleur ne peut pas exiger plus de deux (2) mois de loyers d\'avance lors de la conclusion du contrat (Article 415 de la Loi n° 2019-576).',
         legalBasis: {
-          law: 'Loi n° 2019-576 du 26 juin 2019 instituant le Code de la Construction et de l\'Habitat',
+          law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
           article: 'Article 415 (Plafonnement impératif des avances de loyer)',
           sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
           verified: true
         },
         recommendedAction: 'Ajuster les mois d\'avance à deux (2) mois au maximum.',
         proposedCorrection: 'Avance fixée à 2 mois de loyer maximum.',
-        reformulatedText: 'L\'avance sur loyer est fixée à deux (02) mois maximum conformément à l\'Article 415 de la Loi n° 2019-576.',
+        reformulatedText:
+          'L\'avance sur loyer est fixée à deux (02) mois maximum conformément à l\'Article 415 de la Loi n° 2019-576.',
         fieldSource: 'advanceMonths'
       });
     }
 
+    // Dépôt de garantie / Caution (Art. 416 : Plafonné à 2 mois)
     if (cautionMonths > 2) {
       analyzedClauses.push({
         id: 'fin_caution_cap',
@@ -952,24 +1257,25 @@ export function runLegalAnalysisEngine(params: {
         category: 'loyer_caution',
         categoryLabel: 'Loyer et paiement',
         status: 'non_conforme',
-        title: 'Plafond légal du dépôt de garantie dépassé (Max 2 mois)',
+        alertLevel: 3,
+        title: 'Plafond légal du dépôt de garantie dépassé (Max 2 mois - Art. 416)',
         understoodMeaning: `Exigence de ${cautionMonths} mois de dépôt de garantie (caution).`,
         explanation:
-          'Le montant du dépôt de garantie (caution) exigible par le bailleur ne peut en aucun cas excéder deux (2) mois de loyer principal hors charges.',
+          'Le montant du dépôt de garantie (caution) exigible par le bailleur ne peut en aucun cas excéder deux (2) mois de loyer principal hors charges (Article 416 de la Loi n° 2019-576).',
         legalBasis: {
-          law: 'Loi n° 2019-576 du 26 juin 2019 instituant le Code de la Construction et de l\'Habitat',
+          law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
           article: 'Article 416 (Plafonnement impératif du dépôt de garantie)',
           sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
           verified: true
         },
         recommendedAction: 'Ajuster les mois de caution à deux (2) mois au maximum.',
         proposedCorrection: 'Caution fixée à 2 mois de loyer maximum.',
-        reformulatedText: 'Le dépôt de garantie est plafonné à deux (02) mois de loyer hors charges conformément à l\'Article 416 de la Loi n° 2019-576.',
+        reformulatedText:
+          'Le dépôt de garantie est plafonné à deux (02) mois de loyer hors charges conformément à l\'Article 416 de la Loi n° 2019-576.',
         fieldSource: 'cautionMonths'
       });
     }
 
-    // Si les montants sont conformes, ajouter la validation du volet financier
     if (advanceMonths <= 2 && cautionMonths <= 2) {
       analyzedClauses.push({
         id: 'fin_caps_compliant',
@@ -978,15 +1284,15 @@ export function runLegalAnalysisEngine(params: {
         category: 'loyer_caution',
         categoryLabel: 'Loyer et paiement',
         status: 'conforme',
-        title: 'Conditions financières conformes aux plafonds légaux',
+        title: 'Conditions financières conformes aux plafonds légaux (Art. 415 & 416)',
         understoodMeaning:
-          `Avance de ${advanceMonths} mois et caution de ${cautionMonths} mois conformes aux limites de la loi.`,
+          `Avance de ${advanceMonths} mois et caution de ${cautionMonths} mois conformes aux limites légales de la Loi 2019-576.`,
         explanation:
           'Le montant de l\'avance et de la caution respecte scrupuleusement les plafonds impératifs des Articles 415 et 416.',
         legalBasis: {
           law: 'Loi n° 2019-576 du 26 juin 2019',
           article: 'Articles 415 et 416',
-          sourceHierarchy: 'Droit National Ivoirien',
+          sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
           verified: true
         },
         recommendedAction: 'Conditions financières validées.',
@@ -995,9 +1301,35 @@ export function runLegalAnalysisEngine(params: {
         fieldSource: 'cautionMonths'
       });
     }
+  } else {
+    // Régime Professionnel : Liberté contractuelle (AUDCG OHADA Art. 116)
+    analyzedClauses.push({
+      id: 'fin_ohada_freedom',
+      rawText: `Garantie / Avance convenue : ${advanceMonths} mois d'avance, ${cautionMonths} mois de dépôt de garantie`,
+      sourceParty: 'financier',
+      category: 'loyer_caution',
+      categoryLabel: 'Loyer et garanties commerciales',
+      status: 'conforme',
+      title: 'Conditions financières fixées selon la liberté contractuelle (AUDCG OHADA Art. 116)',
+      understoodMeaning: `Conditions financières fixées d'un commun accord entre les parties (${advanceMonths} mois d'avance, ${cautionMonths} mois de garantie).`,
+      explanation:
+        'En matière de bail professionnel sous l\'Acte Uniforme OHADA (AUDCG, Article 116), le loyer et les garanties sont librement convenus entre les parties. Le plafonnement à deux (2) mois propre au bail d\'habitation ne s\'applique pas de plein droit aux relations commerciales.',
+      legalBasis: {
+        law: 'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
+        article: 'Article 116 (Liberté de fixation du loyer et des garanties)',
+        sourceHierarchy: 'Droit Commercial Communautaire OHADA',
+        verified: true
+      },
+      recommendedAction: 'Conditions financières commerciales validées.',
+      reformulatedText:
+        `Les conditions financières convenues s'établissent à ${advanceMonths} mois d'avance et ${cautionMonths} mois de garantie conformément à l'Article 116 de l'AUDCG OHADA.`,
+      fieldSource: 'cautionMonths'
+    });
   }
 
-  // 2. Clauses réelles du propriétaire
+  // --------------------------------------------------------------------------
+  // 4. CLAUSES SAISIES PAR LES PARTIES
+  // --------------------------------------------------------------------------
   if (ownerConditionsText.trim()) {
     const clauses = extractLogicalClauses(ownerConditionsText);
     clauses.forEach((clauseText, idx) => {
@@ -1007,7 +1339,6 @@ export function runLegalAnalysisEngine(params: {
     });
   }
 
-  // 3. Demandes réelles du locataire
   if (tenantRequestsText.trim()) {
     const clauses = extractLogicalClauses(tenantRequestsText);
     clauses.forEach((clauseText, idx) => {
@@ -1017,7 +1348,6 @@ export function runLegalAnalysisEngine(params: {
     });
   }
 
-  // 4. Règles spécifiques au logement / copropriété
   if (propertyRulesText.trim()) {
     const clauses = extractLogicalClauses(propertyRulesText);
     clauses.forEach((clauseText, idx) => {
@@ -1027,21 +1357,23 @@ export function runLegalAnalysisEngine(params: {
     });
   }
 
-  // 5. Calcul des catégories & statut "Validé"
+  // --------------------------------------------------------------------------
+  // 5. SYNTHÈSE DES CATÉGORIES ET CALCUL DES ALERTES
+  // --------------------------------------------------------------------------
   const categoryDefinitions: Array<{ id: string; label: string }> = [
     { id: 'loyer_caution', label: 'Loyer et paiement' },
     { id: 'obligations_bailleur', label: 'Obligations du propriétaire' },
     { id: 'obligations_locataire', label: 'Obligations du locataire' },
     { id: 'entretien_reparations', label: 'Entretien et réparations' },
-    { id: 'regles_serenite', label: 'Règles de sérénité, stationnement et entretien courant' },
+    { id: 'regles_serenite', label: 'Règles de sérénité, destination et stationnement' },
     { id: 'demandes_particulieres', label: 'Demandes particulières du locataire' },
-    { id: 'resiliation', label: 'Durée et résiliation' }
+    { id: 'resiliation', label: 'Durée, renouvellement et résiliation' }
   ];
 
   const categories: CategoryStatus[] = categoryDefinitions.map((catDef) => {
     const catClauses = analyzedClauses.filter((c) => c.category === catDef.id);
     const hasIncompatible = catClauses.some((c) => c.status === 'non_conforme');
-    const hasToVerify = catClauses.some((c) => c.status === 'a_verifier');
+    const hasToVerify = catClauses.some((c) => c.status === 'avertissement' || c.status === 'a_verifier');
 
     let status: 'valide' | 'a_verifier' | 'anomalie' = 'valide';
     if (hasIncompatible) {
@@ -1059,52 +1391,81 @@ export function runLegalAnalysisEngine(params: {
   });
 
   const blockingCount = analyzedClauses.filter((c) => c.status === 'non_conforme').length;
-  const toVerifyCount = analyzedClauses.filter((c) => c.status === 'a_verifier').length;
+  const toVerifyCount = analyzedClauses.filter((c) => c.status === 'avertissement' || c.status === 'a_verifier').length;
+  const informationCount = analyzedClauses.filter((c) => c.status === 'information').length;
   const compliantCount = analyzedClauses.filter((c) => c.status === 'conforme').length;
 
   const isGlobalCompliant = blockingCount === 0;
 
   const legalRegimeLabel =
     leaseType === 'habitation'
-      ? 'Bail d\'Habitation Ivoirien (Loi n° 2019-576 du 26 juin 2019)'
-      : 'Bail à Usage Professionnel (Acte Uniforme OHADA AUDCG)';
+      ? 'Bail à Usage d\'Habitation (Loi n° 2019-576 & Loi n° 2025-221)'
+      : 'Bail à Usage Professionnel (Acte Uniforme OHADA AUDCG & Loi n° 2025-221)';
 
   const applicableSources =
     leaseType === 'habitation'
       ? [
-          'Loi n° 2019-576 du 26 juin 2019 instituant le Code de la Construction et de l\'Habitat',
-          'Articles 415 & 416 (Plafonds d\'avance et de caution)',
-          'Article 424 (Obligation de délivrance d\'un logement décent)',
-          'Article 425 (Jouissance paisible et respect de la vie privée)',
-          'Article 428 (Grosses réparations et structure)',
-          'Article 435 (Obligations d\'entretien du preneur)',
-          'Article 450 (Procédure légale de résiliation et préavis)'
+          'Loi n° 2019-576 du 26 juin 2019 instituant le Code de la Construction et de l\'Habitat (Art. 408 à 450)',
+          'Loi n° 2025-221 du 28 mars 2025 (Procédures de contentieux et exécution des décisions d\'expulsion)',
+          'Code Général des Impôts (Article 414 - Enregistrement fiscal obligatoire)',
+          'Article 415 (Plafond d\'avance : 2 mois max) & Article 416 (Plafond de caution : 2 mois max)',
+          'Article 428 (Grosses réparations impératives à la charge du bailleur)',
+          'Article 430 (Droit de visite avec préavis d\'au moins 48 heures)',
+          'Exclusion expresse de la Loi n° 2018-575 abrogée'
         ]
       : [
-          'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
-          'Articles 101 à 134 (Régime du bail à usage professionnel)',
-          'Article 106 (Grosses réparations incombant au bailleur)',
-          'Article 112 (Obligations d\'exploitation du preneur)',
-          'Article 133 (Résiliation judiciaire après mise en demeure)'
+          'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG 2010), Livre VI, Titre I (Art. 101 à 134)',
+          'Loi n° 2025-221 du 28 mars 2025, Article 14 (Opérations d\'expulsion d\'un immeuble professionnel)',
+          'Article 103 (Définition et champ d\'application du bail professionnel par la destination)',
+          'Article 104 (Fixation libre de la durée déterminée ou indéterminée)',
+          'Article 106 (Grosses réparations structurelles incombant au bailleur)',
+          'Article 116 (Liberté de fixation du loyer et des garanties)',
+          'Articles 123 & 134 (Droit d\'ordre public au renouvellement après 2 ans d\'exploitation)',
+          'Article 133 (Mise en demeure préalable obligatoire d\'au moins 1 mois avant résiliation judiciaire)'
         ];
 
   const anomalies: AnomalyReportItem[] = analyzedClauses
-    .filter((c) => c.status === 'non_conforme' || c.status === 'a_verifier')
-    .map((c) => ({
-      id: c.id,
-      title: c.title,
-      exactClause: c.rawText,
-      party: c.sourceParty,
-      problem: c.explanation,
-      legalBasisText: `${c.legalBasis.law} - ${c.legalBasis.article}`,
-      legalReference: `${c.legalBasis.law}, ${c.legalBasis.article} (${c.legalBasis.sourceHierarchy})`,
-      severity: c.status === 'non_conforme' ? 'bloquante' : 'a_verifier',
-      recommendedAction: c.recommendedAction,
-      recommendedCorrection: c.proposedCorrection,
-      understoodMeaning: c.understoodMeaning,
-      fieldSource: c.fieldSource,
-      lineIndex: c.lineIndex
-    }));
+    .filter((c) => c.status === 'non_conforme' || c.status === 'avertissement' || c.status === 'a_verifier' || c.status === 'information')
+    .map((c) => {
+      let alertLevel: 1 | 2 | 3 = 1;
+      let alertLevelLabel: 'NIVEAU 1 — INFORMATION' | 'NIVEAU 2 — AVERTISSEMENT' | 'NIVEAU 3 — NON-CONFORMITÉ' = 'NIVEAU 1 — INFORMATION';
+      let sev: 'information' | 'avertissement' | 'non_conforme' | 'bloquante' | 'a_verifier' = 'information';
+
+      if (c.status === 'non_conforme') {
+        alertLevel = 3;
+        alertLevelLabel = 'NIVEAU 3 — NON-CONFORMITÉ';
+        sev = 'non_conforme';
+      } else if (c.status === 'avertissement' || c.status === 'a_verifier') {
+        alertLevel = 2;
+        alertLevelLabel = 'NIVEAU 2 — AVERTISSEMENT';
+        sev = 'avertissement';
+      } else {
+        alertLevel = 1;
+        alertLevelLabel = 'NIVEAU 1 — INFORMATION';
+        sev = 'information';
+      }
+
+      return {
+        id: c.id,
+        title: c.title,
+        exactClause: c.rawText,
+        party: c.sourceParty,
+        problem: c.explanation,
+        legalBasisText: `${c.legalBasis.law} - ${c.legalBasis.article}`,
+        legalReference: `${c.legalBasis.law}, ${c.legalBasis.article} (${c.legalBasis.sourceHierarchy})`,
+        severity: sev,
+        alertLevel,
+        alertLevelLabel,
+        recommendedAction: c.recommendedAction,
+        recommendedCorrection: c.proposedCorrection,
+        understoodMeaning: c.understoodMeaning,
+        fieldSource: c.fieldSource,
+        lineIndex: c.lineIndex
+      };
+    });
+
+  const legalNotice =
+    'LocaTrust agit comme assistant numérique de rédaction et de contrôle de conformité contractuelle. Pour toute situation contentieuse ou montage spécifique, la consultation d\'un professionnel du droit (avocat, notaire, commissaire de justice) est expressément recommandée.';
 
   return {
     clauses: analyzedClauses,
@@ -1113,9 +1474,13 @@ export function runLegalAnalysisEngine(params: {
     blockingCount,
     toVerifyCount,
     compliantCount,
+    informationCount,
+    warningCount: toVerifyCount,
+    nonConformityCount: blockingCount,
     legalRegimeLabel,
     applicableSources,
     anomalies,
+    legalNotice,
     canContinue: blockingCount === 0,
     globalStatus: blockingCount === 0 ? 'conforme' : 'incomplet'
   };

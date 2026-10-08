@@ -65,134 +65,20 @@ export interface MaintenanceItem {
   notes: { id: string; author: string; content: string; date: string; isInternal?: boolean }[];
 }
 
-const INITIAL_TICKETS: MaintenanceItem[] = [
-  {
-    id: 'maint-001',
-    ticketNumber: 'MNT-2026-089',
-    tenantName: 'Kouadio Jean-Marc',
-    tenantPhone: '+225 07 48 92 11 00',
-    propertyTitle: 'Appartement 3P Standing',
-    propertyAddress: 'Cocody Riviera 2, Immeuble Les Jardins B',
-    category: 'Plomberie & Fuite',
-    priority: 'Haute',
-    status: 'Intervention programmée',
-    createdAt: '24/09/2026 à 08:30',
-    scheduledDate: '26/09/2026 à 10:00 (Plombier agréé)',
-    description: 'Fuite persistante sous l\'évier de la cuisine principale. Le robinet d\'arrêt d\'eau a été temporairement fermé pour éviter l\'infiltration vers le sol.',
-    photos: [
-      'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=600&q=80',
-      'https://images.unsplash.com/photo-1507652313519-d4e9174996dd?auto=format&fit=crop&w=600&q=80'
-    ],
-    rentDeductionRequest: {
-      hasRequestedDeduction: true,
-      amountSpent: 45000,
-      invoiceReference: 'FACT-PLOMB-2026-042',
-      description: 'Remplacement urgent du siphon et vanne d\'arrêt par artisan agréé suite fuite active.',
-      status: 'en_attente_accord',
-      deductionMonth: 'Octobre 2026',
-      monthlyRent: 450000
-    },
-    notes: [
-      {
-        id: 'n1',
-        author: 'Kouadio Jean-Marc',
-        content: 'Bonjour, l\'eau suinte sous le placard même robinet fermé. Merci pour votre réactivité.',
-        date: '24/09/2026 à 08:35'
-      },
-      {
-        id: 'n2',
-        author: 'Propriétaire (Vous)',
-        content: 'Bonjour M. Kouadio. J\'ai mandaté M. Bamba, notre artisan plombier agréé, pour une intervention ce samedi matin à 10h00.',
-        date: '24/09/2026 à 11:15'
-      },
-      {
-        id: 'n3',
-        author: 'Note interne',
-        content: 'Devis estimé à 25 000 FCFA pour remplacement joint et siphon.',
-        date: '24/09/2026 à 11:20',
-        isInternal: true
-      }
-    ]
-  },
-  {
-    id: 'maint-002',
-    ticketNumber: 'MNT-2026-090',
-    tenantName: 'Amina Diabaté',
-    tenantPhone: '+225 05 55 66 77 88',
-    propertyTitle: 'Villa 4 pièces Duplex',
-    propertyAddress: 'Riviera M\'Badon, Cité Étoile',
-    category: 'Climatisation',
-    priority: 'Moyenne',
-    status: 'En cours',
-    createdAt: '22/09/2026 à 14:10',
-    description: 'Le climatiseur split de la chambre parentale souffle de l\'air tiède et le voyant LED clignote en orange.',
-    photos: [
-      'https://images.unsplash.com/photo-1613977257363-707ba9348227?auto=format&fit=crop&w=600&q=80'
-    ],
-    notes: [
-      {
-        id: 'n21',
-        author: 'Amina Diabaté',
-        content: 'Un bruit anormal s\'est produit avant l\'arrêt du froid.',
-        date: '22/09/2026 à 14:12'
-      },
-      {
-        id: 'n22',
-        author: 'Propriétaire (Vous)',
-        content: 'Bonjour Mme Diabaté, notre frigoriste a pris la pièce de rechange. Il passe jeudi après-midi.',
-        date: '23/09/2026 à 09:00'
-      }
-    ]
-  },
-  {
-    id: 'maint-003',
-    ticketNumber: 'MNT-2026-091',
-    tenantName: 'Marc-Aurèle Koné',
-    tenantPhone: '+225 01 02 03 04 05',
-    propertyTitle: 'Studio Meublé Cocody',
-    propertyAddress: 'Cocody Danga',
-    category: 'Serrurerie & Porte',
-    priority: 'Haute',
-    status: 'Nouveau',
-    createdAt: '25/09/2026 à 07:15',
-    description: 'La serrure de la porte blindée d\'entrée accroche fortement lors de la fermeture à clé.',
-    photos: [],
-    notes: [
-      {
-        id: 'n31',
-        author: 'Marc-Aurèle Koné',
-        content: 'J\'ai du mal à retirer ma clé depuis ce matin. Merci de m\'indiquer la démarche.',
-        date: '25/09/2026 à 07:18'
-      }
-    ]
-  },
-  {
-    id: 'maint-004',
-    ticketNumber: 'MNT-2026-085',
-    tenantName: 'Bamba Ali',
-    tenantPhone: '+225 07 11 22 33 44',
-    propertyTitle: 'Appartement 2P Marcory',
-    propertyAddress: 'Marcory Résidentiel',
-    category: 'Électricité',
-    priority: 'Normale',
-    status: 'Résolu',
-    createdAt: '15/09/2026 à 10:00',
-    description: 'Disjoncteur secondaire du couloir qui sautait par intermittence. Câble remplacé.',
-    photos: [],
-    notes: [
-      {
-        id: 'n41',
-        author: 'Propriétaire (Vous)',
-        content: 'Intervention électricien validée avec succès le 16/09/2026.',
-        date: '16/09/2026 à 17:00'
-      }
-    ]
-  }
-];
-
 export const MaintenanceView: React.FC = () => {
-  const [tickets, setTickets] = useState<MaintenanceItem[]>(INITIAL_TICKETS);
-  const [selectedTicketId, setSelectedTicketId] = useState<string>('maint-001');
+  const [tickets, setTickets] = useState<MaintenanceItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_maintenance_tickets');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+    }
+    return [];
+  });
+  const [selectedTicketId, setSelectedTicketId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [replyMessage, setReplyMessage] = useState<string>('');
   const [internalNoteMessage, setInternalNoteMessage] = useState<string>('');
@@ -833,8 +719,14 @@ export const MaintenanceView: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
-              Sélectionnez une demande de maintenance pour afficher le suivi complet.
+            <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center flex flex-col items-center justify-center gap-3 shadow-sm h-full min-h-[300px]">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center">
+                <Wrench className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-black text-slate-800">Aucun incident ou ticket signalé</h4>
+              <p className="text-xs text-slate-500 max-w-sm">
+                Les signalements de pannes, fuites ou demandes d'intervention de vos locataires apparaîtront ici.
+              </p>
             </div>
           )}
         </div>

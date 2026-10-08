@@ -27,53 +27,8 @@ export interface GlobalNotificationItem {
   targetTab: string;
 }
 
-// Candidats par défaut (alignés avec DemandesView MOCK_APPLICATIONS)
-const DEFAULT_APPLICATIONS = [
-  {
-    id: 'app_kwame',
-    property_id: 'prop_apt_a',
-    tenant_name: 'Kwame Koffi',
-    tenant_phone: '+225 07 45 89 12 00',
-    tenant_email: 'kwame.koffi@email.ci',
-    tenant_cni: 'CI-009841201',
-    property_title: 'Appartement A (Cocody Riviera 3)',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    status: 'en_attente'
-  },
-  {
-    id: 'app_moussa',
-    property_id: 'prop_apt_a',
-    tenant_name: 'Moussa Touré',
-    tenant_phone: '+225 05 67 89 45 12',
-    tenant_email: 'moussa.toure@yahoo.fr',
-    tenant_cni: 'CI-0029481920',
-    property_title: 'Appartement A (Cocody Riviera 3)',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    status: 'en_attente'
-  },
-  {
-    id: 'app_awa',
-    property_id: 'prop_apt_a',
-    tenant_name: 'Awa Diallo',
-    tenant_phone: '+225 07 44 55 66 77',
-    tenant_email: 'awa.diallo@gmail.com',
-    tenant_cni: 'CI-0033221199',
-    property_title: 'Appartement A (Cocody Riviera 3)',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    status: 'en_attente'
-  },
-  {
-    id: 'app_bamba',
-    property_id: 'prop_villa_mbadon',
-    tenant_name: 'Bamba Souleymane',
-    tenant_phone: '+225 01 22 33 44 55',
-    tenant_email: 'bamba.s@gmail.com',
-    tenant_cni: 'CI-0055443322',
-    property_title: "Villa 4 pièces Riviera M'Badon",
-    property_address: "Riviera M'Badon, Cocody",
-    status: 'en_attente'
-  }
-];
+// Candidats par défaut (vide pour garantir des données réelles uniquement)
+const DEFAULT_APPLICATIONS: any[] = [];
 
 /**
  * Notifie automatiquement tous les demandeurs de contrat / candidats en liste d'attente
@@ -104,7 +59,7 @@ export function notifyWaitingListCandidatesOnLeaseFinalized({
   }
 
   if (!storedApps || storedApps.length === 0) {
-    storedApps = DEFAULT_APPLICATIONS;
+    storedApps = [];
   }
 
   // Normalisation pour recherche flexible

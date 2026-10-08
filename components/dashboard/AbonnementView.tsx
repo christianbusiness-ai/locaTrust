@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building2,
   CheckCircle2,
@@ -17,10 +17,13 @@ import {
   Smartphone,
   Check,
   X,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
-import { MOCK_PROPERTIES } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
+import { SasPayService } from '@/src/lib/saspayService';
 import jsPDF from 'jspdf';
 import confetti from 'canvas-confetti';
 
@@ -34,39 +37,90 @@ interface SubscriptionInvoice {
   status: 'Payé' | 'En attente';
 }
 
-const INITIAL_INVOICES: SubscriptionInvoice[] = [
-  {
-    id: 'SUB-2026-009',
-    date: '01/09/2026',
-    period: 'Septembre 2026',
-    amount: 2000,
-    propertiesCount: 5,
-    paymentMethod: 'Orange Money',
-    status: 'Payé'
-  },
-  {
-    id: 'SUB-2026-008',
-    date: '01/08/2026',
-    period: 'Août 2026',
-    amount: 2000,
-    propertiesCount: 4,
-    paymentMethod: 'Wave CI',
-    status: 'Payé'
-  },
-  {
-    id: 'SUB-2026-007',
-    date: '01/07/2026',
-    period: 'Juillet 2026',
-    amount: 500,
-    propertiesCount: 1,
-    paymentMethod: 'Wave CI',
-    status: 'Payé'
-  }
-];
+const INITIAL_INVOICES: SubscriptionInvoice[] = [];
 
 export const AbonnementView: React.FC = () => {
-  // Count active properties managed by the landlord
-  const activePropertiesCount = MOCK_PROPERTIES.filter((p) => p.status !== 'desactive').length || 5;
+  const { user, profile } = useAuth();
+  const [activePropertiesCount, setActivePropertiesCount] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchPropertiesCount = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      let query = supabase
+        .from('properties')
+        .select('id, status', { count: 'exact', head: true });
+
+      if (user?.id) {
+        query = query.eq('owner_id', user.id);
+      }
+
+      const { count, error: qError } = await query;
+      if (qError) throw qError;
+      setActivePropertiesCount(count || 0);
+    } catch (err: any) {
+      console.error('Erreur chargement nombre de biens:', err);
+      setError('Impossible de calculer le tarif basé sur votre parc. Veuillez réessayer.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSubscriptions = async () => {
+    if (!user?.id) return;
+    try {
+      const subs = await SasPayService.getUserSubscriptions(user.id);
+      if (subs && subs.length > 0) {
+        const mapped: SubscriptionInvoice[] = subs.map((s: any) => ({
+          id: `SUB-${s.id.slice(0, 8)}`,
+          date: new Date(s.created_at).toLocaleDateString('fr-FR'),
+          period: new Date(s.period_start).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
+          amount: Number(s.amount),
+          propertiesCount: s.properties_count || 1,
+          paymentMethod: s.payment_method,
+          status: s.status === 'actif' ? 'Payé' : 'En attente'
+        }));
+        setInvoices(mapped);
+        setSubscriptionStatus('actif');
+        if (subs[0]?.period_end) {
+          setNextDueDate(new Date(subs[0].period_end).toLocaleDateString('fr-FR'));
+        }
+      }
+    } catch (e) {
+      console.warn('Subscriptions load:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchPropertiesCount();
+    fetchSubscriptions();
+
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('payment') === 'success' && user?.id) {
+        const plan = urlParams.get('plan') || 'Abonnement LocaTrust';
+        const amount = Number(urlParams.get('amount')) || 500;
+        SasPayService.activateSubscriptionFromSession({
+          userId: user.id,
+          planName: plan,
+          amount: amount,
+          propertiesCount: activePropertiesCount
+        }).then(() => {
+          setSubscriptionStatus('actif');
+          fetchSubscriptions();
+          setPaymentSuccessMsg(`Paiement de ${formatFCFA(amount)} validé avec succès par la passerelle SasPay ! Votre abonnement est actif.`);
+          confetti({
+            particleCount: 80,
+            spread: 70,
+            origin: { y: 0.6 }
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        });
+      }
+    }
+  }, [user?.id]);
 
   // STRICT AUTOMATIC TIER CALCULATION (Point 9)
   // 1 property = 500 FCFA / month
@@ -103,13 +157,9 @@ export const AbonnementView: React.FC = () => {
 
   // Status state simulation (active vs expired)
   const [subscriptionStatus, setSubscriptionStatus] = useState<'actif' | 'expire'>('actif');
-  const [nextDueDate, setNextDueDate] = useState<string>('01 octobre 2026');
+  const [nextDueDate, setNextDueDate] = useState<string>('01 novembre 2026');
 
-  // Payment Modal state
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [paymentProvider, setPaymentProvider] = useState<'wave' | 'orange' | 'mtn' | 'card'>('wave');
-  const [phoneNumber, setPhoneNumber] = useState('+225 07 48 92 11 00');
-  const [cardNumber, setCardNumber] = useState('4111 2222 3333 4444');
+  // Direct payment state & messaging
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string | null>(null);
 
@@ -153,7 +203,8 @@ export const AbonnementView: React.FC = () => {
     doc.text('Facturé à :', 15, 52);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
-    doc.text("M. Koffi N'Guessan", 15, 58);
+    const clientName = profile?.full_name || user?.email || 'Bailleur Propriétaire';
+    doc.text(clientName, 15, 58);
     doc.text('Bailleur Propriétaire Certifié', 15, 63);
     doc.text('Abidjan, Côte d\'Ivoire', 15, 68);
 
@@ -231,47 +282,34 @@ export const AbonnementView: React.FC = () => {
     doc.save(`Facture_LocaTrust_${inv.id}.pdf`);
   };
 
-  // Handle online payment execution
-  const handleConfirmPayment = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Redirection DIRECTE vers le guichet de paiement réel SasPay (Wave CI, Orange, MTN, Carte)
+  const handleDirectSasPayPayment = async () => {
+    if (isProcessingPayment) return;
     setIsProcessingPayment(true);
+    setPaymentSuccessMsg("Connexion à la passerelle officielle SasPay en cours...");
 
-    setTimeout(() => {
-      setIsProcessingPayment(false);
-      const newInvoiceId = `SUB-2026-0${invoices.length + 10}`;
-      const methodLabel =
-        paymentProvider === 'wave'
-          ? 'Wave CI'
-          : paymentProvider === 'orange'
-          ? 'Orange Money'
-          : paymentProvider === 'mtn'
-          ? 'MTN MoMo'
-          : 'Carte Bancaire';
-
-      const newInv: SubscriptionInvoice = {
-        id: newInvoiceId,
-        date: new Date().toLocaleDateString('fr-FR'),
-        period: 'Octobre 2026',
+    try {
+      const result = await SasPayService.createLiveCheckoutSession({
+        userId: user?.id || 'guest',
+        customerEmail: user?.email || 'contact@locatrust.ci',
+        customerName: profile?.full_name || 'Bailleur LocaTrust',
+        customerPhone: profile?.phone || '+2250700000000',
         amount: currentPlan.amount,
-        propertiesCount: activePropertiesCount,
-        paymentMethod: methodLabel,
-        status: 'Payé'
-      };
-
-      setInvoices([newInv, ...invoices]);
-      setSubscriptionStatus('actif');
-      setNextDueDate('01 novembre 2026');
-      setIsPaymentModalOpen(false);
-      setPaymentSuccessMsg(`Paiement de ${formatFCFA(currentPlan.amount)} confirmé via ${methodLabel}. Votre abonnement est actif.`);
-
-      confetti({
-        particleCount: 60,
-        spread: 60,
-        origin: { y: 0.6 }
+        planName: currentPlan.tierName,
       });
 
-      setTimeout(() => setPaymentSuccessMsg(null), 5000);
-    }, 1200);
+      if (result.success && result.checkoutUrl) {
+        setPaymentSuccessMsg("Redirection immédiate vers le guichet de paiement officiel SasPay...");
+        window.location.href = result.checkoutUrl;
+        return;
+      }
+
+      throw new Error(result.error || "Impossible d'initialiser la passerelle de paiement.");
+    } catch (err: any) {
+      alert(`Erreur de paiement SasPay : ${err?.message || 'Vérifiez la connexion réseau et réessayez.'}`);
+      setIsProcessingPayment(false);
+      setPaymentSuccessMsg(null);
+    }
   };
 
   return (
@@ -323,6 +361,31 @@ export const AbonnementView: React.FC = () => {
         </div>
       )}
 
+      {/* Loading state */}
+      {loading && (
+        <div className="p-8 bg-white rounded-3xl border border-slate-200 flex flex-col items-center justify-center gap-3">
+          <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+          <p className="text-sm font-bold text-slate-600">Calcul de votre formule d'abonnement en cours...</p>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && !loading && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={fetchPropertiesCount}
+            className="px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-colors flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Réessayer</span>
+          </button>
+        </div>
+      )}
+
       {/* GESTION DE L'ABONNEMENT EXPIRÉ (Règles non destructives) */}
       {subscriptionStatus === 'expire' && (
         <div className="p-6 rounded-3xl bg-amber-50/90 border-2 border-amber-300 flex flex-col md:flex-row md:items-center justify-between gap-5 animate-scaleUp shadow-sm">
@@ -345,18 +408,34 @@ export const AbonnementView: React.FC = () => {
           </div>
 
           <button
-            onClick={() => setIsPaymentModalOpen(true)}
-            className="px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-lg shadow-amber-600/30 shrink-0 transition-all active:scale-95 whitespace-nowrap"
+            onClick={handleDirectSasPayPayment}
+            disabled={isProcessingPayment}
+            className="px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-lg shadow-amber-600/30 shrink-0 transition-all active:scale-95 whitespace-nowrap flex items-center gap-2 disabled:opacity-50"
           >
-            Renouveler ({formatFCFA(currentPlan.amount)} / mois)
+            {isProcessingPayment ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Redirection SasPay...</span>
+              </>
+            ) : (
+              <span>Renouveler ({formatFCFA(currentPlan.amount)} / mois)</span>
+            )}
           </button>
         </div>
       )}
 
+      {/* Redirection / Status banner */}
+      {paymentSuccessMsg && (
+        <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 text-blue-900 text-xs font-bold flex items-center gap-2.5 shadow-sm animate-fadeIn">
+          <RefreshCw className="w-4 h-4 animate-spin text-blue-600 shrink-0" />
+          <span>{paymentSuccessMsg}</span>
+        </div>
+      )}
+
       {/* CLEAN SAAS SUBSCRIPTION CARD (Clean, modern, no internal tier breakdown) */}
-      <div className="bg-gradient-to-br from-[#0B192C] via-blue-950 to-slate-900 rounded-3xl p-8 text-white shadow-xl border border-blue-900/60 flex flex-col md:flex-row md:items-center justify-between gap-8">
+      <div className="bg-gradient-to-br from-[#0B192C] via-blue-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-blue-900/60 flex flex-col md:flex-row md:items-center justify-between gap-6 sm:gap-8">
         <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 text-xs font-black uppercase tracking-wider shadow-sm">
               Votre formule active
             </span>
@@ -382,7 +461,7 @@ export const AbonnementView: React.FC = () => {
         </div>
 
         {/* Subscription details box */}
-        <div className="p-6 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex flex-col gap-4 shrink-0 min-w-[280px]">
+        <div className="p-5 sm:p-6 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex flex-col gap-4 shrink-0 min-w-[260px] sm:min-w-[280px]">
           <div>
             <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
               Patrimoine géré
@@ -402,11 +481,21 @@ export const AbonnementView: React.FC = () => {
 
           <div className="pt-2 border-t border-white/10 flex flex-col gap-2">
             <button
-              onClick={() => setIsPaymentModalOpen(true)}
-              className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-2"
+              onClick={handleDirectSasPayPayment}
+              disabled={isProcessingPayment}
+              className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <CreditCard className="w-4 h-4" />
-              <span>Gérer le paiement</span>
+              {isProcessingPayment ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Redirection vers SasPay...</span>
+                </>
+              ) : (
+                <>
+                  <CreditCard className="w-4 h-4" />
+                  <span>Payer mon abonnement</span>
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -438,236 +527,48 @@ export const AbonnementView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {invoices.map((inv) => (
-                <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3.5 px-4 whitespace-nowrap font-mono text-slate-600">{inv.date}</td>
-                  <td className="py-3.5 px-4 whitespace-nowrap font-mono font-bold text-blue-900">{inv.id}</td>
-                  <td className="py-3.5 px-4 whitespace-nowrap font-semibold text-slate-900">{inv.period}</td>
-                  <td className="py-3.5 px-4 whitespace-nowrap font-black text-slate-900">{formatFCFA(inv.amount)}</td>
-                  <td className="py-3.5 px-4 whitespace-nowrap text-center font-bold text-slate-800">
-                    {inv.propertiesCount} bien(s)
-                  </td>
-                  <td className="py-3.5 px-4 whitespace-nowrap text-center">
-                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-black border border-emerald-200 inline-flex items-center gap-1 whitespace-nowrap">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>{inv.status}</span>
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4 whitespace-nowrap text-right">
-                    <button
-                      onClick={() => handleDownloadInvoice(inv)}
-                      className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 text-blue-700 hover:text-blue-900 font-extrabold text-xs transition-all border border-slate-200 hover:border-blue-200 inline-flex items-center gap-1.5"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Facture PDF</span>
-                    </button>
+              {invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 px-4 text-center">
+                    <div className="flex flex-col items-center justify-center gap-2 text-slate-400">
+                      <History className="w-8 h-8 text-slate-300" />
+                      <span className="font-bold text-slate-700 text-xs">Aucune facture d'abonnement enregistrée</span>
+                      <span className="text-[11px] text-slate-400">Vos factures acquittées apparaîtront ici après chaque règlement.</span>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                invoices.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3.5 px-4 whitespace-nowrap font-mono text-slate-600">{inv.date}</td>
+                    <td className="py-3.5 px-4 whitespace-nowrap font-mono font-bold text-blue-900">{inv.id}</td>
+                    <td className="py-3.5 px-4 whitespace-nowrap font-semibold text-slate-900">{inv.period}</td>
+                    <td className="py-3.5 px-4 whitespace-nowrap font-black text-slate-900">{formatFCFA(inv.amount)}</td>
+                    <td className="py-3.5 px-4 whitespace-nowrap text-center font-bold text-slate-800">
+                      {inv.propertiesCount} bien(s)
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap text-center">
+                      <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-black border border-emerald-200 inline-flex items-center gap-1 whitespace-nowrap">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>{inv.status}</span>
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap text-right">
+                      <button
+                        onClick={() => handleDownloadInvoice(inv)}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 text-blue-700 hover:text-blue-900 font-extrabold text-xs transition-all border border-slate-200 hover:border-blue-200 inline-flex items-center gap-1.5"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Facture PDF</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
-
-      {/* PAYMENT PROVIDER ADAPTER MODAL */}
-      {isPaymentModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 flex flex-col gap-5 animate-scaleUp">
-            <div className="flex items-center justify-between border-b pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center">
-                  <CreditCard className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Règlement Abonnement LocaTrust</h3>
-                  <p className="text-xs text-slate-500">Paiement sécurisé et instantané</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsPaymentModalOpen(false)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Plan Summary */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-              <div>
-                <span className="text-xs text-slate-500 font-medium block">Formule active</span>
-                <span className="text-sm font-black text-slate-900">{currentPlan.tierName} ({activePropertiesCount} biens)</span>
-              </div>
-              <div className="text-right">
-                <span className="text-xs text-slate-500 font-medium block">Montant</span>
-                <span className="text-lg font-black text-blue-700">{formatFCFA(currentPlan.amount)}</span>
-              </div>
-            </div>
-
-            {/* Providers Selection */}
-            <div>
-              <label className="text-xs font-black text-slate-700 block mb-2">
-                Choisissez votre moyen de paiement
-              </label>
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setPaymentProvider('wave')}
-                  className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
-                    paymentProvider === 'wave'
-                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
-                      : 'border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="w-8 h-8 rounded-xl bg-sky-500 text-white font-black text-xs flex items-center justify-center shrink-0">
-                    W
-                  </div>
-                  <div>
-                    <span className="text-xs font-black text-slate-900 block">Wave CI</span>
-                    <span className="text-[10px] text-emerald-600 font-bold">0% de frais</span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentProvider('orange')}
-                  className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
-                    paymentProvider === 'orange'
-                      ? 'border-orange-500 bg-orange-50/70 ring-2 ring-orange-500/20'
-                      : 'border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="w-8 h-8 rounded-xl bg-orange-500 text-white font-black text-xs flex items-center justify-center shrink-0">
-                    OM
-                  </div>
-                  <div>
-                    <span className="text-xs font-black text-slate-900 block">Orange Money</span>
-                    <span className="text-[10px] text-slate-500 font-bold">Instantané</span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentProvider('mtn')}
-                  className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
-                    paymentProvider === 'mtn'
-                      ? 'border-amber-500 bg-amber-50/70 ring-2 ring-amber-500/20'
-                      : 'border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="w-8 h-8 rounded-xl bg-amber-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0">
-                    M
-                  </div>
-                  <div>
-                    <span className="text-xs font-black text-slate-900 block">MTN MoMo</span>
-                    <span className="text-[10px] text-slate-500 font-bold">Instantané</span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentProvider('card')}
-                  className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
-                    paymentProvider === 'card'
-                      ? 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-600/20'
-                      : 'border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="w-8 h-8 rounded-xl bg-slate-900 text-white font-black text-xs flex items-center justify-center shrink-0">
-                    <CreditCard className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="text-xs font-black text-slate-900 block">Carte Bancaire</span>
-                    <span className="text-[10px] text-slate-500 font-bold">Visa / Mastercard</span>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            {/* Provider Form Inputs */}
-            <form onSubmit={handleConfirmPayment} className="flex flex-col gap-4">
-              {paymentProvider !== 'card' ? (
-                <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">
-                    Numéro de téléphone mobile
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    className="w-full p-3 rounded-xl border border-slate-300 font-bold text-xs focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 outline-none"
-                    placeholder="+225 07 00 00 00 00"
-                  />
-                  <span className="text-[10px] text-slate-500 mt-1 block">
-                    Un prompt de confirmation sera envoyé sur votre téléphone.
-                  </span>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1">
-                      Numéro de carte bancaire
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value)}
-                      className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold text-xs focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 outline-none"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">Expiration</label>
-                      <input
-                        type="text"
-                        defaultValue="12/28"
-                        className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold text-slate-700 block mb-1">CVC</label>
-                      <input
-                        type="password"
-                        defaultValue="888"
-                        maxLength={4}
-                        className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold text-xs"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsPaymentModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-50 transition-colors"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isProcessingPayment}
-                  className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
-                >
-                  {isProcessingPayment ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Validation en cours...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>Régler {formatFCFA(currentPlan.amount)}</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

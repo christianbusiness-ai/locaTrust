@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Folder,
   FileText,
@@ -13,9 +13,11 @@ import {
   CheckCircle2,
   Calendar,
   X,
-  ExternalLink
+  ExternalLink,
+  AlertTriangle
 } from 'lucide-react';
-import { MOCK_CONTRACTS } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 import { triggerCelebration } from '@/lib/celebration';
 
 interface TenantDocumentRow {
@@ -36,59 +38,6 @@ interface TenantDocumentRow {
   }[];
 }
 
-const MOCK_DOCS_LIST: TenantDocumentRow[] = [
-  {
-    id: 'doc_row_1',
-    tenant_name: "Koffi N'Guessan",
-    tenant_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 07 08 09 10 11',
-    property_title: 'Appartement 3 pièces Cocody Riviera 3',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    contract_number: 'LT-2026-CI-000492',
-    contract_date: '01/01/2026',
-    documents_count: 4,
-    documents: [
-      { title: 'Contrat de bail certifié conforme', type: 'contrat', date: '01/01/2026', file_name: 'Contrat_Bail_LT-2026-CI-000492.pdf' },
-      { title: 'Pièce d\'identité locataire (CNI)', type: 'cni', date: '01/01/2026', file_name: 'CNI_Koffi_NGuessan.pdf' },
-      { title: 'État des lieux d\'entrée contradictoire', type: 'etat_des_lieux', date: '01/01/2026', file_name: 'Etat_Des_Lieux_Entree_000492.pdf' },
-      { title: 'Attestation d\'assurance habitation', type: 'assurance', date: '05/01/2026', file_name: 'Assurance_Habitation_2026.pdf' }
-    ]
-  },
-  {
-    id: 'doc_row_2',
-    tenant_name: 'Amina Diabaté',
-    tenant_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 05 55 66 77 88',
-    property_title: 'Villa 4 pièces Riviera M\'Badon',
-    property_address: 'Riviera M\'Badon, Cocody',
-    contract_number: 'LT-2026-CI-000508',
-    contract_date: '01/05/2026',
-    documents_count: 3,
-    documents: [
-      { title: 'Contrat de bail notifié', type: 'contrat', date: '01/05/2026', file_name: 'Contrat_Bail_LT-2026-CI-000508.pdf' },
-      { title: 'Pièce d\'identité (Passeport/CNI)', type: 'cni', date: '01/05/2026', file_name: 'Passeport_Amina_Diabate.pdf' },
-      { title: 'État des lieux d\'entrée', type: 'etat_des_lieux', date: '02/05/2026', file_name: 'Etat_Des_Lieux_Villa_Mbadon.pdf' }
-    ]
-  },
-  {
-    id: 'doc_row_3',
-    tenant_name: 'Kouadio Jean',
-    tenant_avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 05 67 89 45 12',
-    property_title: 'Studio meublé Marcory Zone 4',
-    property_address: 'Marcory Zone 4, Abidjan',
-    contract_number: 'LT-2026-CI-000512',
-    contract_date: '01/08/2026',
-    documents_count: 4,
-    documents: [
-      { title: 'Contrat de bail d\'habitation', type: 'contrat', date: '01/08/2026', file_name: 'Contrat_Bail_Studio_000512.pdf' },
-      { title: 'Avenant n°1 au contrat', type: 'avenant', date: '15/08/2026', file_name: 'Avenant_1_Climatiseur.pdf' },
-      { title: 'Pièce d\'identité nationale', type: 'cni', date: '01/08/2026', file_name: 'CNI_Kouadio_Jean.pdf' },
-      { title: 'État des lieux d\'entrée et inventaire', type: 'etat_des_lieux', date: '01/08/2026', file_name: 'Inventaire_Meuble_Marcory.pdf' }
-    ]
-  }
-];
-
 interface DocumentsViewProps {
   onOpenContractDetail?: (contractNumber: string) => void;
   onOpenReceipts?: () => void;
@@ -98,10 +47,70 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   onOpenContractDetail,
   onOpenReceipts
 }) => {
+  const { user } = useAuth();
+  const [tenantDocs, setTenantDocs] = useState<TenantDocumentRow[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTenantRow, setSelectedTenantRow] = useState<TenantDocumentRow | null>(null);
 
-  const filteredRows = MOCK_DOCS_LIST.filter(
+  const loadDocuments = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { data, error } = await supabase
+        .from('contracts')
+        .select('*, property:properties(*), tenant:users!tenant_id(*)')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        setLoadError(error.message);
+      } else {
+        const rows: TenantDocumentRow[] = (data || []).map((c: any) => ({
+          id: c.id,
+          tenant_name: c.tenant?.full_name || 'Locataire',
+          tenant_avatar: c.tenant?.avatar_url || '',
+          tenant_phone: c.tenant?.phone || '',
+          property_title: c.property?.title || 'Logement',
+          property_address: c.property?.address || 'Abidjan',
+          contract_number: c.contract_number || 'LT-2026',
+          contract_date: new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
+          documents_count: 3,
+          documents: [
+            {
+              title: 'Contrat de bail certifié conforme',
+              type: 'contrat',
+              date: new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
+              file_name: `Contrat_Bail_${c.contract_number}.pdf`
+            },
+            {
+              title: 'Pièce d\'identité locataire (CNI)',
+              type: 'cni',
+              date: new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR'),
+              file_name: `CNI_${(c.tenant?.full_name || 'Locataire').replace(/\s+/g, '_')}.pdf`
+            },
+            {
+              title: 'État des lieux d\'entrée contradictoire',
+              type: 'etat_des_lieux',
+              date: new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
+              file_name: `Etat_Des_Lieux_${c.contract_number}.pdf`
+            }
+          ]
+        }));
+        setTenantDocs(rows);
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Erreur lors du chargement des documents.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDocuments();
+  }, [user]);
+
+  const filteredRows = tenantDocs.filter(
     (row) =>
       row.tenant_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       row.property_title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -164,7 +173,52 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {filteredRows.map((row) => (
+              {isLoading && (
+                <tr>
+                  <td colSpan={5} className="p-12 text-center">
+                    <div className="flex flex-col items-center justify-center">
+                      <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
+                      <span className="text-slate-700 font-bold text-xs">Chargement des documents...</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && loadError && (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center bg-rose-50/50">
+                    <div className="flex flex-col items-center justify-center">
+                      <AlertTriangle className="w-8 h-8 text-rose-500 mb-2" />
+                      <span className="text-slate-800 font-bold text-xs">{loadError}</span>
+                      <button onClick={loadDocuments} className="mt-3 px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer">
+                        Réessayer
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && !loadError && filteredRows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-12 text-center">
+                    <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
+                        <Folder className="w-6 h-6" />
+                      </div>
+                      <span className="text-slate-800 font-bold text-sm">
+                        {searchTerm ? "Aucun document trouvé" : "Aucun dossier locataire pour le moment"}
+                      </span>
+                      <p className="text-slate-400 text-xs mt-1 text-center">
+                        {searchTerm
+                          ? "Aucun résultat ne correspond à votre recherche."
+                          : "Dès qu'un bail est conclu, l'ensemble des pièces juridiques (bail, CNI, états des lieux) apparaîtra ici."}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && !loadError && filteredRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
                   
                   {/* Locataire */}

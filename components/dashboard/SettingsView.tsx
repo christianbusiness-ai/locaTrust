@@ -29,7 +29,8 @@ import {
   Award
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
-import { MOCK_USERS, MOCK_PROPERTIES } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 import {
   getActiveReferenceYear,
   setActiveReferenceYear,
@@ -48,23 +49,7 @@ interface AdminTicket {
   adminResponse?: string;
 }
 
-const INITIAL_SUPPORT_TICKETS: AdminTicket[] = [
-  {
-    id: 'ADM-2026-042',
-    subject: 'Validation compte séquestre caution',
-    message: 'Bonjour, pouvez-vous confirmer la bonne liaison de mon compte Wave pour les avis de caution ?',
-    status: 'répondu',
-    date: '18/09/2026 à 14:20',
-    adminResponse: 'Bonjour M. N\'Guessan, votre compte a bien été validé et certifié conforme par le pôle financier LocaTrust.'
-  },
-  {
-    id: 'ADM-2026-049',
-    subject: 'Demande d\'attestation de propriété',
-    message: 'Je souhaite obtenir l\'attestation récapitulative pour mon dossier bancaire.',
-    status: 'lu',
-    date: '24/09/2026 à 09:15'
-  }
-];
+const INITIAL_SUPPORT_TICKETS: AdminTicket[] = [];
 
 interface SettingsViewProps {
   userRole?: 'proprietaire' | 'agence' | 'locataire' | 'admin';
@@ -79,7 +64,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onNavigateToPaymentAccounts,
   onNavigateToSubscription
 }) => {
-  const isAgency = userRole === 'agence';
+  const { user, profile, refreshProfile } = useAuth();
+  const isAgency = userRole === 'agence' || profile?.role === 'agence';
   const [activeTab, setActiveTab] = useState<
     'profile' | 'account' | 'accounting_year' | 'preferences' | 'notifications' | 'payments' | 'verification' | 'privacy' | 'support'
   >('profile');
@@ -87,9 +73,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Avatar Management State (Points 19 & 20 du prompt)
   const [userAvatar, setUserAvatar] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('locatrust_user_avatar') || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80';
+      const stored = localStorage.getItem('locatrust_user_avatar');
+      if (stored && !stored.includes('images.unsplash.com')) return stored;
     }
-    return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80';
+    const profAvatar = profile?.avatar_url;
+    if (profAvatar && !profAvatar.includes('images.unsplash.com')) return profAvatar;
+    return '';
   });
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
@@ -104,40 +93,112 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [yearSuccessFeedback, setYearSuccessFeedback] = useState<string | null>(null);
 
   // Profile Form State
-  const [fullName, setFullName] = useState<string>(() => {
-    if (currentUser?.full_name) return currentUser.full_name;
-    return isAgency ? 'Immobilière du Golf Abidjan' : "Koffi N'Guessan";
-  });
-  const [email, setEmail] = useState<string>(() => {
-    if (currentUser?.email) return currentUser.email;
-    return isAgency ? 'contact@immogolf.ci' : 'koffi.nguessan@gmail.com';
-  });
-  const [phone, setPhone] = useState<string>(() => {
-    if (currentUser?.phone) return currentUser.phone;
-    return isAgency ? '+225 27 22 44 55 66' : '+225 07 48 92 11 00';
-  });
-  const [address, setAddress] = useState<string>(() => {
-    return isAgency ? 'Boulevard du Golf, Cocody, Abidjan' : 'Cocody Deux-Plateaux, Abidjan';
-  });
+  const [fullName, setFullName] = useState<string>(() => profile?.full_name || currentUser?.full_name || '');
+  const [email, setEmail] = useState<string>(() => profile?.email || user?.email || currentUser?.email || '');
+  const [phone, setPhone] = useState<string>(() => profile?.phone || currentUser?.phone || '');
+  const [address, setAddress] = useState<string>(() => currentUser?.address || 'Abidjan, Côte d\'Ivoire');
+
+  // Synchronize when profile or user loads
+  React.useEffect(() => {
+    if (profile) {
+      if (profile.full_name) setFullName(profile.full_name);
+      if (profile.email) setEmail(profile.email);
+      if (profile.phone) setPhone(profile.phone);
+    } else if (user) {
+      if (user.email) setEmail(user.email);
+    }
+  }, [profile, user]);
 
   // Agency / Corporate specific fields
   const [rccmNumber, setRccmNumber] = useState<string>('CI-ABJ-2021-B-12849');
   const [ministerialApproval, setMinisterialApproval] = useState<string>('AGR-MCU-2022-048');
   const [taxId, setTaxId] = useState<string>('2104829 Z');
-  const [legalRepresentative, setLegalRepresentative] = useState<string>('M. Kouamé Patrice');
+  const [legalRepresentative, setLegalRepresentative] = useState<string>('Représentant Légal Agréé');
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Preferences Form State
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [language, setLanguage] = useState<'fr' | 'en'>('fr');
-  const [refYear, setRefYear] = useState<string>(() => getActiveReferenceYear());
+  // KYC Verification Upload State & Handlers
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docFilePreview, setDocFilePreview] = useState<string | null>(null);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [docSuccessMsg, setDocSuccessMsg] = useState<string | null>(null);
+  const [docErrorMsg, setDocErrorMsg] = useState<string | null>(null);
+  const [docIdentifier, setDocIdentifier] = useState<string>(() => profile?.cni_number || '');
 
-  // Notification Preferences State
-  const [notifEmail, setNotifEmail] = useState(true);
-  const [notifPayments, setNotifPayments] = useState(true);
-  const [notifMessages, setNotifMessages] = useState(true);
-  const [notifMaintenance, setNotifMaintenance] = useState(true);
-  const [notifContracts, setNotifContracts] = useState(true);
+  const handleKycFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setDocErrorMsg('Le document ne doit pas dépasser 10 Mo.');
+      return;
+    }
+    setDocErrorMsg(null);
+    setDocFile(file);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => setDocFilePreview(reader.result as string);
+      reader.readAsDataURL(file);
+    } else {
+      setDocFilePreview(null);
+    }
+  };
+
+  const handleKycDocSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setIsUploadingDoc(true);
+    setDocSuccessMsg(null);
+    setDocErrorMsg(null);
+
+    try {
+      let finalDocUrl = profile?.id_document_url || '';
+      if (docFile) {
+        const fileExt = docFile.name.split('.').pop()?.toLowerCase() || 'pdf';
+        const sanitizedName = `${Date.now()}_${docFile.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const filePath = `kyc_documents/${user.id}/${sanitizedName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(filePath, docFile, { upsert: true, contentType: docFile.type });
+
+        if (uploadError) {
+          const reader = new FileReader();
+          const base64Promise = new Promise<string>((resolve) => {
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(docFile);
+          });
+          finalDocUrl = await base64Promise;
+        } else {
+          const { data: publicData } = supabase.storage.from('documents').getPublicUrl(filePath);
+          finalDocUrl = publicData?.publicUrl || filePath;
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          cni_number: docIdentifier.trim(),
+          id_document_url: finalDocUrl,
+          verification_status: 'en_attente',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+      await refreshProfile();
+      setDocFile(null);
+      setDocFilePreview(null);
+      setDocSuccessMsg('✅ Vos pièces justificatives ont été transmises avec succès à l’administrateur ! Votre dossier KYC est désormais en cours d’examen.');
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:verification_updated'));
+      setTimeout(() => setDocSuccessMsg(null), 8000);
+    } catch (err: any) {
+      setDocErrorMsg(err?.message || 'Erreur lors du téléversement.');
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
 
   // Support / Admin Tickets State
   const [tickets, setTickets] = useState<AdminTicket[]>(INITIAL_SUPPORT_TICKETS);
@@ -147,14 +208,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [ticketFile, setTicketFile] = useState<string | null>(null);
 
   // Property & Subscription auto calculations
-  const activePropertiesCount = MOCK_PROPERTIES.filter((p) => p.status !== 'desactive').length || 5;
+  const [activePropertiesCount, setActivePropertiesCount] = useState<number>(0);
+
+  React.useEffect(() => {
+    if (user?.id) {
+      supabase
+        .from('properties')
+        .select('id, status', { count: 'exact', head: true })
+        .eq('owner_id', user.id)
+        .then(({ count, error: qErr }) => {
+          if (!qErr && count !== null) {
+            setActivePropertiesCount(count);
+          }
+        });
+    }
+  }, [user?.id]);
+
   const subscriptionCost = activePropertiesCount <= 1 ? 500 : activePropertiesCount <= 10 ? 2000 : activePropertiesCount <= 20 ? 5000 : 10000;
 
   // Handle Save Profile
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSavedMessage('Vos informations personnelles ont été mises à jour avec succès.');
-    setTimeout(() => setSavedMessage(null), 3500);
+    if (!user?.id) {
+      setSavedMessage('Modifications enregistrées localement.');
+      setTimeout(() => setSavedMessage(null), 3000);
+      return;
+    }
+    try {
+      setIsSaving(true);
+      setSaveError(null);
+      const { error: updError } = await supabase.from('profiles').update({
+        full_name: fullName,
+        phone: phone,
+        updated_at: new Date().toISOString()
+      }).eq('id', user.id);
+
+      if (updError) throw updError;
+      await refreshProfile();
+      setSavedMessage('Vos informations personnelles ont été mises à jour avec succès.');
+      setTimeout(() => setSavedMessage(null), 3500);
+    } catch (err: any) {
+      console.error('Erreur sauvegarde profil:', err);
+      setSaveError('Erreur lors de la mise à jour de vos informations.');
+      setTimeout(() => setSaveError(null), 4000);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Handle Avatar Change (Points 19 & 20)
@@ -548,13 +647,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </div>
 
+              {saveError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl">
+                  {saveError}
+                </div>
+              )}
+
               <div className="pt-4 border-t border-slate-100 flex justify-end">
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black flex items-center gap-2 shadow-md transition-all active:scale-95"
+                  disabled={isSaving}
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black flex items-center gap-2 shadow-md transition-all active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>Enregistrer les modifications</span>
+                  <span>{isSaving ? 'Enregistrement...' : 'Enregistrer les modifications'}</span>
                 </button>
               </div>
             </form>
@@ -833,123 +939,166 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          {/* TAB 6: DOCUMENTS & VÉRIFICATION */}
+          {/* TAB 6: DOCUMENTS & VÉRIFICATION KYC (Connecté en direct à la base de données Supabase) */}
           {activeTab === 'verification' && (
             <div className="flex flex-col gap-5 text-xs">
               <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-black text-slate-900">
-                    {isAgency ? "Documents d'Agrément & Conformité Agence" : "Documents d'Identité & Vérification"}
+                    {isAgency ? "Documents d'Agrément & Conformité Agence" : "Documents d'Identité & Propriété"}
                   </h3>
                   <p className="text-slate-500">
                     {isAgency
-                      ? "Statut légal d'agent immobilier agréé par le Ministère de la Construction et de l'Urbanisme"
-                      : 'Statut de conformité de votre profil bailleur'}
+                      ? "Agrément ministériel MCU, RCCM et conformité réglementaire"
+                      : 'Pièce d’identité et attestations de propriété (Loi CI n° 2019-576)'}
                   </p>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-black border border-emerald-200 shrink-0 self-start sm:self-auto">
-                  {isAgency ? '✓ Agence Immobilière Agréée' : '✓ Propriétaire Vérifié'}
-                </span>
+                <div>
+                  {profile?.verification_status === 'verifie' ? (
+                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-black border border-emerald-200 flex items-center gap-1.5 shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{isAgency ? '✓ Agence Agréée & Vérifiée' : '✓ Propriétaire Vérifié'}</span>
+                    </span>
+                  ) : profile?.verification_status === 'en_attente' ? (
+                    <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 font-black border border-amber-200 flex items-center gap-1.5 shrink-0">
+                      <span>⏳ Dossier en cours d'examen</span>
+                    </span>
+                  ) : profile?.verification_status === 'rejete' ? (
+                    <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-800 font-black border border-rose-200 flex items-center gap-1.5 shrink-0">
+                      <span>❌ Dossier Rejeté</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-black border border-slate-300 flex items-center gap-1.5 shrink-0">
+                      <span>⚠️ Non vérifié</span>
+                    </span>
+                  )}
+                </div>
               </div>
 
-              <div className="space-y-3">
-                {isAgency ? (
-                  <>
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Agrément Ministériel Immobilier (MCU)</span>
-                          <span className="text-slate-500 font-mono">N° {ministerialApproval} • Arrêté ministériel conforme</span>
-                        </div>
-                      </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        Validé MCU
-                      </span>
+              {docSuccessMsg && (
+                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{docSuccessMsg}</span>
+                </div>
+              )}
+
+              {docErrorMsg && (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold flex items-center gap-2">
+                  <X className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{docErrorMsg}</span>
+                </div>
+              )}
+
+              {/* Statut vérifié affiché */}
+              {profile?.verification_status === 'verifie' ? (
+                <div className="p-5 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <Shield className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-black text-emerald-950 text-sm">
+                        {isAgency ? 'Agence Immobilière Officiellement Agréée' : 'Profil Bailleur Certifié Conforme'}
+                      </h4>
+                      <p className="text-emerald-800 mt-0.5 font-medium">
+                        Vos documents ont été audités et validés par l'administration juridique LocaTrust. Vos contrats de bail générés sont scellés avec valeur probante et QR Code officiel.
+                      </p>
+                    </div>
+                  </div>
+                  {profile?.id_document_url && (
+                    <a
+                      href={profile.id_document_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-2 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 font-bold border border-emerald-300 flex items-center gap-1.5 shrink-0 shadow-sm"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Consulter la pièce validée</span>
+                    </a>
+                  )}
+                </div>
+              ) : (
+                /* Formulaire de soumission KYC pour Propriétaire et Agence */
+                <form onSubmit={handleKycDocSubmit} className="flex flex-col gap-4 p-5 bg-slate-50 rounded-2xl border border-slate-200">
+                  <div className="flex flex-col gap-1">
+                    <h4 className="font-bold text-slate-900 text-sm">
+                      {isAgency ? 'Téléverser votre Registre de Commerce (RCCM) ou Agrément MCU' : 'Téléverser votre Pièce d’Identité (CNI / Passeport)'}
+                    </h4>
+                    <p className="text-slate-500">
+                      Conformément à la Loi 2019-576, la certification de votre compte est requise pour publier des annonces et générer des baux scellés.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        {isAgency ? 'Numéro RCCM ou Agrément MCU *' : 'Numéro CNI ou Passeport *'}
+                      </label>
+                      <input
+                        type="text"
+                        value={docIdentifier}
+                        onChange={(e) => setDocIdentifier(e.target.value)}
+                        placeholder={isAgency ? 'Ex : CI-ABJ-2023-B-12849' : 'Ex : CI002894129'}
+                        className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold focus:ring-2 focus:ring-blue-600/30 bg-white"
+                        required
+                      />
                     </div>
 
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Registre de Commerce et du Crédit Mobilier (RCCM)</span>
-                          <span className="text-slate-500 font-mono">N° {rccmNumber} • Greffe Tribunal de Commerce</span>
-                        </div>
-                      </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        Conforme
-                      </span>
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Document scanné (PDF, PNG, JPG - Max 10 Mo) *
+                      </label>
+                      <label className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-3 flex flex-col items-center justify-center text-center cursor-pointer bg-white hover:bg-blue-50/30 transition-colors">
+                        <Upload className="w-5 h-5 text-blue-600 mb-0.5" />
+                        <span className="font-bold text-slate-800 text-xs">
+                          {docFile ? docFile.name : 'Sélectionner le document'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={handleKycFileSelect}
+                          className="hidden"
+                        />
+                      </label>
                     </div>
+                  </div>
 
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  {docFilePreview && (
+                    <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Déclaration Fiscale d'Existence (DGI)</span>
-                          <span className="text-slate-500 font-mono">Compte Contribuable N° {taxId}</span>
-                        </div>
+                        <img src={docFilePreview} alt="Aperçu" className="w-14 h-10 rounded-lg object-cover border" />
+                        <span className="font-bold text-slate-800">{docFile?.name}</span>
                       </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        En règle
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setDocFile(null); setDocFilePreview(null); }}
+                        className="p-1 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
+                  )}
 
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Pièce d'Identité du Gérant ({legalRepresentative})</span>
-                          <span className="text-slate-500">CNI ivoirienne certifiée</span>
-                        </div>
-                      </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        Vérifiée
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Pièce d'Identité (CNI / Passeport)</span>
-                          <span className="text-slate-500">Validé le 12/01/2026 par l'équipe juridique LocaTrust</span>
-                        </div>
-                      </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        Conforme
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Titre de propriété / Attestation d'attribution</span>
-                          <span className="text-slate-500">Déposé pour les biens enregistrés</span>
-                        </div>
-                      </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        Conforme
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <FileCheck className="w-5 h-5 text-blue-600 shrink-0" />
-                        <div>
-                          <span className="font-bold text-slate-900 block">Relevé d'Identité Bancaire / Compte Mobile Money</span>
-                          <span className="text-slate-500">Validé pour l'encaissement direct et le séquestre</span>
-                        </div>
-                      </div>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-center shrink-0">
-                        Actif
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-200">
+                    <span className="text-slate-500 text-[11px] flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      Transmission directe et sécurisée vers l'administrateur système LocaTrust
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={isUploadingDoc || (!docFile && !docIdentifier.trim())}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
+                    >
+                      {isUploadingDoc ? (
+                        <span>Envoi en cours...</span>
+                      ) : (
+                        <>
+                          <FileCheck className="w-4 h-4" />
+                          <span>Soumettre à l’administrateur</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           )}
 

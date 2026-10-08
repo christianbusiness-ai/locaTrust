@@ -4,100 +4,20 @@ import { formatFCFA } from '@/lib/utils';
 
 const STORAGE_KEY = 'locatrust_deposits_v1';
 
-export const INITIAL_DEPOSITS: Deposit[] = [
-  {
-    id: 'dep_1',
-    contract_id: 'LT-2026-CI-000492',
-    tenant_id: 'usr_tenant_1',
-    owner_id: 'usr_owner_1',
-    amount_requested: 900000,
-    amount_paid: 900000,
-    status: 'caution_a_confirmer', // Tenant reported paying 900 000 FCFA for demo notification flow
-    declared_at: '2026-09-26T07:30:00Z',
-    declared_reference: 'OM-CI-2026-99182301',
-    proof_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80',
-    comment: 'Paiement effectué ce matin par Orange Money pour la caution de 900 000 FCFA. Reçu ci-joint.',
-    restitution_status: 'conserve',
-    created_at: '2026-01-01T10:00:00Z',
-    tenant: {
-      id: 'usr_tenant_1',
-      role: 'locataire',
-      full_name: "Koffi N'Guessan",
-      email: 'koffi.nguessan@locatrust.ci',
-      phone: '+225 07 08 09 10 11',
-      verification_status: 'verifie',
-      created_at: '2025-01-15'
-    },
-    property: {
-      id: 'prop_1',
-      owner_id: 'usr_owner_1',
-      type: 'appartement',
-      title: 'Appartement 3 pièces moderne à Cocody Riviera',
-      description: 'Appartement 3 pièces',
-      surface: 120,
-      rooms: 3,
-      bedrooms: 2,
-      bathrooms: 2,
-      rent: 450000,
-      caution: 900000,
-      charges: 25000,
-      furnished: true,
-      equipments: ['Climatisation'],
-      status: 'loue',
-      created_at: '2026-01-01',
-      photos: ['https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=400&q=80']
-    }
-  },
-  {
-    id: 'dep_2',
-    contract_id: 'LT-2026-CI-000508',
-    tenant_id: 'usr_tenant_2',
-    owner_id: 'usr_owner_1',
-    amount_requested: 1300000,
-    amount_paid: 650000,
-    status: 'paye_partiel',
-    restitution_status: 'conserve',
-    created_at: '2026-05-10T14:00:00Z',
-    tenant: {
-      id: 'usr_tenant_2',
-      role: 'locataire',
-      full_name: 'Amina Diabaté',
-      email: 'amina.diabate@gmail.com',
-      phone: '+225 05 55 66 77 88',
-      verification_status: 'verifie',
-      created_at: '2026-05-01'
-    },
-    property: {
-      id: 'prop_5',
-      owner_id: 'usr_owner_1',
-      type: 'maison',
-      title: 'Villa 4 pièces Riviera M\'Badon',
-      description: 'Villa 4 pièces',
-      surface: 200,
-      rooms: 4,
-      bedrooms: 3,
-      bathrooms: 3,
-      rent: 650000,
-      caution: 1300000,
-      charges: 30000,
-      furnished: false,
-      equipments: [],
-      status: 'loue',
-      created_at: '2026-05-01',
-      photos: ['https://images.unsplash.com/photo-1613977257363-707ba9348227?auto=format&fit=crop&w=400&q=80']
-    }
-  }
-];
+export const INITIAL_DEPOSITS: Deposit[] = [];
 
 export function getStoredDeposits(): Deposit[] {
   if (typeof window === 'undefined') return INITIAL_DEPOSITS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_DEPOSITS));
+    if (!raw) return INITIAL_DEPOSITS;
+    // Purger les données fictives de démonstration résiduelles
+    if (raw.includes("Koffi N'Guessan") || raw.includes('000492') || raw.includes('Amina Diabaté')) {
+      localStorage.removeItem(STORAGE_KEY);
       return INITIAL_DEPOSITS;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : INITIAL_DEPOSITS;
   } catch (err) {
     console.error('Error loading deposits from localStorage:', err);
     return INITIAL_DEPOSITS;
@@ -202,7 +122,7 @@ export function declareCautionPayment(params: {
   return updatedDeposit;
 }
 
-export function confirmCautionReceipt(depositId: string, confirmedBy: string = "Koffi N'Guessan"): Deposit | null {
+export function confirmCautionReceipt(depositId: string, confirmedBy: string = 'Bailleur'): Deposit | null {
   const all = getStoredDeposits();
   const target = all.find((d) => d.id === depositId);
   if (!target) return null;
@@ -421,7 +341,7 @@ export function restituteCaution(params: {
     action: 'restitution_caution',
     contractId: target.contract_id,
     tenantName: target.tenant?.full_name || 'Locataire',
-    confirmedBy: params.confirmedBy || "Koffi N'Guessan",
+    confirmedBy: params.confirmedBy || 'Bailleur',
     amount: isImputation ? target.amount_paid : params.amountRestituted,
     date: params.restitutionDate || now,
     details: auditDetails
@@ -455,7 +375,7 @@ export function restituteCaution(params: {
           : params.deductionReason,
         restitutionDate: params.restitutionDate || new Date().toLocaleDateString('fr-FR'),
         restitutionMethod: isImputation ? 'Compensation de loyers' : (params.paymentMethod || 'Wave CI'),
-        ownerName: params.confirmedBy || "Koffi N'Guessan",
+        ownerName: params.confirmedBy || 'Bailleur',
         tenantName: target.tenant?.full_name || 'Locataire',
         operationType: isImputation ? 'IMPUTATION_LOYERS' : 'RESTITUTION_CAUTION'
       },

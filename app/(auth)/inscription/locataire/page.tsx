@@ -49,7 +49,7 @@ export default function InscriptionLocatairePage() {
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Koffi N'Guessan"
+                placeholder="LocaTrust Utilisateur"
                 className="p-3 bg-slate-50 border rounded-xl text-xs"
                 required
               />
@@ -60,7 +60,7 @@ export default function InscriptionLocatairePage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="koffi@locatrust.ci"
+                placeholder="contact@locatrust.ci"
                 className="p-3 bg-slate-50 border rounded-xl text-xs"
                 required
               />

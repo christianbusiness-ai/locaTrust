@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   MapPin,
@@ -25,12 +25,16 @@ import {
   Calendar,
   Layers,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  ShieldAlert,
+  ArrowRight
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
-import { MOCK_PROPERTIES } from '@/lib/mock/data';
+import { getAvailableProperties } from '@/src/lib/db';
 import { Property } from '@/types/database.types';
 import { triggerCelebration } from '@/lib/celebration';
+import { useAuth } from '@/src/context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 interface LocataireFeedViewProps {
   onOpenMessages?: (landlordName?: string) => void;
@@ -82,6 +86,12 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   ];
 
   // Modals state
+  const { profile } = useAuth();
+  const navigate = useNavigate();
+  const isVerified = profile?.verification_status === 'verifie';
+  const [showKycBlockModal, setShowKycBlockModal] = useState<boolean>(false);
+  const [kycBlockAction, setKycBlockAction] = useState<string>('candidater pour un logement');
+
   const [selectedRental, setSelectedRental] = useState<any | null>(null);
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
   const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
@@ -102,11 +112,21 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   };
 
   const handleApply = (rental: any) => {
+    if (!isVerified) {
+      setKycBlockAction('candidater pour un logement');
+      setShowKycBlockModal(true);
+      return;
+    }
     setSelectedRental(rental);
     setIsApplyModalOpen(true);
   };
 
   const handleMessage = (rental: any) => {
+    if (!isVerified) {
+      setKycBlockAction('contacter le bailleur et demander une visite');
+      setShowKycBlockModal(true);
+      return;
+    }
     setSelectedRental(rental);
     setIsMessageModalOpen(true);
   };
@@ -126,154 +146,66 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     if (onOpenMessages) onOpenMessages(selectedRental?.authorName);
   };
 
-  // Comprehensive verified feed database
-  const ALL_FEED_ITEMS = [
-    {
-      id: 'feed_1',
-      authorName: 'Aïcha Diallo',
-      authorAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-      isVerified: true,
-      roleBadge: 'Propriétaire vérifié',
-      locationPublished: 'Abidjan, Cocody Riviera • Publiée aujourd\'hui à 09:30',
-      badge: 'À LOUER',
-      title: 'Appartement 3 pièces moderne à Cocody Riviera',
-      description: 'Bel appartement moderne avec 3 pièces, salon spacieux, cuisine équipée, 2 salles de bain et balcon avec belle vue.',
-      city: 'Abidjan',
-      district: 'Cocody Riviera',
-      type: 'Appartement',
-      price: 450000,
-      location: 'Cocody Riviera, Abidjan',
-      amenities: [
-        { label: '2 Chambres', icon: Bed },
-        { label: '1 Salon', icon: Sofa },
-        { label: '2 Salles de bain', icon: Bath },
-        { label: '120 m²', icon: Maximize2 },
-        { label: '2e étage', icon: Building }
-      ],
-      images: {
-        main: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=900&q=80',
-        thumb1: 'https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&w=400&q=80',
-        thumb2: 'https://images.unsplash.com/photo-1540518614846-7ede433c4550?auto=format&fit=crop&w=400&q=80',
-        extraCount: '+8'
+  // State pour données réelles Supabase
+  const [properties, setProperties] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const fetchProperties = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { data, error } = await getAvailableProperties();
+      if (error) {
+        setLoadError("Impossible de charger les logements en direct depuis la base de données.");
+      } else {
+        setProperties(data || []);
       }
-    },
-    {
-      id: 'feed_2',
-      authorName: 'Koffi Traoré',
-      authorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-      isVerified: true,
-      roleBadge: 'Propriétaire vérifié',
-      locationPublished: 'Yamoussoukro, Quartier Millionnaire • Publiée hier à 18:45',
-      badge: 'À LOUER',
-      title: 'Villa duplex 5 pièces à Yamoussoukro',
-      description: 'Villa duplex de standing avec 5 pièces, jardin, garage, chauffe-eau, climatisation et groupe électrogène.',
-      city: 'Yamoussoukro',
-      district: 'Quartier Millionnaire',
-      type: 'Villa duplex',
-      price: 750000,
-      location: 'Yamoussoukro, Quartier Millionnaire',
-      amenities: [
-        { label: '4 Chambres', icon: Bed },
-        { label: '2 Salons', icon: Sofa },
-        { label: '4 Salles de bain', icon: Bath },
-        { label: '250 m²', icon: Maximize2 },
-        { label: 'Garage', icon: Building }
-      ],
-      images: {
-        main: 'https://images.unsplash.com/photo-1613490493576-7fde63acd811?auto=format&fit=crop&w=900&q=80',
-        thumb1: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=400&q=80',
-        thumb2: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=400&q=80',
-        extraCount: '+12'
-      }
-    },
-    {
-      id: 'feed_3',
-      authorName: 'Jean-Marc Kouassi',
-      authorAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-      isVerified: true,
-      roleBadge: 'Agence agréée',
-      locationPublished: 'Abidjan, Angré 8e tranche • Publiée aujourd\'hui',
-      badge: 'À LOUER',
-      title: 'Studio meublé de standing à Angré 8e tranche',
-      description: 'Superbe studio meublé avec finitions de standing, internet fibre optique, gardiennage 24h/7j et terrasse privative.',
-      city: 'Abidjan',
-      district: 'Angré 8e tranche',
-      type: 'Studio meublé',
-      price: 220000,
-      location: 'Angré 8e tranche, Abidjan',
-      amenities: [
-        { label: '1 Chambre', icon: Bed },
-        { label: '1 Salon', icon: Sofa },
-        { label: '1 Salle de bain', icon: Bath },
-        { label: '45 m²', icon: Maximize2 },
-        { label: 'Climatisé', icon: Building }
-      ],
-      images: {
-        main: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=900&q=80',
-        thumb1: 'https://images.unsplash.com/photo-1502005229762-ee1b2b8100f9?auto=format&fit=crop&w=400&q=80',
-        thumb2: 'https://images.unsplash.com/photo-1554995207-c18c203602cb?auto=format&fit=crop&w=400&q=80',
-        extraCount: '+6'
-      }
-    },
-    {
-      id: 'feed_4',
-      authorName: 'Fatou Bamba',
-      authorAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      isVerified: true,
-      roleBadge: 'Propriétaire vérifié',
-      locationPublished: 'Abidjan, Marcory Zone 4 • Publiée il y a 2 jours',
-      badge: 'À LOUER',
-      title: 'Appartement 2 pièces standing à Marcory Zone 4',
-      description: 'Appartement lumineux et sécurisé au cœur de Zone 4, résidence avec piscine, ascenseur et parking souterrain.',
-      city: 'Abidjan',
-      district: 'Marcory Zone 4',
-      type: 'Appartement',
-      price: 350000,
-      location: 'Marcory Zone 4, Abidjan',
-      amenities: [
-        { label: '1 Chambre', icon: Bed },
-        { label: '1 Salon', icon: Sofa },
-        { label: '1 Salle de bain', icon: Bath },
-        { label: '70 m²', icon: Maximize2 },
-        { label: 'Piscine', icon: Building }
-      ],
-      images: {
-        main: 'https://images.unsplash.com/photo-1493809842364-78817add7ffb?auto=format&fit=crop&w=900&q=80',
-        thumb1: 'https://images.unsplash.com/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=400&q=80',
-        thumb2: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=400&q=80',
-        extraCount: '+9'
-      }
-    },
-    {
-      id: 'feed_5',
-      authorName: 'Patrick Touré',
-      authorAvatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=150&q=80',
-      isVerified: true,
-      roleBadge: 'Propriétaire vérifié',
-      locationPublished: 'Abidjan, Riviera M\'Badon • Publiée cette semaine',
-      badge: 'À LOUER',
-      title: 'Villa 4 pièces avec jardin à Riviera M\'Badon',
-      description: 'Splendide villa d\'architecte avec grand jardin paysager, séjour cathédrale, cuisine américaine et suite parentale.',
-      city: 'Abidjan',
-      district: 'Riviera M\'Badon',
-      type: 'Villa duplex',
-      price: 650000,
-      location: 'Riviera M\'Badon, Abidjan',
-      amenities: [
-        { label: '3 Chambres', icon: Bed },
-        { label: '1 Grand Salon', icon: Sofa },
-        { label: '3 Salles de bain', icon: Bath },
-        { label: '210 m²', icon: Maximize2 },
-        { label: 'Jardin privé', icon: Building }
-      ],
-      images: {
-        main: 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=900&q=80',
-        thumb1: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=400&q=80',
-        thumb2: 'https://images.unsplash.com/photo-1600585154526-990dced4db0d?auto=format&fit=crop&w=400&q=80',
-        extraCount: '+15'
-      }
+    } catch (err: any) {
+      setLoadError("Erreur réseau lors de la récupération des annonces.");
+    } finally {
+      setIsLoading(false);
     }
-  ];
+  };
+
+  useEffect(() => {
+    fetchProperties();
+  }, []);
+
+  // Transformation des biens réels Supabase en items de fil certifiés
+  const ALL_FEED_ITEMS = properties.map((p) => {
+    const photos = Array.isArray(p.photos) && p.photos.length > 0 
+      ? p.photos 
+      : ['https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=900&q=80'];
+    return {
+      id: p.id,
+      authorName: p.owner?.full_name || 'Bailleur certifié',
+      authorAvatar: p.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.owner?.full_name || 'Bailleur')}&background=0D8ABC&color=fff`,
+      isVerified: true,
+      roleBadge: 'Propriétaire vérifié',
+      locationPublished: `${p.city || 'Abidjan'}, ${p.commune || p.quartier || ''} • Publication certifiée`,
+      badge: 'À LOUER',
+      title: p.title || `${p.type || 'Logement'} à ${p.commune || p.city}`,
+      description: p.description || 'Logement certifié conforme au Code de la Construction et de l\'Habitat (Loi 2019-576).',
+      city: p.city || 'Abidjan',
+      district: p.commune || p.quartier || 'Abidjan',
+      type: p.type || 'Appartement',
+      price: Number(p.rent || 0),
+      location: `${p.commune ? p.commune + ', ' : ''}${p.city || 'Abidjan'}`,
+      amenities: [
+        p.rooms ? { label: `${p.rooms} Pièces`, icon: Sofa } : null,
+        p.bedrooms ? { label: `${p.bedrooms} Chambres`, icon: Bed } : null,
+        p.bathrooms ? { label: `${p.bathrooms} Salles d'eau`, icon: Bath } : null,
+        p.surface ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
+      ].filter(Boolean) as { label: string; icon: any }[],
+      images: {
+        main: photos[0],
+        thumb1: photos[1] || photos[0],
+        thumb2: photos[2] || photos[0],
+        extraCount: photos.length > 3 ? `+${photos.length - 3}` : ''
+      }
+    };
+  });
 
   const handleExecuteSearch = () => {
     setActiveSearch(searchQuery.trim());
@@ -346,35 +278,14 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     return true;
   }).slice(0, 3);
 
-  const favoriteAnnouncements = [
-    {
-      id: 'fav_1',
-      title: 'Studio meublé à Angré',
-      neighborhood: 'Angré 8e tranche',
-      price: 220000,
-      image: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=200&q=80'
-    },
-    {
-      id: 'fav_2',
-      title: 'Appartement 2 pièces',
-      neighborhood: 'Marcory Zone 4',
-      price: 300000,
-      image: 'https://images.unsplash.com/photo-1493809842364-78817add7ffb?auto=format&fit=crop&w=200&q=80'
-    },
-    {
-      id: 'fav_3',
-      title: 'Villa 4 pièces',
-      neighborhood: "Riviera M'Badon",
-      price: 650000,
-      image: 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=200&q=80'
-    }
-  ];
-
-  const recentSearches = [
-    { query: 'Appartements à Cocody', count: '20 résultats' },
-    { query: 'Maisons à Yamoussoukro', count: '15 résultats' },
-    { query: 'Studios à Marcory', count: '12 résultats' }
-  ];
+  // Annonces favorites réelles basées sur les likes de l'utilisateur
+  const favoriteAnnouncements = ALL_FEED_ITEMS.filter((item) => likedPosts[item.id]).map((fav) => ({
+    id: fav.id,
+    title: fav.title,
+    neighborhood: fav.district,
+    price: fav.price,
+    image: fav.images.main
+  }));
 
   // Render individual feed post card with optional "Proposition similaire" badge
   const renderFeedCard = (item: any, isSimilar: boolean = false) => (
@@ -382,7 +293,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       key={item.id + (isSimilar ? '_sim' : '')}
       className={`bg-white rounded-2xl border ${
         isSimilar ? 'border-amber-200/90 ring-1 ring-amber-100' : 'border-slate-200/90'
-      } shadow-sm overflow-hidden flex flex-col gap-3 p-5 transition-all hover:shadow-md`}
+      } shadow-sm overflow-hidden flex flex-col gap-3.5 p-5 sm:p-6 transition-all hover:shadow-md`}
     >
       {/* Proposition similaire header if applicable */}
       {isSimilar && (
@@ -428,7 +339,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       </div>
 
       {/* Collage Images: Large left + 2 stacked right — CLICKABLE GALLERY */}
-      <div className="grid grid-cols-3 gap-2 rounded-xl overflow-hidden h-64 sm:h-72 my-1">
+      <div className="grid grid-cols-3 gap-2 sm:gap-2.5 rounded-2xl overflow-hidden h-64 sm:h-80 lg:h-96 my-2 shadow-sm">
         <div
           className="col-span-2 h-full relative group cursor-pointer overflow-hidden"
           onClick={() => openGallery(item, 0)}
@@ -689,8 +600,37 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           </div>
         </div>
 
-        {/* FEED LISTING POSTS OR NO-RESULTS SIMILAR PROPOSITIONS */}
-        {filteredFeedItems.length === 0 ? (
+        {/* ÉTATS : LOADER, ERREUR, OU VIDE */}
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200/90 shadow-sm text-center">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="mt-4 text-sm font-bold text-slate-800">Chargement des logements disponibles...</p>
+            <p className="text-xs text-slate-400 mt-1">Interrogation de la base de données certifiée Supabase</p>
+          </div>
+        ) : loadError ? (
+          <div className="p-6 bg-rose-50 border border-rose-200 rounded-2xl text-center shadow-sm">
+            <AlertCircle className="w-8 h-8 text-rose-600 mx-auto mb-2" />
+            <h4 className="text-sm font-black text-rose-900">Échec du chargement des annonces</h4>
+            <p className="text-xs text-rose-700 mt-1">{loadError}</p>
+            <button
+              type="button"
+              onClick={fetchProperties}
+              className="mt-4 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition"
+            >
+              Réessayer
+            </button>
+          </div>
+        ) : ALL_FEED_ITEMS.length === 0 ? (
+          <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200/90 shadow-sm text-center">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-3">
+              <Building className="w-8 h-8 text-blue-600" />
+            </div>
+            <h3 className="text-base font-black text-slate-800">Aucun logement disponible pour le moment</h3>
+            <p className="text-xs text-slate-500 max-w-md mt-1 leading-relaxed">
+              Aucune annonce certifiée n'est actuellement publiée dans la base de données. Dès qu'un bailleur ou une agence publiera un nouveau bien conforme, il apparaîtra ici en temps réel.
+            </p>
+          </div>
+        ) : filteredFeedItems.length === 0 ? (
           <div className="flex flex-col gap-6 animate-fadeIn">
             {/* Message d'information lorsqu'aucun résultat direct ne correspond */}
             <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -759,10 +699,10 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       {/* ======================================================== */}
       {/* RIGHT COLUMN: WIDGETS (Masqué sur mobile, visible sur desktop) */}
       {/* ======================================================== */}
-      <div className="hidden lg:flex lg:w-80 flex-col gap-6 shrink-0">
+      <div className="hidden lg:flex lg:w-72 flex-col gap-5 shrink-0">
         
         {/* BANNIÈRE DE CONFIANCE LOCATRUST */}
-        <div className="bg-gradient-to-br from-blue-900 to-indigo-950 text-white rounded-2xl p-5 shadow-sm flex flex-col gap-3 relative overflow-hidden">
+        <div className="bg-gradient-to-br from-blue-900 to-indigo-950 text-white rounded-2xl p-4.5 shadow-sm flex flex-col gap-2.5 relative overflow-hidden">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-300 flex items-center justify-center border border-blue-400/30">
               <ShieldCheck className="w-5 h-5" />
@@ -777,8 +717,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           </p>
         </div>
 
-        {/* WIDGET 2: Annonces favorites */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-5 flex flex-col gap-4">
+        {/* WIDGET: Annonces favorites */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4.5 flex flex-col gap-3.5">
           <div className="flex items-center justify-between">
             <h4 className="font-black text-sm text-slate-900 tracking-tight">Annonces favorites</h4>
             <button
@@ -790,86 +730,43 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           </div>
 
           <div className="flex flex-col gap-3">
-            {favoriteAnnouncements.map((fav) => (
-              <div
-                key={fav.id}
-                onClick={() => {
-                  setSearchQuery(fav.neighborhood);
-                  setActiveSearch(fav.neighborhood);
-                }}
-                className="flex items-center justify-between gap-3 p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer group"
-                title="Cliquer pour afficher ce secteur"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <img
-                    src={fav.image}
-                    alt={fav.title}
-                    className="w-12 h-12 rounded-xl object-cover ring-1 ring-slate-200 shrink-0"
-                  />
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-xs font-black text-slate-900 truncate group-hover:text-blue-600 transition-colors">
-                      {fav.title}
-                    </span>
-                    <span className="text-[11px] text-slate-400 font-medium truncate">
-                      {fav.neighborhood}
-                    </span>
-                    <span className="text-xs font-black text-blue-700">
-                      {formatFCFA(fav.price)} / mois
-                    </span>
+            {favoriteAnnouncements.length === 0 ? (
+              <p className="text-xs text-slate-400 italic py-2">
+                Aucune annonce en favoris. Cliquez sur le cœur d'une annonce pour la sauvegarder ici.
+              </p>
+            ) : (
+              favoriteAnnouncements.map((fav) => (
+                <div
+                  key={fav.id}
+                  onClick={() => {
+                    setSearchQuery(fav.neighborhood);
+                    setActiveSearch(fav.neighborhood);
+                  }}
+                  className="flex items-center justify-between gap-3 p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer group"
+                  title="Cliquer pour afficher ce secteur"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img
+                      src={fav.image}
+                      alt={fav.title}
+                      className="w-12 h-12 rounded-xl object-cover ring-1 ring-slate-200 shrink-0"
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-black text-slate-900 truncate group-hover:text-blue-600 transition-colors">
+                        {fav.title}
+                      </span>
+                      <span className="text-[11px] text-slate-400 font-medium truncate">
+                        {fav.neighborhood}
+                      </span>
+                      <span className="text-xs font-black text-blue-700">
+                        {formatFCFA(fav.price)} / mois
+                      </span>
+                    </div>
                   </div>
+                  <Heart className="w-4 h-4 fill-rose-500 text-rose-500 shrink-0" />
                 </div>
-                <Heart className="w-4 h-4 fill-rose-500 text-rose-500 shrink-0" />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* WIDGET 3: Recherches récentes */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-5 flex flex-col gap-4">
-          <h4 className="font-black text-sm text-slate-900 tracking-tight">Recherches récentes</h4>
-          <div className="flex flex-col gap-3">
-            {recentSearches.map((rec, i) => (
-              <div
-                key={i}
-                onClick={() => {
-                  const cleaned = rec.query.replace(/Appartements à |Maisons à |Studios à /g, '');
-                  setSearchQuery(cleaned);
-                  setActiveSearch(cleaned);
-                }}
-                className="flex items-center gap-3 p-2 rounded-xl hover:bg-blue-50/70 transition-colors cursor-pointer group"
-                title="Cliquer pour lancer cette recherche"
-              >
-                <Clock className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-slate-800 group-hover:text-blue-700">{rec.query}</span>
-                  <span className="text-[10px] text-slate-400 font-medium">({rec.count})</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* WIDGET 4: Blue Banner "Vous cherchez à louer ?" */}
-        <div className="bg-gradient-to-br from-blue-900 to-indigo-950 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden flex flex-col gap-4">
-          <div className="relative z-10 flex flex-col gap-1.5">
-            <h4 className="text-base font-black tracking-tight leading-snug">
-              Vous cherchez à louer ?
-            </h4>
-            <p className="text-xs text-blue-200 leading-relaxed font-medium">
-              Trouvez le logement idéal rapidement et facilement.
-            </p>
-          </div>
-
-          <button
-            onClick={() => onNavigateTab && onNavigateTab('search')}
-            className="relative z-10 w-full py-2.5 rounded-xl bg-white text-blue-900 font-extrabold text-xs hover:bg-blue-50 transition-colors text-center shadow-md"
-          >
-            Voir toutes les annonces
-          </button>
-
-          {/* Decorative key graphic */}
-          <div className="absolute right-2 -bottom-2 opacity-20 pointer-events-none">
-            <Key className="w-24 h-24 text-white" />
+              ))
+            )}
           </div>
         </div>
 
@@ -1138,6 +1035,51 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             <span className="text-white font-black text-sm">
               {formatFCFA(galleryModal.item.price)}<span className="text-white/60 font-normal text-xs"> / mois</span>
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Blocage KYC pour Locataire (Audio utilisateur) */}
+      {showKycBlockModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
+              <ShieldAlert className="w-8 h-8" />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <h3 className="text-base font-black text-slate-900">
+                Certification d'Identité Requise (KYC)
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed mt-1">
+                Conformément aux règles de sécurité LocaTrust, vous devez obligatoirement faire valider votre profil avec votre pièce d'identité officielle (CNI ou Passeport) par l'administrateur avant de pouvoir {kycBlockAction}.
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-900 text-left">
+              Statut de votre compte : {profile?.verification_status === 'en_attente' ? '⏳ Dossier en cours d\'examen par l\'administrateur' : profile?.verification_status === 'rejete' ? `❌ Dossier rejeté (${profile.rejection_reason || 'Document illisible'})` : '⚠️ Non vérifié (Aucune CNI enregistrée)'}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowKycBlockModal(false);
+                  navigate('/profile');
+                }}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>Faire vérifier mon compte</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowKycBlockModal(false)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+              >
+                Fermer
+              </button>
+            </div>
           </div>
         </div>
       )}

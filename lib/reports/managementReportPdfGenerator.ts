@@ -24,7 +24,7 @@ export const generateManagementReportPDF = (options: ManagementReportOptions): v
     });
 
     const summary = options.periodSummary;
-    const ownerName = options.ownerName || "Koffi N'Guessan";
+    const ownerName = options.ownerName || "LocaTrust Utilisateur";
     const dateStr = new Date().toLocaleDateString('fr-FR', {
       day: '2-digit',
       month: 'long',

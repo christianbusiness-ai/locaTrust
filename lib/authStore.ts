@@ -82,7 +82,7 @@ export function registerSingleAdmin(data: {
       full_name: adminInfo.name,
       email: adminInfo.email,
       phone: adminInfo.phone,
-      avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=250&q=80',
+      avatar_url: '',
       verification_status: 'verifie',
       created_at: adminInfo.registeredAt
     };
@@ -105,6 +105,7 @@ export function resetSingleAdminForDemo(): void {
 // ---------------------------------------------------------------------------
 
 export interface RegisterUserData {
+  id?: string;
   role: 'locataire' | 'proprietaire' | 'agence';
   name: string;
   email: string;
@@ -126,7 +127,7 @@ export function registerUserAccount(data: RegisterUserData): { success: boolean;
     return { success: false, error: 'Client indisponible.' };
   }
 
-  const id = `usr_${data.role}_${Date.now()}`;
+  const id = data.id || `usr_${data.role}_${Date.now()}`;
   const fullName = data.role === 'agence' ? (data.agencyName || data.name) : data.name;
 
   const newUser: User = {
@@ -135,11 +136,7 @@ export function registerUserAccount(data: RegisterUserData): { success: boolean;
     full_name: fullName.trim(),
     email: data.email.trim(),
     phone: data.phone.trim(),
-    avatar_url: data.role === 'locataire'
-      ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80'
-      : data.role === 'agence'
-      ? 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=250&q=80'
-      : 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80',
+    avatar_url: '',
     verification_status: 'en_attente', // En attente de certification KYC
     created_at: new Date().toISOString()
   };
@@ -184,4 +181,25 @@ export function getActiveUser(): User | null {
     if (raw) return JSON.parse(raw);
   } catch {}
   return null;
+}
+
+/**
+ * Réinitialise complètement les données locales à 0 pour garantir
+ * que seules les données réelles des vrais utilisateurs s'affichent.
+ */
+export function clearAllStoredMockData(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem('locatrust_properties');
+    localStorage.removeItem('locatrust_rental_applications');
+    localStorage.removeItem('locatrust_contracts');
+    localStorage.removeItem('locatrust_cautions');
+    localStorage.removeItem('locatrust_rent_payments');
+    localStorage.removeItem('locatrust_receipts');
+    localStorage.removeItem('locatrust_maintenance_tickets');
+    localStorage.removeItem('locatrust_conversations');
+    localStorage.removeItem('locatrust_messages');
+  } catch (err) {
+    console.warn('Error clearing mock data:', err);
+  }
 }

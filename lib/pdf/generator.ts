@@ -8,8 +8,8 @@ export function generateReceiptPDF(payment: RentPayment): string {
     N° Quittance : Q-2026-${payment.id.slice(0, 6).toUpperCase()}
     Date d'émission : ${formatDateFr(payment.created_at)}
     
-    Bailleur : ${payment.contract?.owner?.full_name || 'Aicha Diallo'}
-    Locataire : ${payment.tenant?.full_name || "Koffi N'Guessan"}
+    Bailleur : ${payment.contract?.owner?.full_name || 'Bailleur Partenaire'}
+    Locataire : ${payment.tenant?.full_name || "LocaTrust Utilisateur"}
     Bien loué : ${payment.contract?.property?.title || 'Appartement 3 pièces à Cocody Riviera'}
     
     Période : ${payment.target_month}

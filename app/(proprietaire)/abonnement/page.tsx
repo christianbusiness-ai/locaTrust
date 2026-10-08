@@ -1,20 +1,55 @@
 'use client';
 
-import React, { useState } from 'react';
-import { MOCK_PROPERTIES, MOCK_USERS } from '@/lib/mock/data';
+import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
 import { calculateSubscriptionTier, formatFCFA } from '@/lib/utils';
 import { StripePaymentGateway } from '@/lib/payments/stripe.gateway';
 import { CinetPayGateway } from '@/lib/payments/cinetpay.gateway';
-import { ShieldCheck, Check, CreditCard, Smartphone, Zap } from 'lucide-react';
+import { ShieldCheck, Check, CreditCard, Smartphone, Zap, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 
 export default function SubscriptionPage() {
-  const currentUser = MOCK_USERS.proprietaire;
-  const activePropsCount = MOCK_PROPERTIES.length;
+  const { user, profile } = useAuth();
+  const [activePropsCount, setActivePropsCount] = useState<number>(0);
+  const [loadingProps, setLoadingProps] = useState<boolean>(true);
+
+  useEffect(() => {
+    const fetchCount = async () => {
+      try {
+        setLoadingProps(true);
+        let query = supabase.from('properties').select('id', { count: 'exact', head: true });
+        if (user?.id) {
+          query = query.eq('owner_id', user.id);
+        }
+        const { count, error } = await query;
+        if (!error && count !== null) {
+          setActivePropsCount(count);
+        }
+      } catch (e) {
+        console.error('Erreur chargement biens pour abonnement:', e);
+      } finally {
+        setLoadingProps(false);
+      }
+    };
+    fetchCount();
+  }, [user?.id]);
+
   const tierInfo = calculateSubscriptionTier(activePropsCount);
+
+  const currentUser = {
+    id: user?.id || 'guest',
+    email: user?.email || 'bailleur@locatrust.ci',
+    full_name: profile?.full_name || 'Bailleur Propriétaire',
+    avatar_url: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+    role: 'proprietaire' as const,
+    phone: profile?.phone || '',
+    is_verified: profile?.is_verified ?? false,
+    created_at: new Date().toISOString()
+  };
 
   const [gateway, setGateway] = useState<'cinetpay' | 'stripe'>('cinetpay');
   const [loading, setLoading] = useState(false);

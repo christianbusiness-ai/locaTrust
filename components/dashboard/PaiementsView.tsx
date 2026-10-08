@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Search,
   Download,
   AlertCircle,
+  AlertTriangle,
   Eye,
   ArrowRight,
   Filter,
@@ -28,9 +29,9 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { RentPayment } from '@/types/database.types';
-import { MOCK_RENT_PAYMENTS } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 import {
-  MOCK_TENANT_RENT_SCHEDULE,
   MonthlyScheduleItem,
   processChronologicalRentPayment,
   AllocationResult
@@ -39,6 +40,7 @@ import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGen
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { sendQuittanceToTenant } from '@/lib/messagingStore';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
+import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 
 interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
@@ -47,8 +49,14 @@ interface PaiementsViewProps {
 export const PaiementsView: React.FC<PaiementsViewProps> = ({
   onOpenConfirmPaymentModal,
 }) => {
+  const { user } = useAuth();
+  const [payments, setPayments] = useState<RentPayment[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   // Live Rent Schedule State for the active tenant
-  const [rentSchedule, setRentSchedule] = useState<MonthlyScheduleItem[]>(MOCK_TENANT_RENT_SCHEDULE);
+  const [rentSchedule, setRentSchedule] = useState<MonthlyScheduleItem[]>([]);
   const [lastAllocationResult, setLastAllocationResult] = useState<AllocationResult | null>(null);
 
   // Modern Centered Confirmation Modal State (Point 14)
@@ -66,32 +74,48 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const [customSimAmount, setCustomSimAmount] = useState<number>(150000);
   const [customSimMethod, setCustomSimMethod] = useState<string>('Orange Money');
 
-  const [payments, setPayments] = useState<RentPayment[]>([
-    ...MOCK_RENT_PAYMENTS,
-    {
-      id: 'pmt_3',
-      contract_id: 'LT-2026-CI-000492',
-      tenant_id: 'usr_tenant_1',
-      owner_id: 'usr_owner_1',
-      target_month: 'Août 2026',
-      amount: 150000,
-      payment_date: '2026-09-02',
-      reference: 'OM-225-99182301',
-      proof_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=400&q=80',
-      status: 'declare',
-      created_at: '2026-09-02T10:15:00Z',
-      tenant: {
-        id: 'usr_tenant_1',
-        role: 'locataire',
-        full_name: "Koffi N'Guessan",
-        email: 'koffi.nguessan@locatrust.ci',
-        phone: '+225 07 08 09 10 11',
-        verification_status: 'verifie',
-        created_at: '2025-01-15'
-      },
-      contract: MOCK_RENT_PAYMENTS[0].contract
+  const loadPayments = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { data, error } = await supabase
+        .from('rent_payments')
+        .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
+        .order('payment_date', { ascending: false });
+
+      if (error) {
+        const { data: simpleData, error: simpleError } = await supabase
+          .from('rent_payments')
+          .select('*')
+          .order('payment_date', { ascending: false });
+
+        if (simpleError) {
+          setLoadError(simpleError.message);
+        } else {
+          setPayments(simpleData || []);
+        }
+      } else {
+        setPayments(data || []);
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Erreur lors du chargement des paiements.');
+    } finally {
+      setIsLoading(false);
     }
-  ]);
+  };
+
+  useEffect(() => {
+    loadPayments();
+
+    const handleUpdate = () => {
+      loadPayments();
+    };
+
+    window.addEventListener('locatrust:payments-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:payments-updated', handleUpdate);
+    };
+  }, [user]);
 
   const [activeTab, setActiveTab] = useState<'tous' | 'declares' | 'confirmes' | 'refuses'>('tous');
   const [selectedProofUrl, setSelectedProofUrl] = useState<string | null>(null);
@@ -103,7 +127,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       amountToPay,
       customSimMethod,
       `OM-CI-${Math.floor(100000 + Math.random() * 900000)}`,
-      "Koffi N'Guessan",
+      user?.user_metadata?.full_name || 'Bailleur',
       'LT-2026-CI-000492',
       'Appartement 3 pièces Cocody Riviera 3'
     );
@@ -127,8 +151,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       tenant: {
         id: 'usr_tenant_1',
         role: 'locataire',
-        full_name: "Koffi N'Guessan",
-        email: 'koffi.nguessan@locatrust.ci',
+        full_name: user?.user_metadata?.full_name || 'Bailleur',
+        email: 'bailleur@locatrust.ci',
         phone: '+225 07 08 09 10 11',
         verification_status: 'verifie',
         created_at: '2025-01-15'
@@ -149,7 +173,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   };
 
   const handleResetSchedule = () => {
-    setRentSchedule(MOCK_TENANT_RENT_SCHEDULE);
+    setRentSchedule([]);
     setLastAllocationResult(null);
     setConfirmationModal({
       isOpen: true,
@@ -193,7 +217,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     setValidatingPayment(pmt);
   };
 
-  const handleFinalizeValidation = () => {
+  const handleFinalizeValidation = async () => {
     if (!validatingPayment || !extractedOcrData) return;
 
     if (!ownerSignatureUrl) {
@@ -214,7 +238,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       extractedOcrData.amount,
       extractedOcrData.payment_method,
       extractedOcrData.reference,
-      validatingPayment.tenant?.full_name || "Koffi N'Guessan",
+      validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Bailleur',
       validatingPayment.contract_id || 'LT-2026-CI-000492',
       validatingPayment.contract?.property?.title || 'Appartement 3 pièces Cocody Riviera 3'
     );
@@ -247,11 +271,32 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       paymentDate: new Date().toLocaleDateString('fr-FR'),
       paymentMethod: extractedOcrData.payment_method,
       transactionReference: extractedOcrData.reference,
-      ownerName: "Koffi N'Guessan",
-      tenantName: validatingPayment.tenant?.full_name || 'Kouadio Jean',
+      ownerName: user?.user_metadata?.full_name || 'Bailleur',
+      tenantName: validatingPayment.tenant?.full_name || 'Locataire',
       ownerSignatureUrl: ownerSignatureUrl,
       tenantSignatureUrl: tenantSignatureUrl,
     });
+
+    // Synchroniser avec Supabase
+    try {
+      await supabase.from('rent_payments').update({
+        status: 'confirme',
+        confirmed_at: new Date().toISOString()
+      }).eq('id', validatingPayment.id);
+
+      await supabase.from('receipts').insert({
+        receipt_number: `REC-${Date.now().toString().slice(-6)}`,
+        type: 'loyer',
+        contract_id: validatingPayment.contract_id,
+        rent_payment_id: validatingPayment.id,
+        tenant_id: validatingPayment.tenant_id,
+        owner_id: user?.id,
+        amount: extractedOcrData.amount,
+        token: `tok_rec_${Date.now()}`
+      });
+    } catch (e) {
+      console.warn('Sync payment confirmation error:', e);
+    }
 
     setValidatingPayment(null);
     setExtractedOcrData(null);
@@ -261,7 +306,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       isOpen: true,
       type: 'payment_validated',
       title: 'Paiement validé avec succès !',
-      message: `La quittance N° ${extractedOcrData.reference} a été certifiée conforme et transmise directement dans la boîte de messagerie du locataire ${validatingPayment.tenant?.full_name || 'Kouadio Jean'}.`,
+      message: `La quittance N° ${extractedOcrData.reference} a été certifiée conforme et transmise directement dans la boîte de messagerie du locataire ${validatingPayment.tenant?.full_name || 'Locataire'}.`,
       details: `Périodes couvertes : ${result.generatedReceipt.periods_covered_text} • Montant : ${formatFCFA(extractedOcrData.amount)}`,
       confirmText: 'Consulter la quittance',
       withCelebration: true
@@ -271,12 +316,17 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     setPreviewingReceipt(confirmedPmt);
   };
 
-  const handleReject = (id: string) => {
+  const handleReject = async (id: string) => {
     const reason = prompt('Motif du refus du paiement :');
     if (reason !== null) {
       setPayments((prev) =>
         prev.map((p) => (p.id === id ? { ...p, status: 'refuse' } : p))
       );
+      try {
+        await supabase.from('rent_payments').update({ status: 'refuse' }).eq('id', id);
+      } catch (e) {
+        console.warn('Sync payment rejection error:', e);
+      }
       alert('Paiement refusé et notifié au locataire.');
     }
   };
@@ -297,10 +347,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       durationMonths: 12,
       leaseStartDate: '01/10/2026',
       leaseEndDate: '30/09/2027',
-      ownerName: "Koffi N'Guessan",
+      ownerName: user?.user_metadata?.full_name || 'Bailleur',
       ownerCni: 'CI987654321',
       ownerPhone: '05 05 43 21 00',
-      tenantName: pmt.tenant?.full_name || 'Kouadio Jean',
+      tenantName: pmt.tenant?.full_name || 'Locataire',
       tenantCni: 'CI123456789',
       tenantPhone: pmt.tenant?.phone || '07 00 12 34 56',
       amount: pmt.amount,
@@ -314,9 +364,19 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   };
 
   const filteredPayments = payments.filter((p) => {
-    if (activeTab === 'declares') return p.status === 'declare';
-    if (activeTab === 'confirmes') return p.status === 'confirme';
-    if (activeTab === 'refuses') return p.status === 'refuse';
+    if (activeTab === 'declares' && p.status !== 'declare') return false;
+    if (activeTab === 'confirmes' && p.status !== 'confirme') return false;
+    if (activeTab === 'refuses' && p.status !== 'refuse') return false;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchRef = (p.reference || '').toLowerCase().includes(q);
+      const matchTenant = (p.tenant?.full_name || '').toLowerCase().includes(q);
+      const matchMonth = (p.target_month || '').toLowerCase().includes(q);
+      const matchAmount = String(p.amount || '').includes(q);
+      return matchRef || matchTenant || matchMonth || matchAmount;
+    }
+
     return true;
   });
 
@@ -340,94 +400,113 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         </div>
       </div>
 
-      {/* KPI Cards (3 Compact & Responsive Cards - Règle d'affectation retirée et gérée en arrière-plan) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div
-          onClick={() => setActiveTab('confirmes')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            activeTab === 'confirmes'
-              ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-emerald-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-5 h-5" />
+      {/* KPI Cards (3 Compact & Responsive Cards) */}
+      {isLoading ? (
+        <KpiGridSkeleton count={3} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div
+            onClick={() => setActiveTab('confirmes')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              activeTab === 'confirmes'
+                ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-emerald-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-lg font-black text-emerald-700 leading-none">{formatFCFA(totalConfirmed)}</span>
+              <span className="text-xs font-semibold text-slate-500 mt-1">Loyers encaissés (Confirmés)</span>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-black text-emerald-700 leading-none">{formatFCFA(totalConfirmed)}</span>
-            <span className="text-xs font-semibold text-slate-500 mt-1">Loyers encaissés (Confirmés)</span>
+
+          <div
+            onClick={() => setActiveTab('declares')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              activeTab === 'declares'
+                ? 'bg-amber-50/70 border-amber-500 shadow-md ring-2 ring-amber-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-amber-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-lg font-black text-amber-600 leading-none">{formatFCFA(totalDeclared)}</span>
+              <span className="text-xs font-semibold text-slate-500 mt-1">Déclarations en attente</span>
+            </div>
+          </div>
+
+          <div
+            onClick={() => setActiveTab('tous')}
+            className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
+              activeTab === 'tous'
+                ? 'bg-blue-50/70 border-blue-500 shadow-md ring-2 ring-blue-500/20'
+                : 'bg-white border-slate-200 shadow-sm hover:border-blue-300'
+            }`}
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <FileText className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-lg font-black text-slate-900 leading-none">{payments.length}</span>
+              <span className="text-xs font-semibold text-slate-500 mt-1">Total déclarations reçues</span>
+            </div>
           </div>
         </div>
+      )}
 
-        <div
-          onClick={() => setActiveTab('declares')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            activeTab === 'declares'
-              ? 'bg-amber-50/70 border-amber-500 shadow-md ring-2 ring-amber-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-amber-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-black text-amber-600 leading-none">{formatFCFA(totalDeclared)}</span>
-            <span className="text-xs font-semibold text-slate-500 mt-1">Déclarations en attente</span>
-          </div>
+
+      {/* Tabs & Search */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+          <button
+            onClick={() => setActiveTab('tous')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all ${
+              activeTab === 'tous' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Tous ({payments.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('declares')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
+              activeTab === 'declares' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            À Valider / Déclarés ({payments.filter((p) => p.status === 'declare').length})
+          </button>
+          <button
+            onClick={() => setActiveTab('confirmes')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
+              activeTab === 'confirmes' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Confirmés ({payments.filter((p) => p.status === 'confirme').length})
+          </button>
+          <button
+            onClick={() => setActiveTab('refuses')}
+            className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
+              activeTab === 'refuses' ? 'bg-rose-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            Refusés ({payments.filter((p) => p.status === 'refuse').length})
+          </button>
         </div>
 
-        <div
-          onClick={() => setActiveTab('tous')}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${
-            activeTab === 'tous'
-              ? 'bg-blue-50/70 border-blue-500 shadow-md ring-2 ring-blue-500/20'
-              : 'bg-white border-slate-200 shadow-sm hover:border-blue-300'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-black text-slate-900 leading-none">{payments.length}</span>
-            <span className="text-xs font-semibold text-slate-500 mt-1">Total déclarations reçues</span>
-          </div>
+        {/* Search */}
+        <div className="relative w-full md:w-64">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Rechercher réf, locataire, mois..."
+            className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
+          />
         </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto scrollbar-none">
-        <button
-          onClick={() => setActiveTab('tous')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all ${
-            activeTab === 'tous' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-          }`}
-        >
-          Tous ({payments.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('declares')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
-            activeTab === 'declares' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-          }`}
-        >
-          À Valider / Déclarés ({payments.filter((p) => p.status === 'declare').length})
-        </button>
-        <button
-          onClick={() => setActiveTab('confirmes')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
-            activeTab === 'confirmes' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-          }`}
-        >
-          Confirmés ({payments.filter((p) => p.status === 'confirme').length})
-        </button>
-        <button
-          onClick={() => setActiveTab('refuses')}
-          className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
-            activeTab === 'refuses' ? 'bg-rose-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-          }`}
-        >
-          Refusés ({payments.filter((p) => p.status === 'refuse').length})
-        </button>
       </div>
 
       {/* Table */}
@@ -444,8 +523,43 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 <th className="p-4 text-center">Actions & Quittance</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {filteredPayments.map((pmt) => (
+            {isLoading ? (
+              <TableRowsSkeleton rows={5} cols={6} />
+            ) : (
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {loadError && (
+                <tr>
+                  <td colSpan={6} className="p-8 text-center bg-rose-50/50">
+                    <div className="flex flex-col items-center justify-center">
+                      <AlertTriangle className="w-8 h-8 text-rose-500 mb-2" />
+                      <span className="text-slate-800 font-bold text-xs">{loadError}</span>
+                      <button onClick={loadPayments} className="mt-3 px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer">
+                        Réessayer
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && !loadError && filteredPayments.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-12 text-center">
+                    <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
+                        <CreditCard className="w-6 h-6" />
+                      </div>
+                      <span className="text-slate-800 font-bold text-sm">
+                        Aucun paiement dans cette catégorie
+                      </span>
+                      <p className="text-slate-400 text-xs mt-1 text-center">
+                        Dès qu'un locataire déclare un paiement de loyer par Mobile Money ou virement, il apparaîtra ici pour vérification et émission de quittance.
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && !loadError && filteredPayments.map((pmt) => (
                 <tr key={pmt.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="p-4 font-bold text-slate-900">
                     <div className="flex flex-col">
@@ -555,7 +669,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 </tr>
               ))}
             </tbody>
+            )}
           </table>
+
         </div>
       </div>
 
@@ -614,7 +730,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               </div>
               <div className="flex flex-col text-xs gap-1">
                 <span className="font-extrabold text-slate-800">
-                  Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || "Koffi N'Guessan"}</strong>
+                  Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Bailleur'}</strong>
                 </span>
                 <span className="text-slate-500">Contrat : {validatingPayment.contract_id || 'LT-2026-CI-000492'}</span>
                 <span className="text-[11px] text-emerald-700 font-black flex items-center gap-1 mt-1">
@@ -695,7 +811,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                         <img src={ownerSignatureUrl} alt="Signature bailleur" className="max-h-full max-w-full object-contain" />
                       </div>
                       <div className="flex flex-col text-xs">
-                        <span className="font-extrabold text-slate-900">Koffi N'Guessan</span>
+                        <span className="font-extrabold text-slate-900">LocaTrust Utilisateur</span>
                         <span className="text-[10px] text-slate-500">Bailleur propriétaire</span>
                         <span className="text-[9px] text-emerald-600 font-bold">Horodatée et liée à la quittance</span>
                       </div>
@@ -830,7 +946,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du locataire</span>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Nom et prénom :</span>
-                    <strong className="text-slate-900">{previewingReceipt.tenant?.full_name || 'Kouadio Jean'}</strong>
+                    <strong className="text-slate-900">{previewingReceipt.tenant?.full_name || 'Locataire'}</strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">CNI :</span>
@@ -847,7 +963,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du propriétaire</span>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Nom et prénom :</span>
-                    <strong className="text-slate-900">Koffi N'Guessan</strong>
+                    <strong className="text-slate-900">LocaTrust Utilisateur</strong>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">CNI :</span>
@@ -967,7 +1083,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       </button>
                     )}
                   </div>
-                  <span className="font-bold text-slate-800 text-[10px]">Koffi N'Guessan</span>
+                  <span className="font-bold text-slate-800 text-[10px]">LocaTrust Utilisateur</span>
                 </div>
 
                 {/* Locataire Signature */}
@@ -987,7 +1103,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       </button>
                     )}
                   </div>
-                  <span className="font-bold text-slate-800 text-[10px]">{previewingReceipt.tenant?.full_name || 'Kouadio Jean'}</span>
+                  <span className="font-bold text-slate-800 text-[10px]">{previewingReceipt.tenant?.full_name || 'Locataire'}</span>
                 </div>
 
                 {/* QR Code Verification */}
@@ -1043,8 +1159,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       paymentDate: new Date(previewingReceipt.confirmed_at || previewingReceipt.created_at).toLocaleDateString('fr-FR'),
                       paymentMethod: previewingReceipt.reference.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
                       transactionReference: previewingReceipt.reference,
-                      ownerName: "Koffi N'Guessan",
-                      tenantName: previewingReceipt.tenant?.full_name || 'Kouadio Jean',
+                      ownerName: user?.user_metadata?.full_name || 'Bailleur',
+                      tenantName: previewingReceipt.tenant?.full_name || 'Locataire',
                       ownerSignatureUrl: ownerSignatureUrl,
                       tenantSignatureUrl: tenantSignatureUrl,
                     });
@@ -1089,7 +1205,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             }
             setActiveSigningParty(null);
           }}
-          signerName={activeSigningParty === 'proprietaire' ? "Koffi N'Guessan" : (validatingPayment?.tenant?.full_name || previewingReceipt?.tenant?.full_name || "Kouadio Jean")}
+          signerName={activeSigningParty === 'proprietaire' ? user?.user_metadata?.full_name || 'Bailleur' : (validatingPayment?.tenant?.full_name || previewingReceipt?.tenant?.full_name || "Locataire")}
           signerRole={activeSigningParty}
           documentTitle="Reçu de Paiement Officiel"
           documentNumber={validatingPayment?.reference || previewingReceipt?.reference || 'REC-2026-000987'}

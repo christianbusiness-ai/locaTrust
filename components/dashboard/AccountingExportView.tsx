@@ -34,11 +34,33 @@ import {
 } from '@/lib/reports/accountingExportEngine';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { getActiveReferenceYear } from '@/lib/reports/accountingHistoryStore';
+import { useAuth } from '@/src/context/AuthContext';
+import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
 
 export const AccountingExportView: React.FC = () => {
+  const { user } = useAuth();
+  const [accountingData, setAccountingData] = useState<RealAccountingDataset | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeYear, setActiveYear] = useState<string>(() => getActiveReferenceYear());
   const [selectedPeriod, setSelectedPeriod] = useState<string>('annee_en_cours');
   const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats'>('resultats');
+
+  React.useEffect(() => {
+    let isMounted = true;
+    async function loadData() {
+      setIsLoading(true);
+      try {
+        const data = await fetchRealAccountingData(user?.id, activeYear);
+        if (isMounted) setAccountingData(data);
+      } catch (err) {
+        console.error('Failed to load real accounting data:', err);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+    loadData();
+    return () => { isMounted = false; };
+  }, [user?.id, activeYear]);
 
   React.useEffect(() => {
     const handleYearChange = (e: any) => {
@@ -88,15 +110,15 @@ export const AccountingExportView: React.FC = () => {
     const actionType = prepareModal.actionType;
 
     if (actionType === 'full_zip') {
-      downloadCompleteAccountingZip(periodLabel);
+      downloadCompleteAccountingZip(periodLabel, accountingData);
     } else if (actionType === 'results_pdf') {
-      downloadStatementOfResultsPDF(periodLabel);
+      downloadStatementOfResultsPDF(periodLabel, accountingData);
     } else if (actionType === 'results_csv') {
-      downloadStatementOfResultsCSV(periodLabel);
+      downloadStatementOfResultsCSV(periodLabel, accountingData);
     } else if (format === 'csv') {
-      downloadAccountingCSV(periodLabel);
+      downloadAccountingCSV(periodLabel, accountingData);
     } else {
-      downloadAccountingPDF(periodLabel);
+      downloadAccountingPDF(periodLabel, accountingData);
     }
 
     setPrepareModal(null);
@@ -112,6 +134,28 @@ export const AccountingExportView: React.FC = () => {
       withCelebration: true
     });
   };
+
+  const synthesis = accountingData?.synthesis || ACCOUNTING_DATA.synthesis;
+  const encaissements = accountingData?.encaissements || [];
+  const loyers = accountingData?.loyers || [];
+  const cautions = accountingData?.cautions || [];
+  const maintenance = accountingData?.maintenance || [];
+  const contrats = accountingData?.contrats || [];
+
+  if (isLoading && !accountingData) {
+    return (
+      <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+        <div className="h-24 bg-slate-100 rounded-3xl animate-pulse" />
+        <div className="h-32 bg-slate-100 rounded-2xl animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-28 bg-slate-100 rounded-2xl animate-pulse" />
+          ))}
+        </div>
+        <div className="h-96 bg-slate-100 rounded-3xl animate-pulse" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
@@ -276,22 +320,22 @@ export const AccountingExportView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 flex flex-col justify-between">
                 <span className="text-[10.5px] font-bold text-emerald-800 uppercase">1. Revenus Locatifs Perçus</span>
-                <span className="text-2xl font-black text-emerald-700 my-1">{formatFCFA(ACCOUNTING_DATA.synthesis.loyersEncaisses)}</span>
+                <span className="text-2xl font-black text-emerald-700 my-1">{formatFCFA(synthesis.loyersEncaisses)}</span>
                 <span className="text-[10px] text-emerald-600 font-bold">100% justifié par quittances</span>
               </div>
               <div className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 flex flex-col justify-between">
                 <span className="text-[10.5px] font-bold text-rose-800 uppercase">2. Dépenses Réalisées</span>
-                <span className="text-2xl font-black text-rose-700 my-1">{formatFCFA(ACCOUNTING_DATA.synthesis.depensesMaintenance)}</span>
+                <span className="text-2xl font-black text-rose-700 my-1">{formatFCFA(synthesis.depensesMaintenance)}</span>
                 <span className="text-[10px] text-rose-600 font-bold">Entretien, plomberie, électricité</span>
               </div>
               <div className="p-4 rounded-2xl bg-cyan-50/70 border border-cyan-200 flex flex-col justify-between">
                 <span className="text-[10.5px] font-bold text-cyan-900 uppercase">3. Cautions Sous Séquestre</span>
-                <span className="text-2xl font-black text-cyan-800 my-1">{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRestantes)}</span>
-                <span className="text-[10px] text-cyan-700 font-bold">Remboursées : {formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRemboursees)}</span>
+                <span className="text-2xl font-black text-cyan-800 my-1">{formatFCFA(synthesis.cautionsRestantes)}</span>
+                <span className="text-[10px] text-cyan-700 font-bold">Remboursées : {formatFCFA(synthesis.cautionsRemboursees)}</span>
               </div>
               <div className="p-4 rounded-2xl bg-blue-50/80 border border-blue-200 flex flex-col justify-between">
                 <span className="text-[10.5px] font-bold text-blue-900 uppercase">4. Résultat Net Foncier</span>
-                <span className="text-2xl font-black text-blue-900 my-1">+{formatFCFA(ACCOUNTING_DATA.synthesis.resultatNet)}</span>
+                <span className="text-2xl font-black text-blue-900 my-1">+{formatFCFA(synthesis.resultatNet)}</span>
                 <span className="text-[10px] text-blue-700 font-bold">Bénéfice net certifié</span>
               </div>
             </div>
@@ -315,7 +359,7 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                   <tr>
                     <td className="py-2.5 px-4 pl-6 text-slate-900 font-bold">Loyers bruts perçus et encaissés</td>
-                    <td className="py-2.5 px-4 text-right font-black text-emerald-700">{formatFCFA(ACCOUNTING_DATA.synthesis.loyersEncaisses)}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-emerald-700">{formatFCFA(synthesis.loyersEncaisses)}</td>
                     <td className="py-2.5 px-4 text-slate-500">Règlements locataires vérifiés (quittances numérotées)</td>
                   </tr>
                   <tr>
@@ -325,7 +369,7 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                   <tr className="bg-emerald-50/50 font-bold text-emerald-900">
                     <td className="py-2.5 px-4 pl-6">SOUS-TOTAL REVENUS BRUTS</td>
-                    <td className="py-2.5 px-4 text-right font-black text-emerald-800">{formatFCFA(ACCOUNTING_DATA.synthesis.loyersEncaisses)}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-emerald-800">{formatFCFA(synthesis.loyersEncaisses)}</td>
                     <td className="py-2.5 px-4 text-emerald-700 text-[11px]">Recettes brutes imposables</td>
                   </tr>
 
@@ -337,7 +381,7 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                   <tr>
                     <td className="py-2.5 px-4 pl-6 text-slate-900 font-bold">Travaux, réparations & maintenance locative</td>
-                    <td className="py-2.5 px-4 text-right font-bold text-rose-600">-{formatFCFA(ACCOUNTING_DATA.synthesis.depensesMaintenance)}</td>
+                    <td className="py-2.5 px-4 text-right font-bold text-rose-600">-{formatFCFA(synthesis.depensesMaintenance)}</td>
                     <td className="py-2.5 px-4 text-slate-500">Factures artisans et prestataires qualifiés</td>
                   </tr>
                   <tr>
@@ -347,7 +391,7 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                   <tr className="bg-rose-50/50 font-bold text-rose-900">
                     <td className="py-2.5 px-4 pl-6">SOUS-TOTAL DÉPENSES DÉDUCTIBLES</td>
-                    <td className="py-2.5 px-4 text-right font-black text-rose-700">-{formatFCFA(ACCOUNTING_DATA.synthesis.depensesMaintenance)}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-rose-700">-{formatFCFA(synthesis.depensesMaintenance)}</td>
                     <td className="py-2.5 px-4 text-rose-700 text-[11px]">Charges réelles constatées</td>
                   </tr>
 
@@ -359,17 +403,17 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                   <tr>
                     <td className="py-2.5 px-4 pl-6 text-slate-900">Total des cautions perçues sur baux</td>
-                    <td className="py-2.5 px-4 text-right font-bold text-slate-900">{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRecues)}</td>
+                    <td className="py-2.5 px-4 text-right font-bold text-slate-900">{formatFCFA(synthesis.cautionsRecues)}</td>
                     <td className="py-2.5 px-4 text-slate-500">Placées sous séquestre conformément à la réglementation</td>
                   </tr>
                   <tr>
                     <td className="py-2.5 px-4 pl-6 text-slate-900">Cautions restituées aux locataires sortants</td>
-                    <td className="py-2.5 px-4 text-right font-bold text-slate-700">-{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRemboursees)}</td>
+                    <td className="py-2.5 px-4 text-right font-bold text-slate-700">-{formatFCFA(synthesis.cautionsRemboursees)}</td>
                     <td className="py-2.5 px-4 text-slate-500">Restitutions conformes après états des lieux</td>
                   </tr>
                   <tr className="bg-cyan-50/50 font-bold text-cyan-900">
                     <td className="py-2.5 px-4 pl-6">SOLDE DES CAUTIONS ACTUELLEMENT DÉTENUES</td>
-                    <td className="py-2.5 px-4 text-right font-black text-cyan-800">{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRestantes)}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-cyan-800">{formatFCFA(synthesis.cautionsRestantes)}</td>
                     <td className="py-2.5 px-4 text-cyan-700 text-[11px]">Garantie active sur baux en cours</td>
                   </tr>
 
@@ -379,7 +423,7 @@ export const AccountingExportView: React.FC = () => {
                       RÉSULTAT NET FONCIER AVANT IMPÔT
                     </td>
                     <td className="py-4 px-4 text-right font-black text-emerald-400 text-base">
-                      +{formatFCFA(ACCOUNTING_DATA.synthesis.resultatNet)}
+                      +{formatFCFA(synthesis.resultatNet)}
                     </td>
                     <td className="py-4 px-4 text-slate-300 text-xs font-normal">
                       Base certifiée pour déclaration fiscale des revenus fonciers
@@ -417,17 +461,17 @@ export const AccountingExportView: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 flex flex-col justify-between">
                 <span className="text-[11px] font-bold text-emerald-800 uppercase">Total Encaissé</span>
-                <span className="text-2xl font-black text-emerald-700 my-1">{formatFCFA(ACCOUNTING_DATA.synthesis.totalEncaisse)}</span>
+                <span className="text-2xl font-black text-emerald-700 my-1">{formatFCFA(synthesis.totalEncaisse)}</span>
                 <span className="text-[11px] text-emerald-600">Revenus locatifs perçus</span>
               </div>
               <div className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 flex flex-col justify-between">
                 <span className="text-[11px] font-bold text-rose-800 uppercase">Total Dépensé</span>
-                <span className="text-2xl font-black text-rose-700 my-1">{formatFCFA(ACCOUNTING_DATA.synthesis.totalDepense)}</span>
+                <span className="text-2xl font-black text-rose-700 my-1">{formatFCFA(synthesis.totalDepense)}</span>
                 <span className="text-[11px] text-rose-600">Maintenance & Restitutions</span>
               </div>
               <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
                 <span className="text-[11px] font-bold text-blue-800 uppercase">Résultat Net Estimatif</span>
-                <span className="text-2xl font-black text-blue-900 my-1">+{formatFCFA(ACCOUNTING_DATA.synthesis.resultatNet)}</span>
+                <span className="text-2xl font-black text-blue-900 my-1">+{formatFCFA(synthesis.resultatNet)}</span>
                 <span className="text-[11px] text-blue-700">Bénéfice net enregistré</span>
               </div>
             </div>
@@ -450,7 +494,7 @@ export const AccountingExportView: React.FC = () => {
               <div className="flex items-center gap-4 text-right">
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-bold block">Résultat net d'exercice</span>
-                  <strong className="text-xl font-black text-emerald-400">+{formatFCFA(ACCOUNTING_DATA.synthesis.resultatNet)}</strong>
+                  <strong className="text-xl font-black text-emerald-400">+{formatFCFA(synthesis.resultatNet)}</strong>
                 </div>
               </div>
             </div>
@@ -467,42 +511,42 @@ export const AccountingExportView: React.FC = () => {
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                   <tr>
                     <td className="p-3.5 font-bold text-slate-900">Total Loyers Attendus</td>
-                    <td className="p-3.5 text-right font-bold">{formatFCFA(ACCOUNTING_DATA.synthesis.loyersAttendus)}</td>
+                    <td className="p-3.5 text-right font-bold">{formatFCFA(synthesis.loyersAttendus)}</td>
                     <td className="p-3.5 text-slate-500">Calculé sur la base des baux actifs</td>
                   </tr>
                   <tr className="bg-emerald-50/40">
                     <td className="p-3.5 font-bold text-emerald-900">Total Loyers Encaissés (Revenus bruts)</td>
-                    <td className="p-3.5 text-right font-black text-emerald-700">{formatFCFA(ACCOUNTING_DATA.synthesis.loyersEncaisses)}</td>
+                    <td className="p-3.5 text-right font-black text-emerald-700">{formatFCFA(synthesis.loyersEncaisses)}</td>
                     <td className="p-3.5 text-emerald-700 font-bold">100% justifié par quittances numérotées</td>
                   </tr>
                   <tr>
                     <td className="p-3.5 font-bold text-rose-900">Total Loyers Impayés / Restants</td>
-                    <td className="p-3.5 text-right font-bold text-rose-600">{formatFCFA(ACCOUNTING_DATA.synthesis.loyersImpayes)}</td>
+                    <td className="p-3.5 text-right font-bold text-rose-600">{formatFCFA(synthesis.loyersImpayes)}</td>
                     <td className="p-3.5 text-slate-500">Créances locatives en cours</td>
                   </tr>
                   <tr>
                     <td className="p-3.5 font-bold text-slate-900">Total Cautions Reçues</td>
-                    <td className="p-3.5 text-right font-bold">{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRecues)}</td>
+                    <td className="p-3.5 text-right font-bold">{formatFCFA(synthesis.cautionsRecues)}</td>
                     <td className="p-3.5 text-slate-500">Dépôts de garantie sous séquestre</td>
                   </tr>
                   <tr>
                     <td className="p-3.5 font-bold text-slate-900">Total Cautions Remboursées</td>
-                    <td className="p-3.5 text-right font-bold">{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRemboursees)}</td>
+                    <td className="p-3.5 text-right font-bold">{formatFCFA(synthesis.cautionsRemboursees)}</td>
                     <td className="p-3.5 text-slate-500">Restitutions suite états des lieux conformes</td>
                   </tr>
                   <tr>
                     <td className="p-3.5 font-bold text-blue-900">Total Cautions Actuellement Détenues</td>
-                    <td className="p-3.5 text-right font-bold text-blue-700">{formatFCFA(ACCOUNTING_DATA.synthesis.cautionsRestantes)}</td>
+                    <td className="p-3.5 text-right font-bold text-blue-700">{formatFCFA(synthesis.cautionsRestantes)}</td>
                     <td className="p-3.5 text-slate-500">Dépôts actifs en cours de bail</td>
                   </tr>
                   <tr>
                     <td className="p-3.5 font-bold text-slate-900">Total Dépenses de Maintenance</td>
-                    <td className="p-3.5 text-right font-bold text-rose-600">-{formatFCFA(ACCOUNTING_DATA.synthesis.depensesMaintenance)}</td>
+                    <td className="p-3.5 text-right font-bold text-rose-600">-{formatFCFA(synthesis.depensesMaintenance)}</td>
                     <td className="p-3.5 text-slate-500">Factures artisans & bons d'intervention</td>
                   </tr>
                   <tr className="bg-slate-100 font-black text-slate-900 text-sm">
                     <td className="p-4 uppercase tracking-wider text-blue-900">RÉSULTAT NET COMPTABLE</td>
-                    <td className="p-4 text-right text-emerald-700 font-black text-base">+{formatFCFA(ACCOUNTING_DATA.synthesis.resultatNet)}</td>
+                    <td className="p-4 text-right text-emerald-700 font-black text-base">+{formatFCFA(synthesis.resultatNet)}</td>
                     <td className="p-4 text-slate-700 font-bold">Base imposable estimative</td>
                   </tr>
                 </tbody>
@@ -555,23 +599,35 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                  {ACCOUNTING_DATA.encaissements.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600">{item.date}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono font-bold text-blue-800">{item.receiptNo}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap font-bold text-slate-900">{item.tenant}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600">{item.contractNo}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap font-semibold text-slate-800">{item.period}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap text-right font-black text-emerald-700">{formatFCFA(item.amount)}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-700">{item.method}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono text-xs text-slate-600">{item.ref}</td>
-                      <td className="py-3 px-3.5 whitespace-nowrap text-center">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
-                          {item.status}
-                        </span>
+                  {encaissements.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-12 text-center text-slate-400 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileSpreadsheet className="w-8 h-8 text-slate-300" />
+                          <span className="text-sm font-semibold text-slate-600">Aucun encaissement enregistré pour cette période</span>
+                          <span className="text-xs text-slate-400">Les quittances et paiements validés apparaîtront automatiquement ici.</span>
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    encaissements.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600">{item.date}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono font-bold text-blue-800">{item.receiptNo}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap font-bold text-slate-900">{item.tenant}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600">{item.contractNo}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap font-semibold text-slate-800">{item.period}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap text-right font-black text-emerald-700">{formatFCFA(item.amount)}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap text-slate-700">{item.method}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono text-xs text-slate-600">{item.ref}</td>
+                        <td className="py-3 px-3.5 whitespace-nowrap text-center">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            {item.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -615,25 +671,37 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                  {ACCOUNTING_DATA.loyers.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
-                      <td className="p-3 text-slate-600">{item.property}</td>
-                      <td className="p-3 font-semibold">{formatFCFA(item.monthlyRent)}</td>
-                      <td className="p-3 font-bold text-blue-900">{item.month}</td>
-                      <td className="p-3 font-medium">{formatFCFA(item.expected)}</td>
-                      <td className="p-3 font-bold text-emerald-700">{formatFCFA(item.paid)}</td>
-                      <td className="p-3 font-bold text-rose-600">{formatFCFA(item.balance)}</td>
-                      <td className="p-3 font-mono text-slate-500">{item.paymentDate}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          item.status === 'À jour' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {item.status}
-                        </span>
+                  {loyers.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-12 text-center text-slate-400 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileSpreadsheet className="w-8 h-8 text-slate-300" />
+                          <span className="text-sm font-semibold text-slate-600">Aucun état de loyer pour cette période</span>
+                          <span className="text-xs text-slate-400">Les loyers attendus et encaissés seront calculés à partir de vos baux actifs.</span>
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    loyers.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
+                        <td className="p-3 text-slate-600">{item.property}</td>
+                        <td className="p-3 font-semibold">{formatFCFA(item.monthlyRent)}</td>
+                        <td className="p-3 font-bold text-blue-900">{item.month}</td>
+                        <td className="p-3 font-medium">{formatFCFA(item.expected)}</td>
+                        <td className="p-3 font-bold text-emerald-700">{formatFCFA(item.paid)}</td>
+                        <td className="p-3 font-bold text-rose-600">{formatFCFA(item.balance)}</td>
+                        <td className="p-3 font-mono text-slate-500">{item.paymentDate}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            item.status === 'À jour' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -678,20 +746,32 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                  {ACCOUNTING_DATA.cautions.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
-                      <td className="p-3 text-slate-600">{item.property}</td>
-                      <td className="p-3 font-mono text-slate-500">{item.contractNo}</td>
-                      <td className="p-3">{formatFCFA(item.planned)}</td>
-                      <td className="p-3 font-bold text-blue-700">{formatFCFA(item.deposited)}</td>
-                      <td className="p-3 font-bold text-slate-600">{item.refunded > 0 ? formatFCFA(item.refunded) : '—'}</td>
-                      <td className="p-3 text-slate-500">{item.retained > 0 ? formatFCFA(item.retained) : '0 FCFA'}</td>
-                      <td className="p-3 font-black text-slate-900">{formatFCFA(item.balanceRemaining)}</td>
-                      <td className="p-3 font-mono text-slate-500">{item.refundDate}</td>
-                      <td className="p-3 text-slate-600">{item.reason}</td>
+                  {cautions.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-12 text-center text-slate-400 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileSpreadsheet className="w-8 h-8 text-slate-300" />
+                          <span className="text-sm font-semibold text-slate-600">Aucune caution enregistrée pour cette période</span>
+                          <span className="text-xs text-slate-400">Les dépôts de garantie sous séquestre apparaîtront dès la création des contrats.</span>
+                        </div>
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    cautions.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
+                        <td className="p-3 text-slate-600">{item.property}</td>
+                        <td className="p-3 font-mono text-slate-500">{item.contractNo}</td>
+                        <td className="p-3">{formatFCFA(item.planned)}</td>
+                        <td className="p-3 font-bold text-blue-700">{formatFCFA(item.deposited)}</td>
+                        <td className="p-3 font-bold text-slate-600">{item.refunded > 0 ? formatFCFA(item.refunded) : '—'}</td>
+                        <td className="p-3 text-slate-500">{item.retained > 0 ? formatFCFA(item.retained) : '0 FCFA'}</td>
+                        <td className="p-3 font-black text-slate-900">{formatFCFA(item.balanceRemaining)}</td>
+                        <td className="p-3 font-mono text-slate-500">{item.refundDate}</td>
+                        <td className="p-3 text-slate-600">{item.reason}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -734,22 +814,34 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                  {ACCOUNTING_DATA.maintenance.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-mono text-slate-500">{item.date}</td>
-                      <td className="p-3 text-slate-800 font-semibold">{item.property}</td>
-                      <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
-                      <td className="p-3 text-slate-700">{item.description}</td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
-                          {item.category}
-                        </span>
+                  {maintenance.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-slate-400 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileSpreadsheet className="w-8 h-8 text-slate-300" />
+                          <span className="text-sm font-semibold text-slate-600">Aucune dépense de maintenance pour cette période</span>
+                          <span className="text-xs text-slate-400">Les interventions et factures d'entretien validées seront répertoriées ici.</span>
+                        </div>
                       </td>
-                      <td className="p-3 text-slate-600">{item.contractor}</td>
-                      <td className="p-3 text-right font-black text-rose-600">{formatFCFA(item.amount)}</td>
-                      <td className="p-3 font-bold text-emerald-700">{item.status}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    maintenance.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3 font-mono text-slate-500">{item.date}</td>
+                        <td className="p-3 text-slate-800 font-semibold">{item.property}</td>
+                        <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
+                        <td className="p-3 text-slate-700">{item.description}</td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
+                            {item.category}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-600">{item.contractor}</td>
+                        <td className="p-3 text-right font-black text-rose-600">{formatFCFA(item.amount)}</td>
+                        <td className="p-3 font-bold text-emerald-700">{item.status}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -793,25 +885,37 @@ export const AccountingExportView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                  {ACCOUNTING_DATA.contrats.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-mono font-bold text-blue-700">{item.contractNo}</td>
-                      <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
-                      <td className="p-3 text-slate-600">{item.property}</td>
-                      <td className="p-3 font-mono text-slate-500">{item.startDate}</td>
-                      <td className="p-3 font-mono text-slate-500">{item.endDate}</td>
-                      <td className="p-3 font-semibold">{formatFCFA(item.rent)}</td>
-                      <td className="p-3 font-semibold">{formatFCFA(item.caution)}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          item.status === 'Actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
-                        }`}>
-                          {item.status}
-                        </span>
+                  {contrats.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-12 text-center text-slate-400 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileSpreadsheet className="w-8 h-8 text-slate-300" />
+                          <span className="text-sm font-semibold text-slate-600">Aucun contrat de bail enregistré pour cette période</span>
+                          <span className="text-xs text-slate-400">Tous les baux signés ou en cours apparaîtront automatiquement dans ce registre.</span>
+                        </div>
                       </td>
-                      <td className="p-3 font-mono text-slate-500">{item.signaturesDate}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    contrats.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3 font-mono font-bold text-blue-700">{item.contractNo}</td>
+                        <td className="p-3 font-bold text-slate-900">{item.tenant}</td>
+                        <td className="p-3 text-slate-600">{item.property}</td>
+                        <td className="p-3 font-mono text-slate-500">{item.startDate}</td>
+                        <td className="p-3 font-mono text-slate-500">{item.endDate}</td>
+                        <td className="p-3 font-semibold">{formatFCFA(item.rent)}</td>
+                        <td className="p-3 font-semibold">{formatFCFA(item.caution)}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            item.status === 'Actif' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="p-3 font-mono text-slate-500">{item.signaturesDate}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

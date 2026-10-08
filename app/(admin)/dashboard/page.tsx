@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { MOCK_USERS } from '@/lib/mock/data';
+import { useAuth } from '@/src/context/AuthContext';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
@@ -22,7 +22,17 @@ export default function AdminDashboardPage({
   onOpenRegisterModal = () => {},
   onExitToLanding,
 }: AdminDashboardPageProps) {
-  const currentUser = MOCK_USERS.admin;
+  const { user, profile } = useAuth();
+  const currentUser = {
+    id: user?.id || 'admin_user',
+    email: user?.email || 'admin@locatrust.ci',
+    full_name: profile?.full_name || 'Administrateur Plateforme',
+    avatar_url: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+    role: 'admin' as const,
+    phone: profile?.phone || '',
+    is_verified: true,
+    created_at: new Date().toISOString()
+  };
   const [activeTab, setActiveTab] = useState<string>('supervision');
   const [isSupportOpen, setIsSupportOpen] = useState(false);
 
@@ -49,7 +59,7 @@ export default function AdminDashboardPage({
       />
 
       {/* Main Admin Layout */}
-      <div className="max-w-[1600px] w-full mx-auto flex gap-6 px-4 lg:px-8 py-6 flex-1">
+      <div className="max-w-[1600px] w-full mx-auto flex gap-6 px-3 sm:px-4 lg:px-8 py-4 sm:py-6 flex-1">
         
         <Sidebar
           currentRole="admin"

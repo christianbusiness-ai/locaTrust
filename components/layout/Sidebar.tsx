@@ -29,10 +29,13 @@ import {
   HelpCircle,
   FileCheck,
   ShieldAlert,
-  Calendar
+  Calendar,
+  Clock
 } from 'lucide-react';
 import { Logo } from '@/components/common/Logo';
 import { UserRole } from '@/types/database.types';
+import { getActiveUser } from '@/lib/authStore';
+import { useAuth } from '@/src/context/AuthContext';
 
 interface SidebarProps {
   currentRole: UserRole;
@@ -52,26 +55,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isLocataire = currentRole === 'locataire';
   const isAdmin = currentRole === 'admin';
 
+  const { user, profile } = useAuth();
+
+  const getInitials = (name?: string, email?: string): string => {
+    if (name && name.trim()) {
+      const parts = name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+      }
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    if (email && email.trim()) {
+      return email.trim().slice(0, 2).toUpperCase();
+    }
+    return 'LT';
+  };
+
   const [avatarUrl, setAvatarUrl] = React.useState<string>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('locatrust_user_avatar');
-      if (stored) return stored;
+      if (stored && !stored.includes('images.unsplash.com')) return stored;
     }
-    if (isAgence) {
-      return 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=150&q=80';
-    }
-    if (isLocataire) {
-      return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80';
-    }
-    if (isAdmin) {
-      return 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80';
-    }
-    return 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80';
+    const profAvatar = profile?.avatar_url;
+    if (profAvatar && !profAvatar.includes('images.unsplash.com')) return profAvatar;
+    return '';
   });
 
   React.useEffect(() => {
     const handleAvatarUpdated = (e: any) => {
-      if (e.detail?.avatarUrl) {
+      if (e.detail?.avatarUrl && !e.detail.avatarUrl.includes('images.unsplash.com')) {
         setAvatarUrl(e.detail.avatarUrl);
       }
     };
@@ -79,16 +91,94 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('locatrust:avatar_updated', handleAvatarUpdated);
   }, []);
 
-  // 1. LOCATAIRE SPECIFIC NAVIGATION (Fidèle à l'image fournie)
-  // Supprime complètement: Dashboard, Rapports, Export comptable, Abonnement SaaS
+  // Calcul dynamique des badges réels (données réelles de la base uniquement)
+  const [appCount, setAppCount] = React.useState<number>(0);
+  const [msgCount, setMsgCount] = React.useState<number>(0);
+  const [contractCount, setContractCount] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    const updateCounts = () => {
+      try {
+        const appsRaw = localStorage.getItem('locatrust_rental_applications');
+        let countApps = 0;
+        if (appsRaw) {
+          const apps = JSON.parse(appsRaw);
+          if (Array.isArray(apps)) {
+            const validApps = apps.filter((a: any) => a.id !== 'app_kwame' && a.id !== 'app_moussa' && a.id !== 'app_awa' && a.id !== 'app_bamba');
+            if (isLocataire) {
+              countApps = validApps.filter((a: any) => 
+                (user?.email && a.tenant_email?.toLowerCase() === user.email.toLowerCase()) ||
+                (user?.id && a.tenant_id === user.id)
+              ).length;
+            } else if (isProprietaire || isAgence) {
+              countApps = validApps.filter((a: any) =>
+                a.status === 'en_attente' &&
+                (!user?.id || a.owner_id === user.id || a.property_owner_id === user.id)
+              ).length;
+            }
+          }
+        }
+        setAppCount(countApps);
+
+        const contractsRaw = localStorage.getItem('locatrust_contracts');
+        let countContracts = 0;
+        if (contractsRaw) {
+          const cnts = JSON.parse(contractsRaw);
+          if (Array.isArray(cnts)) {
+            if (isLocataire) {
+              countContracts = cnts.filter((c: any) =>
+                (user?.email && (c.tenant?.email?.toLowerCase() === user.email.toLowerCase() || c.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
+                (user?.id && (c.tenant_id === user.id || c.tenant?.id === user.id))
+              ).length;
+            } else if (isProprietaire || isAgence) {
+              countContracts = cnts.filter((c: any) =>
+                c.status === 'actif' &&
+                (!user?.id || c.owner_id === user.id || c.owner?.id === user.id)
+              ).length;
+            }
+          }
+        }
+        setContractCount(countContracts);
+
+        const msgsRaw = localStorage.getItem('locatrust_chat_messages_v4');
+        let countMsgs = 0;
+        if (msgsRaw) {
+          const msgs = JSON.parse(msgsRaw);
+          if (Array.isArray(msgs)) {
+            countMsgs = msgs.filter((m: any) => 
+              (m.status === 'sent' || m.status === 'delivered') &&
+              ((user?.id && m.receiver_id === user.id) || (user?.email && m.receiver_email === user.email))
+            ).length;
+          }
+        }
+        setMsgCount(countMsgs);
+      } catch (e) {
+        setAppCount(0);
+        setMsgCount(0);
+        setContractCount(0);
+      }
+    };
+
+    updateCounts();
+    window.addEventListener('locatrust:applications-updated', updateCounts);
+    window.addEventListener('locatrust:contracts-updated', updateCounts);
+    window.addEventListener('locatrust:messages_updated', updateCounts);
+    return () => {
+      window.removeEventListener('locatrust:applications-updated', updateCounts);
+      window.removeEventListener('locatrust:contracts-updated', updateCounts);
+      window.removeEventListener('locatrust:messages_updated', updateCounts);
+    };
+  }, [user, isLocataire, isProprietaire, isAgence]);
+
+  // 1. LOCATAIRE SPECIFIC NAVIGATION
   const tenantItems = [
     { id: 'feed', name: "Fil d'actualité", icon: LayoutDashboard },
     { id: 'search', name: 'Rechercher', icon: Search },
     { id: 'favorites', name: 'Favoris', icon: Heart },
-    { id: 'applications', name: 'Demandes', icon: Eye, badge: 2 },
-    { id: 'messages', name: 'Messages', icon: MessageSquare, badge: 5 },
+    { id: 'applications', name: 'Demandes', icon: Eye, badge: appCount > 0 ? appCount : undefined },
+    { id: 'messages', name: 'Messages', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
     { id: 'visits', name: 'Visites', icon: Calendar },
-    { id: 'contracts', name: 'Contrats', icon: FileText },
+    { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements', icon: CreditCard },
     { id: 'receipts', name: 'Reçus', icon: Receipt },
     { id: 'guarantees', name: 'Cautions', icon: ShieldCheck },
@@ -99,12 +189,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'support', name: 'Aide & Support', icon: HelpCircle },
   ];
 
-  // 2. ADMIN SPECIFIC NAVIGATION (Point 9 du prompt : ne pas copier celui du propriétaire)
+  // 2. ADMIN SPECIFIC NAVIGATION
   const adminItems = [
     { id: 'supervision', name: 'Supervision globale', icon: BarChart3 },
     { id: 'users', name: 'Gestion utilisateurs', icon: Users },
     { id: 'subscriptions', name: 'Gestion abonnements', icon: CreditCard },
-    { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileCheck, badge: 3 },
+    { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileCheck },
     { id: 'disputes', name: 'Litiges & Fraude', icon: ShieldAlert },
     { id: 'settings', name: 'Paramètres système', icon: Settings },
   ];
@@ -120,11 +210,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ]
       : []),
     { id: 'tenants', name: 'Locataires', icon: Users },
-    { id: 'applications', name: 'Demandes de location', icon: Eye, badge: 8 },
-    { id: 'contracts', name: 'Contrats', icon: FileText, badge: 5 },
+    { id: 'applications', name: 'Demandes de location', icon: Eye, badge: appCount > 0 ? appCount : undefined },
+    { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements & Loyers', icon: CreditCard },
     { id: 'guarantees', name: 'Cautions', icon: ShieldCheck },
-    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: 6 },
+    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
     { id: 'visits', name: 'Demandes de visite', icon: Eye },
     { id: 'documents', name: 'Documents', icon: Folder },
     { id: 'receipts', name: 'Reçus & Quittances', icon: Receipt },
@@ -143,18 +233,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'settings', name: 'Paramètres', icon: Settings },
   ];
 
+  const activeUser = typeof window !== 'undefined' ? getActiveUser() : null;
+  const isVerified = profile?.verification_status === 'verifie' || activeUser?.verification_status === 'verifie';
+
   const getProfileName = () => {
+    if (profile?.full_name) return profile.full_name;
+    if (user?.user_metadata?.full_name) return user.user_metadata.full_name;
+    if (activeUser?.full_name) return activeUser.full_name;
     if (isAgence) return 'Immobilière du Golf';
-    if (isLocataire) return "Koffi N'Guessan";
+    if (isLocataire) return 'Espace Locataire';
     if (isAdmin) return 'Super Administrateur';
-    return "Koffi N'Guessan";
+    return "Bailleur";
   };
 
   const getProfileSubtext = () => {
-    if (isAgence) return 'Agence Agréée';
-    if (isLocataire) return 'Locataire';
+    if (isAgence) return isVerified ? 'Agence Agréée' : 'Agence Immobilière';
+    if (isLocataire) return isVerified ? 'Locataire Certifié' : 'Locataire';
     if (isAdmin) return 'Superviseur Système';
-    return 'Propriétaire vérifié';
+    return isVerified ? 'Propriétaire Certifié' : 'Propriétaire';
   };
 
   return (
@@ -162,25 +258,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Top Logo */}
       <div className="px-2 py-3 mb-4 border-b border-slate-800/80">
-        <Logo size="md" variant="dark" showSubtitle={true} />
+        <Logo size="md" variant="dark" align="left" showSubtitle={true} />
       </div>
 
       {/* User / Agency Profile Card Header */}
       <div className="flex items-center gap-3 px-3 py-2.5 mb-6 rounded-xl bg-slate-900/80 border border-slate-800">
         <div className="relative shrink-0">
-          <img
-            src={avatarUrl}
-            alt={getProfileName()}
-            className="w-10 h-10 rounded-full object-cover border-2 border-amber-500"
-          />
-          <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#0B192C] rounded-full" />
+          {avatarUrl && !avatarUrl.includes('images.unsplash.com') ? (
+            <img
+              src={avatarUrl}
+              alt={getProfileName()}
+              className={`w-10 h-10 rounded-full object-cover border-2 ${isVerified ? 'border-emerald-500' : 'border-slate-600'}`}
+            />
+          ) : (
+            <div className={`w-10 h-10 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-sm flex items-center justify-center border-2 shadow-sm shrink-0 select-none ${isVerified ? 'border-emerald-500' : 'border-slate-700'}`}>
+              {getInitials(getProfileName(), user?.email)}
+            </div>
+          )}
+          <span className={`absolute bottom-0 right-0 w-3 h-3 ${isVerified ? 'bg-emerald-500' : 'bg-slate-400'} border-2 border-[#0B192C] rounded-full`} />
         </div>
         <div className="flex flex-col text-left overflow-hidden">
           <span className="text-xs font-bold text-white truncate">
             {getProfileName()}
           </span>
-          <span className="text-[11px] font-semibold text-amber-400 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3 text-amber-400 fill-amber-400/20" />
+          <span className={`text-[11px] font-semibold flex items-center gap-1 ${isVerified ? 'text-emerald-400' : 'text-slate-400'}`}>
+            {isVerified && (
+              <CheckCircle2 className="w-3 h-3 text-emerald-400 fill-emerald-400/20" />
+            )}
             {getProfileSubtext()}
           </span>
         </div>

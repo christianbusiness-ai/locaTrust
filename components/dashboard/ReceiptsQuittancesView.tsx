@@ -18,8 +18,11 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
-import { Lock, Clock, Send } from 'lucide-react';
+import { Lock, Clock, Send, AlertTriangle } from 'lucide-react';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
+import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 
 interface OfficialReceiptRow {
   id: string;
@@ -39,79 +42,11 @@ interface OfficialReceiptRow {
   tenant_signed: boolean;
 }
 
-const MOCK_RECEIPTS_DATA: OfficialReceiptRow[] = [
-  {
-    id: 'rcp_1',
-    receipt_number: 'REC-2026-000987',
-    receipt_type: 'loyer',
-    tenant_name: 'Kouadio Jean',
-    property_title: 'Appartement 3 pièces Cocody Riviera 3',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    contract_number: 'LT-CI-2026-000123',
-    period_covered: 'Août 2026',
-    amount: 150000,
-    payment_method: 'Mobile Money (Orange)',
-    payment_date: '05/09/2026',
-    transaction_ref: 'MM20260905123456',
-    status: 'certifie',
-    owner_signed: true,
-    tenant_signed: true
-  },
-  {
-    id: 'rcp_2',
-    receipt_number: 'CAUT-2026-000109',
-    receipt_type: 'caution',
-    tenant_name: "Koffi N'Guessan",
-    property_title: 'Appartement 3 pièces moderne',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    contract_number: 'LT-2026-CI-000492',
-    period_covered: 'Dépôt de garantie contractuelle',
-    amount: 900000,
-    payment_method: 'Virement bancaire',
-    payment_date: '01/01/2026',
-    transaction_ref: 'VIR-BNI-2026-9901',
-    status: 'certifie',
-    owner_signed: true,
-    tenant_signed: false
-  },
-  {
-    id: 'rcp_3',
-    receipt_number: 'REC-2026-000980',
-    receipt_type: 'loyer',
-    tenant_name: "Koffi N'Guessan",
-    property_title: 'Appartement 3 pièces moderne',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    contract_number: 'LT-2026-CI-000492',
-    period_covered: 'Juillet 2026',
-    amount: 450000,
-    payment_method: 'Wave CI',
-    payment_date: '03/08/2026',
-    transaction_ref: 'WAVE-CI-77382109',
-    status: 'valide',
-    owner_signed: true,
-    tenant_signed: true
-  },
-  {
-    id: 'rcp_4',
-    receipt_number: 'CAUT-2026-000115',
-    receipt_type: 'caution',
-    tenant_name: 'Amina Diabaté',
-    property_title: 'Villa 4 pièces Riviera M\'Badon',
-    property_address: 'Riviera M\'Badon, Cocody',
-    contract_number: 'LT-2026-CI-000508',
-    period_covered: 'Dépôt de garantie initial',
-    amount: 650000,
-    payment_method: 'Wave CI',
-    payment_date: '10/05/2026',
-    transaction_ref: 'WAVE-CI-8899120',
-    status: 'valide',
-    owner_signed: false,
-    tenant_signed: true
-  }
-];
-
 export const ReceiptsQuittancesView: React.FC = () => {
-  const [receipts] = useState<OfficialReceiptRow[]>(MOCK_RECEIPTS_DATA);
+  const { user } = useAuth();
+  const [receipts, setReceipts] = useState<OfficialReceiptRow[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'tous' | 'loyer' | 'caution'>('tous');
   const [previewReceipt, setPreviewReceipt] = useState<OfficialReceiptRow | null>(null);
@@ -121,6 +56,58 @@ export const ReceiptsQuittancesView: React.FC = () => {
     message: string;
     details?: string;
   } | null>(null);
+
+  const loadReceipts = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const { data, error } = await supabase
+        .from('receipts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        setLoadError(error.message);
+      } else {
+        setReceipts((data || []).map((r: any) => ({
+          id: r.id,
+          receipt_number: r.receipt_number || `REC-${r.id.slice(0, 8)}`,
+          receipt_type: (r.type || 'loyer') as 'loyer' | 'caution',
+          tenant_name: r.tenant_name || 'Locataire',
+          property_title: r.property_title || 'Logement',
+          property_address: r.property_address || 'Abidjan',
+          contract_number: r.contract_number || 'LT-CI-2026',
+          period_covered: r.period_covered || new Date(r.created_at || Date.now()).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
+          amount: Number(r.amount) || 0,
+          payment_method: r.payment_method || 'Mobile Money',
+          payment_date: new Date(r.created_at || Date.now()).toLocaleDateString('fr-FR'),
+          transaction_ref: r.token || r.id.slice(0, 12),
+          status: 'certifie',
+          owner_signed: true,
+          tenant_signed: true
+        })));
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Erreur lors du chargement des quittances.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    loadReceipts();
+
+    const handleUpdate = () => {
+      loadReceipts();
+    };
+
+    window.addEventListener('locatrust:receipts-updated', handleUpdate);
+    window.addEventListener('locatrust:payments-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:receipts-updated', handleUpdate);
+      window.removeEventListener('locatrust:payments-updated', handleUpdate);
+    };
+  }, [user]);
 
   const handleRelanceReceipt = (r: OfficialReceiptRow) => {
     const targetRole = !r.owner_signed ? 'bailleur' : 'locataire';
@@ -156,7 +143,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
       durationMonths: 12,
       leaseStartDate: '01/01/2026',
       leaseEndDate: '31/12/2026',
-      ownerName: "Koffi N'Guessan",
+      ownerName: user?.user_metadata?.full_name || 'Bailleur',
       ownerCni: 'CI987654321',
       ownerPhone: '+225 05 05 43 21 00',
       tenantName: r.tenant_name,
@@ -257,8 +244,45 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {filteredReceipts.map((r) => (
+            {isLoading ? (
+              <TableRowsSkeleton rows={5} cols={8} />
+            ) : (
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {loadError && (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center bg-rose-50/50">
+                    <div className="flex flex-col items-center justify-center">
+                      <AlertTriangle className="w-8 h-8 text-rose-500 mb-2" />
+                      <span className="text-slate-800 font-bold text-xs">{loadError}</span>
+                      <button onClick={loadReceipts} className="mt-3 px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer">
+                        Réessayer
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && !loadError && filteredReceipts.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="p-12 text-center">
+                    <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
+                        <Receipt className="w-6 h-6" />
+                      </div>
+                      <span className="text-slate-800 font-bold text-sm">
+                        {searchTerm ? "Aucun reçu ne correspond à votre recherche" : "Aucune quittance émise pour le moment"}
+                      </span>
+                      <p className="text-slate-400 text-xs mt-1 text-center">
+                        {searchTerm
+                          ? "Modifiez vos filtres ou termes de recherche."
+                          : "Dès que vous validerez des paiements de loyer ou de caution, vos quittances certifiées conformes apparaîtront ici."}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!isLoading && !loadError && filteredReceipts.map((r) => (
                 <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
                   
                   {/* N° Reçu */}
@@ -361,7 +385,9 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 </tr>
               ))}
             </tbody>
+            )}
           </table>
+
         </div>
       </div>
 

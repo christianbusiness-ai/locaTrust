@@ -28,10 +28,16 @@ import { LegalContractGeneratorModal } from '@/components/contracts/LegalContrac
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { notifyWaitingListCandidatesOnLeaseFinalized } from '@/lib/waitingListNotifications';
+import { triggerCelebration } from '@/lib/celebration';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
+import { updateRentalApplication } from '@/lib/supabase/services';
+import { ApplicationCardSkeleton } from '@/components/common/SkeletonLoader';
 
 export interface RentalApplication {
   id: string;
   property_id: string;
+  tenant_id?: string;
   tenant_name: string;
   tenant_avatar: string;
   tenant_phone: string;
@@ -56,123 +62,53 @@ export interface RentalApplication {
   };
 }
 
-// Multiples candidats sur le même bien (Kwame, Moussa, Awa sur Appartement A)
-const MOCK_APPLICATIONS: RentalApplication[] = [
-  {
-    id: 'app_kwame',
-    property_id: 'prop_apt_a',
-    tenant_name: 'Kwame Koffi',
-    tenant_avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 07 45 89 12 00',
-    tenant_email: 'kwame.koffi@email.ci',
-    tenant_cni: 'CI-009841201',
-    property_title: 'Appartement A (Cocody Riviera 3)',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    rent_amount: 150000,
-    caution_amount: 300000,
-    date_received: '24/09/2026',
-    status: 'liste_d_attente',
-    dossier_status: 'complet',
-    tenant_signed: false,
-    documents: {
-      cni_url: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=400&q=80',
-      quittances_url: 'Quittances_anciennes_2026.pdf',
-      attestation_url: 'Contrat_travail_cadre.pdf'
-    }
-  },
-  {
-    id: 'app_moussa',
-    property_id: 'prop_apt_a',
-    tenant_name: 'Moussa Touré',
-    tenant_avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 05 67 89 45 12',
-    tenant_email: 'moussa.toure@yahoo.fr',
-    tenant_cni: 'CI-0029481920',
-    property_title: 'Appartement A (Cocody Riviera 3)',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    rent_amount: 150000,
-    caution_amount: 300000,
-    date_received: '24/09/2026',
-    status: 'liste_d_attente',
-    dossier_status: 'complet',
-    tenant_signed: false,
-    documents: {
-      cni_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
-      quittances_url: 'Quittance_locative_2026.pdf'
-    }
-  },
-  {
-    id: 'app_awa',
-    property_id: 'prop_apt_a',
-    tenant_name: 'Awa Diallo',
-    tenant_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 07 44 55 66 77',
-    tenant_email: 'awa.diallo@gmail.com',
-    tenant_cni: 'CI-0033221199',
-    property_title: 'Appartement A (Cocody Riviera 3)',
-    property_address: 'Cocody Riviera 3, Abidjan',
-    rent_amount: 150000,
-    caution_amount: 300000,
-    date_received: '23/09/2026',
-    status: 'validee',
-    dossier_status: 'complet',
-    tenant_signed: false,
-    documents: {
-      cni_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
-    }
-  },
-  {
-    id: 'app_bamba',
-    property_id: 'prop_villa_mbadon',
-    tenant_name: 'Bamba Souleymane',
-    tenant_avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=150&q=80',
-    tenant_phone: '+225 01 22 33 44 55',
-    tenant_email: 'bamba.s@gmail.com',
-    tenant_cni: 'CI-0055443322',
-    property_title: "Villa 4 pièces Riviera M'Badon",
-    property_address: "Riviera M'Badon, Cocody",
-    rent_amount: 450000,
-    caution_amount: 900000,
-    date_received: '20/09/2026',
-    status: 'contrat_actif',
-    dossier_status: 'complet',
-    tenant_signed: true,
-    contract_finalized: true,
-    contract_number: 'LT-2026-CI-000492',
-    documents: {
-      cni_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80'
-    }
-  }
-];
-
 interface DemandesViewProps {
   onOpenMessages?: (tenantId?: string) => void;
   onOpenContractGenerator?: (application?: RentalApplication) => void;
+  isDemo?: boolean;
 }
 
 export const DemandesView: React.FC<DemandesViewProps> = ({
   onOpenMessages,
-  onOpenContractGenerator
+  onOpenContractGenerator,
+  isDemo = false
 }) => {
-  const [applications, setApplications] = useState<RentalApplication[]>(MOCK_APPLICATIONS);
+  const { user, profile } = useAuth();
+  const [applications, setApplications] = useState<RentalApplication[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedApplicationForContract, setSelectedApplicationForContract] = useState<RentalApplication | null>(null);
   const [selectedDossierApp, setSelectedDossierApp] = useState<RentalApplication | null>(null);
   const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadFromDatabase = async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
-      const stored = localStorage.getItem('locatrust_rental_applications');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setApplications(parsed);
+      const { data, error } = await supabase
+        .from('rental_applications')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        setLoadError(error.message);
+      } else {
+        setApplications(data || []);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_rental_applications', JSON.stringify(data || []));
         }
       }
-    } catch (e) {
-      console.warn(e);
+    } catch (err: any) {
+      setLoadError(err?.message || 'Erreur lors du chargement des candidatures.');
+    } finally {
+      setIsLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadFromDatabase();
 
     const handleAppsUpdated = (e: any) => {
       if (e.detail?.updatedApps && Array.isArray(e.detail.updatedApps)) {
@@ -180,7 +116,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       }
     };
     window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
-    return () => window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
+    return () => {
+      window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
+    };
   }, []);
 
   const saveApplications = (updated: RentalApplication[]) => {
@@ -236,19 +174,28 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   };
 
   // Validation effective de la signature par le locataire (Étape 1 & 2)
-  const handleConfirmTenantSignature = (app: RentalApplication) => {
+  const handleConfirmTenantSignature = async (app: RentalApplication) => {
+    const signedAt = new Date().toISOString();
     const updated = applications.map((a) =>
-      a.id === app.id ? { ...a, tenant_signed: true, tenant_signed_at: new Date().toISOString() } : a
+      a.id === app.id ? { ...a, tenant_signed: true, tenant_signed_at: signedAt } : a
     );
     saveApplications(updated);
     setSigningTenantApp(null);
     setCandidateAlert(
       `✍️ ${app.tenant_name} a signé et validé sa signature ! Le bouton « Finaliser le contrat » est désormais actif pour le bailleur.`
     );
+    try {
+      await supabase.from('rental_applications').update({
+        tenant_signed: true,
+        tenant_signed_at: signedAt
+      }).eq('id', app.id);
+    } catch (e) {
+      console.warn('Sync signature error:', e);
+    }
   };
 
   // Finalisation définitive du contrat par le propriétaire/agence
-  const handleFinalizeContract = (app: RentalApplication) => {
+  const handleFinalizeContract = async (app: RentalApplication) => {
     // Contrôle 1 : Le locataire doit obligatoirement avoir signé et validé
     if (!app.tenant_signed) {
       alert("Le locataire n'a pas encore signé et validé sa signature. Le contrat ne peut être finalisé sans sa signature effective.");
@@ -294,6 +241,24 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     saveApplications(updated);
 
+    // Synchronisation Supabase
+    try {
+      await supabase.from('rental_applications').update({
+        status: 'contrat_actif',
+        contract_finalized: true,
+        contract_number: contractNumber
+      }).eq('id', app.id);
+
+      for (const comp of competing) {
+        await supabase.from('rental_applications').update({
+          status: 'refusee',
+          unavailable_reason: "Le logement demandé est déjà pris et n'est plus disponible."
+        }).eq('id', comp.id);
+      }
+    } catch (err) {
+      console.warn('Supabase sync contract error:', err);
+    }
+
     // 3. Notifier automatiquement tous les candidats refusés
     try {
       notifyWaitingListCandidatesOnLeaseFinalized({
@@ -306,8 +271,25 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       console.warn('Waiting list notification error:', e);
     }
 
-    // 4. Enregistrer dans le registre des contrats locataire pour téléchargement depuis son espace
+    // 4. Enregistrer dans le registre des contrats
+    const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
+    const ownerPhone = profile?.phone || "+225 07 00 00 00 00";
+
     try {
+      await supabase.from('contracts').insert({
+        contract_number: contractNumber,
+        property_id: app.property_id,
+        tenant_id: app.tenant_id || user?.id,
+        owner_id: user?.id,
+        rent_amount: app.rent_amount,
+        charges_amount: 10000,
+        caution_amount: app.caution_amount,
+        duration_months: 12,
+        status: 'actif',
+        start_date: new Date().toISOString(),
+        signed_date: new Date().toISOString()
+      });
+
       const rawContracts = localStorage.getItem('locatrust_contracts');
       const currentContracts = rawContracts ? JSON.parse(rawContracts) : [];
       const newContractRecord = {
@@ -317,7 +299,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         charges: 10000,
         payment_due_day: 5,
         duration_months: 12,
-        owner: { full_name: "Koffi N'Guessan", phone: "+225 07 89 45 12 34" },
+        owner: { full_name: ownerName, phone: ownerPhone },
         tenant: { full_name: app.tenant_name, phone: app.tenant_phone },
         property: {
           title: app.property_title,
@@ -331,6 +313,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       console.warn('Contract storage error:', e);
     }
 
+    triggerCelebration('success');
+
     setCandidateAlert(
       `🎉 Contrat N° ${contractNumber} définitivement finalisé avec ${app.tenant_name} pour « ${app.property_title} » ! Le logement est officiellement loué. ${
         competing.length > 0
@@ -340,14 +324,36 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     );
   };
 
+  const getPropertyForApp = (propId: string) => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem('locatrust_properties');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const found = parsed.find((p: any) => p.id === propId);
+          if (found) return found;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  };
+
   // Téléchargement du contrat finalisé au format PDF certifié
   const handleDownloadContract = async (app: RentalApplication) => {
     try {
+      const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
+      const ownerPhone = profile?.phone || "+225 07 00 00 00 00";
+      const matchedProperty = getPropertyForApp(app.property_id);
+      const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
+
       await generateOfficialContractPdf({
         contractNumber: app.contract_number || 'LT-2026-CI-000492',
         isAgency: false,
-        ownerName: "Koffi N'Guessan",
-        ownerPhone: '+225 07 89 45 12 34',
+        ownerName: ownerName,
+        ownerPhone: ownerPhone,
         tenantName: app.tenant_name,
         tenantPhone: app.tenant_phone,
         tenantCni: app.tenant_cni,
@@ -359,7 +365,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         cautionMonths: 2,
         chargesAmount: 10000,
         dueDay: 5,
-        isSignedCopy: true
+        isSignedCopy: true,
+        leaseType,
+        usageDestination: leaseType,
+        authorizedActivity: matchedProperty?.authorized_activity || ''
       });
     } catch (err) {
       console.error('Download contract PDF error:', err);
@@ -423,10 +432,50 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         </div>
       )}
 
-      {/* Helper pour abréviation intelligente des longs libellés (Point 23 du prompt) */}
-      {/* Main List: Sleek, Ultra-compact single-row layout without vertical bloat (Points 21 to 26) */}
+      {/* Main List: 3 States (Loader, Error, Empty State) */}
       <div className="flex flex-col gap-2.5">
-        {filteredApps.map((app) => {
+        {/* 1. Skeleton Loader */}
+        {isLoading && (
+          <div className="flex flex-col gap-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <ApplicationCardSkeleton key={i} />
+            ))}
+          </div>
+        )}
+
+        {/* 2. Erreur */}
+        {!isLoading && loadError && (
+          <div className="p-8 text-center bg-rose-50 border border-rose-200 rounded-2xl flex flex-col items-center justify-center">
+            <AlertTriangle className="w-10 h-10 text-rose-500 mb-3" />
+            <h3 className="text-slate-900 font-bold text-base">Impossible de charger les candidatures</h3>
+            <p className="text-slate-600 text-xs mt-1 max-w-md">{loadError}</p>
+            <button
+              onClick={loadFromDatabase}
+              className="mt-4 px-4 py-2 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer"
+            >
+              Réessayer
+            </button>
+          </div>
+        )}
+
+        {/* 3. État vide */}
+        {!isLoading && !loadError && filteredApps.length === 0 && (
+          <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
+            <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mb-3">
+              <Users className="w-6 h-6" />
+            </div>
+            <h3 className="text-slate-800 font-bold text-base">
+              {searchQuery ? "Aucun résultat trouvé" : "Aucune candidature reçue pour le moment"}
+            </h3>
+            <p className="text-slate-500 text-xs mt-1 max-w-sm">
+              {searchQuery
+                ? "Aucune candidature ne correspond à votre recherche. Essayez avec d'autres termes."
+                : "Dès qu'un locataire postule à l'un de vos biens immobiliers, son dossier complet apparaîtra ici pour vérification et établissement du bail."}
+            </p>
+          </div>
+        )}
+
+        {!isLoading && !loadError && filteredApps.map((app) => {
           const compactTitle = app.property_title
             .replace(/Appartement numéro /gi, 'App. N°')
             .replace(/Appartement /gi, 'App. ')
@@ -815,46 +864,48 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       )}
 
       {/* Contract Generator Modal */}
-      {selectedApplicationForContract && (
-        <LegalContractGeneratorModal
-          isOpen={true}
-          onClose={() => setSelectedApplicationForContract(null)}
-          onContractFinalized={({ contractNumber, tenantName, propertyTitle }) => {
-            const chosenApp = selectedApplicationForContract;
-            const competing = applications.filter(
-              (a) => a.property_id === chosenApp.property_id && a.id !== chosenApp.id
-            );
-            const competingNames = competing.map((c) => c.tenant_name).join(', ');
-            setApplications((prev) => {
-              const updated = prev.map((a) => {
+      {selectedApplicationForContract && (() => {
+        const matchedProperty = getPropertyForApp(selectedApplicationForContract.property_id);
+        const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
+        return (
+          <LegalContractGeneratorModal
+            isOpen={true}
+            onClose={() => setSelectedApplicationForContract(null)}
+            onContractFinalized={({ contractNumber, tenantName, propertyTitle }) => {
+              const chosenApp = selectedApplicationForContract;
+              const competing = applications.filter(
+                (a) => a.property_id === chosenApp.property_id && a.id !== chosenApp.id
+              );
+              const competingNames = competing.map((c) => c.tenant_name).join(', ');
+              const updated = applications.map((a) => {
                 if (a.id === chosenApp.id) return { ...a, status: 'contrat_actif' as const };
                 if (a.property_id === chosenApp.property_id) {
                   return { ...a, status: 'refusee' as const };
                 }
                 return a;
               });
-              try {
-                localStorage.setItem('locatrust_rental_applications', JSON.stringify(updated));
-              } catch (e) {
-                console.warn(e);
-              }
-              return updated;
-            });
-            setCandidateAlert(
-              `🎉 Bail N° ${contractNumber} finalisé avec ${tenantName} pour « ${propertyTitle} » ! Les candidats en liste d'attente (${competingNames || 'demandeurs'}) ont été automatiquement notifiés que le logement n'est plus disponible.`
-            );
-          }}
-          initialData={{
-            tenantName: selectedApplicationForContract.tenant_name,
-            tenantPhone: selectedApplicationForContract.tenant_phone,
-            tenantCni: selectedApplicationForContract.tenant_cni,
-            propertyTitle: selectedApplicationForContract.property_title,
-            propertyAddress: selectedApplicationForContract.property_address,
-            rentAmount: selectedApplicationForContract.rent_amount,
-            cautionAmount: selectedApplicationForContract.caution_amount
-          }}
-        />
-      )}
+              saveApplications(updated);
+              setCandidateAlert(
+                `🎉 Bail N° ${contractNumber} finalisé avec ${tenantName} pour « ${propertyTitle} » ! Les candidats en liste d'attente (${competingNames || 'demandeurs'}) ont été automatiquement notifiés que le logement n'est plus disponible.`
+              );
+            }}
+            initialData={{
+              tenantName: selectedApplicationForContract.tenant_name,
+              tenantPhone: selectedApplicationForContract.tenant_phone,
+              tenantCni: selectedApplicationForContract.tenant_cni,
+              propertyTitle: selectedApplicationForContract.property_title,
+              propertyAddress: selectedApplicationForContract.property_address,
+              rentAmount: selectedApplicationForContract.rent_amount,
+              cautionAmount: selectedApplicationForContract.caution_amount,
+              leaseType,
+              usageDestination: leaseType,
+              authorizedActivity: matchedProperty?.authorized_activity || '',
+              propertyType: matchedProperty?.type || '',
+              ownerDestinationAuthorized: matchedProperty?.owner_destination_authorized ?? true
+            }}
+          />
+        );
+      })()}
 
       {/* Interactive Tenant Signature Modal (Simulation / Signature effective du locataire) */}
       {signingTenantApp && (

@@ -71,7 +71,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         duration: 12,
         dateSignature: '24 septembre 2026',
         periode: '01/10/2026 au 30/09/2027',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+        avatar: '',
       }
     : contractNumber === 'CT-2026-00060'
     ? {
@@ -89,7 +89,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         duration: 12,
         dateSignature: '28 septembre 2026',
         periode: '15/10/2026 au 14/10/2027',
-        avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80',
+        avatar: '',
       }
     : contractNumber === 'CT-2026-00061'
     ? {
@@ -107,12 +107,12 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         duration: 12,
         dateSignature: '30 septembre 2026',
         periode: '01/11/2026 au 31/10/2027',
-        avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
+        avatar: '',
       }
     : {
-        name: 'Kouadio Jean',
+        name: 'Locataire',
         phone: '+225 05 67 89 45 12',
-        email: 'kouadio.jean@email.com',
+        email: 'contact@locatrust.ci',
         cni: 'CI002894129',
         address: 'Riviera 3, Cocody - Abidjan',
         propertyTitle: 'Appartement 3 pièces - Cocody Riviera 3',
@@ -124,14 +124,14 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         duration: 12,
         dateSignature: '01 juillet 2026',
         periode: '01/07/2026 au 30/06/2027',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+        avatar: '',
       };
 
   const [showQrZoomModal, setShowQrZoomModal] = useState(false);
 
   // Real Handwritten Signature States
   const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    const ownerName = isAgency ? "Société Immobilière de l'Éléphant" : "Koffi N'Guessan";
+    const ownerName = isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur";
     return getCertifiedSignatureDataUrl(ownerName, isAgency ? 'agence' : 'bailleur');
   });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(() => {
@@ -205,11 +205,11 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       return;
     }
 
-    confetti({ particleCount: 60, spread: 50, origin: { y: 0.6 } });
+    const leaseType = (contract?.usage_destination || (contract?.property as any)?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
     await generateOfficialContractPdf({
       contractNumber,
       isAgency,
-      ownerName: isAgency ? "Société Immobilière de l'Éléphant" : "Koffi N'Guessan",
+      ownerName: isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur",
       ownerPhone: "+225 07 89 45 12 34",
       tenantName: tenantData.name,
       tenantPhone: tenantData.phone,
@@ -224,6 +224,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       dueDay: 5,
       ownerSignatureUrl,
       tenantSignatureUrl,
+      leaseType,
+      usageDestination: leaseType,
+      authorizedActivity: contract?.authorized_activity || (contract?.property as any)?.authorized_activity || ''
     });
 
     setConfirmationModal({
@@ -244,7 +247,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       cautionAmount: tenantData.caution,
       durationMonths: tenantData.duration,
       startDate: tenantData.startDate,
-      ownerName: isAgency ? "Société Immobilière de l'Éléphant" : "Koffi N'Guessan",
+      ownerName: isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur",
       tenantName: tenantData.name,
       ownerSigned: Boolean(ownerSignatureUrl),
       tenantSigned: Boolean(tenantSignatureUrl)
@@ -497,19 +500,17 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             
             {/* Propriétaire */}
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-start gap-3">
-              <img
-                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
-                alt="Propriétaire"
-                className="w-10 h-10 rounded-full object-cover border-2 border-amber-500 shrink-0"
-              />
+              <div className="w-10 h-10 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center border-2 border-amber-600 shrink-0">
+                {contract?.owner?.full_name ? contract.owner.full_name.slice(0, 2).toUpperCase() : 'BA'}
+              </div>
               <div className="flex flex-col text-xs">
                 <span className="font-extrabold text-slate-900">PROPRIÉTAIRE (BAILLEUR)</span>
-                <span className="font-bold text-slate-800">Koffi N'Guessan</span>
+                <span className="font-bold text-slate-800">{contract?.owner?.full_name || 'Bailleur Propriétaire'}</span>
                 <span className="text-slate-500 flex items-center gap-1 mt-1">
-                  <Phone className="w-3 h-3" /> +225 07 89 45 12 34
+                  <Phone className="w-3 h-3" /> {contract?.owner?.phone || '+225 07 00 00 00 00'}
                 </span>
                 <span className="text-slate-500 flex items-center gap-1">
-                  <Mail className="w-3 h-3" /> koffi.nguessan@email.com
+                  <Mail className="w-3 h-3" /> {contract?.owner?.email || 'contact@locatrust.ci'}
                 </span>
                 <span className="text-slate-500 flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Cocody, Abidjan - Côte d'Ivoire
@@ -519,11 +520,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
             {/* Locataire */}
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-start gap-3">
-              <img
-                src={tenantData.avatar}
-                alt="Locataire"
-                className="w-10 h-10 rounded-full object-cover border-2 border-blue-500 shrink-0"
-              />
+              <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-black text-xs flex items-center justify-center border-2 border-blue-700 shrink-0">
+                {tenantData.name ? tenantData.name.slice(0, 2).toUpperCase() : 'LO'}
+              </div>
               <div className="flex flex-col text-xs">
                 <div className="flex items-center gap-2">
                   <span className="font-extrabold text-slate-900">LOCATAIRE (PRENEUR)</span>
@@ -816,7 +815,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   {isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE' : 'LE PROPRIÉTAIRE (BAILLEUR)'}
                 </span>
                 <span className="font-bold text-slate-900 text-xs">
-                  {isAgency ? "Société Immobilière de l'Éléphant" : "Koffi N'Guessan"}
+                  {isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur"}
                 </span>
 
                 <div className="min-h-[70px] flex items-center justify-center my-2 p-2 bg-white rounded-xl border border-slate-200 shadow-inner">
@@ -947,7 +946,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             }
             setActiveSigningParty(null);
           }}
-          signerName={activeSigningParty === 'proprietaire' ? (isAgency ? "Société Immobilière de l'Éléphant" : "Koffi N'Guessan") : "Kouadio Jean"}
+          signerName={activeSigningParty === 'proprietaire' ? (isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur") : contract?.tenant?.full_name || "Locataire"}
           signerRole={activeSigningParty}
           documentTitle="Contrat de Bail d'Habitation"
           documentNumber={contractNumber}
@@ -1170,7 +1169,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col gap-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Bailleur :</span>
-                <span className="font-bold text-slate-900">{isAgency ? "Société Immobilière de l'Éléphant" : "Koffi N'Guessan"}</span>
+                <span className="font-bold text-slate-900">{isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Locataire lié :</span>

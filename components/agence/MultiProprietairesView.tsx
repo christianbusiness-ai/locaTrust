@@ -27,55 +27,26 @@ export interface ManagedOwner {
   joined_date: string;
 }
 
-const INITIAL_MANAGED_OWNERS: ManagedOwner[] = [
-  {
-    id: 'owner_101',
-    full_name: "Koffi N'Guessan",
-    email: 'koffi.nguessan@locatrust.ci',
-    phone: '+225 07 08 09 10 11',
-    properties_count: 12,
-    active_tenants: 10,
-    total_monthly_rent: 4850000,
-    mandate_type: 'exclusif',
-    joined_date: '2025-01-10'
-  },
-  {
-    id: 'owner_102',
-    full_name: 'Aicha Diallo',
-    email: 'aicha.diallo@locatrust.ci',
-    phone: '+225 05 04 03 02 01',
-    properties_count: 5,
-    active_tenants: 4,
-    total_monthly_rent: 2200000,
-    mandate_type: 'simple',
-    joined_date: '2025-03-15'
-  },
-  {
-    id: 'owner_103',
-    full_name: 'Koffi Traoré',
-    email: 'koffi.traore@locatrust.ci',
-    phone: '+225 01 02 03 04 05',
-    properties_count: 6,
-    active_tenants: 5,
-    total_monthly_rent: 3400000,
-    mandate_type: 'exclusif',
-    joined_date: '2025-04-01'
-  },
-  {
-    id: 'owner_104',
-    full_name: 'SCI Les Lagunes (M. Bamba)',
-    email: 'contact@scilagunes.ci',
-    phone: '+225 27 20 22 33 44',
-    properties_count: 5,
-    active_tenants: 5,
-    total_monthly_rent: 4400000,
-    mandate_type: 'exclusif',
-    joined_date: '2025-06-20'
-  }
-];
+const INITIAL_MANAGED_OWNERS: ManagedOwner[] = [];
 
 export const MultiProprietairesView: React.FC = () => {
-  const [owners, setOwners] = useState<ManagedOwner[]>(INITIAL_MANAGED_OWNERS);
+  const [owners, setOwners] = useState<ManagedOwner[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_agency_mandates');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            // Filtrer les anciens faux mandants de démo
+            return parsed.filter((o: any) => o.id !== 'owner_101' && o.id !== 'owner_102' && o.id !== 'owner_103' && o.id !== 'owner_104');
+          }
+        }
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
 
@@ -108,12 +79,15 @@ export const MultiProprietairesView: React.FC = () => {
       joined_date: new Date().toISOString().split('T')[0]
     };
 
-    setOwners((prev) => [created, ...prev]);
+    const next = [created, ...owners];
+    setOwners(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_agency_mandates', JSON.stringify(next));
+    }
     setShowAddModal(false);
     setNewName('');
     setNewEmail('');
     setNewPhone('');
-    alert('Propriétaire ajouté sous mandat avec succès !');
   };
 
   return (
@@ -137,7 +111,7 @@ export const MultiProprietairesView: React.FC = () => {
 
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold shadow-lg shadow-blue-600/30 transition-all shrink-0"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold shadow-lg shadow-blue-600/30 transition-all shrink-0 cursor-pointer"
         >
           <UserPlus className="w-4 h-4" />
           <span>Ajouter un propriétaire</span>
@@ -159,8 +133,25 @@ export const MultiProprietairesView: React.FC = () => {
         <span className="text-xs font-bold text-slate-500">{filteredOwners.length} bailleur(s) trouvé(s)</span>
       </div>
 
-      {/* Grid of Managed Owners */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+      {/* Grid of Managed Owners or Clean Empty State */}
+      {filteredOwners.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 flex flex-col items-center justify-center gap-3">
+          <div className="w-14 h-14 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center">
+            <Users className="w-7 h-7" />
+          </div>
+          <h4 className="text-base font-black text-slate-900">Aucun bailleur mandant enregistré</h4>
+          <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+            Votre agence n'a pas encore de bailleur sous mandat. Cliquez sur « Ajouter un propriétaire » pour enregistrer votre premier mandant et lui rattacher des lots.
+          </p>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="mt-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all cursor-pointer"
+          >
+            Ajouter mon premier mandant
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
         {filteredOwners.map((owner) => (
           <div
             key={owner.id}
@@ -218,6 +209,7 @@ export const MultiProprietairesView: React.FC = () => {
           </div>
         ))}
       </div>
+      )}
 
       {/* Add Owner Modal */}
       {showAddModal && (
@@ -236,7 +228,7 @@ export const MultiProprietairesView: React.FC = () => {
                   required
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Ex: Koffi N'Guessan ou SCI Les Palmiers"
+                  placeholder="Ex: LocaTrust Utilisateur ou SCI Les Palmiers"
                   className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
                 />
               </div>
@@ -248,7 +240,7 @@ export const MultiProprietairesView: React.FC = () => {
                   required
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="Ex: koffi@locatrust.ci"
+                  placeholder="Ex: contact@locatrust.ci"
                   className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-medium"
                 />
               </div>

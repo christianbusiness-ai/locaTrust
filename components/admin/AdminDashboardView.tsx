@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/src/lib/supabase';
 import {
   ShieldCheck,
   Building2,
@@ -25,6 +26,7 @@ import {
   Sliders,
   Lock,
   Smartphone,
+  ExternalLink,
   RefreshCw,
   Save,
   Plus,
@@ -100,161 +102,10 @@ export interface AdminUserAccount {
   active_contracts: number;
 }
 
-// Initial Mock Data
-const INITIAL_DOC_REQUESTS: DocumentVerificationRequest[] = [
-  {
-    id: 'doc_1',
-    user_name: 'Aïcha Diallo',
-    role: 'proprietaire',
-    phone: '+225 07 44 55 66 77',
-    email: 'aicha.diallo@locatrust.com',
-    doc_type: 'cni',
-    doc_number: 'CI-002894129',
-    file_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-    file_back_url: 'https://images.unsplash.com/photo-1554224154-26032ffc0d07?auto=format&fit=crop&w=800&q=80',
-    issue_date: '14/03/2023',
-    expiry_date: '14/03/2033',
-    status: 'en_attente',
-    submitted_at: 'Hier à 14:20'
-  },
-  {
-    id: 'doc_2',
-    user_name: 'Immobilière du Golf Abidjan',
-    role: 'agence',
-    phone: '+225 01 22 33 44 55',
-    email: 'contact@immodugolf.ci',
-    doc_type: 'rccm',
-    doc_number: 'CI-ABJ-2024-B-11928',
-    file_url: 'https://images.unsplash.com/photo-1568602471122-7832951cc4c5?auto=format&fit=crop&w=800&q=80',
-    issue_date: '02/01/2024',
-    status: 'en_attente',
-    submitted_at: 'Aujourd\'hui à 08:45'
-  },
-  {
-    id: 'doc_3',
-    user_name: 'Koffi Traoré',
-    role: 'proprietaire',
-    phone: '+225 05 67 89 45 12',
-    email: 'koffi.traore@gmail.com',
-    doc_type: 'cni',
-    doc_number: 'CI-001984532',
-    file_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-    issue_date: '10/05/2022',
-    expiry_date: '10/05/2032',
-    status: 'en_attente',
-    submitted_at: '28/09/2026'
-  },
-  {
-    id: 'doc_4',
-    user_name: 'Kouassi Amadou',
-    role: 'proprietaire',
-    phone: '+225 07 11 22 33 44',
-    email: 'kouassi@yahoo.fr',
-    doc_type: 'titre_propriete',
-    doc_number: 'TF-2023-ABJ-9921',
-    file_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-    issue_date: '15/09/2023',
-    status: 'verifie',
-    submitted_at: '20/09/2026'
-  }
-];
-
-const INITIAL_DISPUTES: DisputeDossier[] = [
-  {
-    id: 'LIT-2026-001',
-    title: 'Retard de restitution de caution légale',
-    category: 'caution',
-    contract_number: 'LT-2026-CI-000492',
-    tenant_name: 'Kouadio Jean',
-    tenant_phone: '+225 05 67 89 45 12',
-    owner_name: 'Koffi N\'Guessan',
-    owner_phone: '+225 07 89 45 12 34',
-    amount_in_dispute: 900000,
-    status: 'arbitrage_requis',
-    created_at: '25/09/2026',
-    description: 'Le locataire a libéré les lieux le 15 août après état des lieux de sortie contradictoire conforme. Le bailleur n\'a pas procédé au virement de la caution dans le délai légal de 30 jours imparti par la loi CI 2019-576.',
-    evidence_files: [
-      { name: 'Etat_des_lieux_sortie_signe.pdf', url: '#' },
-      { name: 'Reçu_caution_initial.pdf', url: '#' }
-    ]
-  },
-  {
-    id: 'LIT-2026-002',
-    title: 'Contestation retenue dégradation de peinture',
-    category: 'degradation',
-    contract_number: 'LT-2026-CI-000108',
-    tenant_name: 'Marc Kouassi',
-    tenant_phone: '+225 07 12 34 56 78',
-    owner_name: 'Aïcha Diallo',
-    owner_phone: '+225 07 44 55 66 77',
-    amount_in_dispute: 150000,
-    status: 'en_cours',
-    created_at: '28/09/2026',
-    description: 'Bailleur réclame 150 000 FCFA pour réfection de la peinture du salon. Le locataire soutient qu\'il s\'agit d\'une vétusté normale après 3 ans d\'occupation.',
-    evidence_files: [
-      { name: 'Photos_murs_salon.jpg', url: '#' },
-      { name: 'Devis_peintre.pdf', url: '#' }
-    ]
-  }
-];
-
-const INITIAL_USERS: AdminUserAccount[] = [
-  {
-    id: 'usr_1',
-    name: "Koffi N'Guessan",
-    email: 'koffi@locatrust.com',
-    phone: '+225 07 89 45 12 34',
-    role: 'proprietaire',
-    status: 'actif',
-    verified: true,
-    registered_at: '12/01/2026',
-    active_contracts: 5
-  },
-  {
-    id: 'usr_2',
-    name: 'Aïcha Diallo',
-    email: 'aicha@locatrust.com',
-    phone: '+225 07 44 55 66 77',
-    role: 'proprietaire',
-    status: 'actif',
-    verified: true,
-    registered_at: '05/02/2026',
-    active_contracts: 3
-  },
-  {
-    id: 'usr_3',
-    name: 'Immobilière du Golf Abidjan',
-    email: 'contact@immodugolf.ci',
-    phone: '+225 01 22 33 44 55',
-    role: 'agence',
-    status: 'actif',
-    verified: true,
-    registered_at: '18/02/2026',
-    active_contracts: 28
-  },
-  {
-    id: 'usr_4',
-    name: 'Kouadio Jean',
-    email: 'kouadio.jean@gmail.com',
-    phone: '+225 05 67 89 45 12',
-    role: 'locataire',
-    status: 'actif',
-    verified: true,
-    registered_at: '01/03/2026',
-    active_contracts: 1
-  },
-  {
-    id: 'usr_5',
-    name: 'Kouassi Amadou',
-    email: 'kouassi@yahoo.fr',
-    phone: '+225 07 11 22 33 44',
-    role: 'proprietaire',
-    status: 'en_attente',
-    verified: false,
-    registered_at: '20/09/2026',
-    active_contracts: 0
-  }
-];
+// Initial Clean States (Données réelles chargées depuis Supabase)
+const INITIAL_DOC_REQUESTS: DocumentVerificationRequest[] = [];
+const INITIAL_DISPUTES: DisputeDossier[] = [];
+const INITIAL_USERS: AdminUserAccount[] = [];
 
 interface AdminDashboardViewProps {
   activeTab?: string;
@@ -269,6 +120,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [docRequests, setDocRequests] = useState<DocumentVerificationRequest[]>(INITIAL_DOC_REQUESTS);
   const [disputes, setDisputes] = useState<DisputeDossier[]>(INITIAL_DISPUTES);
   const [usersList, setUsersList] = useState<AdminUserAccount[]>(INITIAL_USERS);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [searchUserQuery, setSearchUserQuery] = useState('');
   const [searchDocQuery, setSearchDocQuery] = useState('');
 
@@ -280,7 +132,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [rejectionModalDoc, setRejectionModalDoc] = useState<DocumentVerificationRequest | null>(null);
   const [rejectionReasonText, setRejectionReasonText] = useState('');
 
-  // SMS Modal State (demandé par l'audio : pour demander une vraie image si document non conforme)
+  // SMS Modal State
   const [smsTargetDoc, setSmsTargetDoc] = useState<DocumentVerificationRequest | null>(null);
   const [smsMessageText, setSmsMessageText] = useState('');
 
@@ -312,34 +164,165 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setTimeout(() => setNotificationToast(null), 5000);
   };
 
-  // Metrics demandées par l'utilisateur dans l'audio
+  // Statistiques réelles du SaaS calculées depuis Supabase
+  const [statsDashboard, setStatsDashboard] = useState({
+    proprietairesValides: 0,
+    proprietairesNonValides: 0,
+    totalLocataires: 0,
+    totalAgences: 0,
+    contratsSignes: 0,
+    proprietairesAbonnesPayes: 0,
+    proprietairesNonAbonnes: 0,
+    montantAbonnementsPayes: 0,
+    totalAnnonces: 0,
+    annoncesProprietaires: 0,
+    annoncesAgences: 0,
+    fluxSecurisesFCFA: 0
+  });
+
+  // =========================================================================
+  // CHARGEMENT EN TEMPS RÉEL DES DONNÉES RÉELLES DEPUIS SUPABASE
+  // =========================================================================
+  const fetchRealData = async () => {
+    setIsLoadingData(true);
+    try {
+      // 1. Profils réels enregistrés
+      const { data: dbProfiles, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (profErr) {
+        console.error('Erreur chargement profils:', profErr);
+      }
+
+      // 2. Biens réels
+      const { data: dbProperties } = await supabase
+        .from('properties')
+        .select('*');
+
+      // 3. Contrats réels
+      const { data: dbContracts } = await supabase
+        .from('contracts')
+        .select('*');
+
+      // 4. Paiements & Cautions
+      const { data: dbPayments } = await supabase
+        .from('rent_payments')
+        .select('*');
+
+      const { data: dbCautions } = await supabase
+        .from('cautions')
+        .select('*');
+
+      const profiles = dbProfiles || [];
+      const properties = dbProperties || [];
+      const contracts = dbContracts || [];
+      const payments = dbPayments || [];
+      const cautions = dbCautions || [];
+
+      // Mappage vers la liste des utilisateurs réels
+      const users: AdminUserAccount[] = profiles.map(p => ({
+        id: p.id,
+        name: p.full_name || (p.email ? p.email.split('@')[0] : 'Utilisateur'),
+        email: p.email || (p.phone ? `${p.phone}@locatrust.ci` : 'Non renseigné'),
+        phone: p.phone || 'Non renseigné',
+        role: (p.role === 'admin' ? 'admin' : (p.account_type || 'locataire')) as any,
+        status: 'actif',
+        verified: p.verification_status === 'verifie',
+        registered_at: p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : 'Récent',
+        active_contracts: contracts.filter((c: any) => c.tenant_id === p.id || c.owner_id === p.id).length
+      }));
+      setUsersList(users);
+
+      // Mappage vers la queue CNI & RCCM réelle
+      const docs: DocumentVerificationRequest[] = profiles
+        .filter(p => p.role !== 'admin')
+        .map(p => ({
+          id: p.id,
+          user_name: p.full_name || (p.email ? p.email.split('@')[0] : 'Candidat'),
+          role: (p.account_type === 'agence' ? 'agence' : (p.account_type === 'locataire' ? 'locataire' : 'proprietaire')) as any,
+          phone: p.phone || '',
+          email: p.email || '',
+          doc_type: p.account_type === 'agence' ? 'rccm' : 'cni',
+          doc_number: p.cni_number || (p.verification_status === 'en_attente' || p.verification_status === 'verifie' ? `CI-${p.id.slice(0, 8).toUpperCase()}` : 'Non renseigné'),
+          file_url: p.id_document_url || '',
+          issue_date: p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : 'Récent',
+          status: p.verification_status === 'verifie' ? 'verifie' : (p.verification_status === 'refuse' || p.verification_status === 'rejete' ? 'refuse' : (p.verification_status === 'en_attente' ? 'en_attente' : 'non_soumis')),
+          submitted_at: p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : 'Récent'
+        }));
+      setDocRequests(docs);
+
+      // Calcul des métriques réelles du SaaS
+      const propValides = profiles.filter(p => (p.account_type === 'proprietaire' || p.role === 'proprietaire') && p.verification_status === 'verifie').length;
+      const propNonValides = profiles.filter(p => (p.account_type === 'proprietaire' || p.role === 'proprietaire') && p.verification_status !== 'verifie').length;
+      const totLoc = profiles.filter(p => p.account_type === 'locataire' || p.role === 'locataire' || p.role === 'user').length;
+      const totAg = profiles.filter(p => p.account_type === 'agence' || p.role === 'agence').length;
+
+      const confirmedPayments = payments.filter((pm: any) => pm.status === 'confirme');
+      const totalSecuredPayments = confirmedPayments.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
+      const totalSecuredCautions = cautions.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
+
+      setStatsDashboard({
+        proprietairesValides: propValides,
+        proprietairesNonValides: propNonValides,
+        totalLocataires: totLoc,
+        totalAgences: totAg,
+        contratsSignes: contracts.length,
+        proprietairesAbonnesPayes: 0,
+        proprietairesNonAbonnes: propValides + propNonValides,
+        montantAbonnementsPayes: 0,
+        totalAnnonces: properties.length,
+        annoncesProprietaires: properties.filter((pr: any) => !pr.agency_id).length,
+        annoncesAgences: properties.filter((pr: any) => !!pr.agency_id).length,
+        fluxSecurisesFCFA: totalSecuredPayments + totalSecuredCautions
+      });
+
+    } catch (err) {
+      console.error('Erreur chargement données SaaS:', err);
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRealData();
+  }, []);
+
   const pendingDocsCount = docRequests.filter(d => d.status === 'en_attente').length;
   const activeDisputesCount = disputes.filter(d => d.status !== 'resolu').length;
 
-  // Statistiques exhaustives demandées dans l'audio
-  const statsDashboard = {
-    proprietairesValides: 384,
-    proprietairesNonValides: 42,
-    totalLocataires: 1056,
-    contratsSignes: 328,
-    proprietairesAbonnesPayes: 142,
-    proprietairesNonAbonnes: 284,
-    montantAbonnementsPayes: 4890000,
-    totalAnnonces: 186,
-    annoncesProprietaires: 114,
-    annoncesAgences: 72,
-    fluxSecurisesFCFA: 84500000
-  };
+  // =========================================================================
+  // ACTIONS : CNI & RCCM VERIFICATION & SMS AVEC PERSISTANCE SUPABASE
+  // =========================================================================
+  const handleApproveDoc = async (doc: DocumentVerificationRequest) => {
+    try {
+      // 1. Mettre à jour en direct la table profiles dans Supabase
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          verification_status: 'verifie',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', doc.id);
 
-  // =========================================================================
-  // ACTIONS : CNI & RCCM VERIFICATION & SMS
-  // =========================================================================
-  const handleApproveDoc = (doc: DocumentVerificationRequest) => {
-    setDocRequests(prev => prev.map(d => d.id === doc.id ? { ...d, status: 'verifie' } : d));
-    setUsersList(prev => prev.map(u => u.name === doc.user_name ? { ...u, verified: true, status: 'actif' } : u));
-    setInspectedDoc(null);
-    triggerCelebration('success');
-    showToast(`✅ Pièce ${doc.doc_type.toUpperCase()} de ${doc.user_name} certifiée ! Ses annonces sont publiées automatiquement sans blocage.`);
+      if (error) {
+        showToast(`Erreur lors de la validation : ${error.message}`, 'error');
+        return;
+      }
+
+      // 2. Mettre à jour les états locaux réactifs
+      setDocRequests(prev => prev.map(d => d.id === doc.id ? { ...d, status: 'verifie' } : d));
+      setUsersList(prev => prev.map(u => u.id === doc.id ? { ...u, verified: true, status: 'actif' } : u));
+      setInspectedDoc(null);
+      triggerCelebration('success');
+      showToast(`✅ Pièce ${doc.doc_type.toUpperCase()} de ${doc.user_name} certifiée avec succès ! Le badge "Vérifié" lui est attribué.`);
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:verification_updated'));
+      fetchRealData();
+    } catch (err: any) {
+      showToast(`Erreur : ${err?.message || 'Erreur inattendue'}`, 'error');
+    }
   };
 
   const handleOpenRejection = (doc: DocumentVerificationRequest) => {
@@ -347,16 +330,37 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setRejectionReasonText('');
   };
 
-  const handleConfirmRejection = () => {
+  const handleConfirmRejection = async () => {
     if (!rejectionModalDoc) return;
     if (!rejectionReasonText.trim()) {
       alert('Veuillez préciser le motif du rejet.');
       return;
     }
-    setDocRequests(prev => prev.map(d => d.id === rejectionModalDoc.id ? { ...d, status: 'refuse', rejection_reason: rejectionReasonText } : d));
-    setRejectionModalDoc(null);
-    setInspectedDoc(null);
-    showToast(`❌ Pièce rejetée pour ${rejectionModalDoc.user_name}. Notification transmise.`, 'error');
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          verification_status: 'rejete',
+          rejection_reason: rejectionReasonText,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', rejectionModalDoc.id);
+
+      if (error) {
+        showToast(`Erreur : ${error.message}`, 'error');
+        return;
+      }
+
+      setDocRequests(prev => prev.map(d => d.id === rejectionModalDoc.id ? { ...d, status: 'refuse', rejection_reason: rejectionReasonText } : d));
+      setRejectionModalDoc(null);
+      setInspectedDoc(null);
+      showToast(`❌ Pièce rejetée pour ${rejectionModalDoc.user_name}. Statut mis à jour.`, 'error');
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:verification_updated'));
+      fetchRealData();
+    } catch (err: any) {
+      showToast(`Erreur : ${err?.message || 'Erreur inattendue'}`, 'error');
+    }
   };
 
   const handleOpenSmsModal = (doc: DocumentVerificationRequest) => {
@@ -469,7 +473,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
+          <button
+            type="button"
+            onClick={fetchRealData}
+            disabled={isLoadingData}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+            title="Recharger les données en temps réel depuis Supabase"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isLoadingData ? 'animate-spin' : ''}`} />
+            <span>{isLoadingData ? 'Actualisation...' : 'Actualiser'}</span>
+          </button>
+          <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             Nœud Abidjan Sécurisé
           </span>
@@ -911,7 +925,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
           {/* Table / List */}
           <div className="divide-y divide-slate-100">
-            {filteredDocs.map((req) => (
+            {filteredDocs.length === 0 ? (
+              <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center">
+                  <FileCheck className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-bold text-slate-700">Aucun dossier à afficher</h4>
+                <p className="text-xs text-slate-400 max-w-sm">
+                  Les dossiers de pièces d'identité et RCCM soumis par les utilisateurs apparaîtront ici pour certification.
+                </p>
+              </div>
+            ) : (
+              filteredDocs.map((req) => (
               <div key={req.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/60 p-3 rounded-2xl transition-colors">
                 
                 <div className="flex items-center gap-3">
@@ -981,7 +1006,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
 
               </div>
-            ))}
+            ))
+            )}
           </div>
         </div>
       )}
@@ -1387,15 +1413,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </button>
             </div>
 
-            {/* Document Image Preview */}
+            {/* Document Image / PDF Preview */}
             <div className="flex flex-col gap-2">
-              <span className="text-xs font-bold text-slate-600">Document scanné fourni par l'usager :</span>
-              <div className="h-64 sm:h-72 w-full rounded-2xl overflow-hidden relative shadow-inner border border-slate-200 bg-slate-900">
-                <img
-                  src={inspectedDoc.file_url}
-                  alt="Aperçu document"
-                  className="w-full h-full object-contain"
-                />
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-600">Document scanné fourni par l'usager :</span>
+                {inspectedDoc.file_url && (
+                  <a
+                    href={inspectedDoc.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs transition-colors border border-blue-200"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Ouvrir la pièce</span>
+                  </a>
+                )}
+              </div>
+              <div className="h-64 sm:h-72 w-full rounded-2xl overflow-hidden relative shadow-inner border border-slate-200 bg-slate-900 flex items-center justify-center">
+                {inspectedDoc.file_url?.toLowerCase().includes('.pdf') ? (
+                  <iframe
+                    src={inspectedDoc.file_url}
+                    title="Aperçu document PDF"
+                    className="w-full h-full border-0"
+                  />
+                ) : (
+                  <img
+                    src={inspectedDoc.file_url}
+                    alt="Aperçu document"
+                    className="w-full h-full object-contain"
+                  />
+                )}
               </div>
             </div>
 

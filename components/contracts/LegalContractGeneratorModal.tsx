@@ -62,6 +62,11 @@ interface LegalContractGeneratorModalProps {
     propertyCommune?: string;
     durationMonths?: number;
     startDate?: string;
+    leaseType?: LeaseType;
+    usageDestination?: 'habitation' | 'professionnel';
+    authorizedActivity?: string;
+    propertyType?: string;
+    ownerDestinationAuthorized?: boolean;
   };
   onContractFinalized?: (contractData: {
     contractNumber: string;
@@ -98,7 +103,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   }, [isOpen]);
 
   // Parties & Property
-  const [tenantName, setTenantName] = useState<string>(initialData?.tenantName || "Koffi N'Guessan");
+  const [tenantName, setTenantName] = useState<string>(initialData?.tenantName || "");
   const [tenantPhone, setTenantPhone] = useState<string>(initialData?.tenantPhone || '+225 07 08 09 10 11');
   const [tenantCni, setTenantCni] = useState<string>(initialData?.tenantCni || 'CI-0029481920');
   const [ownerName, setOwnerName] = useState<string>(
@@ -131,7 +136,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     setPropertyAddress(computedAddress);
   }, [computedAddress]);
 
-  const [propertyDestination, setPropertyDestination] = useState<string>('Habitation Principale');
+  const [propertyDestination, setPropertyDestination] = useState<string>(
+    initialData?.usageDestination === 'professionnel'
+      ? (initialData.authorizedActivity ? `Usage Professionnel - ${initialData.authorizedActivity}` : 'Usage Professionnel / Commercial (OHADA AUDCG)')
+      : 'Habitation Principale'
+  );
 
   // Financials
   const [rent, setRent] = useState<number>(initialData?.rentAmount || 150000);
@@ -142,7 +151,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [cautionPaidAmount, setCautionPaidAmount] = useState<number>(initialData?.cautionAmount || 300000);
   const [cautionReceiptNumber, setCautionReceiptNumber] = useState<string>('DEP-2026-CI-00984');
   const [contractNumber] = useState<string>('LT-2026-CI-000492');
-  const [leaseType, setLeaseType] = useState<LeaseType>('habitation');
+  const [leaseType, setLeaseType] = useState<LeaseType>(
+    initialData?.leaseType || initialData?.usageDestination || 'habitation'
+  );
+  const [propertyType, setPropertyType] = useState<string>(initialData?.propertyType || '');
+  const [authorizedActivity, setAuthorizedActivity] = useState<string>(initialData?.authorizedActivity || '');
+  const [ownerDestinationAuthorized, setOwnerDestinationAuthorized] = useState<boolean>(
+    initialData?.ownerDestinationAuthorized ?? true
+  );
   const [fiscalStatus, setFiscalStatus] = useState<'non_enregistre' | 'en_cours' | 'enregistre'>('en_cours');
   const [startDate, setStartDate] = useState<string>(initialData?.startDate || '2026-10-01');
   const [durationMonths, setDurationMonths] = useState<number>(initialData?.durationMonths || 12);
@@ -167,6 +183,21 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (typeof initialData.cautionAmount === 'number') setCautionPaidAmount(initialData.cautionAmount);
         if (typeof initialData.durationMonths === 'number') setDurationMonths(initialData.durationMonths);
         if (initialData.startDate) setStartDate(initialData.startDate);
+        if (initialData.leaseType || initialData.usageDestination) {
+          setLeaseType(initialData.leaseType || initialData.usageDestination || 'habitation');
+        }
+        if (initialData.propertyType) setPropertyType(initialData.propertyType);
+        if (initialData.authorizedActivity) setAuthorizedActivity(initialData.authorizedActivity);
+        if (typeof initialData.ownerDestinationAuthorized === 'boolean') {
+          setOwnerDestinationAuthorized(initialData.ownerDestinationAuthorized);
+        }
+        if (initialData.usageDestination === 'professionnel') {
+          setPropertyDestination(
+            initialData.authorizedActivity
+              ? `Usage Professionnel - ${initialData.authorizedActivity}`
+              : 'Usage Professionnel / Commercial (OHADA AUDCG)'
+          );
+        }
       }
     }
   }, [
@@ -181,7 +212,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.rentAmount,
     initialData?.cautionAmount,
     initialData?.durationMonths,
-    initialData?.startDate
+    initialData?.startDate,
+    initialData?.leaseType,
+    initialData?.usageDestination,
+    initialData?.authorizedActivity,
+    initialData?.propertyType,
+    initialData?.ownerDestinationAuthorized
   ]);
 
   // Conditions Particulières Saisies (Sections 1, 3, 4 du Cahier des Charges)
@@ -438,7 +474,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       cautionMonths,
       rent,
       city: propertyCity,
-      commune: propertyCommune
+      commune: propertyCommune,
+      propertyType,
+      usageDestination: leaseType,
+      authorizedActivity,
+      ownerDestinationAuthorized
     });
   }, [
     leaseType,
@@ -449,7 +489,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     cautionMonths,
     rent,
     propertyCity,
-    propertyCommune
+    propertyCommune,
+    propertyType,
+    authorizedActivity,
+    ownerDestinationAuthorized
   ]);
 
   const blockingClauses = useMemo(() => {
@@ -646,6 +689,15 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       dueDay,
       ownerSignatureUrl,
       tenantSignatureUrl,
+      leaseType,
+      usageDestination: leaseType,
+      authorizedActivity,
+      ownerCustomConditions,
+      tenantCustomRequests,
+      propertySpecificRules,
+      customConditions: compliantClauses
+        .filter((c) => c.fieldSource !== 'advanceMonths' && c.fieldSource !== 'cautionMonths')
+        .map((c) => c.reformulatedText || c.rawText)
     });
   };
 
@@ -763,7 +815,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     value={tenantName}
                     onChange={(e) => setTenantName(e.target.value)}
                     className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
-                    placeholder="Ex: Kouadio Jean"
+                    placeholder="Ex: Locataire"
                   />
                 </div>
               </div>
@@ -1434,8 +1486,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                             <AlertTriangle className="w-5 h-5" />
                           </div>
                           <div>
-                            <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider">
-                              ⚠️ ANOMALIE JURIDIQUE DÉTECTÉE
+                            <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1">
+                              ⚠️ {clause.alertLevelLabel || 'NIVEAU 3 - NON-CONFORMITÉ'}
                             </span>
                             <h4 className="text-sm font-black text-rose-950 mt-1">{clause.title}</h4>
                             <span className="text-[11px] font-extrabold text-rose-700">
@@ -1571,7 +1623,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       className="p-3.5 rounded-xl border border-amber-300 bg-amber-50/70 text-xs flex flex-col gap-2"
                     >
                       <div className="flex items-start justify-between">
-                        <span className="font-black text-slate-900">{clause.title}</span>
+                        <div>
+                          <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white text-[9px] font-black uppercase tracking-wider mr-2 inline-block">
+                            {clause.alertLevelLabel || 'NIVEAU 2 - AVERTISSEMENT'}
+                          </span>
+                          <span className="font-black text-slate-900">{clause.title}</span>
+                        </div>
                         <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-200 text-amber-900">
                           À vérifier
                         </span>
@@ -1637,6 +1694,19 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   </p>
                 </div>
               )}
+
+              {/* AVERTISSEMENT LÉGAL OFFICIEL LOCATRUST */}
+              <div className="p-3.5 bg-white/90 rounded-xl border border-slate-200 text-[11px] text-slate-600 flex items-start gap-2.5 leading-relaxed">
+                <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-black text-slate-800 block text-[10px] uppercase tracking-wider mb-0.5">
+                    Avertissement Légal Officiel LocaTrust
+                  </span>
+                  <p className="text-[11px] text-slate-600 font-medium">
+                    {analysisReport.disclaimer || "LocaTrust est un assistant technologique d'aide à la rédaction et à la vérification de conformité contractuelle. Il ne se substitue ni au conseil d'un professionnel du droit habilité (avocat, notaire, commissaire de justice), ni au pouvoir souverain d'appréciation des juridictions ivoiriennes et communautaires compétentes."}
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* BOUTON « VALIDER ET CONTINUER » (Section 8) */}
@@ -1990,15 +2060,19 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     ARTICLE 9 : RÉSILIATION
                   </span>
                   <p className="text-slate-600 text-[11px] mt-0.5">
-                    En cas de manquement grave par l'une des parties à ses obligations, l'autre partie pourra résilier le présent contrat après mise en demeure restée sans effet pendant un délai de 30 jours (Art. 450 de la Loi n°2019-576).
+                    {leaseType === 'professionnel'
+                      ? "En cas d'inexécution par le preneur ou le bailleur de ses obligations, la résiliation judiciaire du bail ne peut être poursuivie qu'après mise en demeure par exploit de commissaire de justice restée infructueuse pendant un délai statutaire d'un (1) mois (Article 133 de l'AUDCG OHADA et Article 14 de la Loi n° 2025-221)."
+                      : "En cas de manquement grave par l'une des parties à ses obligations, l'autre partie pourra poursuivre la résiliation du bail après mise en demeure par acte extrajudiciaire d'un délai d'un (1) mois restée sans effet, constatée par la juridiction compétente avec concours exclusif d'un Commissaire de Justice (Art. 450 Loi n° 2019-576 et Loi n° 2025-221)."}
                   </p>
                 </div>
                 <div className="pt-2 border-t border-slate-200">
                   <span className="font-black text-blue-900 uppercase tracking-wide block">
-                    ARTICLE 10 : LITIGES
+                    ARTICLE 10 : LITIGES & JURIDICTION COMPÉTENTE
                   </span>
                   <p className="text-slate-600 text-[11px] mt-0.5">
-                    Tout litige relatif à l'interprétation ou à l'exécution du présent contrat sera soumis à l'amiable. À défaut d'accord, il sera porté devant les juridictions compétentes du Tribunal de Première Instance d'Abidjan.
+                    {leaseType === 'professionnel'
+                      ? "Tout litige relatif à l'interprétation ou à l'exécution du présent bail relève de la compétence exclusive de la Juridiction Commerciale compétente (Tribunal de Commerce), conformément aux dispositions de l'Acte Uniforme OHADA portant sur le Droit Commercial Général."
+                      : "Tout litige relatif à l'interprétation ou à l'exécution du présent contrat sera soumis à conciliation amiable. À défaut d'accord, il sera porté devant les juridictions civiles compétentes du Tribunal de Première Instance d'Abidjan."}
                   </p>
                 </div>
               </div>
@@ -2104,7 +2178,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                         </span>
                       </div>
                       <span className="text-[5.5px] font-bold text-slate-500 leading-none">
-                        LOI N° 2019-576 DU 26 JUIN 2019
+                        {leaseType === 'professionnel' ? 'AUDCG OHADA • LOI 2025-221' : 'LOI N° 2019-576 & 2025-221'}
                       </span>
                       <span className="text-[6.2px] font-black text-amber-800 tracking-wider uppercase leading-none">
                         ABIDJAN • SÉCURITÉ JURIDIQUE
@@ -2207,7 +2281,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 </div>
                 <div className="flex flex-col text-xs">
                   <span className="font-extrabold text-slate-900">Horodatage & Preuve Cryptographique</span>
-                  <span className="text-[11px] text-slate-500">Conforme à la Loi n°2019-576 sur le bail d'habitation</span>
+                  <span className="text-[11px] text-slate-500">
+                    {leaseType === 'professionnel'
+                      ? "Conforme à l'AUDCG OHADA sur le bail professionnel et commercial"
+                      : "Conforme à la Loi n° 2019-576 & Loi n° 2025-221 sur le bail d'habitation"}
+                  </span>
                   <span className="text-[10px] text-emerald-700 font-bold mt-0.5">✓ Enregistré au registre officiel de vérification</span>
                 </div>
               </div>

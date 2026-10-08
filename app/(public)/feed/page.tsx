@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
-import { MOCK_PROPERTIES, MOCK_USERS } from '@/lib/mock/data';
+import React, { useState, useEffect } from 'react';
 import { Property, UserRole } from '@/types/database.types';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
@@ -12,40 +11,95 @@ import { FavoritesWidget } from '@/components/feed/FavoritesWidget';
 import { RecentSearches } from '@/components/feed/RecentSearches';
 import { RentalRequestModal } from '@/components/feed/RentalRequestModal';
 import { ContactOwnerModal } from '@/components/feed/ContactOwnerModal';
-import { Image as ImageIcon, Video, Search, Sparkles } from 'lucide-react';
+import { Image as ImageIcon, Video, Search, Sparkles, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 
 export default function FeedPage() {
+  const { user, profile } = useAuth();
   const [currentRole, setCurrentRole] = useState<UserRole>('locataire');
-  const [properties, setProperties] = useState<Property[]>(MOCK_PROPERTIES);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [allProperties, setAllProperties] = useState<Property[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [selectedRentalProperty, setSelectedRentalProperty] = useState<Property | null>(null);
   const [selectedMessageProperty, setSelectedMessageProperty] = useState<Property | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const currentUser = MOCK_USERS[currentRole] || MOCK_USERS.locataire;
+  const currentUser = {
+    id: user?.id || 'guest',
+    email: user?.email || 'visiteur@locatrust.ci',
+    full_name: profile?.full_name || 'Utilisateur LocaTrust',
+    avatar_url: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+    role: currentRole,
+    phone: profile?.phone || '+225 07 00 00 00 00',
+    is_verified: profile?.is_verified ?? false,
+    created_at: new Date().toISOString()
+  };
+
+  const fetchProperties = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const { data, error: qErr } = await supabase
+        .from('properties')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (qErr) throw qErr;
+      const formatted = (data || []).map((p: any) => ({
+        ...p,
+        location: p.location || {
+          city: p.city || 'Abidjan',
+          commune: p.commune || '',
+          quartier: p.quartier || ''
+        },
+        pricing: p.pricing || {
+          monthly_rent: Number(p.rent) || 0,
+          deposit_months: Math.round(Number(p.caution) / (Number(p.rent) || 1)) || 2
+        }
+      }));
+      setProperties(formatted);
+      setAllProperties(formatted);
+    } catch (err: any) {
+      console.error('Erreur chargement des biens:', err);
+      setError('Impossible de charger les annonces du fil d\'actualité.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProperties();
+  }, []);
 
   // Handle Search & Filtering
   const handleSearch = (term: string) => {
     setSearchQuery(term);
     if (!term.trim()) {
-      setProperties(MOCK_PROPERTIES);
+      setProperties(allProperties);
       return;
     }
-    const filtered = MOCK_PROPERTIES.filter(p =>
-      p.title.toLowerCase().includes(term.toLowerCase()) ||
-      p.description.toLowerCase().includes(term.toLowerCase()) ||
-      p.location?.city.toLowerCase().includes(term.toLowerCase()) ||
-      p.location?.quartier?.toLowerCase().includes(term.toLowerCase())
+    const q = term.toLowerCase();
+    const filtered = allProperties.filter(p =>
+      (p.title || '').toLowerCase().includes(q) ||
+      (p.description || '').toLowerCase().includes(q) ||
+      (p.city || p.location?.city || '').toLowerCase().includes(q) ||
+      (p.commune || p.location?.commune || '').toLowerCase().includes(q) ||
+      (p.quartier || p.location?.quartier || '').toLowerCase().includes(q) ||
+      (p.type || '').toLowerCase().includes(q)
     );
     setProperties(filtered);
   };
 
   const handleFilterChange = (filters: any) => {
-    let result = [...MOCK_PROPERTIES];
+    let result = [...allProperties];
     if (filters.city) {
-      result = result.filter(p => p.location?.city === filters.city);
+      result = result.filter(p => (p.city || p.location?.city) === filters.city);
     }
-    if (filters.quartier) {
-      result = result.filter(p => p.location?.quartier === filters.quartier);
+    if (filters.commune) {
+      result = result.filter(p => (p.commune || p.location?.commune) === filters.commune);
     }
     if (filters.type) {
       result = result.filter(p => p.type === filters.type);
@@ -60,7 +114,8 @@ export default function FeedPage() {
   };
 
   const handleResetFilters = () => {
-    setProperties(MOCK_PROPERTIES);
+    setProperties(allProperties);
+    setSearchQuery('');
   };
 
   return (
@@ -115,7 +170,30 @@ export default function FeedPage() {
 
           {/* Property Cards List */}
           <div className="flex flex-col gap-6">
-            {properties.length === 0 ? (
+            {loading && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+                <p className="text-xs font-bold text-slate-600">Chargement des biens vérifiés...</p>
+              </div>
+            )}
+
+            {error && !loading && (
+              <div className="bg-rose-50 rounded-2xl border border-rose-200 p-6 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-rose-800 text-xs font-bold">
+                  <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <span>{error}</span>
+                </div>
+                <button
+                  onClick={fetchProperties}
+                  className="px-3 py-1.5 bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Réessayer</span>
+                </button>
+              </div>
+            )}
+
+            {!loading && !error && properties.length === 0 && (
               <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center flex flex-col items-center gap-3">
                 <Sparkles className="w-8 h-8 text-brand-500" />
                 <h4 className="font-bold text-slate-900 text-base">Aucun bien trouvé</h4>
@@ -129,7 +207,9 @@ export default function FeedPage() {
                   Voir tous les biens
                 </button>
               </div>
-            ) : (
+            )}
+
+            {!loading && !error && properties.length > 0 && (
               properties.map((property) => (
                 <FeedPropertyCard
                   key={property.id}
