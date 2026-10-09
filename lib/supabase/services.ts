@@ -80,7 +80,7 @@ export async function verifyEmailOtp(email: string, token: string) {
     return {
       success: false,
       data: null,
-      error: error || signupCheck.error || new Error('Code de validation invalide ou expiré.')
+      error: error || emailCheck.error || new Error('Code de validation invalide ou expiré.')
     };
   } catch (err: any) {
     return { success: false, data: null, error: err };

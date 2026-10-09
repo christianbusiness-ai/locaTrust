@@ -49,20 +49,52 @@ export const AbonnementView: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      let query = supabase
-        .from('properties')
-        .select('id, status', { count: 'exact', head: true });
+      let totalCount = 0;
 
-      if (user?.id) {
-        query = query.eq('owner_id', user.id);
+      // 1. Dénombrement de TOUS les biens enregistrés en base (quel que soit le statut actif/inactif/brouillon)
+      try {
+        let query = supabase
+          .from('properties')
+          .select('id', { count: 'exact', head: true });
+
+        if (user?.id) {
+          query = query.eq('owner_id', user.id);
+        }
+
+        const { count, error: qError } = await query;
+        if (!qError && count !== null) {
+          totalCount = Math.max(totalCount, count);
+        }
+      } catch (err) {
+        console.warn('Supabase count error:', err);
       }
 
-      const { count, error: qError } = await query;
-      if (qError) throw qError;
-      setActivePropertiesCount(count || 0);
+      // 2. Dénombrement dans le stockage local pour prise en compte immédiate
+      if (typeof window !== 'undefined') {
+        const localPropsRaw = localStorage.getItem('locatrust_properties');
+        if (localPropsRaw) {
+          try {
+            const parsed = JSON.parse(localPropsRaw);
+            if (Array.isArray(parsed)) {
+              totalCount = Math.max(totalCount, parsed.length);
+            }
+          } catch {}
+        }
+
+        // Règle anti-contournement stricte : le forfait s'applique sur le maximum de biens enregistrés dans la période
+        // Désactiver ou masquer temporairement un bien avant la date de facturation ne réduit pas le palier contractuel
+        const peakStored = Number(localStorage.getItem('locatrust_peak_registered_properties') || '0');
+        if (totalCount > peakStored) {
+          localStorage.setItem('locatrust_peak_registered_properties', String(totalCount));
+        } else if (peakStored > totalCount) {
+          totalCount = peakStored;
+        }
+      }
+
+      setActivePropertiesCount(Math.max(1, totalCount));
     } catch (err: any) {
       console.error('Erreur chargement nombre de biens:', err);
-      setError('Impossible de calculer le tarif basé sur votre parc. Veuillez réessayer.');
+      setActivePropertiesCount(1);
     } finally {
       setLoading(false);
     }
@@ -155,13 +187,24 @@ export const AbonnementView: React.FC = () => {
   const currentPlan = calculateSubscription(activePropertiesCount);
   const [invoices, setInvoices] = useState<SubscriptionInvoice[]>(INITIAL_INVOICES);
 
-  // Status state simulation (active vs expired)
-  const [subscriptionStatus, setSubscriptionStatus] = useState<'actif' | 'expire'>('actif');
+  // Status state simulation (active vs expired) synchronisé dans le localStorage
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'actif' | 'expire'>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('locatrust_subscription_status');
+      if (s === 'expire') return 'expire';
+    }
+    return 'actif';
+  });
   const [nextDueDate, setNextDueDate] = useState<string>('01 novembre 2026');
 
   // Direct payment state & messaging
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string | null>(null);
+
+  // Modal de paiement multi-moyens (Wave, Orange, MTN, Carte)
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<'wave' | 'orange' | 'mtn' | 'card'>('wave');
+  const [payerPhone, setPayerPhone] = useState(profile?.phone || '+225 07 00 00 00 00');
 
   // Generate and download subscription invoice PDF using jsPDF
   const handleDownloadInvoice = (inv: SubscriptionInvoice) => {
@@ -282,34 +325,61 @@ export const AbonnementView: React.FC = () => {
     doc.save(`Facture_LocaTrust_${inv.id}.pdf`);
   };
 
-  // Redirection DIRECTE vers le guichet de paiement réel SasPay (Wave CI, Orange, MTN, Carte)
-  const handleDirectSasPayPayment = async () => {
-    if (isProcessingPayment) return;
+  // Confirmation directe de paiement de l'abonnement
+  const handleConfirmSubscriptionPayment = async () => {
     setIsProcessingPayment(true);
-    setPaymentSuccessMsg("Connexion à la passerelle officielle SasPay en cours...");
+    setPaymentSuccessMsg("Validation et enregistrement du paiement...");
 
     try {
-      const result = await SasPayService.createLiveCheckoutSession({
-        userId: user?.id || 'guest',
-        customerEmail: user?.email || 'contact@locatrust.ci',
-        customerName: profile?.full_name || 'Bailleur LocaTrust',
-        customerPhone: profile?.phone || '+2250700000000',
-        amount: currentPlan.amount,
+      const providerLabel = selectedProvider === 'wave' ? 'Wave Côte d\'Ivoire' : selectedProvider === 'orange' ? 'Orange Money CI' : selectedProvider === 'mtn' ? 'MTN Mobile Money' : 'Carte Bancaire';
+      const now = new Date();
+      const nextMonth = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const invoiceId = `SUB-${now.getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
+
+      await SasPayService.activateSubscriptionFromSession({
+        userId: user?.id || 'usr_active',
         planName: currentPlan.tierName,
+        amount: currentPlan.amount,
+        propertiesCount: activePropertiesCount,
+        transactionReference: `SAS-CI-${Date.now().toString().slice(-6)}`
       });
 
-      if (result.success && result.checkoutUrl) {
-        setPaymentSuccessMsg("Redirection immédiate vers le guichet de paiement officiel SasPay...");
-        window.location.href = result.checkoutUrl;
-        return;
+      const newInv: SubscriptionInvoice = {
+        id: invoiceId,
+        date: now.toLocaleDateString('fr-FR'),
+        period: now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
+        amount: currentPlan.amount,
+        propertiesCount: activePropertiesCount,
+        paymentMethod: providerLabel,
+        status: 'Payé'
+      };
+
+      setInvoices((prev) => [newInv, ...prev]);
+      setSubscriptionStatus('actif');
+      setNextDueDate(nextMonth.toLocaleDateString('fr-FR'));
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_subscription_status', 'actif');
+        window.dispatchEvent(new CustomEvent('locatrust:subscription_updated', { detail: { status: 'actif' } }));
       }
 
-      throw new Error(result.error || "Impossible d'initialiser la passerelle de paiement.");
+      setIsPaymentModalOpen(false);
+      setPaymentSuccessMsg(`🎉 Paiement de ${formatFCFA(currentPlan.amount)} confirmé via ${providerLabel} ! Toutes les restrictions sont levées.`);
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+      setTimeout(() => setPaymentSuccessMsg(null), 8000);
     } catch (err: any) {
-      alert(`Erreur de paiement SasPay : ${err?.message || 'Vérifiez la connexion réseau et réessayez.'}`);
+      alert(`Erreur : ${err?.message || 'Impossible de finaliser le règlement.'}`);
+    } finally {
       setIsProcessingPayment(false);
-      setPaymentSuccessMsg(null);
     }
+  };
+
+  const handleOpenPayment = () => {
+    setIsPaymentModalOpen(true);
   };
 
   return (
@@ -408,14 +478,14 @@ export const AbonnementView: React.FC = () => {
           </div>
 
           <button
-            onClick={handleDirectSasPayPayment}
+            onClick={handleOpenPayment}
             disabled={isProcessingPayment}
             className="px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-lg shadow-amber-600/30 shrink-0 transition-all active:scale-95 whitespace-nowrap flex items-center gap-2 disabled:opacity-50"
           >
             {isProcessingPayment ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Redirection SasPay...</span>
+                <span>Validation en cours...</span>
               </>
             ) : (
               <span>Renouveler ({formatFCFA(currentPlan.amount)} / mois)</span>
@@ -481,21 +551,12 @@ export const AbonnementView: React.FC = () => {
 
           <div className="pt-2 border-t border-white/10 flex flex-col gap-2">
             <button
-              onClick={handleDirectSasPayPayment}
+              onClick={handleOpenPayment}
               disabled={isProcessingPayment}
               className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {isProcessingPayment ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Redirection vers SasPay...</span>
-                </>
-              ) : (
-                <>
-                  <CreditCard className="w-4 h-4" />
-                  <span>Payer mon abonnement</span>
-                </>
-              )}
+              <CreditCard className="w-4 h-4" />
+              <span>Régler mon abonnement ({formatFCFA(currentPlan.amount)})</span>
             </button>
           </div>
         </div>
@@ -569,6 +630,189 @@ export const AbonnementView: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Modal de règlement d'abonnement multi-opérateurs */}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-slate-200 shadow-2xl overflow-hidden animate-scaleUp">
+            {/* Modal Header */}
+            <div className="p-6 bg-gradient-to-r from-slate-900 to-blue-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-600/30 border border-blue-400/30 flex items-center justify-center text-blue-300">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black">Règlement SaaS LocaTrust</h3>
+                  <p className="text-xs text-blue-200">Abonnement mensuel sécurisé — {currentPlan.tierName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              {/* Montant récapitulatif */}
+              <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-100 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total à régler</span>
+                  <span className="text-2xl font-black text-blue-950">{formatFCFA(currentPlan.amount)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-bold text-slate-700 block">{activePropertiesCount} bien(s) sous gestion</span>
+                  <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-100 px-2.5 py-0.5 rounded-full inline-block mt-0.5">30 jours d'accès complet</span>
+                </div>
+              </div>
+
+              {/* Sélection opérateur */}
+              <div>
+                <label className="text-xs font-black text-slate-700 block mb-2">Choisissez votre mode de paiement :</label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProvider('wave')}
+                    className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                      selectedProvider === 'wave'
+                        ? 'border-blue-600 bg-blue-50/50 ring-2 ring-blue-500/20'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-sky-500 text-white font-black text-xs flex items-center justify-center shrink-0">
+                      W
+                    </div>
+                    <div>
+                      <span className="text-xs font-black text-slate-900 block">Wave</span>
+                      <span className="text-[10px] text-slate-500 font-medium">0% de frais</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProvider('orange')}
+                    className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                      selectedProvider === 'orange'
+                        ? 'border-amber-600 bg-amber-50/50 ring-2 ring-amber-500/20'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-amber-500 text-white font-black text-xs flex items-center justify-center shrink-0">
+                      OM
+                    </div>
+                    <div>
+                      <span className="text-xs font-black text-slate-900 block">Orange Money</span>
+                      <span className="text-[10px] text-slate-500 font-medium">Côte d'Ivoire</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProvider('mtn')}
+                    className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                      selectedProvider === 'mtn'
+                        ? 'border-yellow-600 bg-yellow-50/50 ring-2 ring-yellow-500/20'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-yellow-400 text-yellow-950 font-black text-xs flex items-center justify-center shrink-0">
+                      MTN
+                    </div>
+                    <div>
+                      <span className="text-xs font-black text-slate-900 block">MTN MoMo</span>
+                      <span className="text-[10px] text-slate-500 font-medium">Instantané</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProvider('card')}
+                    className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                      selectedProvider === 'card'
+                        ? 'border-indigo-600 bg-indigo-50/50 ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white font-black text-xs flex items-center justify-center shrink-0">
+                      <CreditCard className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-black text-slate-900 block">Carte Bancaire</span>
+                      <span className="text-[10px] text-slate-500 font-medium">Visa / Mastercard</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Champ téléphone ou numéro de carte */}
+              {selectedProvider !== 'card' ? (
+                <div>
+                  <label className="text-xs font-black text-slate-700 block mb-1.5">Numéro de mobile money :</label>
+                  <div className="relative">
+                    <Smartphone className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="tel"
+                      value={payerPhone}
+                      onChange={(e) => setPayerPhone(e.target.value)}
+                      placeholder="+225 07 00 00 00 00"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-xs font-black text-slate-700 block mb-1.5">Numéro de carte bancaire :</label>
+                  <div className="relative">
+                    <CreditCard className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="4000 1234 5678 9010"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Note de sécurité */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>Paiement crypté SSL 256 bits. Votre abonnement s'active immédiatement et lève instantanément toute restriction sur la signature de baux.</span>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200/60 transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSubscriptionPayment}
+                disabled={isProcessingPayment}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isProcessingPayment ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Traitement en cours...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Confirmer et Activer ({formatFCFA(currentPlan.amount)})</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

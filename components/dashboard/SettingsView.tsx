@@ -65,10 +65,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onNavigateToSubscription
 }) => {
   const { user, profile, refreshProfile } = useAuth();
-  const isAgency = userRole === 'agence' || profile?.role === 'agence';
+  const isAgency = userRole === 'agence' || (profile as any)?.role === 'agence' || (profile as any)?.account_type === 'agence';
   const [activeTab, setActiveTab] = useState<
     'profile' | 'account' | 'accounting_year' | 'preferences' | 'notifications' | 'payments' | 'verification' | 'privacy' | 'support'
   >('profile');
+
+  // Thème et couleurs d'ambiance de l'environnement (Demande vocale utilisateur)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('locatrust_theme') as 'light' | 'dark') || 'light';
+    }
+    return 'light';
+  });
+
+  const [accentColor, setAccentColor] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('locatrust_accent_color') || 'blue';
+    }
+    return 'blue';
+  });
+
+  // États des préférences de notifications
+  const [notifPayments, setNotifPayments] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('locatrust_notif_payments');
+      return s !== null ? s === 'true' : true;
+    }
+    return true;
+  });
+  const [notifMessages, setNotifMessages] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('locatrust_notif_messages');
+      return s !== null ? s === 'true' : true;
+    }
+    return true;
+  });
+  const [notifEmail, setNotifEmail] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('locatrust_notif_email');
+      return s !== null ? s === 'true' : true;
+    }
+    return true;
+  });
+  const [notifMaintenance, setNotifMaintenance] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('locatrust_notif_maintenance');
+      return s !== null ? s === 'true' : true;
+    }
+    return true;
+  });
+  const [notifContracts, setNotifContracts] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('locatrust_notif_contracts');
+      return s !== null ? s === 'true' : true;
+    }
+    return true;
+  });
+  const [notifSavedMsg, setNotifSavedMsg] = useState<string | null>(null);
 
   // Avatar Management State (Points 19 & 20 du prompt)
   const [userAvatar, setUserAvatar] = useState<string>(() => {
@@ -94,7 +147,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Profile Form State
   const [fullName, setFullName] = useState<string>(() => profile?.full_name || currentUser?.full_name || '');
-  const [email, setEmail] = useState<string>(() => profile?.email || user?.email || currentUser?.email || '');
+  const [email, setEmail] = useState<string>(() => (profile as any)?.email || user?.email || currentUser?.email || '');
   const [phone, setPhone] = useState<string>(() => profile?.phone || currentUser?.phone || '');
   const [address, setAddress] = useState<string>(() => currentUser?.address || 'Abidjan, Côte d\'Ivoire');
 
@@ -102,7 +155,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   React.useEffect(() => {
     if (profile) {
       if (profile.full_name) setFullName(profile.full_name);
-      if (profile.email) setEmail(profile.email);
+      if ((profile as any).email) setEmail((profile as any).email);
       if (profile.phone) setPhone(profile.phone);
     } else if (user) {
       if (user.email) setEmail(user.email);
@@ -314,7 +367,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (res.success) {
       setActiveAccountingYear(res.activeYear);
       setArchivedAccountingYears(res.archivedYears);
-      setRefYear(res.activeYear);
       setYearSuccessFeedback(`Année comptable enregistrée : ${res.activeYear}`);
       setTimeout(() => setYearSuccessFeedback(null), 4500);
     }
@@ -736,54 +788,100 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          {/* TAB 3: PRÉFÉRENCES D'AFFICHAGE */}
+          {/* TAB 3: PRÉFÉRENCES D'AFFICHAGE & THÈMES DE COULEURS */}
           {activeTab === 'preferences' && (
-            <div className="flex flex-col gap-5 text-xs">
+            <div className="flex flex-col gap-6 text-xs animate-fadeIn">
               <div className="border-b border-slate-100 pb-3">
-                <h3 className="text-sm font-black text-slate-900">Préférences d'affichage</h3>
-                <p className="text-slate-500">Personnalisez votre confort visuel sur LocaTrust</p>
+                <h3 className="text-sm font-black text-slate-900">Préférences d'affichage & Environnement</h3>
+                <p className="text-slate-500">Personnalisez votre confort visuel et vos couleurs d'ambiance</p>
               </div>
 
               <div className="space-y-4">
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+                {/* 1. Mode Clair / Sombre */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h4 className="font-bold text-slate-900">Thème de l'interface</h4>
-                    <p className="text-slate-500">Basculer entre le mode clair et le mode sombre</p>
+                    <h4 className="font-extrabold text-slate-900">Mode d'affichage</h4>
+                    <p className="text-slate-500">Basculez entre le thème diurne et nocturne</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setTheme('light');
                         document.documentElement.classList.remove('dark');
-                        localStorage.setItem('theme', 'light');
+                        localStorage.setItem('locatrust_theme', 'light');
                       }}
-                      className={`px-3 py-1.5 rounded-lg font-bold border transition-all ${
-                        theme === 'light' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700'
+                      className={`px-4 py-2 rounded-xl font-black border transition-all ${
+                        theme === 'light'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border-slate-300'
                       }`}
                     >
-                      Mode clair
+                      ☀️ Mode clair
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setTheme('dark');
                         document.documentElement.classList.add('dark');
-                        localStorage.setItem('theme', 'dark');
+                        localStorage.setItem('locatrust_theme', 'dark');
                       }}
-                      className={`px-3 py-1.5 rounded-lg font-bold border transition-all ${
-                        theme === 'dark' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700'
+                      className={`px-4 py-2 rounded-xl font-black border transition-all ${
+                        theme === 'dark'
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                          : 'bg-white text-slate-700 hover:bg-slate-100 border-slate-300'
                       }`}
                     >
-                      Mode sombre
+                      🌙 Mode sombre
                     </button>
                   </div>
                 </div>
 
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+                {/* 2. Palette de couleurs d'ambiance (Demande vocale : 2 à 3 couleurs personnalisables) */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-3">
                   <div>
-                    <h4 className="font-bold text-slate-900">Langue de l'interface</h4>
-                    <p className="text-slate-500">Documents et reçus officiels rédigés en français</p>
+                    <h4 className="font-extrabold text-slate-900">Couleur d'ambiance de l'environnement</h4>
+                    <p className="text-slate-500">
+                      Personnalisez les touches de couleur et l'accent visuel de votre espace SaaS
+                    </p>
                   </div>
-                  <span className="font-bold text-slate-800 bg-white px-3 py-1 rounded-lg border border-slate-200">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                    {[
+                      { id: 'blue', label: 'Bleu Océan', hex: '#1E40AF', bgClass: 'bg-blue-600' },
+                      { id: 'emerald', label: 'Émeraude Banco', hex: '#059669', bgClass: 'bg-emerald-600' },
+                      { id: 'amber', label: 'Ambre Savane', hex: '#D97706', bgClass: 'bg-amber-600' },
+                      { id: 'indigo', label: 'Indigo Prestige', hex: '#4F46E5', bgClass: 'bg-indigo-600' }
+                    ].map((col) => (
+                      <button
+                        key={col.id}
+                        type="button"
+                        onClick={() => {
+                          setAccentColor(col.id);
+                          localStorage.setItem('locatrust_accent_color', col.id);
+                          document.documentElement.style.setProperty('--primary-accent', col.hex);
+                          setSavedMessage(`Couleur d'ambiance « ${col.label} » appliquée !`);
+                          setTimeout(() => setSavedMessage(null), 3000);
+                        }}
+                        className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
+                          accentColor === col.id
+                            ? 'bg-white border-slate-900 ring-2 ring-slate-900/20 shadow-md font-black text-slate-900'
+                            : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        <span className={`w-4 h-4 rounded-full ${col.bgClass} shrink-0 shadow-inner`} />
+                        <span className="text-xs">{col.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Langue officielle */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+                  <div>
+                    <h4 className="font-extrabold text-slate-900">Langue de l'interface</h4>
+                    <p className="text-slate-500">Documents et reçus officiels certifiés rédigés en français normé</p>
+                  </div>
+                  <span className="font-extrabold text-slate-800 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-xs">
                     Français (Côte d'Ivoire)
                   </span>
                 </div>
@@ -796,77 +894,112 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           {/* TAB 4: NOTIFICATIONS */}
           {activeTab === 'notifications' && (
-            <div className="flex flex-col gap-5 text-xs">
-              <div className="border-b border-slate-100 pb-3">
-                <h3 className="text-sm font-black text-slate-900">Gestion des Alertes & Notifications</h3>
-                <p className="text-slate-500">Choisissez les événements déclenchant une notification immédiate</p>
+            <div className="flex flex-col gap-5 text-xs animate-fadeIn">
+              <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Gestion des Alertes & Notifications</h3>
+                  <p className="text-slate-500">Choisissez les événements déclenchant une notification immédiate</p>
+                </div>
+                {notifSavedMsg && (
+                  <span className="px-3 py-1 bg-emerald-100 text-emerald-800 font-extrabold rounded-lg text-xs animate-fadeIn">
+                    {notifSavedMsg}
+                  </span>
+                )}
               </div>
 
               <div className="space-y-3">
-                <label className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                <label className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/70 rounded-2xl border border-slate-200 cursor-pointer transition-colors">
                   <div>
-                    <span className="font-bold text-slate-900 block">Notifications de paiement de loyer</span>
+                    <span className="font-extrabold text-slate-900 block">Notifications de paiement de loyer</span>
                     <span className="text-slate-500">Alerte dès qu'un locataire signale ou effectue un versement</span>
                   </div>
                   <input
                     type="checkbox"
                     checked={notifPayments}
-                    onChange={(e) => setNotifPayments(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
+                    onChange={(e) => {
+                      setNotifPayments(e.target.checked);
+                      localStorage.setItem('locatrust_notif_payments', String(e.target.checked));
+                    }}
+                    className="w-5 h-5 text-blue-600 rounded-lg cursor-pointer"
                   />
                 </label>
 
-                <label className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                <label className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/70 rounded-2xl border border-slate-200 cursor-pointer transition-colors">
                   <div>
-                    <span className="font-bold text-slate-900 block">Nouveaux messages & messagerie</span>
+                    <span className="font-extrabold text-slate-900 block">Nouveaux messages & messagerie</span>
                     <span className="text-slate-500">Notification en temps réel lors de la réception d'un message locataire</span>
                   </div>
                   <input
                     type="checkbox"
                     checked={notifMessages}
-                    onChange={(e) => setNotifMessages(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
+                    onChange={(e) => {
+                      setNotifMessages(e.target.checked);
+                      localStorage.setItem('locatrust_notif_messages', String(e.target.checked));
+                    }}
+                    className="w-5 h-5 text-blue-600 rounded-lg cursor-pointer"
                   />
                 </label>
 
-                <label className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                <label className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/70 rounded-2xl border border-slate-200 cursor-pointer transition-colors">
                   <div>
-                    <span className="font-bold text-slate-900 block">Demandes de visite & candidatures</span>
+                    <span className="font-extrabold text-slate-900 block">Demandes de visite & candidatures</span>
                     <span className="text-slate-500">Avertissement lors de la soumission d'une nouvelle demande</span>
                   </div>
                   <input
                     type="checkbox"
                     checked={notifEmail}
-                    onChange={(e) => setNotifEmail(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
+                    onChange={(e) => {
+                      setNotifEmail(e.target.checked);
+                      localStorage.setItem('locatrust_notif_email', String(e.target.checked));
+                    }}
+                    className="w-5 h-5 text-blue-600 rounded-lg cursor-pointer"
                   />
                 </label>
 
-                <label className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                <label className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/70 rounded-2xl border border-slate-200 cursor-pointer transition-colors">
                   <div>
-                    <span className="font-bold text-slate-900 block">Tickets d'incidents & maintenance</span>
+                    <span className="font-extrabold text-slate-900 block">Tickets d'incidents & maintenance</span>
                     <span className="text-slate-500">Signalements urgents sur vos biens immobiliers</span>
                   </div>
                   <input
                     type="checkbox"
                     checked={notifMaintenance}
-                    onChange={(e) => setNotifMaintenance(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
+                    onChange={(e) => {
+                      setNotifMaintenance(e.target.checked);
+                      localStorage.setItem('locatrust_notif_maintenance', String(e.target.checked));
+                    }}
+                    className="w-5 h-5 text-blue-600 rounded-lg cursor-pointer"
                   />
                 </label>
 
-                <label className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer">
+                <label className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/70 rounded-2xl border border-slate-200 cursor-pointer transition-colors">
                   <div>
-                    <span className="font-bold text-slate-900 block">Signatures & échéances des contrats</span>
+                    <span className="font-extrabold text-slate-900 block">Signatures & échéances des contrats</span>
                     <span className="text-slate-500">Rappels 60 jours avant fin de bail et alertes de signature</span>
                   </div>
                   <input
                     type="checkbox"
                     checked={notifContracts}
-                    onChange={(e) => setNotifContracts(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
+                    onChange={(e) => {
+                      setNotifContracts(e.target.checked);
+                      localStorage.setItem('locatrust_notif_contracts', String(e.target.checked));
+                    }}
+                    className="w-5 h-5 text-blue-600 rounded-lg cursor-pointer"
                   />
                 </label>
+
+                <div className="pt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifSavedMsg('Préférences de notifications enregistrées avec succès !');
+                      setTimeout(() => setNotifSavedMsg(null), 3500);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold shadow-sm transition-all"
+                  >
+                    Enregistrer les préférences
+                  </button>
+                </div>
               </div>
             </div>
           )}

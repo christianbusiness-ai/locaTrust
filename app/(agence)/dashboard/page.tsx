@@ -253,9 +253,11 @@ export default function AgencyDashboardPage({
 
           {/* TAB 9: Payments (Reused PaiementsView) */}
           {activeTab === 'payments' && (
-            <PaiementsView
-              onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
-            />
+            <ErrorBoundary>
+              <PaiementsView
+                onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
+              />
+            </ErrorBoundary>
           )}
 
           {/* TAB 10: Tenants (Locataires du parc) */}
@@ -300,17 +302,21 @@ export default function AgencyDashboardPage({
 
           {/* TAB 18: Subscription (Reused AbonnementView) */}
           {activeTab === 'subscription' && (
-            <AbonnementView />
+            <ErrorBoundary>
+              <AbonnementView />
+            </ErrorBoundary>
           )}
 
           {/* TAB 19: Settings (Point 4) */}
           {activeTab === 'settings' && (
-            <SettingsView
-              userRole="agence"
-              currentUser={currentUser}
-              onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
-              onNavigateToSubscription={() => setActiveTab('subscription')}
-            />
+            <ErrorBoundary>
+              <SettingsView
+                userRole="agence"
+                currentUser={currentUser}
+                onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
+                onNavigateToSubscription={() => setActiveTab('subscription')}
+              />
+            </ErrorBoundary>
           )}
 
           {/* TAB 20: Messages (Reused MessagerieView) */}

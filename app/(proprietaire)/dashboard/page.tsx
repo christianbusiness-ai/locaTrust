@@ -273,9 +273,11 @@ export default function ProprietaireDashboardPage({
 
           {/* TAB 7: Payments (Paiements & Loyers) */}
           {activeTab === 'payments' && (
-            <PaiementsView
-              onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
-            />
+            <ErrorBoundary>
+              <PaiementsView
+                onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
+              />
+            </ErrorBoundary>
           )}
 
           {/* TAB 8: Tenants (Locataires) */}
@@ -322,17 +324,21 @@ export default function ProprietaireDashboardPage({
 
           {/* TAB 15: Subscription (Abonnement SaaS LocaTrust) */}
           {activeTab === 'subscription' && (
-            <AbonnementView />
+            <ErrorBoundary>
+              <AbonnementView />
+            </ErrorBoundary>
           )}
 
           {/* TAB 16: Settings (Paramètres) */}
           {activeTab === 'settings' && (
-            <SettingsView
-              userRole="proprietaire"
-              currentUser={currentUser}
-              onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
-              onNavigateToSubscription={() => setActiveTab('subscription')}
-            />
+            <ErrorBoundary>
+              <SettingsView
+                userRole="proprietaire"
+                currentUser={currentUser}
+                onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
+                onNavigateToSubscription={() => setActiveTab('subscription')}
+              />
+            </ErrorBoundary>
           )}
 
           {/* TAB 17: Messages (Messagerie) */}

@@ -28,7 +28,8 @@ import {
   Trash2,
   Film,
   Users,
-  Camera
+  Camera,
+  Lock
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import jsPDF from 'jspdf';
@@ -42,6 +43,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const { profile } = useAuth();
   const navigate = useNavigate();
   const isVerified = profile?.verification_status === 'verifie';
+  const isSubscriptionExpired = typeof window !== 'undefined' && localStorage.getItem('locatrust_subscription_status') === 'expire';
 
   const [title, setTitle] = useState<string>('');
   const [propertyType, setPropertyType] = useState<string>('appartement');
@@ -148,6 +150,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubscriptionExpired) {
+      setErrorMsg('⚠️ Publication impossible : votre abonnement SaaS LocaTrust est expiré. Veuillez le renouveler dans la section "Abonnement" pour ajouter de nouveaux biens.');
+      return;
+    }
     if (!isVerified) {
       setErrorMsg('⚠️ Publication non autorisée : votre compte propriétaire/agence doit être certifié par l\'administrateur avant de pouvoir publier une maison.');
       return;
@@ -288,6 +294,18 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         {errorMsg && (
           <div className="p-3 mb-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold">
             {errorMsg}
+          </div>
+        )}
+
+        {isSubscriptionExpired && (
+          <div className="p-4 mb-3 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-start gap-3 shadow-sm">
+            <Lock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-black text-sm block">Abonnement SaaS arrivé à échéance</span>
+              <p className="text-amber-800 font-medium leading-relaxed">
+                L'ajout de nouveaux biens est temporairement suspendu jusqu'au règlement de votre abonnement. Vos baux existants et l'accès de vos locataires restent 100% actifs.
+              </p>
+            </div>
           </div>
         )}
 
@@ -858,13 +876,15 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               </button>
               <button 
                 type="submit" 
-                disabled={loading || !isVerified}
+                disabled={loading || !isVerified || isSubscriptionExpired}
                 className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 {loading ? (
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 ) : !isVerified ? (
                   <span>🔒 Validation KYC requise pour publier</span>
+                ) : isSubscriptionExpired ? (
+                  <span>🔒 Abonnement expiré (Renouvellement requis)</span>
                 ) : (
                   <span>Publier le bien</span>
                 )}

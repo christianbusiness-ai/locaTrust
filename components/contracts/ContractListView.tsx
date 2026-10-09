@@ -177,19 +177,16 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn">
       
-      {/* Title Header with Generate button */}
+      {/* Title Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h2 className="text-xl font-extrabold text-slate-900">Gestion des contrats</h2>
           <p className="text-xs text-slate-500 mt-0.5">Consultez et suivez l'ensemble des contrats de location enregistrés.</p>
         </div>
-        <button
-          onClick={handleCreateClick}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md shadow-blue-600/20 transition-all active:scale-95 shrink-0"
-        >
-          <FileText className="w-4 h-4" />
-          <span>Générer un contrat de bail</span>
-        </button>
+        <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs font-bold shrink-0">
+          <FileText className="w-4 h-4 text-blue-600" />
+          <span>Génération liée aux Demandes de location</span>
+        </div>
       </div>
 
       {/* Alert banner: Tenant pending signature */}
@@ -388,16 +385,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                         <FileText className="w-6 h-6" />
                       </div>
                       <h4 className="text-sm font-black text-slate-800">Aucun contrat de bail enregistré</h4>
-                      <p className="text-xs text-slate-500">
-                        Vous n'avez aucun contrat actif pour l'instant. Vous pouvez créer un contrat directement ou finaliser une candidature locataire.
+                      <p className="text-xs text-slate-500 text-center leading-relaxed">
+                        Les contrats de bail certifiés sont générés exclusivement depuis l'onglet <strong>Demandes de location</strong> lorsqu'une candidature est acceptée et validée par la signature du locataire.
                       </p>
-                      <button
-                        onClick={handleCreateClick}
-                        className="mt-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>Générer un contrat certifié</span>
-                      </button>
                     </div>
                   </td>
                 </tr>

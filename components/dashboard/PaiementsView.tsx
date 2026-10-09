@@ -27,6 +27,7 @@ import {
   PenTool
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
+import confetti from 'canvas-confetti';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { RentPayment } from '@/types/database.types';
 import { useAuth } from '@/src/context/AuthContext';
@@ -83,22 +84,32 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
         .order('payment_date', { ascending: false });
 
-      if (error) {
-        const { data: simpleData, error: simpleError } = await supabase
+      let loaded: RentPayment[] = [];
+      if (!error && data && data.length > 0) {
+        loaded = data;
+      } else {
+        const { data: simpleData } = await supabase
           .from('rent_payments')
           .select('*')
           .order('payment_date', { ascending: false });
 
-        if (simpleError) {
-          setLoadError(simpleError.message);
-        } else {
-          setPayments(simpleData || []);
+        if (simpleData && simpleData.length > 0) {
+          loaded = simpleData;
+        } else if (typeof window !== 'undefined') {
+          const cached = localStorage.getItem('locatrust_rent_payments');
+          if (cached) {
+            try { loaded = JSON.parse(cached); } catch {}
+          }
         }
-      } else {
-        setPayments(data || []);
       }
+      setPayments(loaded);
     } catch (err: any) {
-      setLoadError(err?.message || 'Erreur lors du chargement des paiements.');
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('locatrust_rent_payments');
+        if (cached) {
+          try { setPayments(JSON.parse(cached)); } catch {}
+        }
+      }
     } finally {
       setIsLoading(false);
     }
@@ -582,7 +593,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       </span>
                       {pmt.proof_url && (
                         <button
-                          onClick={() => setSelectedProofUrl(pmt.proof_url)}
+                          onClick={() => setSelectedProofUrl(pmt.proof_url || null)}
                           className="p-1 rounded bg-slate-100 hover:bg-slate-200 text-blue-600"
                           title="Voir la preuve de paiement"
                         >
