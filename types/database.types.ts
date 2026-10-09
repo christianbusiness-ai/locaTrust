@@ -98,6 +98,8 @@ export interface Property {
   status: PropertyStatus;
   admin_validation_status?: 'en_attente' | 'validee' | 'refusee';
   admin_refusal_reason?: string;
+  mandant_id?: string;
+  mandant_name?: string;
   deleted_at?: string;
   created_at: string;
 

@@ -349,10 +349,13 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const matchedProperty = getPropertyForApp(app.property_id);
       const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
 
+      const isAgencyUser = profile?.role === 'agence' || profile?.role === 'agent';
+
       await generateOfficialContractPdf({
         contractNumber: app.contract_number || 'LT-2026-CI-000492',
-        isAgency: false,
+        isAgency: isAgencyUser,
         ownerName: ownerName,
+        mandantName: isAgencyUser ? (matchedProperty as any)?.mandant_name : undefined,
         ownerPhone: ownerPhone,
         tenantName: app.tenant_name,
         tenantPhone: app.tenant_phone,
@@ -871,6 +874,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           <LegalContractGeneratorModal
             isOpen={true}
             onClose={() => setSelectedApplicationForContract(null)}
+            isAgency={profile?.role === 'agence' || profile?.role === 'agent'}
             onContractFinalized={({ contractNumber, tenantName, propertyTitle }) => {
               const chosenApp = selectedApplicationForContract;
               const competing = applications.filter(
@@ -895,6 +899,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               tenantCni: selectedApplicationForContract.tenant_cni,
               propertyTitle: selectedApplicationForContract.property_title,
               propertyAddress: selectedApplicationForContract.property_address,
+              mandantName: (matchedProperty as any)?.mandant_name,
               rentAmount: selectedApplicationForContract.rent_amount,
               cautionAmount: selectedApplicationForContract.caution_amount,
               leaseType,

@@ -67,6 +67,7 @@ interface LegalContractGeneratorModalProps {
     authorizedActivity?: string;
     propertyType?: string;
     ownerDestinationAuthorized?: boolean;
+    mandantName?: string;
   };
   onContractFinalized?: (contractData: {
     contractNumber: string;
@@ -110,6 +111,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     isAgency ? 'Immobilière du Golf Abidjan' : 'Kouassi Amadou'
   );
   const [ownerPhone, setOwnerPhone] = useState<string>('+225 01 22 33 44 55');
+  const [mandantName, setMandantName] = useState<string>(initialData?.mandantName || '');
 
   const [propertyTitle, setPropertyTitle] = useState<string>(initialData?.propertyTitle || 'Appartement 3 pièces');
 
@@ -675,6 +677,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       contractNumber,
       isAgency,
       ownerName,
+      mandantName: isAgency ? (mandantName || initialData?.mandantName) : undefined,
       ownerPhone,
       tenantName,
       tenantPhone,

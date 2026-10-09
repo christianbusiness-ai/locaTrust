@@ -210,6 +210,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       contractNumber,
       isAgency,
       ownerName: isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur",
+      mandantName: isAgency ? ((contract?.property as any)?.mandant_name || (contract as any)?.mandant_name) : undefined,
       ownerPhone: "+225 07 89 45 12 34",
       tenantName: tenantData.name,
       tenantPhone: tenantData.phone,

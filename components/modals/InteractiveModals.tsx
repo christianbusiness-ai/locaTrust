@@ -22,7 +22,13 @@ import {
   MessageSquare,
   ShieldAlert,
   ArrowRight,
-  Scale
+  Scale,
+  Upload,
+  Video,
+  Trash2,
+  Film,
+  Users,
+  Camera
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import jsPDF from 'jspdf';
@@ -60,7 +66,85 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Sélecteur de fichiers local (Photos & Vidéo)
+  const [photoFiles, setPhotoFiles] = useState<{ id: string; url: string; name: string }[]>([]);
+  const photoInputRef = React.useRef<HTMLInputElement>(null);
+  const [videoFile, setVideoFile] = useState<{ name: string; size: string; url: string } | null>(null);
+  const videoInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Mandats spécifiques pour les Agences Immobilières
+  const isAgency = profile?.account_type === 'agence' || profile?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
+  const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_agency_mandates');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [
+      { id: 'mnd_1', full_name: 'M. Badjou Kouamé', phone: '+225 07 08 09 10 11' },
+      { id: 'mnd_2', full_name: 'Mme Touré Aïcha', phone: '+225 05 06 07 08 09' },
+      { id: 'mnd_3', full_name: 'M. Koffi Jean-Baptiste', phone: '+225 01 02 03 04 05' },
+    ];
+  });
+  const [selectedMandantId, setSelectedMandantId] = useState<string>('mnd_1');
+  const [customMandantName, setCustomMandantName] = useState<string>('');
+  const [customMandantPhone, setCustomMandantPhone] = useState<string>('');
+
   if (!isOpen) return null;
+
+  const handlePhotoFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const files = Array.from(e.target.files);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (reader.result) {
+          setPhotoFiles((prev) => [
+            ...prev,
+            {
+              id: 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+              url: reader.result as string,
+              name: file.name
+            }
+          ]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const handleRemovePhoto = (id: string) => {
+    setPhotoFiles((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const handleVideoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + ' Mo';
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (reader.result) {
+        setVideoFile({
+          name: file.name,
+          size: sizeMb,
+          url: reader.result as string
+        });
+        setVideoUrl(reader.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleRemoveVideo = () => {
+    setVideoFile(null);
+    setVideoUrl('');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,10 +152,22 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       setErrorMsg('⚠️ Publication non autorisée : votre compte propriétaire/agence doit être certifié par l\'administrateur avant de pouvoir publier une maison.');
       return;
     }
-    if (!videoUrl.trim()) {
-      setErrorMsg('⚠️ Une vidéo réelle du logement est obligatoire pour éviter les fausses annonces (Section 10).');
+
+    const finalPhotos = photoFiles.length > 0
+      ? photoFiles.map((p) => p.url)
+      : photosUrl.split(',').map((s) => s.trim()).filter(Boolean);
+
+    if (finalPhotos.length === 0) {
+      setErrorMsg('⚠️ Veuillez sélectionner au moins une photo réelle du logement depuis votre appareil.');
       return;
     }
+
+    const finalVideo = videoFile?.url || videoUrl.trim();
+    if (!finalVideo) {
+      setErrorMsg('⚠️ Une vidéo réelle du logement est obligatoire (sélectionnez un fichier vidéo depuis votre appareil).');
+      return;
+    }
+
     setErrorMsg('');
     setLoading(true);
 
@@ -79,6 +175,32 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
     const finalCity = city === 'autre_ville' ? (customCity.trim() || 'Abidjan') : city;
     const finalCommune = (commune === 'autre_commune' || city === 'autre_ville') ? (customCommune.trim() || 'Cocody') : commune;
     const finalTitle = title.trim() || `${finalType.charAt(0).toUpperCase() + finalType.slice(1)} de standing - ${finalCommune}`;
+
+    // Rapprochement du Mandant pour les Agences Immobilières
+    let finalMandantName: string | undefined = undefined;
+    let finalMandantId: string | undefined = undefined;
+
+    if (isAgency) {
+      if (selectedMandantId === 'new') {
+        if (!customMandantName.trim()) {
+          setLoading(false);
+          setErrorMsg('⚠️ Veuillez préciser le nom complet du propriétaire mandant.');
+          return;
+        }
+        finalMandantName = customMandantName.trim();
+        finalMandantId = 'mnd_' + Date.now();
+        const newMandant = { id: finalMandantId, full_name: finalMandantName, phone: customMandantPhone.trim() };
+        const updated = [newMandant, ...mandantsList];
+        setMandantsList(updated);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_agency_mandates', JSON.stringify(updated));
+        }
+      } else {
+        const found = mandantsList.find((m) => m.id === selectedMandantId);
+        finalMandantName = found?.full_name || 'M. Badjou Kouamé';
+        finalMandantId = found?.id || selectedMandantId;
+      }
+    }
 
     const newPropPayload = {
       title: finalTitle,
@@ -95,8 +217,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       caution: Number(caution) || 500000,
       description: description.trim(),
       status: 'disponible',
-      photos: photosUrl.split(',').map(s => s.trim()).filter(Boolean),
-      videos: [videoUrl.trim()]
+      photos: finalPhotos,
+      videos: [finalVideo],
+      mandant_id: finalMandantId,
+      mandant_name: finalMandantName
     };
 
     // 1. Sauvegarde dans Supabase
@@ -120,7 +244,9 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         pricing: { monthly_rent: Number(rent), deposit_months: Math.round(Number(caution) / Number(rent)) || 2 },
         usage_destination: usageDestination === 'habitation' ? 'habitation' : 'professionnel',
         authorized_activity: usageDestination === 'habitation' ? undefined : authorizedActivity.trim(),
-        owner_destination_authorized: ownerAuthorized
+        owner_destination_authorized: ownerAuthorized,
+        mandant_id: finalMandantId,
+        mandant_name: finalMandantName
       };
       list.unshift(propToSave);
       localStorage.setItem('locatrust_properties', JSON.stringify(list));
@@ -508,34 +634,212 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               </div>
             </div>
 
-            {/* Section: Photos & Vidéo Obligatoires */}
-            <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col gap-3">
-              <div className="flex items-center justify-between text-xs font-black text-blue-950">
-                <span>📷 Photos Réelles Obligatoires</span>
-                <span className="text-[10px] text-blue-700">Façade, Salon, Chambres, Cuisine, SDB</span>
+            {/* SECTION 1: PHOTOS RÉELLES DU LOGEMENT (Explorateur de fichiers local) */}
+            <div className="p-4 rounded-2xl bg-blue-50/60 border border-blue-200 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-blue-700" />
+                  <span className="text-xs font-black text-blue-950">Photos Réelles du Logement *</span>
+                </div>
+                <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${
+                  photoFiles.length > 0 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-blue-100 text-blue-800 border-blue-200'
+                }`}>
+                  {photoFiles.length > 0 ? `✔ ${photoFiles.length} photo(s) sélectionnée(s)` : 'Au moins 1 photo requise'}
+                </span>
               </div>
+
+              {/* Input file masqué */}
               <input
-                type="text"
-                required
-                value={photosUrl}
-                onChange={(e) => setPhotosUrl(e.target.value)}
-                placeholder="URLs ou photos réelles du bien (séparées par des virgules)"
-                className="w-full p-2.5 rounded-xl bg-white border border-blue-200 text-xs font-medium"
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handlePhotoFilesSelect}
+                className="hidden"
               />
 
-              <div className="flex items-center justify-between text-xs font-black text-blue-950 mt-1">
-                <span>🎥 Vidéo Obligatoire du Logement</span>
-                <span className="text-[10px] text-rose-600 font-bold">Lien vidéo requis</span>
+              {/* Zone cliquable d'ouverture de l'explorateur de photos */}
+              <div
+                onClick={() => photoInputRef.current?.click()}
+                className="p-5 border-2 border-dashed border-blue-300 hover:border-blue-500 bg-white hover:bg-blue-50/50 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group shadow-sm active:scale-[0.99]"
+              >
+                <div className="w-11 h-11 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <span className="text-xs font-black text-slate-900 text-center">
+                  Cliquez ici pour choisir les photos depuis votre appareil
+                </span>
+                <span className="text-[11px] text-slate-500 text-center font-medium">
+                  Galerie photo ou dossiers (JPG, PNG, WEBP) • Salon, Chambres, Cuisine, SDB
+                </span>
               </div>
-              <input
-                type="text"
-                required
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
-                placeholder="Lien vidéo de visite réelle (ex: https://youtu.be/xyz ou lien MP4)..."
-                className="w-full p-2.5 rounded-xl bg-white border border-blue-200 text-xs font-medium"
-              />
+
+              {/* Aperçu des photos sélectionnées avec bouton de suppression */}
+              {photoFiles.length > 0 && (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-2 border-t border-blue-200">
+                  {photoFiles.map((p, idx) => (
+                    <div key={p.id} className="relative group rounded-xl overflow-hidden aspect-video bg-slate-200 border border-blue-200 shadow-sm">
+                      <img src={p.url} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemovePhoto(p.id);
+                        }}
+                        className="absolute top-1 right-1 p-1 rounded-full bg-rose-600 text-white shadow-md hover:bg-rose-700 transition-colors"
+                        title="Supprimer cette photo"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                      <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-white text-[9px] font-bold">
+                        #{idx + 1}
+                      </span>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    className="rounded-xl border-2 border-dashed border-blue-300 hover:border-blue-500 aspect-video flex flex-col items-center justify-center gap-1 text-blue-600 hover:bg-blue-50/60 bg-white transition-all text-center"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span className="text-[10px] font-bold">+ Ajouter</span>
+                  </button>
+                </div>
+              )}
             </div>
+
+            {/* SECTION 2: VIDÉO OBLIGATOIRE DU LOGEMENT (Explorateur de fichiers local) */}
+            <div className="p-4 rounded-2xl bg-purple-50/60 border border-purple-200 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Film className="w-4 h-4 text-purple-700" />
+                  <span className="text-xs font-black text-purple-950">Vidéo de Visite Réelle du Logement *</span>
+                </div>
+                <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${
+                  videoFile ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-200'
+                }`}>
+                  {videoFile ? '✔ Fichier vidéo prêt' : 'Vidéo obligatoire'}
+                </span>
+              </div>
+
+              {/* Input file masqué pour vidéo */}
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/*"
+                onChange={handleVideoFileSelect}
+                className="hidden"
+              />
+
+              {videoFile ? (
+                <div className="p-3.5 rounded-xl bg-white border border-purple-200 flex items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0">
+                      <Film className="w-5 h-5" />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-black text-slate-900 truncate">{videoFile.name}</span>
+                      <span className="text-[11px] text-purple-700 font-bold">{videoFile.size} • Prêt pour la publication</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => videoInputRef.current?.click()}
+                      className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-800 text-[11px] font-bold border border-purple-200 hover:bg-purple-100"
+                    >
+                      Remplacer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveVideo}
+                      className="p-1 rounded-lg text-rose-600 hover:bg-rose-50"
+                      title="Supprimer la vidéo"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  onClick={() => videoInputRef.current?.click()}
+                  className="p-5 border-2 border-dashed border-purple-300 hover:border-purple-500 bg-white hover:bg-purple-50/50 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group shadow-sm active:scale-[0.99]"
+                >
+                  <div className="w-11 h-11 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Video className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-black text-slate-900 text-center">
+                    Cliquez ici pour choisir la vidéo de visite réelle
+                  </span>
+                  <span className="text-[11px] text-slate-500 text-center font-medium">
+                    Sélection directe depuis votre appareil (MP4, MOV, WEBM)
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* SECTION 3: MANDAT DE GESTION & MANDANT (Spécifique aux Agences Immobilières) */}
+            {isAgency && (
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-indigo-700" />
+                    <span className="text-xs font-black text-indigo-950">Propriétaire Mandant du Bien *</span>
+                  </div>
+                  <span className="text-[10px] font-bold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
+                    Mandat Agence
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[11px] font-bold text-indigo-900">
+                    Sélectionner le propriétaire mandant pour ce lot :
+                  </label>
+                  <select
+                    value={selectedMandantId}
+                    onChange={(e) => setSelectedMandantId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  >
+                    {mandantsList.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.full_name} {m.phone ? `(${m.phone})` : ''}
+                      </option>
+                    ))}
+                    <option value="new">+ Saisir un nouveau propriétaire mandant...</option>
+                  </select>
+                </div>
+
+                {selectedMandantId === 'new' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-indigo-200 animate-fadeIn">
+                    <div>
+                      <label className="text-[11px] font-bold text-indigo-900 block mb-1">
+                        Nom & Prénoms du mandant *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={customMandantName}
+                        onChange={(e) => setCustomMandantName(e.target.value)}
+                        placeholder="Ex: M. Badjou Kouamé"
+                        className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-indigo-900 block mb-1">
+                        Téléphone du mandant
+                      </label>
+                      <input
+                        type="tel"
+                        value={customMandantPhone}
+                        onChange={(e) => setCustomMandantPhone(e.target.value)}
+                        placeholder="+225 07 00 00 00 00"
+                        className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-bold text-slate-700 block mb-1">Description & Équipements</label>

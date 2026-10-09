@@ -10,6 +10,7 @@ export interface ContractPdfData {
   authorizedActivity?: string;
   isAgency?: boolean;
   ownerName: string;
+  mandantName?: string;
   ownerPhone?: string;
   tenantName: string;
   tenantPhone?: string;
@@ -47,6 +48,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       contractNumber,
       isAgency = false,
       ownerName = 'Bailleur',
+      mandantName,
       ownerPhone = '+225 07 89 45 12 34',
       tenantName = 'Locataire',
       tenantPhone = '+225 05 67 89 45 12',
@@ -158,14 +160,27 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
-    doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 41);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(51, 65, 85);
-    doc.text(`Nom / Raison : ${ownerName}`, 18, 46);
-    doc.text(`Téléphone : ${ownerPhone}`, 18, 50);
-    doc.text(`Adresse : Cocody, Abidjan - Côte d'Ivoire`, 18, 54);
-    doc.text(`Identifiant : CNI / RCCM vérifié`, 18, 58);
+    if (isAgency && mandantName) {
+      doc.text('L\'AGENCE IMMOBILIÈRE (MANDATAIRE)', 18, 41);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`Agence : ${ownerName}`, 18, 45);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Propriétaire Mandant : ${mandantName}`, 18, 49);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Téléphone : ${ownerPhone}`, 18, 53);
+      doc.text(`Identifiant : Agence & Mandat vérifié`, 18, 57);
+    } else {
+      doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 41);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`Nom / Raison : ${ownerName}`, 18, 46);
+      doc.text(`Téléphone : ${ownerPhone}`, 18, 50);
+      doc.text(`Adresse : Cocody, Abidjan - Côte d'Ivoire`, 18, 54);
+      doc.text(`Identifiant : CNI / RCCM vérifié`, 18, 58);
+    }
 
     // Preneur (Personne physique ou morale)
     doc.setFont('helvetica', 'bold');
