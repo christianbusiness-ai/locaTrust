@@ -297,29 +297,37 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   // =========================================================================
   const handleApproveDoc = async (doc: DocumentVerificationRequest) => {
     try {
-      // 1. Mettre à jour en direct la table profiles dans Supabase
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          verification_status: 'verifie',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', doc.id);
+      // 1. Mettre à jour en direct via RPC admin_verify_user_kyc (bypasse RLS côté serveur de manière sécurisée)
+      const { data: rpcData, error: rpcError } = await supabase.rpc('admin_verify_user_kyc', {
+        target_user_id: doc.id,
+        new_status: 'verifie'
+      });
 
-      if (error) {
-        showToast(`Erreur lors de la validation : ${error.message}`, 'error');
-        return;
+      if (rpcError) {
+        console.warn('Erreur RPC admin_verify_user_kyc, essai mise à jour directe:', rpcError);
+        const { error: directError } = await supabase
+          .from('profiles')
+          .update({
+            verification_status: 'verifie',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', doc.id);
+
+        if (directError) {
+          showToast(`Erreur lors de la validation : ${rpcError.message || directError.message}`, 'error');
+          return;
+        }
       }
 
-      // 2. Mettre à jour les états locaux réactifs
+      // 2. Mettre à jour immédiatement les états locaux réactifs
       setDocRequests(prev => prev.map(d => d.id === doc.id ? { ...d, status: 'verifie' } : d));
       setUsersList(prev => prev.map(u => u.id === doc.id ? { ...u, verified: true, status: 'actif' } : u));
       setInspectedDoc(null);
       triggerCelebration('success');
       showToast(`✅ Pièce ${doc.doc_type.toUpperCase()} de ${doc.user_name} certifiée avec succès ! Le badge "Vérifié" lui est attribué.`);
-      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
-      window.dispatchEvent(new CustomEvent('locatrust:verification_updated'));
-      fetchRealData();
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: { id: doc.id, status: 'verifie' } }));
+      window.dispatchEvent(new CustomEvent('locatrust:verification_updated', { detail: { id: doc.id, status: 'verifie' } }));
+      await fetchRealData();
     } catch (err: any) {
       showToast(`Erreur : ${err?.message || 'Erreur inattendue'}`, 'error');
     }
@@ -337,27 +345,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       return;
     }
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          verification_status: 'rejete',
-          rejection_reason: rejectionReasonText,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', rejectionModalDoc.id);
+      const { data: rpcData, error: rpcError } = await supabase.rpc('admin_verify_user_kyc', {
+        target_user_id: rejectionModalDoc.id,
+        new_status: 'rejete',
+        reason: rejectionReasonText
+      });
 
-      if (error) {
-        showToast(`Erreur : ${error.message}`, 'error');
-        return;
+      if (rpcError) {
+        console.warn('Erreur RPC rejet, essai mise à jour directe:', rpcError);
+        const { error: directError } = await supabase
+          .from('profiles')
+          .update({
+            verification_status: 'rejete',
+            rejection_reason: rejectionReasonText,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', rejectionModalDoc.id);
+
+        if (directError) {
+          showToast(`Erreur : ${rpcError.message || directError.message}`, 'error');
+          return;
+        }
       }
 
       setDocRequests(prev => prev.map(d => d.id === rejectionModalDoc.id ? { ...d, status: 'refuse', rejection_reason: rejectionReasonText } : d));
       setRejectionModalDoc(null);
       setInspectedDoc(null);
       showToast(`❌ Pièce rejetée pour ${rejectionModalDoc.user_name}. Statut mis à jour.`, 'error');
-      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
-      window.dispatchEvent(new CustomEvent('locatrust:verification_updated'));
-      fetchRealData();
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: { id: rejectionModalDoc.id, status: 'rejete' } }));
+      window.dispatchEvent(new CustomEvent('locatrust:verification_updated', { detail: { id: rejectionModalDoc.id, status: 'rejete' } }));
+      await fetchRealData();
     } catch (err: any) {
       showToast(`Erreur : ${err?.message || 'Erreur inattendue'}`, 'error');
     }

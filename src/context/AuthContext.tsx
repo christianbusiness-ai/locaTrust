@@ -74,9 +74,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshProfile = async () => {
-    if (user?.id) {
-      const p = await fetchProfile(user.id);
-      if (p) setProfile(p);
+    try {
+      const currentUserId = user?.id || (await supabase.auth.getSession()).data.session?.user?.id;
+      if (currentUserId) {
+        const p = await fetchProfile(currentUserId);
+        if (p) setProfile(p);
+      }
+    } catch (e) {
+      console.warn('Erreur rafraîchissement profil:', e);
     }
   };
 
@@ -141,9 +146,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mounted) setLoading(false);
     });
 
+    // 3. Écoute réactive des mises à jour de profil (événements personnalisés & retour au premier plan)
+    const handleProfileSync = () => {
+      if (mounted) refreshProfile();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && mounted) {
+        refreshProfile();
+      }
+    };
+
+    window.addEventListener('locatrust:profile_updated', handleProfileSync);
+    window.addEventListener('locatrust:verification_updated', handleProfileSync);
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleProfileSync);
+
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      window.removeEventListener('locatrust:profile_updated', handleProfileSync);
+      window.removeEventListener('locatrust:verification_updated', handleProfileSync);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleProfileSync);
     };
   }, []);
 
