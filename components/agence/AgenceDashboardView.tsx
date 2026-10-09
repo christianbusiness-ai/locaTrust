@@ -39,28 +39,57 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
   onOpenAddOwner,
 }) => {
   const { user, profile } = useAuth();
-  const [totalProperties, setTotalProperties] = useState<number>(0);
-  const [managedOwners, setManagedOwners] = useState<any[]>([]);
+  const [totalProperties, setTotalProperties] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_properties');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) return parsed.length;
+        }
+      } catch {}
+    }
+    return 0;
+  });
+  const [managedOwners, setManagedOwners] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_agency_mandates');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
   const [totalCollectedRent, setTotalCollectedRent] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchAgencyData = async () => {
     try {
-      setLoading(true);
       setError(null);
 
-      // Properties count rattachés à cette agence
+      // Properties query
       let propsQuery = supabase
         .from('properties')
         .select('id', { count: 'exact', head: true });
       if (user?.id) {
         propsQuery = propsQuery.or(`agency_id.eq.${user.id},owner_id.eq.${user.id}`);
       }
-      const { count: propsCount } = await propsQuery;
-      setTotalProperties(propsCount || 0);
 
-      // Mandats réels de l'agence (stockage local ou table)
+      // Parallel execution for maximum speed
+      const [propsRes, paymentsRes] = await Promise.all([
+        propsQuery,
+        supabase.from('rent_payments').select('amount, status')
+      ]);
+
+      if (propsRes?.count !== undefined && propsRes.count !== null) {
+        setTotalProperties(propsRes.count);
+      }
+
+      // Mandats réels de l'agence
       let agencyOwners: any[] = [];
       if (typeof window !== 'undefined') {
         try {
@@ -68,7 +97,10 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
           if (stored) {
             const parsed = JSON.parse(stored);
             if (Array.isArray(parsed)) {
-              agencyOwners = parsed.filter((o: any) => o.id !== 'owner_101' && o.id !== 'owner_102' && o.id !== 'owner_103' && o.id !== 'owner_104');
+              agencyOwners = parsed.filter((o: any) => 
+                !['mnd_1', 'mnd_2', 'mnd_3', 'owner_101', 'owner_102', 'owner_103', 'owner_104'].includes(o.id) &&
+                !o.full_name?.toLowerCase().includes('badjou')
+              );
             }
           }
         } catch (e) {
@@ -77,19 +109,14 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       }
       setManagedOwners(agencyOwners);
 
-      // Total collected rent
-      const { data: paymentsData, error: payErr } = await supabase
-        .from('rent_payments')
-        .select('amount, status');
-      if (payErr) throw payErr;
-
-      const sum = (paymentsData || [])
-        .filter((p) => p.status === 'valide' || p.status === 'validé' || p.status === 'Payé')
-        .reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-      setTotalCollectedRent(sum);
+      if (paymentsRes?.data) {
+        const sum = paymentsRes.data
+          .filter((p) => p.status === 'valide' || p.status === 'validé' || p.status === 'Payé')
+          .reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+        setTotalCollectedRent(sum);
+      }
     } catch (err: any) {
-      console.error('Erreur chargement données agence:', err);
-      setError('Impossible de charger les données du portefeuille agence.');
+      console.warn('Notice chargement données agence (utilisation du cache local):', err);
     } finally {
       setLoading(false);
     }

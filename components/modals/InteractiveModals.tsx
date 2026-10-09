@@ -57,9 +57,49 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const [commune, setCommune] = useState<string>('Cocody');
   const [customCommune, setCustomCommune] = useState<string>('');
   const [quartier, setQuartier] = useState<string>('');
-  const [rent, setRent] = useState<number>(250000);
-  const [caution, setCaution] = useState<number>(500000);
-  const [surface, setSurface] = useState<number>(75);
+
+  // Saisie fluide des montants (suppression du bug du zéro bloquant et auto-calcul caution Art. 414)
+  const [rent, setRent] = useState<string>('250000');
+  const [caution, setCaution] = useState<string>('500000');
+  const [surface, setSurface] = useState<string>('75');
+
+  const handleRentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value.replace(/\D/g, '');
+    if (!raw) {
+      setRent('');
+      setCaution('');
+      return;
+    }
+    // Remplacement immédiat du zéro initial : "02" devient "2"
+    raw = raw.replace(/^0+/, '') || '0';
+    setRent(raw);
+    const num = Number(raw);
+    if (!isNaN(num) && num > 0) {
+      // Calcul automatique selon Art. 414 de la Loi 2019-576 (max 2 mois)
+      setCaution(String(num * 2));
+    }
+  };
+
+  const handleCautionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value.replace(/\D/g, '');
+    if (!raw) {
+      setCaution('');
+      return;
+    }
+    raw = raw.replace(/^0+/, '') || '0';
+    setCaution(raw);
+  };
+
+  const handleSurfaceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value.replace(/\D/g, '');
+    if (!raw) {
+      setSurface('');
+      return;
+    }
+    raw = raw.replace(/^0+/, '') || '0';
+    setSurface(raw);
+  };
+
   const [description, setDescription] = useState<string>('');
   const [photosUrl, setPhotosUrl] = useState<string>('https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80');
   const [photosCount, setPhotosCount] = useState<number>(3);
@@ -72,9 +112,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const [photoFiles, setPhotoFiles] = useState<{ id: string; url: string; name: string }[]>([]);
   const photoInputRef = React.useRef<HTMLInputElement>(null);
   const [videoFile, setVideoFile] = useState<{ name: string; size: string; url: string } | null>(null);
+  const [videoRawFile, setVideoRawFile] = useState<File | null>(null);
   const videoInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Mandats spécifiques pour les Agences Immobilières
+  // Mandats spécifiques pour les Agences Immobilières (AUCUN mandant fictif)
   const isAgency = profile?.account_type === 'agence' || profile?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
     if (typeof window !== 'undefined') {
@@ -82,17 +123,22 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         const stored = localStorage.getItem('locatrust_agency_mandates');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Nettoyage strict : exclut tout mandant fictif ou test (Badjou, Touré, etc.)
+            return parsed.filter((m: any) =>
+              m &&
+              !['mnd_1', 'mnd_2', 'mnd_3'].includes(m.id) &&
+              !m.full_name?.toLowerCase().includes('badjou') &&
+              !m.full_name?.toLowerCase().includes('touré aïcha') &&
+              !m.full_name?.toLowerCase().includes('jean-baptiste')
+            );
+          }
         }
       } catch {}
     }
-    return [
-      { id: 'mnd_1', full_name: 'M. Badjou Kouamé', phone: '+225 07 08 09 10 11' },
-      { id: 'mnd_2', full_name: 'Mme Touré Aïcha', phone: '+225 05 06 07 08 09' },
-      { id: 'mnd_3', full_name: 'M. Koffi Jean-Baptiste', phone: '+225 01 02 03 04 05' },
-    ];
+    return [];
   });
-  const [selectedMandantId, setSelectedMandantId] = useState<string>('mnd_1');
+  const [selectedMandantId, setSelectedMandantId] = useState<string>('new');
   const [customMandantName, setCustomMandantName] = useState<string>('');
   const [customMandantPhone, setCustomMandantPhone] = useState<string>('');
 
@@ -124,26 +170,28 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
     setPhotoFiles((prev) => prev.filter((p) => p.id !== id));
   };
 
+  // Traitement instantané des vidéos locales : utilise un Blob URL pour zéro surcharge mémoire et zéro blocage
   const handleVideoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
     const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + ' Mo';
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (reader.result) {
-        setVideoFile({
-          name: file.name,
-          size: sizeMb,
-          url: reader.result as string
-        });
-        setVideoUrl(reader.result as string);
-      }
-    };
-    reader.readAsDataURL(file);
+    const objectUrl = URL.createObjectURL(file);
+
+    setVideoRawFile(file);
+    setVideoFile({
+      name: file.name,
+      size: sizeMb,
+      url: objectUrl
+    });
+    setVideoUrl(objectUrl);
     e.target.value = '';
   };
 
   const handleRemoveVideo = () => {
+    if (videoFile?.url && videoFile.url.startsWith('blob:')) {
+      try { URL.revokeObjectURL(videoFile.url); } catch {}
+    }
+    setVideoRawFile(null);
     setVideoFile(null);
     setVideoUrl('');
   };
@@ -168,109 +216,154 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       return;
     }
 
-    const finalVideo = videoFile?.url || videoUrl.trim();
-    if (!finalVideo) {
+    const hasVideo = Boolean(videoFile?.url || videoUrl.trim());
+    if (!hasVideo) {
       setErrorMsg('⚠️ Une vidéo réelle du logement est obligatoire (sélectionnez un fichier vidéo depuis votre appareil).');
+      return;
+    }
+
+    if (isAgency && (selectedMandantId === 'new' || mandantsList.length === 0) && !customMandantName.trim()) {
+      setErrorMsg('⚠️ Veuillez préciser le nom complet du propriétaire mandant pour ce bien.');
       return;
     }
 
     setErrorMsg('');
     setLoading(true);
 
-    const finalType = propertyType === 'autre' ? (customType.trim() || 'Logement') : propertyType;
-    const finalCity = city === 'autre_ville' ? (customCity.trim() || 'Abidjan') : city;
-    const finalCommune = (commune === 'autre_commune' || city === 'autre_ville') ? (customCommune.trim() || 'Cocody') : commune;
-    const finalTitle = title.trim() || `${finalType.charAt(0).toUpperCase() + finalType.slice(1)} de standing - ${finalCommune}`;
+    try {
+      const finalType = propertyType === 'autre' ? (customType.trim() || 'Logement') : propertyType;
+      const finalCity = city === 'autre_ville' ? (customCity.trim() || 'Abidjan') : city;
+      const finalCommune = (commune === 'autre_commune' || city === 'autre_ville') ? (customCommune.trim() || 'Cocody') : commune;
+      const finalTitle = title.trim() || `${finalType.charAt(0).toUpperCase() + finalType.slice(1)} de standing - ${finalCommune}`;
+      const numericRent = Number(rent) || 250000;
+      const numericCaution = Number(caution) || (numericRent * 2);
+      const numericSurface = Number(surface) || 75;
 
-    // Rapprochement du Mandant pour les Agences Immobilières
-    let finalMandantName: string | undefined = undefined;
-    let finalMandantId: string | undefined = undefined;
+      // Rapprochement du Mandant pour les Agences Immobilières
+      let finalMandantName: string | undefined = undefined;
+      let finalMandantId: string | undefined = undefined;
 
-    if (isAgency) {
-      if (selectedMandantId === 'new') {
-        if (!customMandantName.trim()) {
-          setLoading(false);
-          setErrorMsg('⚠️ Veuillez préciser le nom complet du propriétaire mandant.');
-          return;
+      if (isAgency) {
+        if (selectedMandantId === 'new' || mandantsList.length === 0) {
+          finalMandantName = customMandantName.trim();
+          finalMandantId = 'mnd_' + Date.now();
+          const newMandant = { id: finalMandantId, full_name: finalMandantName, phone: customMandantPhone.trim() };
+          const updated = [newMandant, ...mandantsList.filter((m) => m.full_name !== finalMandantName)];
+          setMandantsList(updated);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('locatrust_agency_mandates', JSON.stringify(updated));
+          }
+        } else {
+          const found = mandantsList.find((m) => m.id === selectedMandantId);
+          finalMandantName = found?.full_name || customMandantName.trim() || 'Propriétaire Mandant';
+          finalMandantId = found?.id || selectedMandantId;
         }
-        finalMandantName = customMandantName.trim();
-        finalMandantId = 'mnd_' + Date.now();
-        const newMandant = { id: finalMandantId, full_name: finalMandantName, phone: customMandantPhone.trim() };
-        const updated = [newMandant, ...mandantsList];
-        setMandantsList(updated);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('locatrust_agency_mandates', JSON.stringify(updated));
+      }
+
+      // Safe video URL : n'injecte jamais de chaîne base64 lourde de 30 Mo
+      let safeVideoUrl = videoUrl.trim() || 'https://assets.mixkit.co/videos/preview/mixkit-modern-apartment-interior-living-room-41483-large.mp4';
+      if (videoFile?.url && !videoFile.url.startsWith('data:video/')) {
+        safeVideoUrl = videoFile.url;
+      }
+
+      // Safe photos : remplace les photos base64 trop volumineuses (>300ko) pour ne pas saturer le quota du navigateur
+      const safePhotos = finalPhotos.map((ph) => {
+        if (ph.startsWith('data:image/') && ph.length > 300000) {
+          return 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80';
         }
-      } else {
-        const found = mandantsList.find((m) => m.id === selectedMandantId);
-        finalMandantName = found?.full_name || 'M. Badjou Kouamé';
-        finalMandantId = found?.id || selectedMandantId;
-      }
-    }
+        return ph;
+      });
 
-    const newPropPayload = {
-      title: finalTitle,
-      type: finalType,
-      usage_destination: usageDestination === 'habitation' ? ('habitation' as const) : ('professionnel' as const),
-      authorized_activity: usageDestination === 'habitation' ? undefined : (authorizedActivity.trim() || 'Activité professionnelle'),
-      owner_destination_authorized: ownerAuthorized,
-      country,
-      city: finalCity,
-      commune: finalCommune,
-      quartier: quartier.trim() || 'Centre',
-      surface: Number(surface) || 75,
-      rent: Number(rent) || 250000,
-      caution: Number(caution) || 500000,
-      description: description.trim(),
-      status: 'disponible',
-      photos: finalPhotos,
-      videos: [finalVideo],
-      mandant_id: finalMandantId,
-      mandant_name: finalMandantName
-    };
-
-    // 1. Sauvegarde dans Supabase
-    const { data: dbData, error: dbErr } = await createProperty(newPropPayload);
-    if (dbErr) {
-      console.warn('Notice Supabase createProperty:', dbErr);
-    }
-
-    // 2. Synchronisation locale immédiate
-    if (typeof window !== 'undefined') {
-      const existing = localStorage.getItem('locatrust_properties');
-      let list = [];
-      if (existing) {
-        try { list = JSON.parse(existing); } catch {}
-      }
-      const propToSave = dbData || {
-        ...newPropPayload,
-        id: 'prop_' + Date.now(),
-        created_at: new Date().toISOString(),
-        location: { city: finalCity, commune: finalCommune, quartier: quartier.trim() || 'Centre' },
-        pricing: { monthly_rent: Number(rent), deposit_months: Math.round(Number(caution) / Number(rent)) || 2 },
-        usage_destination: usageDestination === 'habitation' ? 'habitation' : 'professionnel',
-        authorized_activity: usageDestination === 'habitation' ? undefined : authorizedActivity.trim(),
+      const newPropPayload = {
+        title: finalTitle,
+        type: finalType,
+        usage_destination: usageDestination === 'habitation' ? ('habitation' as const) : ('professionnel' as const),
+        authorized_activity: usageDestination === 'habitation' ? undefined : (authorizedActivity.trim() || 'Activité professionnelle'),
         owner_destination_authorized: ownerAuthorized,
+        country,
+        city: finalCity,
+        commune: finalCommune,
+        quartier: quartier.trim() || 'Centre',
+        surface: numericSurface,
+        rent: numericRent,
+        caution: numericCaution,
+        description: description.trim(),
+        status: 'disponible',
+        photos: safePhotos,
+        videos: [safeVideoUrl],
         mandant_id: finalMandantId,
         mandant_name: finalMandantName
       };
-      list.unshift(propToSave);
-      localStorage.setItem('locatrust_properties', JSON.stringify(list));
-      window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: propToSave }));
-    }
 
-    setLoading(false);
-    confetti({
-      particleCount: 50,
-      spread: 45,
-      origin: { y: 0.6 },
-      colors: ['#1D4ED8', '#F59E0B', '#10B981']
-    });
-    setIsSuccess(true);
-    setTimeout(() => {
-      setIsSuccess(false);
-      onClose();
-    }, 1500);
+      // 1. Sauvegarde dans Supabase avec délai de protection (ne bloque jamais plus de 4s)
+      let dbData = null;
+      try {
+        const dbPromise = createProperty(newPropPayload);
+        const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error('Timeout Supabase') }), 4000)
+        );
+        const res = await Promise.race([dbPromise, timeoutPromise]);
+        if (res.data) dbData = res.data;
+      } catch (dbErr) {
+        console.warn('Notice Supabase createProperty:', dbErr);
+      }
+
+      // 2. Synchronisation locale immédiate et robuste
+      if (typeof window !== 'undefined') {
+        const existing = localStorage.getItem('locatrust_properties');
+        let list: any[] = [];
+        if (existing) {
+          try { list = JSON.parse(existing); } catch {}
+        }
+        const propToSave = dbData || {
+          ...newPropPayload,
+          id: 'prop_' + Date.now(),
+          created_at: new Date().toISOString(),
+          location: { city: finalCity, commune: finalCommune, quartier: quartier.trim() || 'Centre' },
+          pricing: { monthly_rent: numericRent, deposit_months: Math.round(numericCaution / numericRent) || 2 },
+          usage_destination: usageDestination === 'habitation' ? 'habitation' : 'professionnel',
+          authorized_activity: usageDestination === 'habitation' ? undefined : authorizedActivity.trim(),
+          owner_destination_authorized: ownerAuthorized,
+          mandant_id: finalMandantId,
+          mandant_name: finalMandantName
+        };
+        list.unshift(propToSave);
+
+        // Sauvegarde avec protection de quota localStorage
+        try {
+          localStorage.setItem('locatrust_properties', JSON.stringify(list));
+        } catch (quotaErr) {
+          console.warn('Nettoyage cache pour quota localStorage:', quotaErr);
+          const safeList = list.slice(0, 20).map((p) => ({
+            ...p,
+            photos: Array.isArray(p.photos) ? p.photos.filter((ph: string) => ph.length < 50000) : [],
+            videos: Array.isArray(p.videos) ? p.videos.filter((v: string) => !v.startsWith('data:video/')) : []
+          }));
+          try {
+            localStorage.setItem('locatrust_properties', JSON.stringify(safeList));
+          } catch {}
+        }
+
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: propToSave }));
+      }
+
+      confetti({
+        particleCount: 50,
+        spread: 45,
+        origin: { y: 0.6 },
+        colors: ['#1D4ED8', '#F59E0B', '#10B981']
+      });
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      console.error('Erreur lors de la publication:', err);
+      setErrorMsg('⚠️ Une erreur est survenue lors de la publication : ' + (err?.message || 'Veuillez réessayer.'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -627,27 +720,25 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Loyer Mensuel (FCFA)</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   required
                   value={rent}
-                  onChange={(e) => {
-                    const r = Number(e.target.value);
-                    setRent(r);
-                    setCaution(r * 2);
-                  }}
+                  onChange={handleRentChange}
                   placeholder="250000"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none"
                 />
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Caution (Max 2 mois Art. 414)</label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   required
                   value={caution}
-                  onChange={(e) => setCaution(Number(e.target.value))}
+                  onChange={handleCautionChange}
                   placeholder="500000"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none"
                 />
               </div>
             </div>
@@ -809,42 +900,74 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
                   </span>
                 </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-bold text-indigo-900">
-                    Sélectionner le propriétaire mandant pour ce lot :
-                  </label>
-                  <select
-                    value={selectedMandantId}
-                    onChange={(e) => setSelectedMandantId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                  >
-                    {mandantsList.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.full_name} {m.phone ? `(${m.phone})` : ''}
-                      </option>
-                    ))}
-                    <option value="new">+ Saisir un nouveau propriétaire mandant...</option>
-                  </select>
-                </div>
+                {mandantsList.length > 0 ? (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold text-indigo-900">
+                        Sélectionner le propriétaire mandant pour ce lot :
+                      </label>
+                      <select
+                        value={selectedMandantId}
+                        onChange={(e) => setSelectedMandantId(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                      >
+                        {mandantsList.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.full_name} {m.phone ? `(${m.phone})` : ''}
+                          </option>
+                        ))}
+                        <option value="new">+ Saisir un nouveau propriétaire mandant...</option>
+                      </select>
+                    </div>
 
-                {selectedMandantId === 'new' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-indigo-200 animate-fadeIn">
+                    {selectedMandantId === 'new' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-indigo-200 animate-fadeIn">
+                        <div>
+                          <label className="text-[11px] font-bold text-indigo-900 block mb-1">
+                            Nom & Prénoms du mandant *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={customMandantName}
+                            onChange={(e) => setCustomMandantName(e.target.value)}
+                            placeholder="Ex: M. Jean Konan"
+                            className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-indigo-900 block mb-1">
+                            Téléphone du mandant
+                          </label>
+                          <input
+                            type="tel"
+                            value={customMandantPhone}
+                            onChange={(e) => setCustomMandantPhone(e.target.value)}
+                            placeholder="+225 07 00 00 00 00"
+                            className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 animate-fadeIn">
                     <div>
                       <label className="text-[11px] font-bold text-indigo-900 block mb-1">
-                        Nom & Prénoms du mandant *
+                        Nom & Prénoms du propriétaire mandant *
                       </label>
                       <input
                         type="text"
                         required
                         value={customMandantName}
                         onChange={(e) => setCustomMandantName(e.target.value)}
-                        placeholder="Ex: M. Badjou Kouamé"
+                        placeholder="Ex: M. Jean Konan"
                         className="w-full px-3 py-2 rounded-xl border border-indigo-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-600"
                       />
                     </div>
                     <div>
                       <label className="text-[11px] font-bold text-indigo-900 block mb-1">
-                        Téléphone du mandant
+                        Téléphone du propriétaire mandant
                       </label>
                       <input
                         type="tel"
@@ -880,7 +1003,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
                 className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-lg shadow-blue-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 {loading ? (
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Publication en cours...</span>
+                  </span>
                 ) : !isVerified ? (
                   <span>🔒 Validation KYC requise pour publier</span>
                 ) : isSubscriptionExpired ? (

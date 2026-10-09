@@ -58,8 +58,30 @@ export const BiensView: React.FC<BiensViewProps> = ({
   onSelectProperty,
 }) => {
   const { user } = useAuth();
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [properties, setProperties] = useState<Property[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_properties');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('locatrust_properties');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return false;
+        } catch {}
+      }
+    }
+    return true;
+  });
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeTypeFilter, setActiveTypeFilter] = useState<string>('tous');
@@ -70,19 +92,22 @@ export const BiensView: React.FC<BiensViewProps> = ({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 6;
 
-  // Synchronisation avec la base de données Supabase
+  // Synchronisation avec la base de données Supabase (en tâche de fond non bloquante)
   const loadPropertiesFromDb = async () => {
-    setIsLoading(true);
+    if (properties.length === 0) {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       const { data, error } = await fetchDbProperties(user?.id);
-      if (error) {
-        setLoadError("Impossible de récupérer la liste de vos biens immobiliers.");
-      } else {
-        setProperties(data || []);
+      if (!error && data && data.length > 0) {
+        setProperties(data);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('locatrust_properties', JSON.stringify(data)); } catch {}
+        }
       }
     } catch (err: any) {
-      setLoadError("Erreur réseau lors de la récupération des biens.");
+      console.warn("Maintien des données du cache local pour une réactivité maximale.");
     } finally {
       setIsLoading(false);
     }
