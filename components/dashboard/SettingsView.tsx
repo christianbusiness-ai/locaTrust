@@ -37,7 +37,7 @@ import {
   getAvailableYears,
   getArchivedYears
 } from '@/lib/reports/accountingHistoryStore';
-import { AccountingYearCompactControl } from '@/components/dashboard/AccountingYearCompactControl';
+import { ACCENT_THEMES, applyAccentTheme } from '@/lib/themeHelper';
 
 interface AdminTicket {
   id: string;
@@ -837,30 +837,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 </div>
 
-                {/* 2. Palette de couleurs d'ambiance (Demande vocale : 2 à 3 couleurs personnalisables) */}
+                {/* 2. Palette de couleurs d'ambiance dynamiques */}
                 <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-3">
                   <div>
                     <h4 className="font-extrabold text-slate-900">Couleur d'ambiance de l'environnement</h4>
                     <p className="text-slate-500">
-                      Personnalisez les touches de couleur et l'accent visuel de votre espace SaaS
+                      Personnalisez les touches de couleur et l'accent visuel de votre espace SaaS (boutons, bordures, badges actifs)
                     </p>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-                    {[
-                      { id: 'blue', label: 'Bleu Océan', hex: '#1E40AF', bgClass: 'bg-blue-600' },
-                      { id: 'emerald', label: 'Émeraude Banco', hex: '#059669', bgClass: 'bg-emerald-600' },
-                      { id: 'amber', label: 'Ambre Savane', hex: '#D97706', bgClass: 'bg-amber-600' },
-                      { id: 'indigo', label: 'Indigo Prestige', hex: '#4F46E5', bgClass: 'bg-indigo-600' }
-                    ].map((col) => (
+                    {ACCENT_THEMES.map((col) => (
                       <button
                         key={col.id}
                         type="button"
                         onClick={() => {
                           setAccentColor(col.id);
-                          localStorage.setItem('locatrust_accent_color', col.id);
-                          document.documentElement.style.setProperty('--primary-accent', col.hex);
-                          setSavedMessage(`Couleur d'ambiance « ${col.label} » appliquée !`);
-                          setTimeout(() => setSavedMessage(null), 3000);
+                          applyAccentTheme(col.id);
+                          setSavedMessage(`Couleur d'ambiance « ${col.label} » activée instantanément !`);
+                          setTimeout(() => setSavedMessage(null), 3500);
                         }}
                         className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${
                           accentColor === col.id
@@ -868,10 +862,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
                         }`}
                       >
-                        <span className={`w-4 h-4 rounded-full ${col.bgClass} shrink-0 shadow-inner`} />
-                        <span className="text-xs">{col.label}</span>
+                        <span
+                          className="w-4 h-4 rounded-full shrink-0 shadow-inner"
+                          style={{ backgroundColor: col.hex }}
+                        />
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-bold leading-tight truncate">{col.label}</span>
+                          <span className="text-[10px] text-slate-400 font-medium leading-tight">{col.hex}</span>
+                        </div>
                       </button>
                     ))}
+                  </div>
+
+                  {/* Aperçu en direct de la couleur sélectionnée */}
+                  <div className="mt-2 p-3.5 bg-white rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-slate-700">Aperçu en direct :</span>
+                      <button
+                        type="button"
+                        className="px-3.5 py-1.5 rounded-lg text-white font-bold text-xs shadow-sm transition-transform active:scale-95 bg-blue-600 hover:bg-blue-700"
+                      >
+                        Bouton d'action
+                      </button>
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        Badge actif
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-500 italic">
+                      Appliqué instantanément sur l'ensemble de votre espace LocaTrust.
+                    </span>
                   </div>
                 </div>
 
@@ -885,9 +904,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     Français (Côte d'Ivoire)
                   </span>
                 </div>
-
-                {/* Année comptable — Interface compacte 3 contrôles */}
-                <AccountingYearCompactControl />
               </div>
             </div>
           )}
