@@ -1,27 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import {
   BrowserRouter,
   Routes,
   Route,
   Navigate,
   useNavigate,
-  useParams,
-  useLocation
+  useParams
 } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/src/context/AuthContext';
-import { LoginPage } from '@/src/pages/LoginPage';
-import { RegisterPage } from '@/src/pages/RegisterPage';
-import { VerifyEmailPage } from '@/src/pages/VerifyEmailPage';
-import { ForgotPasswordPage } from '@/src/pages/ForgotPasswordPage';
-import { ResetPasswordPage } from '@/src/pages/ResetPasswordPage';
-import { ProfilePage } from '@/src/pages/ProfilePage';
-import { DashboardPage } from '@/src/pages/DashboardPage';
 import { ProtectedRoute } from '@/src/components/auth/ProtectedRoute';
-import { DocumentVerificationView } from '@/components/verification/DocumentVerificationView';
 import { LandingPageView } from '@/components/landing/LandingPageView';
-import { RegisterModal } from '@/components/auth/RegisterModal';
-import { LoginModal } from '@/components/auth/LoginModal';
 import { UserRole } from '@/types/database.types';
+
+// Code Splitting / Lazy Loading pour vitesse de chargement mobile maximale
+const LoginPage = lazy(() => import('@/src/pages/LoginPage').then(m => ({ default: m.LoginPage })));
+const RegisterPage = lazy(() => import('@/src/pages/RegisterPage').then(m => ({ default: m.RegisterPage })));
+const VerifyEmailPage = lazy(() => import('@/src/pages/VerifyEmailPage').then(m => ({ default: m.VerifyEmailPage })));
+const ForgotPasswordPage = lazy(() => import('@/src/pages/ForgotPasswordPage').then(m => ({ default: m.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import('@/src/pages/ResetPasswordPage').then(m => ({ default: m.ResetPasswordPage })));
+const ProfilePage = lazy(() => import('@/src/pages/ProfilePage').then(m => ({ default: m.ProfilePage })));
+const DashboardPage = lazy(() => import('@/src/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
+const DocumentVerificationView = lazy(() => import('@/components/verification/DocumentVerificationView').then(m => ({ default: m.DocumentVerificationView })));
+const RegisterModal = lazy(() => import('@/components/auth/RegisterModal').then(m => ({ default: m.RegisterModal })));
+const LoginModal = lazy(() => import('@/components/auth/LoginModal').then(m => ({ default: m.LoginModal })));
+
+const PageLoadingSpinner: React.FC = () => (
+  <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+    <div className="w-10 h-10 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mb-3"></div>
+    <span className="text-xs font-bold text-slate-500">Chargement sécurisé de LocaTrust...</span>
+  </div>
+);
 
 // Composant de vérification publique QR Code
 const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' }> = ({ forcedType }) => {
@@ -31,12 +39,14 @@ const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' }> = ({ 
   const typeParam = (params.type || forcedType || 'contrat') as 'contrat' | 'recu';
 
   return (
-    <DocumentVerificationView
-      type={typeParam}
-      token={token}
-      onNavigateBack={() => navigate('/')}
-      onNavigateToDocument={(t, tok) => navigate(`/verification/${t}/${tok}`)}
-    />
+    <Suspense fallback={<PageLoadingSpinner />}>
+      <DocumentVerificationView
+        type={typeParam}
+        token={token}
+        onNavigateBack={() => navigate('/')}
+        onNavigateToDocument={(t, tok) => navigate(`/verification/${t}/${tok}`)}
+      />
+    </Suspense>
   );
 };
 
@@ -61,27 +71,35 @@ const HomePage: React.FC = () => {
         }}
       />
 
-      <LoginModal
-        isOpen={isLoginOpen}
-        onClose={() => setIsLoginOpen(false)}
-        onOpenRegister={() => {
-          setIsLoginOpen(false);
-          navigate('/register');
-        }}
-        onSuccessLogin={() => {
-          setIsLoginOpen(false);
-          navigate('/dashboard');
-        }}
-      />
+      {isLoginOpen && (
+        <Suspense fallback={null}>
+          <LoginModal
+            isOpen={isLoginOpen}
+            onClose={() => setIsLoginOpen(false)}
+            onOpenRegister={() => {
+              setIsLoginOpen(false);
+              navigate('/register');
+            }}
+            onSuccessLogin={() => {
+              setIsLoginOpen(false);
+              navigate('/dashboard');
+            }}
+          />
+        </Suspense>
+      )}
 
-      <RegisterModal
-        isOpen={isRegisterOpen}
-        onClose={() => setIsRegisterOpen(false)}
-        onSuccessRegister={() => {
-          setIsRegisterOpen(false);
-          navigate('/dashboard');
-        }}
-      />
+      {isRegisterOpen && (
+        <Suspense fallback={null}>
+          <RegisterModal
+            isOpen={isRegisterOpen}
+            onClose={() => setIsRegisterOpen(false)}
+            onSuccessRegister={() => {
+              setIsRegisterOpen(false);
+              navigate('/dashboard');
+            }}
+          />
+        </Suspense>
+      )}
     </>
   );
 };
@@ -90,45 +108,47 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          {/* Routes Publiques d'Authentification */}
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/verify-email" element={<VerifyEmailPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Suspense fallback={<PageLoadingSpinner />}>
+          <Routes>
+            {/* Routes Publiques d'Authentification */}
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-          {/* Routes Privées Sécurisées */}
-          <Route
-            path="/profile"
-            element={
-              <ProtectedRoute>
-                <ProfilePage />
-              </ProtectedRoute>
-            }
-          />
+            {/* Routes Privées Sécurisées */}
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <ProfilePage />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <DashboardPage />
-              </ProtectedRoute>
-            }
-          />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <DashboardPage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Routes Publiques de Scan QR Code */}
-          <Route path="/verify/:token" element={<QrVerificationWrapper />} />
-          <Route path="/verify/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
-          <Route path="/verify/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
-          <Route path="/verification/:type/:token" element={<QrVerificationWrapper />} />
+            {/* Routes Publiques de Scan QR Code */}
+            <Route path="/verify/:token" element={<QrVerificationWrapper />} />
+            <Route path="/verify/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
+            <Route path="/verify/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
+            <Route path="/verification/:type/:token" element={<QrVerificationWrapper />} />
 
-          {/* Page d'accueil / Vitrine */}
-          <Route path="/" element={<HomePage />} />
+            {/* Page d'accueil / Vitrine */}
+            <Route path="/" element={<HomePage />} />
 
-          {/* Redirection par défaut */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* Redirection par défaut */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

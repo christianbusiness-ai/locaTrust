@@ -1,9 +1,18 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
-import TenantDashboardPage from '@/app/(locataire)/dashboard/page';
-import ProprietaireDashboardPage from '@/app/(proprietaire)/dashboard/page';
-import AgencyDashboardPage from '@/app/(agence)/dashboard/page';
-import AdminDashboardPage from '@/app/(admin)/dashboard/page';
+
+// Lazy loading ciblé par rôle pour diviser par 4 le poids du dashboard
+const TenantDashboardPage = lazy(() => import('@/app/(locataire)/dashboard/page'));
+const ProprietaireDashboardPage = lazy(() => import('@/app/(proprietaire)/dashboard/page'));
+const AgencyDashboardPage = lazy(() => import('@/app/(agence)/dashboard/page'));
+const AdminDashboardPage = lazy(() => import('@/app/(admin)/dashboard/page'));
+
+const DashboardSpinner: React.FC = () => (
+  <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+    <div className="w-10 h-10 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mb-3"></div>
+    <span className="text-xs font-bold text-slate-500">Chargement de votre espace de gestion...</span>
+  </div>
+);
 
 export const DashboardPage: React.FC = () => {
   const { profile, signOut } = useAuth();
@@ -23,20 +32,17 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  // Si l'utilisateur est admin
-  if (profile?.role === 'admin') {
-    return <AdminDashboardPage currentRole="admin" isDemo={false} onExitToLanding={handleExitToLanding} />;
-  }
-
-  // Selon le type de compte réel
-  if (profile?.account_type === 'proprietaire') {
-    return <ProprietaireDashboardPage currentRole="proprietaire" isDemo={false} onExitToLanding={handleExitToLanding} />;
-  }
-
-  if (profile?.account_type === 'agence') {
-    return <AgencyDashboardPage currentRole="agence" isDemo={false} onExitToLanding={handleExitToLanding} />;
-  }
-
-  // Par défaut : locataire
-  return <TenantDashboardPage currentRole="locataire" isDemo={false} onExitToLanding={handleExitToLanding} />;
+  return (
+    <Suspense fallback={<DashboardSpinner />}>
+      {profile?.role === 'admin' ? (
+        <AdminDashboardPage currentRole="admin" isDemo={false} onExitToLanding={handleExitToLanding} />
+      ) : profile?.account_type === 'proprietaire' ? (
+        <ProprietaireDashboardPage currentRole="proprietaire" isDemo={false} onExitToLanding={handleExitToLanding} />
+      ) : profile?.account_type === 'agence' ? (
+        <AgencyDashboardPage currentRole="agence" isDemo={false} onExitToLanding={handleExitToLanding} />
+      ) : (
+        <TenantDashboardPage currentRole="locataire" isDemo={false} onExitToLanding={handleExitToLanding} />
+      )}
+    </Suspense>
+  );
 };

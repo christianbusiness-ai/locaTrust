@@ -81,5 +81,33 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: true,
     },
+    build: {
+      target: 'es2020',
+      cssCodeSplit: true,
+      chunkSizeWarningLimit: 800,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('canvg')) {
+                return 'vendor-pdf';
+              }
+              if (id.includes('@supabase') || id.includes('@supabase/supabase-js')) {
+                return 'vendor-supabase';
+              }
+              if (id.includes('lucide-react')) {
+                return 'vendor-icons';
+              }
+              if (id.includes('canvas-confetti')) {
+                return 'vendor-confetti';
+              }
+              if (id.includes('react') || id.includes('react-dom') || id.includes('react-router') || id.includes('@remix-run') || id.includes('scheduler')) {
+                return 'vendor-react';
+              }
+            }
+          }
+        }
+      }
+    }
   };
 });
