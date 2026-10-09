@@ -17,6 +17,7 @@ import {
   Bath,
   Maximize2,
   Building,
+  Building2,
   RotateCcw,
   Clock,
   Key,
@@ -69,11 +70,12 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
   const closeGallery = () => setGalleryModal(null);
 
-  const galleryImages = (item: any): string[] => [
-    item.images.main,
-    item.images.thumb1,
-    item.images.thumb2
-  ];
+  const galleryImages = (item: any): string[] => {
+    if (Array.isArray(item.images?.all) && item.images.all.length > 0) {
+      return item.images.all;
+    }
+    return [item.images?.main, item.images?.thumb1, item.images?.thumb2].filter(Boolean);
+  };
 
   // Modals state
   const { profile } = useAuth();
@@ -145,12 +147,33 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     setIsLoading(true);
     setLoadError(null);
     try {
-      const { data, error } = await getAvailableProperties();
-      if (error) {
-        setLoadError("Impossible de charger les logements en direct depuis la base de données.");
-      } else {
-        setProperties(data || []);
+      // 1. Biens créés localement (localStorage immédiat)
+      let localProps: any[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('locatrust_properties');
+          if (raw) localProps = JSON.parse(raw);
+        } catch {}
       }
+
+      // 2. Biens certifiés Supabase
+      const { data, error } = await getAvailableProperties();
+      const dbProps = data || [];
+
+      // 3. Fusion unifiée sans doublons (priorité aux publications récentes)
+      const map = new Map<string, any>();
+      localProps.forEach((p) => {
+        if (p && p.id && p.status !== 'desactive' && p.status !== 'archive' && p.status !== 'corbeille') {
+          map.set(p.id, p);
+        }
+      });
+      dbProps.forEach((p) => {
+        if (p && p.id && p.status !== 'desactive' && p.status !== 'archive') {
+          map.set(p.id, { ...(map.get(p.id) || {}), ...p });
+        }
+      });
+
+      setProperties(Array.from(map.values()));
     } catch (err: any) {
       setLoadError("Erreur réseau lors de la récupération des annonces.");
     } finally {
@@ -160,17 +183,24 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
   useEffect(() => {
     fetchProperties();
+    const handleUpdate = () => {
+      fetchProperties();
+    };
+    window.addEventListener('locatrust:properties-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:properties-updated', handleUpdate);
+    };
   }, []);
 
-  // Transformation des biens réels Supabase en items de fil certifiés
+  // Transformation des biens réels Supabase en items de fil certifiés (Stricte fidélité)
   const ALL_FEED_ITEMS = properties.map((p) => {
-    const photos = Array.isArray(p.photos) && p.photos.length > 0 
+    const photos: string[] = Array.isArray(p.photos) && p.photos.length > 0 
       ? p.photos 
-      : ['https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=900&q=80'];
+      : [];
     return {
       id: p.id,
-      authorName: p.owner?.full_name || 'Bailleur certifié',
-      authorAvatar: p.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.owner?.full_name || 'Bailleur')}&background=0D8ABC&color=fff`,
+      authorName: p.owner?.full_name || p.mandant_name || 'Bailleur certifié',
+      authorAvatar: p.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.owner?.full_name || p.mandant_name || 'Bailleur')}&background=0D8ABC&color=fff`,
       isVerified: true,
       roleBadge: 'Propriétaire vérifié',
       locationPublished: `${p.city || 'Abidjan'}, ${p.commune || p.quartier || ''} • Publication certifiée`,
@@ -183,15 +213,16 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       price: Number(p.rent || 0),
       location: `${p.commune ? p.commune + ', ' : ''}${p.city || 'Abidjan'}`,
       amenities: [
-        p.rooms ? { label: `${p.rooms} Pièces`, icon: Sofa } : null,
-        p.bedrooms ? { label: `${p.bedrooms} Chambres`, icon: Bed } : null,
-        p.bathrooms ? { label: `${p.bathrooms} Salles d'eau`, icon: Bath } : null,
-        p.surface ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
+        p.rooms && Number(p.rooms) > 0 ? { label: `${p.rooms} Pièce${Number(p.rooms) > 1 ? 's' : ''}`, icon: Sofa } : null,
+        p.bedrooms && Number(p.bedrooms) > 0 ? { label: `${p.bedrooms} Chambre${Number(p.bedrooms) > 1 ? 's' : ''}`, icon: Bed } : null,
+        p.bathrooms && Number(p.bathrooms) > 0 ? { label: `${p.bathrooms} Salle${Number(p.bathrooms) > 1 ? 's' : ''} d'eau`, icon: Bath } : null,
+        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
       ].filter(Boolean) as { label: string; icon: any }[],
       images: {
-        main: photos[0],
-        thumb1: photos[1] || photos[0],
-        thumb2: photos[2] || photos[0],
+        all: photos,
+        main: photos[0] || '',
+        thumb1: photos[1] || '',
+        thumb2: photos[2] || '',
         extraCount: photos.length > 3 ? `+${photos.length - 3}` : ''
       }
     };
@@ -363,12 +394,17 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         </div>
       </div>
 
-      {/* Collage Images: Large left + 2 stacked right — CLICKABLE GALLERY */}
-      <div className="grid grid-cols-3 gap-2 sm:gap-2.5 rounded-2xl overflow-hidden h-64 sm:h-80 lg:h-96 my-2 shadow-sm">
+      {/* Galerie photo adaptée fidèlement aux photos réellement ajoutées */}
+      {item.images.all.length === 0 ? (
+        <div className="rounded-2xl bg-slate-100 border border-slate-200 h-44 sm:h-56 flex flex-col items-center justify-center gap-2 text-slate-400 my-2">
+          <Building2 className="w-9 h-9 text-slate-300" />
+          <span className="text-xs font-bold text-slate-500">Logement certifié • Aucune photo importée</span>
+        </div>
+      ) : item.images.all.length === 1 ? (
         <div
-          className="col-span-2 h-full relative group cursor-pointer overflow-hidden"
+          className="rounded-2xl overflow-hidden h-64 sm:h-80 lg:h-96 my-2 shadow-sm relative group cursor-pointer bg-slate-900"
           onClick={() => openGallery(item, 0)}
-          title="Voir la galerie complète"
+          title="Agrandir la photo"
         >
           <img
             src={item.images.main}
@@ -376,40 +412,84 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-black bg-black/50 px-3 py-1.5 rounded-full backdrop-blur-sm">
-              Voir la galerie
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-black bg-black/60 px-3.5 py-1.5 rounded-full backdrop-blur-sm">
+              Voir la photo réelle
             </span>
           </div>
         </div>
-        <div className="col-span-1 grid grid-rows-2 gap-2 h-full">
+      ) : item.images.all.length === 2 ? (
+        <div className="grid grid-cols-2 gap-2 rounded-2xl overflow-hidden h-64 sm:h-80 lg:h-96 my-2 shadow-sm">
           <div
-            className="relative group cursor-pointer overflow-hidden rounded-r-none"
+            className="h-full relative group cursor-pointer overflow-hidden bg-slate-900"
+            onClick={() => openGallery(item, 0)}
+          >
+            <img
+              src={item.images.main}
+              alt={item.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            />
+          </div>
+          <div
+            className="h-full relative group cursor-pointer overflow-hidden bg-slate-900"
             onClick={() => openGallery(item, 1)}
           >
             <img
               src={item.images.thumb1}
-              alt="Vue pièce"
+              alt="Photo 2"
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
           </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 sm:gap-2.5 rounded-2xl overflow-hidden h-64 sm:h-80 lg:h-96 my-2 shadow-sm">
           <div
-            className="relative group cursor-pointer overflow-hidden"
-            onClick={() => openGallery(item, 2)}
+            className="col-span-2 h-full relative group cursor-pointer overflow-hidden bg-slate-900"
+            onClick={() => openGallery(item, 0)}
+            title="Voir la galerie complète"
           >
             <img
-              src={item.images.thumb2}
-              alt="Vue intérieure"
+              src={item.images.main}
+              alt={item.title}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
-            <div className="absolute inset-0 bg-black/45 flex items-center justify-center backdrop-blur-[1px] hover:bg-black/35 transition-colors">
-              <span className="text-white font-extrabold text-base sm:text-lg">
-                {item.images.extraCount}
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-white text-xs font-black bg-black/50 px-3 py-1.5 rounded-full backdrop-blur-sm">
+                Voir la galerie
               </span>
             </div>
           </div>
+          <div className="col-span-1 grid grid-rows-2 gap-2 h-full">
+            <div
+              className="relative group cursor-pointer overflow-hidden rounded-r-none bg-slate-900"
+              onClick={() => openGallery(item, 1)}
+            >
+              <img
+                src={item.images.thumb1}
+                alt="Vue pièce"
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+              />
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+            </div>
+            <div
+              className="relative group cursor-pointer overflow-hidden bg-slate-900"
+              onClick={() => openGallery(item, 2)}
+            >
+              <img
+                src={item.images.thumb2}
+                alt="Vue intérieure"
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+              />
+              {item.images.extraCount ? (
+                <div className="absolute inset-0 bg-black/45 flex items-center justify-center backdrop-blur-[1px] hover:bg-black/35 transition-colors">
+                  <span className="text-white font-extrabold text-base sm:text-lg">
+                    {item.images.extraCount}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Post Title & Description */}
       <div className="flex flex-col gap-1">

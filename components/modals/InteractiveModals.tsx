@@ -38,6 +38,45 @@ import { createProperty } from '@/lib/supabase/services';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+// Helper pour compresser les vraies photos de l'utilisateur sans aucune perte de sujet
+const compressImageToDataUrl = (file: File, maxWidth = 1280, maxHeight = 1280, quality = 0.82): Promise<string> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const src = e.target?.result as string;
+      if (!src) return resolve('');
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth || height > maxHeight) {
+          if (width > height) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          } else {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(src);
+        }
+      };
+      img.onerror = () => resolve(src);
+      img.src = src;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+};
+
 // 1. Ajouter un bien Modal
 export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const { profile } = useAuth();
@@ -61,7 +100,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   // Saisie fluide des montants (suppression du bug du zéro bloquant et auto-calcul caution Art. 414)
   const [rent, setRent] = useState<string>('250000');
   const [caution, setCaution] = useState<string>('500000');
-  const [surface, setSurface] = useState<string>('75');
+  const [surface, setSurface] = useState<string>('');
+  const [rooms, setRooms] = useState<string>('');
+  const [bedrooms, setBedrooms] = useState<string>('');
+  const [bathrooms, setBathrooms] = useState<string>('');
 
   const handleRentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let raw = e.target.value.replace(/\D/g, '');
@@ -101,7 +143,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   };
 
   const [description, setDescription] = useState<string>('');
-  const [photosUrl, setPhotosUrl] = useState<string>('https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80');
+  const [photosUrl, setPhotosUrl] = useState<string>('');
   const [photosCount, setPhotosCount] = useState<number>(3);
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -144,25 +186,26 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
 
   if (!isOpen) return null;
 
-  const handlePhotoFilesSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoFilesSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const files = Array.from(e.target.files);
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (reader.result) {
+    for (const file of files) {
+      try {
+        const compressedDataUrl = await compressImageToDataUrl(file);
+        if (compressedDataUrl) {
           setPhotoFiles((prev) => [
             ...prev,
             {
               id: 'p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-              url: reader.result as string,
+              url: compressedDataUrl,
               name: file.name
             }
           ]);
         }
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch (err) {
+        console.warn('Erreur compression image:', err);
+      }
+    }
     e.target.value = '';
   };
 
@@ -170,7 +213,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
     setPhotoFiles((prev) => prev.filter((p) => p.id !== id));
   };
 
-  // Traitement instantané des vidéos locales : utilise un Blob URL pour zéro surcharge mémoire et zéro blocage
+  // Traitement des vidéos locales : utilise un Blob URL pour la prévisualisation
   const handleVideoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
@@ -216,12 +259,6 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       return;
     }
 
-    const hasVideo = Boolean(videoFile?.url || videoUrl.trim());
-    if (!hasVideo) {
-      setErrorMsg('⚠️ Une vidéo réelle du logement est obligatoire (sélectionnez un fichier vidéo depuis votre appareil).');
-      return;
-    }
-
     if (isAgency && (selectedMandantId === 'new' || mandantsList.length === 0) && !customMandantName.trim()) {
       setErrorMsg('⚠️ Veuillez préciser le nom complet du propriétaire mandant pour ce bien.');
       return;
@@ -237,7 +274,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       const finalTitle = title.trim() || `${finalType.charAt(0).toUpperCase() + finalType.slice(1)} de standing - ${finalCommune}`;
       const numericRent = Number(rent) || 250000;
       const numericCaution = Number(caution) || (numericRent * 2);
-      const numericSurface = Number(surface) || 75;
+      const numericSurface = surface.trim() ? Number(surface) : null;
+      const numericRooms = rooms.trim() ? Number(rooms) : null;
+      const numericBedrooms = bedrooms.trim() ? Number(bedrooms) : null;
+      const numericBathrooms = bathrooms.trim() ? Number(bathrooms) : null;
 
       // Rapprochement du Mandant pour les Agences Immobilières
       let finalMandantName: string | undefined = undefined;
@@ -260,19 +300,13 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         }
       }
 
-      // Safe video URL : n'injecte jamais de chaîne base64 lourde de 30 Mo
-      let safeVideoUrl = videoUrl.trim() || 'https://assets.mixkit.co/videos/preview/mixkit-modern-apartment-interior-living-room-41483-large.mp4';
-      if (videoFile?.url && !videoFile.url.startsWith('data:video/')) {
-        safeVideoUrl = videoFile.url;
+      // Vidéo optionnelle (n'injecte AUCUNE vidéo de stock Mixkit artificielle)
+      const finalVideos: string[] = [];
+      if (videoUrl.trim() && !videoUrl.startsWith('blob:')) {
+        finalVideos.push(videoUrl.trim());
+      } else if (videoFile?.url && !videoFile.url.startsWith('blob:')) {
+        finalVideos.push(videoFile.url);
       }
-
-      // Safe photos : remplace les photos base64 trop volumineuses (>300ko) pour ne pas saturer le quota du navigateur
-      const safePhotos = finalPhotos.map((ph) => {
-        if (ph.startsWith('data:image/') && ph.length > 300000) {
-          return 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1000&q=80';
-        }
-        return ph;
-      });
 
       const newPropPayload = {
         title: finalTitle,
@@ -285,12 +319,15 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         commune: finalCommune,
         quartier: quartier.trim() || 'Centre',
         surface: numericSurface,
+        rooms: numericRooms,
+        bedrooms: numericBedrooms,
+        bathrooms: numericBathrooms,
         rent: numericRent,
         caution: numericCaution,
         description: description.trim(),
         status: 'disponible',
-        photos: safePhotos,
-        videos: [safeVideoUrl],
+        photos: finalPhotos,
+        videos: finalVideos,
         mandant_id: finalMandantId,
         mandant_name: finalMandantName
       };
@@ -321,6 +358,10 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
           created_at: new Date().toISOString(),
           location: { city: finalCity, commune: finalCommune, quartier: quartier.trim() || 'Centre' },
           pricing: { monthly_rent: numericRent, deposit_months: Math.round(numericCaution / numericRent) || 2 },
+          surface: numericSurface,
+          rooms: numericRooms,
+          bedrooms: numericBedrooms,
+          bathrooms: numericBathrooms,
           usage_destination: usageDestination === 'habitation' ? 'habitation' : 'professionnel',
           authorized_activity: usageDestination === 'habitation' ? undefined : authorizedActivity.trim(),
           owner_destination_authorized: ownerAuthorized,
@@ -329,16 +370,11 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         };
         list.unshift(propToSave);
 
-        // Sauvegarde avec protection de quota localStorage
         try {
           localStorage.setItem('locatrust_properties', JSON.stringify(list));
         } catch (quotaErr) {
           console.warn('Nettoyage cache pour quota localStorage:', quotaErr);
-          const safeList = list.slice(0, 20).map((p) => ({
-            ...p,
-            photos: Array.isArray(p.photos) ? p.photos.filter((ph: string) => ph.length < 50000) : [],
-            videos: Array.isArray(p.videos) ? p.videos.filter((v: string) => !v.startsWith('data:video/')) : []
-          }));
+          const safeList = list.slice(0, 25);
           try {
             localStorage.setItem('locatrust_properties', JSON.stringify(safeList));
           } catch {}
@@ -743,6 +779,64 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               </div>
             </div>
 
+            {/* CARACTÉRISTIQUES RÉELLES DU LOGEMENT (Strict respect de ce qui est saisi) */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2.5">
+              <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                <span>Caractéristiques réelles (Ne remplissez que ce qui s'applique)</span>
+              </span>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Surface (m²)</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={surface}
+                    onChange={handleSurfaceChange}
+                    placeholder="ex: 75"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Nombre de pièces</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={rooms}
+                    onChange={(e) => setRooms(e.target.value.replace(/\D/g, ''))}
+                    placeholder="ex: 3"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Chambres</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={bedrooms}
+                    onChange={(e) => setBedrooms(e.target.value.replace(/\D/g, ''))}
+                    placeholder="ex: 2"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Salles d'eau / SDB</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={bathrooms}
+                    onChange={(e) => setBathrooms(e.target.value.replace(/\D/g, ''))}
+                    placeholder="ex: 1"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-500 italic">
+                Laisser vide les champs non pertinents (magasin, bureau, studio, terrain, etc.). Seules les caractéristiques réelles saisies s'afficheront sur le fil locataire.
+              </p>
+            </div>
+
             {/* SECTION 1: PHOTOS RÉELLES DU LOGEMENT (Explorateur de fichiers local) */}
             <div className="p-4 rounded-2xl bg-blue-50/60 border border-blue-200 flex flex-col gap-3">
               <div className="flex items-center justify-between">
@@ -817,17 +911,17 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               )}
             </div>
 
-            {/* SECTION 2: VIDÉO OBLIGATOIRE DU LOGEMENT (Explorateur de fichiers local) */}
+            {/* SECTION 2: VIDÉO DU LOGEMENT (Optionnelle) */}
             <div className="p-4 rounded-2xl bg-purple-50/60 border border-purple-200 flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Film className="w-4 h-4 text-purple-700" />
-                  <span className="text-xs font-black text-purple-950">Vidéo de Visite Réelle du Logement *</span>
+                  <span className="text-xs font-black text-purple-950">Vidéo de Visite Virtuelle (Optionnelle)</span>
                 </div>
                 <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${
-                  videoFile ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-200'
+                  videoFile ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-100 text-slate-700 border-slate-200'
                 }`}>
-                  {videoFile ? '✔ Fichier vidéo prêt' : 'Vidéo obligatoire'}
+                  {videoFile ? '✔ Fichier vidéo prêt' : 'Optionnelle'}
                 </span>
               </div>
 

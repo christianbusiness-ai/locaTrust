@@ -37,12 +37,28 @@ export default async function handler(request) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const amount = Number(body.amount) || 500;
-    const customerEmail = body.customer_email || 'contact@locatrust.ci';
-    const customerName = body.customer_name || 'Bailleur LocaTrust';
-    const customerPhone = body.customer_phone || '+2250700000000';
-    const description = body.description || 'Abonnement SaaS LocaTrust';
-    const returnUrl = body.return_url || '';
+    const amount = Number(body.amount);
+
+    // Validation stricte des montants des forfaits LocaTrust (500, 2 000, 5 000, 10 000 FCFA)
+    const validTiers = [500, 2000, 5000, 10000];
+    if (!validTiers.includes(amount)) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Montant d’abonnement non autorisé. Paliers valides : 500, 2 000, 5 000 ou 10 000 FCFA.',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    const customerEmail = (body.customer_email || 'contact@locatrust.ci').toString().trim();
+    const customerName = (body.customer_name || 'Bailleur LocaTrust').toString().trim();
+    const customerPhone = (body.customer_phone || '+2250700000000').toString().trim();
+    const description = (body.description || 'Abonnement SaaS LocaTrust').toString().trim();
+    const returnUrl = (body.return_url || '').toString().trim();
 
     // 3. Appel de l'API officielle SasPay
     const saspayResponse = await fetch('https://api.saspay.me/api/v1/checkout-sessions/', {

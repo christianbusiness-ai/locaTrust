@@ -88,31 +88,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
-    // 1. Initialisation de la session au démarrage
-    supabase.auth.getSession().then(async ({ data: { session: initialSession } }) => {
+    // 1. Initialisation sécurisée vérifiée auprès du serveur Supabase
+    supabase.auth.getUser().then(async ({ data: { user: verifiedUser }, error }) => {
       if (!mounted) return;
-      setSession(initialSession);
-      setUser(initialSession?.user ?? null);
-
-      if (initialSession?.user) {
-        let p = await fetchProfile(initialSession.user.id);
-        if (!p) {
-          const meta = initialSession.user.user_metadata || {};
-          const fullName = meta.full_name || meta.name || initialSession.user.email?.split('@')[0] || 'Utilisateur';
-          const avatarUrl = meta.avatar_url || meta.picture || '';
-          await supabase.from('profiles').insert({
-            id: initialSession.user.id,
-            full_name: fullName,
-            phone: '',
-            account_type: 'locataire',
-            role: 'user',
-            avatar_url: avatarUrl,
-            verification_status: 'non_verifie',
-          });
-          p = await fetchProfile(initialSession.user.id);
-        }
-        if (mounted) setProfile(p);
+      if (error || !verifiedUser) {
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        setLoading(false);
+        return;
       }
+
+      const { data: { session: initialSession } } = await supabase.auth.getSession();
+      setSession(initialSession);
+      setUser(verifiedUser);
+
+      let p = await fetchProfile(verifiedUser.id);
+      if (!p) {
+        const meta = verifiedUser.user_metadata || {};
+        const fullName = meta.full_name || meta.name || verifiedUser.email?.split('@')[0] || 'Utilisateur';
+        const avatarUrl = meta.avatar_url || meta.picture || '';
+        await supabase.from('profiles').insert({
+          id: verifiedUser.id,
+          full_name: fullName,
+          phone: '',
+          account_type: 'locataire',
+          role: 'user',
+          avatar_url: avatarUrl,
+          verification_status: 'non_verifie',
+        });
+        p = await fetchProfile(verifiedUser.id);
+      }
+      if (mounted) {
+        setProfile(p);
+        setLoading(false);
+      }
+    }).catch(() => {
       if (mounted) setLoading(false);
     });
 

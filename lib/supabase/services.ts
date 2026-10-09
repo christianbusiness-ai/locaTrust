@@ -15,9 +15,12 @@ export async function signUpUser(params: {
   cni_number?: string;
 }) {
   try {
+    if (!params.password || params.password.length < 6) {
+      return { data: null, error: new Error('Le mot de passe doit comporter au moins 6 caractères.') };
+    }
     const { data, error } = await supabase.auth.signUp({
       email: params.email.trim(),
-      password: params.password || 'LocaTrust2026!',
+      password: params.password,
       options: {
         data: {
           full_name: params.full_name.trim(),
@@ -232,9 +235,12 @@ export async function resend2FAChallenge(userId: string): Promise<{
 }
 
 export async function signInUser(email: string, password?: string) {
+  if (!password) {
+    return { data: null, error: new Error('Le mot de passe est obligatoire pour se connecter.') };
+  }
   const { data, error } = await supabase.auth.signInWithPassword({
-    email,
-    password: password || 'LocaTrust2026!',
+    email: email.trim(),
+    password: password,
   });
   return { data, error };
 }
@@ -316,6 +322,11 @@ export async function createProperty(property: any) {
       }
     }
 
+    const hasSurface = property.surface !== undefined && property.surface !== null && property.surface !== '';
+    const hasRooms = property.rooms !== undefined && property.rooms !== null && property.rooms !== '';
+    const hasBedrooms = property.bedrooms !== undefined && property.bedrooms !== null && property.bedrooms !== '';
+    const hasBathrooms = property.bathrooms !== undefined && property.bathrooms !== null && property.bathrooms !== '';
+
     const payload = {
       owner_id: ownerId,
       type: property.type || 'appartement',
@@ -325,16 +336,16 @@ export async function createProperty(property: any) {
       city: property.city || 'Abidjan',
       commune: property.commune || 'Cocody',
       quartier: property.quartier || 'Centre',
-      surface: Number(property.surface) || 50,
+      surface: hasSurface ? Number(property.surface) : null,
       rent: Number(property.rent || property.pricing?.monthly_rent) || 150000,
       caution: Number(property.caution || (property.pricing?.deposit_months ? property.pricing.deposit_months * 150000 : 300000)) || 300000,
       charges: Number(property.charges) || 0,
-      rooms: Number(property.rooms) || 2,
-      bedrooms: Number(property.bedrooms) || 1,
-      bathrooms: Number(property.bathrooms) || 1,
+      rooms: hasRooms ? Number(property.rooms) : null,
+      bedrooms: hasBedrooms ? Number(property.bedrooms) : null,
+      bathrooms: hasBathrooms ? Number(property.bathrooms) : null,
       status: property.status || 'disponible',
-      photos: property.photos || [],
-      videos: property.videos || (property.video_url ? [property.video_url] : [])
+      photos: Array.isArray(property.photos) ? property.photos : [],
+      videos: Array.isArray(property.videos) ? property.videos : (property.video_url ? [property.video_url] : [])
     };
 
     const { data, error } = await supabase

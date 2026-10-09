@@ -117,35 +117,32 @@ export const FeedPropertyCard: React.FC<FeedPropertyCardProps> = ({
         </p>
       </div>
 
-      {/* 4. Specifications Pills (Matching icon pills in image) */}
+      {/* 4. Specifications Pills (Strictement fidèles aux données saisies) */}
       <div className="flex flex-wrap items-center gap-2 py-1">
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-          <Bed className="w-3.5 h-3.5 text-brand-600" />
-          <span>{property.bedrooms} Chambres</span>
-        </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-          <Sofa className="w-3.5 h-3.5 text-brand-600" />
-          <span>{property.rooms - property.bedrooms > 0 ? property.rooms - property.bedrooms : 1} Salons</span>
-        </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-          <Bath className="w-3.5 h-3.5 text-brand-600" />
-          <span>{property.bathrooms} Salles de bain</span>
-        </div>
-        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-          <Maximize2 className="w-3.5 h-3.5 text-brand-600" />
-          <span>{property.surface} m²</span>
-        </div>
-        {property.type === 'maison' ? (
+        {property.bedrooms && Number(property.bedrooms) > 0 ? (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-            <Car className="w-3.5 h-3.5 text-brand-600" />
-            <span>Garage</span>
+            <Bed className="w-3.5 h-3.5 text-brand-600" />
+            <span>{property.bedrooms} Chambre{Number(property.bedrooms) > 1 ? 's' : ''}</span>
           </div>
-        ) : (
+        ) : null}
+        {property.rooms && Number(property.rooms) > 0 ? (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-            <Building className="w-3.5 h-3.5 text-brand-600" />
-            <span>2e étage</span>
+            <Sofa className="w-3.5 h-3.5 text-brand-600" />
+            <span>{property.rooms} Pièce{Number(property.rooms) > 1 ? 's' : ''}</span>
           </div>
-        )}
+        ) : null}
+        {property.bathrooms && Number(property.bathrooms) > 0 ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
+            <Bath className="w-3.5 h-3.5 text-brand-600" />
+            <span>{property.bathrooms} Salle{Number(property.bathrooms) > 1 ? 's' : ''} d'eau</span>
+          </div>
+        ) : null}
+        {property.surface && Number(property.surface) > 0 ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
+            <Maximize2 className="w-3.5 h-3.5 text-brand-600" />
+            <span>{property.surface} m²</span>
+          </div>
+        ) : null}
       </div>
 
       {/* 5. Price & Location */}

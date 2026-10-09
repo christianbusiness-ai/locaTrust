@@ -97,7 +97,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
     phone: '+225 27 20 00 00 00',
     password: '',
     confirmPassword: '',
-    masterToken: 'LOCATRUST_MASTER_ADMIN_2026_CI'
+    masterToken: ''
   });
 
   // Errors & Feedback

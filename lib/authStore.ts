@@ -54,12 +54,12 @@ export function registerSingleAdmin(data: {
     };
   }
 
-  // Token de sécurité Master (configurable via .env.local)
-  const masterToken = import.meta.env?.VITE_ADMIN_SETUP_TOKEN || 'LOCATRUST_MASTER_ADMIN_2026_CI';
-  if (data.token && data.token.trim() !== masterToken.trim()) {
+  // Token de sécurité Master (doit être configuré via la variable d'environnement VITE_ADMIN_SETUP_TOKEN)
+  const masterToken = import.meta.env?.VITE_ADMIN_SETUP_TOKEN;
+  if (!masterToken || !data.token || data.token.trim() !== masterToken.trim()) {
     return {
       success: false,
-      error: 'Le code de sécurité d\'initialisation Super Admin est incorrect. Consultez le fichier .env.local.'
+      error: 'Le code de sécurité d\'initialisation Super Admin est incorrect ou non configuré dans l\'environnement.'
     };
   }
 
