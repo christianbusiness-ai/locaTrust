@@ -48,24 +48,14 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   // Feed search & filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearch, setActiveSearch] = useState('');
-  const [cityFilter, setCityFilter] = useState('Toutes les villes');
-  const [districtFilter, setDistrictFilter] = useState('Tous les quartiers');
-  const [typeFilter, setTypeFilter] = useState('Tous les types');
-  const [budgetFilter, setBudgetFilter] = useState('Tous les budgets');
+  const [cityFilter, setCityFilter] = useState('');
+  const [districtFilter, setDistrictFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [budgetFilter, setBudgetFilter] = useState('');
   const [roomsFilter, setRoomsFilter] = useState('Toutes');
 
-  const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({
-    feed_1: false,
-    feed_2: true,
-    feed_3: false,
-    feed_4: true
-  });
-  const [likeCounts, setLikeCounts] = useState<Record<string, number>>({
-    feed_1: 24,
-    feed_2: 18,
-    feed_3: 31,
-    feed_4: 15
-  });
+  const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({});
+  const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
 
   // Gallery Modal State
   const [galleryModal, setGalleryModal] = useState<{
@@ -207,6 +197,43 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     };
   });
 
+  // Options dynamiques calculées en direct depuis les données réelles de la base Supabase
+  const availableCities = React.useMemo(() => {
+    const set = new Set<string>();
+    properties.forEach((p) => {
+      const c = p.city || p.location?.city;
+      if (c && typeof c === 'string' && c.trim()) set.add(c.trim());
+    });
+    return Array.from(set).sort();
+  }, [properties]);
+
+  const availableDistricts = React.useMemo(() => {
+    const set = new Set<string>();
+    properties.forEach((p) => {
+      const d = p.commune || p.quartier || p.location?.commune || p.location?.quartier;
+      if (d && typeof d === 'string' && d.trim()) set.add(d.trim());
+    });
+    return Array.from(set).sort();
+  }, [properties]);
+
+  const availableTypes = React.useMemo(() => {
+    const set = new Set<string>();
+    properties.forEach((p) => {
+      if (p.type && typeof p.type === 'string' && p.type.trim()) {
+        const cap = p.type.charAt(0).toUpperCase() + p.type.slice(1);
+        set.add(cap);
+      }
+    });
+    return Array.from(set).sort();
+  }, [properties]);
+
+  const realBudgets = React.useMemo(() => {
+    const rents = properties
+      .map((p) => Number(p.rent || p.pricing?.monthly_rent || 0))
+      .filter((r) => r > 0);
+    return Array.from(new Set(rents)).sort((a, b) => a - b);
+  }, [properties]);
+
   const handleExecuteSearch = () => {
     setActiveSearch(searchQuery.trim());
   };
@@ -214,18 +241,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   const handleResetAll = () => {
     setSearchQuery('');
     setActiveSearch('');
-    setCityFilter('Toutes les villes');
-    setDistrictFilter('Tous les quartiers');
-    setTypeFilter('Tous les types');
-    setBudgetFilter('Tous les budgets');
+    setCityFilter('');
+    setDistrictFilter('');
+    setTypeFilter('');
+    setBudgetFilter('');
     setRoomsFilter('Toutes');
   };
 
-  // Filtrage précis selon la saisie et les filtres sélectionnés
+  // Filtrage précis selon la saisie manuelle ou la sélection
   const filteredFeedItems = ALL_FEED_ITEMS.filter((item) => {
-    // 1. Recherche textuelle (titre, description, commune, quartier, ville, type)
+    // 1. Recherche textuelle libre
     if (activeSearch) {
-      const q = activeSearch.toLowerCase();
+      const q = activeSearch.toLowerCase().trim();
       const matchText =
         item.title.toLowerCase().includes(q) ||
         item.description.toLowerCase().includes(q) ||
@@ -236,47 +263,45 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       if (!matchText) return false;
     }
 
-    // 2. Filtre Ville
-    if (cityFilter !== 'Toutes les villes' && !item.city.toLowerCase().includes(cityFilter.toLowerCase())) {
-      return false;
+    // 2. Filtre Ville (saisie manuelle ou sélection)
+    if (cityFilter && cityFilter !== 'Toutes les villes') {
+      const q = cityFilter.toLowerCase().trim();
+      if (!item.city.toLowerCase().includes(q)) return false;
     }
 
-    // 3. Filtre Quartier
-    if (
-      districtFilter !== 'Tous les quartiers' &&
-      !item.district.toLowerCase().includes(districtFilter.toLowerCase()) &&
-      !item.location.toLowerCase().includes(districtFilter.toLowerCase())
-    ) {
-      return false;
+    // 3. Filtre Quartier (saisie manuelle ou sélection)
+    if (districtFilter && districtFilter !== 'Tous les quartiers') {
+      const q = districtFilter.toLowerCase().trim();
+      const matchDistrict =
+        item.district.toLowerCase().includes(q) ||
+        item.location.toLowerCase().includes(q);
+      if (!matchDistrict) return false;
     }
 
-    // 4. Filtre Type de bien
-    if (typeFilter !== 'Tous les types' && !item.type.toLowerCase().includes(typeFilter.toLowerCase())) {
-      return false;
+    // 4. Filtre Type de bien (saisie manuelle ou sélection)
+    if (typeFilter && typeFilter !== 'Tous les types') {
+      const q = typeFilter.toLowerCase().trim();
+      if (!item.type.toLowerCase().includes(q)) return false;
     }
 
-    // 5. Filtre Budget
-    if (budgetFilter !== 'Tous les budgets') {
-      if (budgetFilter === '≤ 200 000 FCFA' && item.price > 200000) return false;
-      if (budgetFilter === '≤ 500 000 FCFA' && item.price > 500000) return false;
-      if (budgetFilter === '≤ 1 000 000 FCFA' && item.price > 1000000) return false;
-      if (budgetFilter === '> 1 000 000 FCFA' && item.price <= 1000000) return false;
+    // 5. Filtre Budget (saisie manuelle du montant max ou sélection)
+    if (budgetFilter && budgetFilter !== 'Tous les budgets') {
+      const cleanNum = Number(budgetFilter.replace(/\D/g, ''));
+      if (cleanNum > 0 && item.price > cleanNum) {
+        return false;
+      }
     }
 
     return true;
   });
 
-  // Propositions similaires affichées lorsqu'aucun résultat direct n'est trouvé
+  // Propositions similaires lorsqu'aucun résultat exact n'est trouvé
   const similarPropositions = ALL_FEED_ITEMS.filter((item) => {
-    // Proposer des biens alternatifs certifiés
-    if (cityFilter !== 'Toutes les villes' && item.city.toLowerCase().includes(cityFilter.toLowerCase())) {
-      return true;
-    }
-    if (typeFilter !== 'Tous les types' && item.type.toLowerCase().includes(typeFilter.toLowerCase())) {
+    if (cityFilter && item.city.toLowerCase().includes(cityFilter.toLowerCase().trim())) {
       return true;
     }
     return true;
-  }).slice(0, 3);
+  }).slice(0, 4);
 
   // Annonces favorites réelles basées sur les likes de l'utilisateur
   const favoriteAnnouncements = ALL_FEED_ITEMS.filter((item) => likedPosts[item.id]).map((fav) => ({
@@ -519,75 +544,88 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             </button>
           </div>
 
-          {/* Filtres intégrés sur la même barre */}
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
-            {/* Ville */}
-            <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors">
+          {/* Filtres intégrés sur la même barre : Saisie manuelle OU Choix déroulant */}
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+            {/* Ville : Saisie manuelle OU Flèche déroulante */}
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors flex-1 min-w-[130px]">
               <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-              <select
+              <input
+                list="feed-cities-datalist"
+                type="text"
                 value={cityFilter}
                 onChange={(e) => setCityFilter(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer"
-              >
-                <option>Toutes les villes</option>
-                <option>Abidjan</option>
-                <option>Yamoussoukro</option>
-                <option>Bouaké</option>
-                <option>San-Pédro</option>
-              </select>
+                placeholder="Toutes les villes"
+                className="bg-transparent text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none w-full cursor-pointer"
+              />
+              <datalist id="feed-cities-datalist">
+                <option value="Toutes les villes" />
+                {availableCities.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
             </div>
 
-            {/* Quartier */}
-            <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors">
+            {/* Quartier / Commune : Saisie manuelle OU Flèche déroulante */}
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors flex-1 min-w-[150px]">
               <Building className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <select
+              <input
+                list="feed-districts-datalist"
+                type="text"
                 value={districtFilter}
                 onChange={(e) => setDistrictFilter(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer"
-              >
-                <option>Tous les quartiers</option>
-                <option>Cocody Riviera</option>
-                <option>Angré 8e tranche</option>
-                <option>Marcory Zone 4</option>
-                <option>Quartier Millionnaire</option>
-                <option>Riviera M'Badon</option>
-              </select>
+                placeholder="Tous les quartiers"
+                className="bg-transparent text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none w-full cursor-pointer"
+              />
+              <datalist id="feed-districts-datalist">
+                <option value="Tous les quartiers" />
+                {availableDistricts.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
             </div>
 
-            {/* Type */}
-            <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors">
+            {/* Type : Saisie manuelle OU Flèche déroulante */}
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors flex-1 min-w-[130px]">
               <Sofa className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-              <select
+              <input
+                list="feed-types-datalist"
+                type="text"
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer"
-              >
-                <option>Tous les types</option>
-                <option>Appartement</option>
-                <option>Villa duplex</option>
-                <option>Studio meublé</option>
-                <option>Bureau professionnel</option>
-              </select>
+                placeholder="Tous les types"
+                className="bg-transparent text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none w-full cursor-pointer"
+              />
+              <datalist id="feed-types-datalist">
+                <option value="Tous les types" />
+                {availableTypes.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
             </div>
 
-            {/* Budget */}
-            <div className="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors">
-              <span className="text-amber-600 font-bold text-xs">CFA</span>
-              <select
+            {/* Budget : Saisie manuelle directe du montant OU Choix des loyers réels */}
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:border-slate-300 transition-colors flex-1 min-w-[150px]">
+              <span className="text-amber-600 font-extrabold text-xs shrink-0">CFA</span>
+              <input
+                list="feed-budgets-datalist"
+                type="text"
                 value={budgetFilter}
                 onChange={(e) => setBudgetFilter(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer"
-              >
-                <option>Tous les budgets</option>
-                <option>≤ 200 000 FCFA</option>
-                <option>≤ 500 000 FCFA</option>
-                <option>≤ 1 000 000 FCFA</option>
-                <option>&gt; 1 000 000 FCFA</option>
-              </select>
+                placeholder="Budget max (FCFA)"
+                className="bg-transparent text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none w-full cursor-pointer"
+              />
+              <datalist id="feed-budgets-datalist">
+                <option value="Tous les budgets" />
+                {realBudgets.map((b) => (
+                  <option key={b} value={String(b)}>
+                    {`Loyer réel : ${formatFCFA(b)}`}
+                  </option>
+                ))}
+              </datalist>
             </div>
 
-            {/* Reset */}
-            {(searchQuery || activeSearch || cityFilter !== 'Toutes les villes' || districtFilter !== 'Tous les quartiers' || typeFilter !== 'Tous les types' || budgetFilter !== 'Tous les budgets') && (
+            {/* Bouton Réinitialiser */}
+            {(searchQuery || activeSearch || cityFilter || districtFilter || typeFilter || budgetFilter) && (
               <button
                 type="button"
                 onClick={handleResetAll}
@@ -677,7 +715,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         ) : (
           <div className="flex flex-col gap-6">
             {/* Résumé du nombre de résultats si recherche active */}
-            {(activeSearch || cityFilter !== 'Toutes les villes' || districtFilter !== 'Tous les quartiers' || typeFilter !== 'Tous les types' || budgetFilter !== 'Tous les budgets') && (
+            {(activeSearch || cityFilter || districtFilter || typeFilter || budgetFilter) && (
               <div className="flex items-center justify-between text-xs font-bold text-slate-500 px-1">
                 <span>{filteredFeedItems.length} logement(s) trouvé(s)</span>
                 <button

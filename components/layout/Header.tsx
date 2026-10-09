@@ -369,37 +369,15 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-5 h-5 sm:w-6 sm:h-6" />
         </button>
 
-        {/* Left Section: LocaTrust Logo & Global Search Bar */}
-        <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0 max-w-2xl">
+        {/* Left Section: LocaTrust Logo */}
+        <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
           <div className="shrink-0 flex items-center">
             <Logo size="sm" variant={isDarkMode ? 'dark' : 'light'} showSubtitle={false} />
-          </div>
-
-          {/* Global Search Bar (visible on md+) */}
-          <div className="relative flex-1 hidden md:block max-w-xl">
-            <input
-              type="text"
-              placeholder="Rechercher locataire, bien, contrat, référence..."
-              onChange={(e) => onSearch?.(e.target.value)}
-              className="w-full bg-slate-100/90 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full py-2 pl-9 pr-4 text-xs font-semibold text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:bg-white dark:focus:bg-slate-800 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20 transition-all shadow-inner"
-            />
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           </div>
         </div>
 
         {/* Right Section: Action Controls & User Profile Badge */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 lg:gap-3 shrink-0">
-          
-          {/* Mobile Search Toggle Button (visible on < md) */}
-          <button
-            type="button"
-            onClick={() => setIsMobileSearchOpen((prev) => !prev)}
-            aria-label="Rechercher"
-            className="md:hidden w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"
-            title="Rechercher"
-          >
-            <Search className="w-4 h-4" />
-          </button>
 
           {/* Bouton unique "Créer un compte" - affiché uniquement si demandé (ex: landing) */}
           {showCreateAccountBtn && (

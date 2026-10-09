@@ -22,7 +22,14 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
       const res = await signInWithGoogle();
       if (!res.success) {
         setLoading(false);
-        onError?.(res.error || 'Impossible de se connecter avec Google.');
+        const errLower = (res.error || '').toLowerCase();
+        if (errLower.includes('not enabled') || errLower.includes('unsupported provider')) {
+          onError?.(
+            "Le fournisseur Google n'est pas encore activé dans la console Supabase (Authentication > Providers > Google). Veuillez vous connecter avec votre adresse email et mot de passe."
+          );
+        } else {
+          onError?.(res.error || 'Impossible de se connecter avec Google.');
+        }
       }
     } catch (e: any) {
       setLoading(false);
