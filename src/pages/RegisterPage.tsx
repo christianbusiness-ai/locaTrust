@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
 import { Logo } from '@/components/common/Logo';
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { Lock, Mail, User, Phone, AlertCircle, Loader2, ArrowRight, ShieldCheck, Eye, EyeOff, Home, Building2, Briefcase, MapPin, Sparkles } from 'lucide-react';
 import { triggerCelebration } from '@/lib/celebration';
 
@@ -486,8 +487,25 @@ export const RegisterPage: React.FC = () => {
             </div>
           </form>
 
-          <div className="mt-5 text-center text-xs text-slate-500 border-t border-slate-100 pt-3.5">
+          {/* Séparateur élégant */}
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200"></div>
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="px-3 bg-white text-slate-400 font-semibold text-[11px] uppercase tracking-wider">
+                ou s'inscrire avec
+              </span>
+            </div>
+          </div>
 
+          {/* Bouton Inscription Google 1-clic */}
+          <GoogleAuthButton
+            label="Continuer avec Google"
+            onError={(err) => setError(err)}
+          />
+
+          <div className="mt-5 text-center text-xs text-slate-500 border-t border-slate-100 pt-3.5">
             Vous avez déjà un compte ?{' '}
             <Link to="/login" className="font-extrabold text-blue-600 hover:text-blue-800 hover:underline transition-colors">
               Se connecter

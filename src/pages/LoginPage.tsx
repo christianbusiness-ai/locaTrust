@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
 import { Logo } from '@/components/common/Logo';
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 import { Mail, Lock, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
@@ -178,6 +179,24 @@ export const LoginPage: React.FC = () => {
               </button>
             </div>
           </form>
+
+          {/* Séparateur élégant */}
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200"></div>
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="px-3 bg-white text-slate-400 font-semibold text-[11px] uppercase tracking-wider">
+                ou continuer avec
+              </span>
+            </div>
+          </div>
+
+          {/* Bouton Connexion Google 1-clic */}
+          <GoogleAuthButton
+            label="Continuer avec Google"
+            onError={(err) => setError(err)}
+          />
 
           <div className="mt-6 text-center text-xs text-slate-500 border-t border-slate-100 pt-4">
             Pas encore de compte ?{' '}

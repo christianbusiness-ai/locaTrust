@@ -34,6 +34,7 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string; emailNotConfirmed?: boolean }>;
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   signUp: (params: SignUpParams) => Promise<{ success: boolean; error?: string; emailConfirmationRequired?: boolean; email?: string }>;
   registerDirectly?: (params: SignUpParams) => Promise<{ success: boolean; error?: string }>;
   verifyOtp: (email: string, token: string) => Promise<{ success: boolean; error?: string }>;
@@ -89,7 +90,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(initialSession?.user ?? null);
 
       if (initialSession?.user) {
-        const p = await fetchProfile(initialSession.user.id);
+        let p = await fetchProfile(initialSession.user.id);
+        if (!p) {
+          const meta = initialSession.user.user_metadata || {};
+          const fullName = meta.full_name || meta.name || initialSession.user.email?.split('@')[0] || 'Utilisateur';
+          const avatarUrl = meta.avatar_url || meta.picture || '';
+          await supabase.from('profiles').insert({
+            id: initialSession.user.id,
+            full_name: fullName,
+            phone: '',
+            account_type: 'locataire',
+            role: 'user',
+            avatar_url: avatarUrl,
+            verification_status: 'non_verifie',
+          });
+          p = await fetchProfile(initialSession.user.id);
+        }
         if (mounted) setProfile(p);
       }
       if (mounted) setLoading(false);
@@ -102,7 +118,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(newSession?.user ?? null);
 
       if (newSession?.user) {
-        const p = await fetchProfile(newSession.user.id);
+        let p = await fetchProfile(newSession.user.id);
+        if (!p) {
+          const meta = newSession.user.user_metadata || {};
+          const fullName = meta.full_name || meta.name || newSession.user.email?.split('@')[0] || 'Utilisateur';
+          const avatarUrl = meta.avatar_url || meta.picture || '';
+          await supabase.from('profiles').insert({
+            id: newSession.user.id,
+            full_name: fullName,
+            phone: '',
+            account_type: 'locataire',
+            role: 'user',
+            avatar_url: avatarUrl,
+            verification_status: 'non_verifie',
+          });
+          p = await fetchProfile(newSession.user.id);
+        }
         if (mounted) setProfile(p);
       } else {
         if (mounted) setProfile(null);
@@ -348,6 +379,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const signInWithGoogle = async () => {
+    try {
+      const redirectTo = `${window.location.origin}/dashboard`;
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account',
+          },
+        },
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erreur lors de la connexion avec Google.' };
+    }
+  };
+
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -370,6 +423,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile,
         loading,
         signIn,
+        signInWithGoogle,
         signUp,
         registerDirectly,
         verifyOtp,
