@@ -200,6 +200,7 @@ export const AbonnementView: React.FC = () => {
   // Direct payment state & messaging
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string | null>(null);
+  const [paymentErrorMsg, setPaymentErrorMsg] = useState<string | null>(null);
 
 
   // Generate and download subscription invoice PDF using jsPDF
@@ -325,6 +326,7 @@ export const AbonnementView: React.FC = () => {
   const handleDirectSasPayPayment = async () => {
     setIsProcessingPayment(true);
     setPaymentSuccessMsg("Connexion à la passerelle de paiement sécurisée SasPay...");
+    setPaymentErrorMsg(null);
 
     try {
       const res = await SasPayService.createLiveCheckoutSession({
@@ -346,11 +348,13 @@ export const AbonnementView: React.FC = () => {
       throw new Error(res.error || "La passerelle SasPay n'a pas pu initier la session.");
     } catch (err: any) {
       console.warn("SasPay checkout live error:", err);
-      alert(`Passerelle SasPay : ${err?.message || 'Erreur lors de la redirection vers la page de paiement'}.`);
+      setPaymentSuccessMsg(null);
+      setPaymentErrorMsg(err?.message || "Erreur lors de la communication avec la passerelle SasPay.");
     } finally {
       setIsProcessingPayment(false);
     }
   };
+
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
@@ -400,6 +404,26 @@ export const AbonnementView: React.FC = () => {
           <span>{paymentSuccessMsg}</span>
         </div>
       )}
+
+      {paymentErrorMsg && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold flex items-start justify-between gap-3 shadow-sm animate-fadeIn">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-black text-rose-950 block">Notification Passerelle de Paiement :</span>
+              <span className="font-medium text-rose-800 leading-relaxed block mt-0.5">{paymentErrorMsg}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPaymentErrorMsg(null)}
+            className="text-rose-400 hover:text-rose-600 font-bold p-1 shrink-0 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
 
       {/* Loading state */}
       {loading && (

@@ -257,23 +257,43 @@ export class SasPayService {
         })
       });
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || `Erreur serveur (${res.status})`);
+      const resText = await res.text();
+      let json: any = {};
+      try {
+        json = JSON.parse(resText);
+      } catch {
+        json = { raw: resText };
       }
 
-      const json = await res.json();
-      if (json.success && json.data?.checkout_url) {
+      if (!res.ok) {
+        const errorMsg =
+          json.error ||
+          json.message ||
+          json.detail ||
+          (json.raw && json.raw.length < 250 ? json.raw : `Erreur serveur (${res.status})`);
+        throw new Error(errorMsg);
+      }
+
+      // SasPay supporte { data: { checkout_url } } ou directement { checkout_url }
+      const checkoutUrl =
+        json.data?.checkout_url ||
+        json.checkout_url ||
+        json.url ||
+        json.data?.url;
+
+      if (checkoutUrl) {
         return {
           success: true,
-          checkoutUrl: json.data.checkout_url,
-          slug: json.data.slug
+          checkoutUrl: checkoutUrl,
+          slug: json.data?.slug || json.slug
         };
       }
 
       return {
         success: false,
-        error: json.error ? (typeof json.error === 'string' ? json.error : JSON.stringify(json.error)) : 'Impossible d\'initialiser le paiement SasPay.'
+        error: json.error
+          ? (typeof json.error === 'string' ? json.error : JSON.stringify(json.error))
+          : 'Impossible d\'initialiser le paiement SasPay (URL de paiement non reçue).'
       };
     } catch (e: any) {
       console.error('Erreur createLiveCheckoutSession:', e);
