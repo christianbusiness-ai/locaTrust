@@ -980,13 +980,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <span
                     className={`px-3 py-1 rounded-full text-[11px] font-black ${
                       req.status === 'en_attente'
-                        ? 'bg-amber-100 text-amber-900'
+                        ? 'bg-amber-100 text-amber-900 border border-amber-200'
                         : req.status === 'verifie'
-                        ? 'bg-emerald-100 text-emerald-900'
-                        : 'bg-rose-100 text-rose-900'
+                        ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                        : req.status === 'refuse'
+                        ? 'bg-rose-100 text-rose-900 border border-rose-200'
+                        : 'bg-slate-100 text-slate-700 border border-slate-200'
                     }`}
                   >
-                    {req.status === 'en_attente' ? '⏳ En attente' : req.status === 'verifie' ? '✔ Vérifié & Certifié' : '❌ Rejeté'}
+                    {req.status === 'en_attente'
+                      ? '⏳ En attente'
+                      : req.status === 'verifie'
+                      ? '✔ Vérifié & Certifié'
+                      : req.status === 'refuse'
+                      ? '❌ Rejeté'
+                      : '⚪ Non soumis'}
                   </span>
 
                   {/* Bouton SMS direct demandé dans l'audio */}
@@ -1010,11 +1018,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     <span>Vérifier le dossier</span>
                   </button>
 
-                  {req.status === 'en_attente' && (
+                  {req.status !== 'verifie' && (
                     <button
                       type="button"
                       onClick={() => handleApproveDoc(req)}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1 shadow-sm transition-all"
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1 shadow-sm transition-all cursor-pointer active:scale-95"
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>Approuver</span>
@@ -1886,6 +1894,42 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
             {/* Management Actions */}
             <div className="flex flex-col gap-2 pt-2 border-t">
+              <button
+                type="button"
+                onClick={async () => {
+                  const newStatus = managedUser.verified ? 'non_verifie' : 'verifie';
+                  try {
+                    const { error } = await supabase.rpc('admin_verify_user_kyc', {
+                      target_user_id: managedUser.id,
+                      new_status: newStatus
+                    });
+                    if (error) {
+                      console.warn('RPC error, direct update fallback:', error);
+                      await supabase.from('profiles').update({
+                        verification_status: newStatus,
+                        updated_at: new Date().toISOString()
+                      }).eq('id', managedUser.id);
+                    }
+                    setUsersList(prev => prev.map(u => u.id === managedUser.id ? { ...u, verified: !managedUser.verified } : u));
+                    setManagedUser(prev => prev ? { ...prev, verified: !prev.verified } : null);
+                    showToast(newStatus === 'verifie' ? `✅ Compte ${managedUser.name} certifié KYC !` : `Statut KYC révoqué pour ${managedUser.name}.`);
+                    window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: { id: managedUser.id, status: newStatus } }));
+                    window.dispatchEvent(new CustomEvent('locatrust:verification_updated', { detail: { id: managedUser.id, status: newStatus } }));
+                    await fetchRealData();
+                  } catch (err: any) {
+                    showToast(`Erreur : ${err?.message || 'Erreur'}`, 'error');
+                  }
+                }}
+                className={`w-full py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors ${
+                  managedUser.verified
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{managedUser.verified ? 'Révoquer certification KYC' : 'Certifier le compte (Valider KYC)'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => handleToggleUserStatus(managedUser)}

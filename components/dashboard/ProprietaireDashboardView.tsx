@@ -214,7 +214,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
             {isVerified && (
               <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-black flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Bailleur Certifié par l'Admin</span>
+                <span>{userRole === 'agence' ? "Agence Agréée par l'Admin" : "Bailleur Certifié par l'Admin"}</span>
               </span>
             )}
           </div>
