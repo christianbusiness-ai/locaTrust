@@ -160,15 +160,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const { data, error } = await getAvailableProperties();
       const dbProps = data || [];
 
-      // 3. Fusion unifiée sans doublons (priorité aux publications récentes)
+      // 3. Fusion unifiée sans doublons (exclusion stricte des biens supprimés ou en corbeille)
       const map = new Map<string, any>();
       localProps.forEach((p) => {
-        if (p && p.id && p.status !== 'desactive' && p.status !== 'archive' && p.status !== 'corbeille') {
+        if (p && p.id && !p.deleted_at && p.status !== 'desactive' && p.status !== 'archive' && p.status !== 'corbeille') {
           map.set(p.id, p);
         }
       });
       dbProps.forEach((p) => {
-        if (p && p.id && p.status !== 'desactive' && p.status !== 'archive') {
+        if (p && p.id && !p.deleted_at && p.status !== 'desactive' && p.status !== 'archive' && p.status !== 'corbeille') {
+          // Si un bien a été marqué comme supprimé localement, on ne l'affiche pas
+          const localItem = localProps.find((lp) => lp.id === p.id);
+          if (localItem && localItem.deleted_at) return;
           map.set(p.id, { ...(map.get(p.id) || {}), ...p });
         }
       });
@@ -531,37 +534,41 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         </div>
       </div>
 
-      {/* Bottom Actions: Message, Demander, Heart */}
-      <div className="flex items-center gap-3 pt-2">
+      {/* Bottom Actions: Demander, Favoris & Message (100% responsive sur mobile sans débordement) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2">
+        <div className="flex items-center gap-2 flex-1">
+          <button
+            onClick={() => handleApply(item)}
+            className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 text-center min-w-0"
+          >
+            <Key className="w-4 h-4 shrink-0" />
+            <span className="truncate">Demander la location</span>
+          </button>
+
+          {/* Bouton Ajouter aux favoris toujours visible */}
+          <button
+            onClick={() => toggleLike(item.id)}
+            className={`py-2.5 px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 shrink-0 ${
+              likedPosts[item.id]
+                ? 'border-rose-200 bg-rose-50 text-rose-600 font-bold'
+                : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 font-bold'
+            }`}
+            title="Ajouter aux favoris"
+            aria-label="Ajouter aux favoris"
+          >
+            <Heart
+              className={`w-4 h-4 shrink-0 ${likedPosts[item.id] ? 'fill-rose-500 text-rose-500' : 'text-slate-500'}`}
+            />
+            <span className="text-xs font-black">{likeCounts[item.id] || 0}</span>
+          </button>
+        </div>
+
         <button
           onClick={() => handleMessage(item)}
-          className="flex-1 py-2.5 px-3 rounded-xl border border-blue-200 text-blue-700 bg-blue-50/50 hover:bg-blue-100/70 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+          className="w-full sm:w-auto py-2.5 px-3.5 rounded-xl border border-blue-200 text-blue-700 bg-blue-50/50 hover:bg-blue-100/70 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95 text-center shrink-0"
         >
-          <MessageSquare className="w-4 h-4 text-blue-600" />
-          <span className="whitespace-nowrap">Envoyer un message</span>
-        </button>
-
-        <button
-          onClick={() => handleApply(item)}
-          className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95"
-        >
-          <Key className="w-4 h-4" />
-          <span className="whitespace-nowrap">Demander cette location</span>
-        </button>
-
-        <button
-          onClick={() => toggleLike(item.id)}
-          className={`p-2.5 rounded-xl border transition-all flex items-center gap-1.5 ${
-            likedPosts[item.id]
-              ? 'border-rose-200 bg-rose-50 text-rose-600'
-              : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-          title="Ajouter aux favoris"
-        >
-          <Heart
-            className={`w-4 h-4 ${likedPosts[item.id] ? 'fill-rose-500 text-rose-500' : ''}`}
-          />
-          <span className="text-xs font-black">{likeCounts[item.id] || 0}</span>
+          <MessageSquare className="w-4 h-4 text-blue-600 shrink-0" />
+          <span>Message</span>
         </button>
       </div>
     </div>

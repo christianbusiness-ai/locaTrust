@@ -160,6 +160,7 @@ export const BiensView: React.FC<BiensViewProps> = ({
       setProperties(updated);
       if (typeof window !== 'undefined') {
         localStorage.setItem('locatrust_properties', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { id, deleted: true } }));
       }
     }
   };
@@ -170,6 +171,7 @@ export const BiensView: React.FC<BiensViewProps> = ({
     setProperties(updated);
     if (typeof window !== 'undefined') {
       localStorage.setItem('locatrust_properties', JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { id, restored: true } }));
     }
   };
 

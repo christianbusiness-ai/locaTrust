@@ -38,6 +38,7 @@ import {
   getArchivedYears
 } from '@/lib/reports/accountingHistoryStore';
 import { ACCENT_THEMES, applyAccentTheme } from '@/lib/themeHelper';
+import { AccountingYearCompactControl } from './AccountingYearCompactControl';
 
 interface AdminTicket {
   id: string;

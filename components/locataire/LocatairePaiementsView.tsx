@@ -675,6 +675,58 @@ export const LocatairePaiementsView: React.FC = () => {
                   💵 Paiement en espèces — aucune référence de transaction requise.
                 </div>
               )}
+
+              {/* Justificatif / Preuve de Paiement Réelle (depuis galerie ou appareil) */}
+              <div>
+                <label className="font-extrabold text-slate-800 block mb-1">
+                  Reçu / Preuve de paiement (Galerie ou Explorateur)
+                </label>
+                <div className="flex flex-col gap-2">
+                  <input
+                    type="file"
+                    id="payment-proof-upload"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        setProofUrl(event.target?.result as string);
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  {!proofUrl ? (
+                    <label
+                      htmlFor="payment-proof-upload"
+                      className="border-2 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/50 p-4 rounded-xl flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-colors text-center"
+                    >
+                      <Upload className="w-5 h-5 text-blue-600" />
+                      <span className="text-xs font-bold text-slate-700">Sélectionner un reçu réel</span>
+                      <span className="text-[10px] text-slate-400">Capture Mobile Money ou bordereau de virement (JPG, PNG)</span>
+                    </label>
+                  ) : (
+                    <div className="relative border border-slate-200 rounded-xl p-2 bg-slate-50 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <img src={proofUrl} alt="Justificatif" className="w-12 h-12 object-cover rounded-lg border border-slate-200" />
+                        <div className="flex flex-col text-left">
+                          <span className="text-xs font-bold text-slate-800">Preuve réelle attachée</span>
+                          <span className="text-[10px] text-emerald-600 font-bold">✓ Prête pour transmission au bailleur</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setProofUrl('')}
+                        className="p-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 text-xs font-bold"
+                        title="Supprimer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-3 border-t">

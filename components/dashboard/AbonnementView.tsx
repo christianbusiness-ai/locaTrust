@@ -187,15 +187,37 @@ export const AbonnementView: React.FC = () => {
   const currentPlan = calculateSubscription(activePropertiesCount);
   const [invoices, setInvoices] = useState<SubscriptionInvoice[]>(INITIAL_INVOICES);
 
-  // Status state simulation (active vs expired) synchronisé dans le localStorage
-  const [subscriptionStatus, setSubscriptionStatus] = useState<'actif' | 'expire'>(() => {
-    if (typeof window !== 'undefined') {
-      const s = localStorage.getItem('locatrust_subscription_status');
-      if (s === 'expire') return 'expire';
-    }
-    return 'actif';
-  });
+  // Cycle réel de 30 jours pour l'abonnement
+  const SUBSCRIPTION_CYCLE_DAYS = 30;
+  const [daysRemaining, setDaysRemaining] = useState<number>(30);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'actif' | 'expire'>('actif');
   const [nextDueDate, setNextDueDate] = useState<string>('01 novembre 2026');
+
+  useEffect(() => {
+    let startTimestamp = Date.now();
+    if (typeof window !== 'undefined') {
+      const key = `locatrust_sub_start_${user?.id || 'default'}`;
+      const storedStart = localStorage.getItem(key);
+      if (storedStart) {
+        startTimestamp = parseInt(storedStart, 10);
+      } else {
+        localStorage.setItem(key, startTimestamp.toString());
+      }
+    }
+
+    const elapsedDays = Math.floor((Date.now() - startTimestamp) / (1000 * 60 * 60 * 24));
+    const remaining = Math.max(0, SUBSCRIPTION_CYCLE_DAYS - elapsedDays);
+    setDaysRemaining(remaining);
+
+    const expiry = new Date(startTimestamp + SUBSCRIPTION_CYCLE_DAYS * 24 * 60 * 60 * 1000);
+    setNextDueDate(expiry.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }));
+
+    if (remaining <= 0) {
+      setSubscriptionStatus('expire');
+    } else {
+      setSubscriptionStatus('actif');
+    }
+  }, [user?.id]);
 
   // Direct payment state & messaging
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
@@ -374,27 +396,19 @@ export const AbonnementView: React.FC = () => {
           </p>
         </div>
 
-        {/* Status indicator button */}
+        {/* Status indicator */}
         <div className="flex items-center gap-2.5">
           {subscriptionStatus === 'actif' ? (
             <span className="px-3.5 py-2 rounded-2xl bg-emerald-100 text-emerald-900 text-xs font-black border border-emerald-200 flex items-center gap-1.5 shadow-sm whitespace-nowrap">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Abonnement actif</span>
+              <span>Abonnement actif ({daysRemaining}j restants)</span>
             </span>
           ) : (
             <span className="px-3.5 py-2 rounded-2xl bg-rose-100 text-rose-900 text-xs font-black border border-rose-200 flex items-center gap-1.5 shadow-sm whitespace-nowrap">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>Abonnement Expiré</span>
+              <span>Abonnement Expiré (30 jours échus)</span>
             </span>
           )}
-
-          <button
-            onClick={() => setSubscriptionStatus((prev) => (prev === 'actif' ? 'expire' : 'actif'))}
-            className="text-[11px] font-bold text-slate-500 hover:text-blue-700 underline px-1 transition-colors"
-            title="Tester l'affichage d'un abonnement expiré"
-          >
-            ({subscriptionStatus === 'actif' ? 'Simuler expiration' : 'Simuler réactivation'})
-          </button>
         </div>
       </div>
 

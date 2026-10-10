@@ -266,51 +266,36 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       frame++;
       // Background gradient
       const grad = ctx.createLinearGradient(0, 0, 640, 480);
-      grad.addColorStop(0, '#020617');
+      grad.addColorStop(0, '#090d16');
       grad.addColorStop(0.5, '#0f172a');
       grad.addColorStop(1, '#1e293b');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, 640, 480);
 
       // Subtle ambient circle animation
-      const cx = 320 + Math.sin(frame * 0.04) * 40;
-      const cy = 200 + Math.cos(frame * 0.04) * 20;
+      const scale = 1 + Math.sin(frame * 0.05) * 0.08;
       ctx.beginPath();
-      ctx.arc(cx, cy, 110, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(37, 99, 235, 0.18)';
+      ctx.arc(320, 240, 75 * scale, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.15)';
       ctx.fill();
 
-      // User avatar background
+      // User avatar circle
       ctx.beginPath();
-      ctx.arc(320, 190, 56, 0, Math.PI * 2);
+      ctx.arc(320, 240, 50, 0, Math.PI * 2);
       ctx.fillStyle = '#2563eb';
       ctx.fill();
 
       // Silhouette head
       ctx.beginPath();
-      ctx.arc(320, 175, 22, 0, Math.PI * 2);
+      ctx.arc(320, 225, 20, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
 
       // Silhouette body
       ctx.beginPath();
-      ctx.arc(320, 240, 38, Math.PI, 0, false);
+      ctx.arc(320, 280, 32, Math.PI, 0, false);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
-
-      // Overlay details
-      ctx.font = 'bold 20px system-ui, sans-serif';
-      ctx.fillStyle = '#f8fafc';
-      ctx.textAlign = 'center';
-      ctx.fillText(userName, 320, 290);
-
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.fillStyle = '#34d399';
-      ctx.fillText('● Flux Vidéo HD Chiffré Sécurisé', 320, 320);
-
-      ctx.font = '11px monospace';
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText(`LocaTrust Video Stream • ${new Date().toLocaleTimeString('fr-FR')}`, 320, 350);
     };
 
     if (animationIntervalRef.current) {
@@ -510,8 +495,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setAudioBlob(audioBlob);
-        const url = URL.createObjectURL(audioBlob);
-        setAudioPreviewUrl(url);
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (reader.result) {
+            setAudioPreviewUrl(reader.result as string);
+          }
+        };
+        reader.readAsDataURL(audioBlob);
       };
 
       mediaRecorder.start();
@@ -523,8 +513,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       }, 1000);
     } catch (err: any) {
       console.warn('Microphone permission error:', err);
-      // Fallback cleanly with modal explaining mic access
-      setMicPermissionModal("Accès au microphone requis. Veuillez autoriser votre micro dans le navigateur pour enregistrer une note vocale.");
+      // Fallback convivial avec modal explicatif d'accès au micro
+      setMicPermissionModal("Accès au microphone requis. Veuillez autoriser votre micro dans le navigateur pour enregistrer une note vocale réelle.");
     }
   };
 
@@ -553,12 +543,51 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     setRecordingSeconds(0);
   };
 
-  const handleSendVoiceRecording = () => {
-    if (isRecordingAudio) {
-      handleStopVoiceRecording();
+  const handleSendVoiceRecording = async () => {
+    let finalAudioUrl = audioPreviewUrl;
+    const duration = Math.max(1, recordingSeconds || 2);
+
+    // Si l'enregistrement est encore en cours, arrêter proprement et attendre la conversion DataURL
+    if (isRecordingAudio && mediaRecorderRef.current) {
+      await new Promise<void>((resolve) => {
+        const rec = mediaRecorderRef.current;
+        if (!rec) {
+          resolve();
+          return;
+        }
+        rec.onstop = () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (reader.result) {
+              finalAudioUrl = reader.result as string;
+            }
+            resolve();
+          };
+          reader.readAsDataURL(audioBlob);
+        };
+        try {
+          rec.stop();
+          rec.stream.getTracks().forEach((t) => t.stop());
+        } catch {
+          resolve();
+        }
+        clearInterval(recordingTimerRef.current);
+        setIsRecordingAudio(false);
+      });
     }
 
-    const duration = recordingSeconds || 3;
+    if (!finalAudioUrl && audioChunksRef.current.length > 0) {
+      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      finalAudioUrl = await new Promise<string>((res) => {
+        const reader = new FileReader();
+        reader.onloadend = () => res(reader.result as string);
+        reader.readAsDataURL(audioBlob);
+      });
+    }
+
+    if (!finalAudioUrl) return;
+
     const allMsgs = getStoredMessages();
     const newMsg: ChatMessage = {
       id: `msg_${Date.now()}`,
@@ -567,7 +596,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       text: '🎙️ Note vocale',
       attachment: {
         type: 'audio',
-        url: audioPreviewUrl || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        url: finalAudioUrl,
         name: `Vocal_${duration}s`,
         duration
       },
@@ -576,12 +605,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     saveStoredMessages([...allMsgs, newMsg]);
     refreshMessages();
 
-    // Reset recording state
+    // Réinitialiser les états
     setAudioBlob(null);
     setAudioPreviewUrl(null);
     setRecordingSeconds(0);
+    audioChunksRef.current = [];
 
-    // Auto reply
+    // Réponse automatique courtoise
     setIsTyping(true);
     setTimeout(() => {
       setIsTyping(false);

@@ -1057,16 +1057,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
           {/* Formule 2: Propriétaire Bailleur Particulier */}
           <div className="bg-slate-900 text-white rounded-3xl p-6 sm:p-7 border border-slate-800 shadow-2xl flex flex-col justify-between gap-5 relative">
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-              <span className="px-3.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] tracking-wide uppercase shadow-md">
-                Recommandé Bailleurs
-              </span>
-            </div>
-
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black text-amber-300 uppercase tracking-wider">Bailleur Particulier</span>
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 font-bold text-[10px]">Mono-patrimoine</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 font-bold text-[10px]">Selon parc</span>
               </div>
               <h3 className="text-lg font-extrabold text-white mt-1">Propriétaire Indépendant</h3>
               <div className="mt-3 flex items-baseline gap-1">
@@ -1108,7 +1102,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <button
               type="button"
               onClick={onOpenRegister}
-              className="w-full py-2.5 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs shadow-lg transition-colors"
+              className="w-full py-3 px-4 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs shadow-md transition-all active:scale-95 text-center mt-2"
             >
               Gérer mon parc immobilier
             </button>

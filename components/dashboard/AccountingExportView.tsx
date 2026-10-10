@@ -346,7 +346,7 @@ export const AccountingExportView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleOpenPrepare('pdf', `Reddition de Compte - ${selectedMandant}`, 'results_pdf')}
-                className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow transition-all active:scale-95 shrink-0"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow transition-all active:scale-95 text-center shrink-0"
               >
                 Exporter PDF Mandant
               </button>
@@ -387,20 +387,20 @@ export const AccountingExportView: React.FC = () => {
             Dossier certifié avec l'ensemble des 7 journaux et balance générale.
           </p>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
             <button
               onClick={() => handleOpenPrepare('pdf', 'Dossier Comptable en PDF', 'full_pdf')}
-              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 whitespace-nowrap"
+              className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 text-center"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Télécharger le dossier comptable en PDF</span>
+              <Download className="w-3.5 h-3.5 shrink-0" />
+              <span>Dossier complet (PDF)</span>
             </button>
             <button
               onClick={() => handleOpenPrepare('zip', 'Dossier Complet (.ZIP)', 'full_zip')}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 whitespace-nowrap"
+              className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 text-center"
             >
-              <Archive className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Télécharger le dossier complet (.ZIP)</span>
+              <Archive className="w-3.5 h-3.5 text-emerald-200 shrink-0" />
+              <span>Dossier complet (.ZIP)</span>
             </button>
           </div>
         </div>
@@ -457,19 +457,19 @@ export const AccountingExportView: React.FC = () => {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                 <button
                   onClick={() => handleOpenPrepare('pdf', 'État des Résultats (PDF)', 'results_pdf')}
-                  className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition-all active:scale-95"
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/30 transition-all active:scale-95 text-center"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Télécharger l'État des Résultats (PDF)</span>
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>Télécharger PDF</span>
                 </button>
                 <button
                   onClick={() => handleOpenPrepare('csv', 'État des Résultats (CSV)', 'results_csv')}
-                  className="px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-bold flex items-center gap-1.5"
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 text-center"
                 >
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <span>Exporter (.CSV)</span>
                 </button>
               </div>

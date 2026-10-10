@@ -88,9 +88,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
+    // 0. Nettoyage immédiat et sécurisé de la barre d'adresse (tokens, hash, apikey)
+    const cleanAuthUrlTokens = () => {
+      if (typeof window !== 'undefined') {
+        const hash = window.location.hash || '';
+        const search = window.location.search || '';
+        if (
+          hash.includes('access_token=') ||
+          hash.includes('refresh_token=') ||
+          hash.includes('apikey=') ||
+          hash.includes('provider_token=') ||
+          search.includes('code=')
+        ) {
+          // Remplace l'URL dans l'historique sans rechargement de page
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    };
+
+    // Nettoyage immédiat si des jetons sont présents
+    cleanAuthUrlTokens();
+
     // 1. Initialisation sécurisée vérifiée auprès du serveur Supabase
     supabase.auth.getUser().then(async ({ data: { user: verifiedUser }, error }) => {
       if (!mounted) return;
+      cleanAuthUrlTokens();
       if (error || !verifiedUser) {
         setUser(null);
         setSession(null);
@@ -102,6 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       setSession(initialSession);
       setUser(verifiedUser);
+      cleanAuthUrlTokens();
 
       let p = await fetchProfile(verifiedUser.id);
       if (!p) {
@@ -130,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Écoute réactive des changements d'état d'authentification
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
+      cleanAuthUrlTokens();
       setSession(newSession);
       setUser(newSession?.user ?? null);
 
