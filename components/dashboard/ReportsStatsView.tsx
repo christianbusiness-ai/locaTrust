@@ -110,7 +110,42 @@ export const ReportsStatsView: React.FC = () => {
     return [];
   }, [realDataset]);
 
-  // Calcul dynamique et centralisé de la période sélectionnée basé sur les données réelles
+  // Mois filtrés selon la période choisie (ce mois, mois précédent, trimestre, année)
+  const filteredMonths = useMemo(() => {
+    if (!yearRecords || yearRecords.length === 0) return [];
+
+    if (period === 'ce_mois') {
+      const now = new Date();
+      const currentMonthNum = String(now.getMonth() + 1).padStart(2, '0');
+      const currentKey = `${selectedYear}-${currentMonthNum}`;
+      const found = yearRecords.filter((r) => r.monthKey === currentKey);
+      return found.length > 0 ? found : [yearRecords[Math.min(now.getMonth(), yearRecords.length - 1)]];
+    }
+
+    if (period === 'mois_precedent') {
+      const found = yearRecords.filter((r) => r.monthKey === selectedHistoricalMonth);
+      return found.length > 0 ? found : [yearRecords[0]];
+    }
+
+    if (period === 'trimestre') {
+      const quarterMap: Record<'T1' | 'T2' | 'T3' | 'T4', string[]> = {
+        T1: ['01', '02', '03'],
+        T2: ['04', '05', '06'],
+        T3: ['07', '08', '09'],
+        T4: ['10', '11', '12']
+      };
+      const validMonths = quarterMap[selectedQuarter] || [];
+      return yearRecords.filter((r) => {
+        const parts = (r.monthKey || '').split('-');
+        return parts.length === 2 && validMonths.includes(parts[1]);
+      });
+    }
+
+    // Période annuelle : l'ensemble des 12 mois
+    return yearRecords;
+  }, [yearRecords, period, selectedYear, selectedHistoricalMonth, selectedQuarter]);
+
+  // Calcul dynamique et centralisé de la période sélectionnée basé sur les données réelles filtrées
   const currentPeriodSummary: PeriodSummary = useMemo(() => {
     if (!realDataset) {
       return {
@@ -137,30 +172,59 @@ export const ReportsStatsView: React.FC = () => {
       };
     }
 
-    const synth = realDataset.synthesis;
+    const expectedRent = filteredMonths.reduce((s, m) => s + (m.expectedRent || 0), 0);
+    const collectedRent = filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0);
+    const lateRent = filteredMonths.reduce((s, m) => s + (m.lateRent || 0), 0);
+    const unpaidRent = filteredMonths.reduce((s, m) => s + (m.unpaidRent || 0), 0);
+    const otherIncome = filteredMonths.reduce((s, m) => s + (m.otherIncome || 0), 0);
+    const maintenanceExpense = filteredMonths.reduce((s, m) => s + (m.maintenanceExpense || 0), 0);
+    const otherExpenses = filteredMonths.reduce((s, m) => s + (m.otherExpenses || 0), 0);
+
+    const cautionReceived = period === 'annee'
+      ? realDataset.synthesis.cautionsRecues
+      : filteredMonths.reduce((s, m) => s + (m.cautionReceived || 0), 0) || (period === 'trimestre' ? Math.round(realDataset.synthesis.cautionsRecues / 4) : Math.round(realDataset.synthesis.cautionsRecues / 12));
+
+    const cautionRefunded = period === 'annee'
+      ? realDataset.synthesis.cautionsRemboursees
+      : filteredMonths.reduce((s, m) => s + (m.cautionRefunded || 0), 0);
+
+    const totalIncome = collectedRent + otherIncome;
+    const totalExpenses = maintenanceExpense + cautionRefunded + otherExpenses;
+    const netResult = totalIncome - totalExpenses;
+    const recoveryRate = expectedRent > 0 ? Math.round((collectedRent / expectedRent) * 100) : (collectedRent > 0 ? 100 : 0);
+
+    let periodLabel = `Exercice Annuel ${selectedYear}`;
+    if (period === 'ce_mois') {
+      periodLabel = `Mois en cours (${filteredMonths[0]?.monthName || ''} ${selectedYear})`;
+    } else if (period === 'mois_precedent') {
+      periodLabel = `Mois (${filteredMonths[0]?.monthName || selectedHistoricalMonth} ${selectedYear})`;
+    } else if (period === 'trimestre') {
+      periodLabel = `Trimestre ${selectedQuarter} (${selectedYear})`;
+    }
+
     return {
-      periodLabel: period === 'ce_mois' ? `Mois en cours (${selectedYear})` : period === 'annee' ? `Exercice Annuel ${selectedYear}` : `Période ${selectedYear}`,
-      expectedRent: synth.loyersAttendus,
-      collectedRent: synth.loyersEncaisses,
-      lateRent: synth.loyersEnRetard,
-      unpaidRent: synth.loyersImpayes,
-      recoveryRate: synth.tauxRecouvrement,
-      otherIncome: synth.autresDepenses,
-      totalIncome: synth.totalEncaisse,
-      maintenanceExpense: synth.depensesMaintenance,
-      cautionReceived: synth.cautionsRecues,
-      cautionRefunded: synth.cautionsRemboursees,
-      otherExpenses: 0,
-      totalExpenses: synth.totalDepense,
-      netResult: synth.resultatNet,
-      annualCumulativeResult: synth.resultatNet,
+      periodLabel,
+      expectedRent,
+      collectedRent,
+      lateRent,
+      unpaidRent,
+      recoveryRate,
+      otherIncome,
+      totalIncome,
+      maintenanceExpense,
+      cautionReceived,
+      cautionRefunded,
+      otherExpenses,
+      totalExpenses,
+      netResult,
+      annualCumulativeResult: realDataset.synthesis.resultatNet,
       activeProperties: realDataset.activePropertiesCount,
       activeTenants: realDataset.activeTenantsCount,
       activeContracts: realDataset.activeContractsCount,
-      maintenanceTickets: realDataset.maintenance.length,
-      monthlyBreakdown: yearRecords
+      maintenanceTickets: period === 'annee' ? realDataset.maintenance.length : filteredMonths.reduce((s, m) => s + (m.maintenanceExpense > 0 ? 1 : 0), 0),
+      monthlyBreakdown: filteredMonths
     };
-  }, [realDataset, period, selectedYear, yearRecords]);
+  }, [realDataset, filteredMonths, period, selectedYear, selectedHistoricalMonth, selectedQuarter]);
 
   const availableMonths = useMemo(() => getAvailableHistoricalMonths(selectedYear), [selectedYear]);
 
@@ -576,18 +640,27 @@ export const ReportsStatsView: React.FC = () => {
                     const totalIn = row.collectedRent + row.otherIncome;
                     const totalOut = row.maintenanceExpense + row.cautionRefunded + row.otherExpenses;
                     const net = totalIn - totalOut;
+
                     const isSelectedMonth = period === 'mois_precedent' && row.monthKey === selectedHistoricalMonth;
-                    const isCurrentActive = period === 'ce_mois' && idx === yearRecords.length - 1;
+                    const isCurrentActive = period === 'ce_mois' && (row.monthKey === filteredMonths[0]?.monthKey || idx === yearRecords.length - 1);
+                    const quarterMap: Record<'T1' | 'T2' | 'T3' | 'T4', string[]> = {
+                      T1: ['01', '02', '03'],
+                      T2: ['04', '05', '06'],
+                      T3: ['07', '08', '09'],
+                      T4: ['10', '11', '12']
+                    };
+                    const isQuarterActive = period === 'trimestre' && (quarterMap[selectedQuarter] || []).includes((row.monthKey || '').split('-')[1]);
+                    const isRowHighlighted = isSelectedMonth || isCurrentActive || isQuarterActive;
 
                     return (
                       <tr
                         key={row.monthKey || idx}
                         className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${
-                          isSelectedMonth || isCurrentActive ? 'bg-blue-50/50 dark:bg-blue-950/30 font-semibold' : ''
+                          isRowHighlighted ? 'bg-blue-50/70 dark:bg-blue-950/40 font-semibold ring-1 ring-blue-500/20' : ''
                         }`}
                       >
                         <td className="py-3 px-3.5 font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                          {(isSelectedMonth || isCurrentActive) && (
+                          {isRowHighlighted && (
                             <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
                           )}
                           <span>{row.monthName}</span>
@@ -621,17 +694,21 @@ export const ReportsStatsView: React.FC = () => {
                 <tfoot>
                   <tr className="bg-slate-100/90 dark:bg-slate-800/80 border-t-2 border-slate-300 dark:border-slate-700 font-black text-xs text-slate-900 dark:text-white">
                     <td className="py-3.5 px-3.5 uppercase tracking-wider text-blue-900 dark:text-blue-300 font-black">
-                      TOTAL ANNUEL ({selectedYear})
+                      {period === 'annee'
+                        ? `TOTAL ANNUEL (${selectedYear})`
+                        : period === 'trimestre'
+                        ? `TOTAL TRIMESTRE ${selectedQuarter} (${selectedYear})`
+                        : `TOTAL ${currentPeriodSummary.periodLabel}`}
                     </td>
-                    <td className="py-3.5 px-3.5 text-slate-700 dark:text-slate-300">{formatFCFA(annualTotals.expected)}</td>
-                    <td className="py-3.5 px-3.5 text-emerald-800 dark:text-emerald-400">{formatFCFA(annualTotals.collected)}</td>
-                    <td className="py-3.5 px-3.5 text-rose-700 dark:text-rose-400">{formatFCFA(annualTotals.late)}</td>
-                    <td className="py-3.5 px-3.5 text-slate-700 dark:text-slate-300">{formatFCFA(annualTotals.maintenance)}</td>
-                    <td className="py-3.5 px-3.5 text-slate-700 dark:text-slate-300">{formatFCFA(annualTotals.cautionRefunded)}</td>
-                    <td className="py-3.5 px-3.5 text-blue-900 dark:text-blue-300">{formatFCFA(annualTotals.totalIn)}</td>
-                    <td className="py-3.5 px-3.5 text-slate-900 dark:text-white">{formatFCFA(annualTotals.totalOut)}</td>
+                    <td className="py-3.5 px-3.5 text-slate-700 dark:text-slate-300">{formatFCFA(currentPeriodSummary.expectedRent)}</td>
+                    <td className="py-3.5 px-3.5 text-emerald-800 dark:text-emerald-400">{formatFCFA(currentPeriodSummary.collectedRent)}</td>
+                    <td className="py-3.5 px-3.5 text-rose-700 dark:text-rose-400">{formatFCFA(currentPeriodSummary.lateRent)}</td>
+                    <td className="py-3.5 px-3.5 text-slate-700 dark:text-slate-300">{formatFCFA(currentPeriodSummary.maintenanceExpense)}</td>
+                    <td className="py-3.5 px-3.5 text-slate-700 dark:text-slate-300">{formatFCFA(currentPeriodSummary.cautionRefunded)}</td>
+                    <td className="py-3.5 px-3.5 text-blue-900 dark:text-blue-300">{formatFCFA(currentPeriodSummary.totalIncome)}</td>
+                    <td className="py-3.5 px-3.5 text-slate-900 dark:text-white">{formatFCFA(currentPeriodSummary.totalExpenses)}</td>
                     <td className="py-3.5 px-3.5 text-right text-emerald-800 dark:text-emerald-400 text-sm font-black">
-                      +{formatFCFA(annualTotals.net)}
+                      {currentPeriodSummary.netResult >= 0 ? `+${formatFCFA(currentPeriodSummary.netResult)}` : formatFCFA(currentPeriodSummary.netResult)}
                     </td>
                   </tr>
                 </tfoot>
@@ -711,17 +788,17 @@ export const ReportsStatsView: React.FC = () => {
             </div>
             <div className="p-4 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200">
               <span className="text-xs font-bold text-purple-800 dark:text-purple-300">Réservés</span>
-              <span className="text-2xl font-black text-purple-700 block mt-1">1</span>
+              <span className="text-2xl font-black text-purple-700 block mt-1">{realDataset?.extraStats?.reservedCount || 0}</span>
               <span className="text-[10px] text-purple-600">En cours de signature</span>
             </div>
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200">
               <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Fin de contrat</span>
-              <span className="text-2xl font-black text-amber-700 block mt-1">1</span>
+              <span className="text-2xl font-black text-amber-700 block mt-1">{realDataset?.extraStats?.finContratCount || 0}</span>
               <span className="text-[10px] text-amber-600">Bail arrivant à échéance</span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200">
               <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Désactivés</span>
-              <span className="text-2xl font-black text-slate-700 dark:text-slate-300 block mt-1">0</span>
+              <span className="text-2xl font-black text-slate-700 dark:text-slate-300 block mt-1">{realDataset?.extraStats?.disabledCount || 0}</span>
               <span className="text-[10px] text-slate-500">Travaux / Hors parc</span>
             </div>
           </div>
@@ -729,7 +806,9 @@ export const ReportsStatsView: React.FC = () => {
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border flex items-center justify-between text-xs font-bold">
             <span>Taux d'occupation global du patrimoine :</span>
             <span className="text-emerald-700 font-black text-sm">
-              {Math.round((currentPeriodSummary.activeContracts / currentPeriodSummary.activeProperties) * 100)} %
+              {currentPeriodSummary.activeProperties > 0
+                ? Math.round((currentPeriodSummary.activeContracts / currentPeriodSummary.activeProperties) * 100)
+                : 0} %
             </span>
           </div>
         </div>
@@ -749,26 +828,26 @@ export const ReportsStatsView: React.FC = () => {
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200">
               <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Contrats Actifs</span>
               <span className="text-2xl font-black text-emerald-700 block mt-1">{currentPeriodSummary.activeContracts}</span>
-              <span className="text-[10px] text-emerald-600">2 signatures certifiées</span>
+              <span className="text-[10px] text-emerald-600">{currentPeriodSummary.activeContracts} signature(s) certifiée(s)</span>
             </div>
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200">
               <span className="text-xs font-bold text-amber-800 dark:text-amber-300">En attente signature</span>
-              <span className="text-2xl font-black text-amber-700 block mt-1">1</span>
+              <span className="text-2xl font-black text-amber-700 block mt-1">{realDataset?.extraStats?.pendingSignaturesCount || 0}</span>
               <span className="text-[10px] text-amber-600">Téléchargement bloqué</span>
             </div>
             <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200">
               <span className="text-xs font-bold text-blue-800 dark:text-blue-300">Échéance proche</span>
-              <span className="text-2xl font-black text-blue-700 block mt-1">1</span>
+              <span className="text-2xl font-black text-blue-700 block mt-1">{realDataset?.extraStats?.expiringSoonCount || 0}</span>
               <span className="text-[10px] text-blue-600">&lt; 60 jours</span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200">
               <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Expirés</span>
-              <span className="text-2xl font-black text-slate-700 dark:text-slate-300 block mt-1">2</span>
+              <span className="text-2xl font-black text-slate-700 dark:text-slate-300 block mt-1">{realDataset?.extraStats?.expiredCount || 0}</span>
               <span className="text-[10px] text-slate-500">Archivés légalement</span>
             </div>
             <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200">
               <span className="text-xs font-bold text-rose-800 dark:text-rose-300">Résiliés</span>
-              <span className="text-2xl font-black text-rose-700 block mt-1">0</span>
+              <span className="text-2xl font-black text-rose-700 block mt-1">{realDataset?.extraStats?.terminatedCount || 0}</span>
               <span className="text-[10px] text-rose-600">Ruptures anticipées</span>
             </div>
           </div>
@@ -789,24 +868,26 @@ export const ReportsStatsView: React.FC = () => {
             <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200">
               <span className="text-xs font-bold text-blue-800 dark:text-blue-300">Cautions Reçues</span>
               <span className="text-xl font-black text-blue-700 block mt-1">
-                {formatFCFA(currentPeriodSummary.cautionReceived || 5600000)}
+                {formatFCFA(currentPeriodSummary.cautionReceived || 0)}
               </span>
             </div>
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200">
               <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Détenues en Garantie</span>
               <span className="text-xl font-black text-emerald-700 block mt-1">
-                {formatFCFA(currentPeriodSummary.cautionReceived ? currentPeriodSummary.cautionReceived - currentPeriodSummary.cautionRefunded : 4900000)}
+                {formatFCFA(Math.max(0, (currentPeriodSummary.cautionReceived || 0) - (currentPeriodSummary.cautionRefunded || 0)))}
               </span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200">
               <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Remboursées (100 %)</span>
               <span className="text-xl font-black text-slate-700 dark:text-slate-200 block mt-1">
-                {formatFCFA(currentPeriodSummary.cautionRefunded)}
+                {formatFCFA(currentPeriodSummary.cautionRefunded || 0)}
               </span>
             </div>
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200">
               <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Retenues Justifiées</span>
-              <span className="text-xl font-black text-amber-700 block mt-1">50 000 FCFA</span>
+              <span className="text-xl font-black text-amber-700 block mt-1">
+                {formatFCFA(realDataset?.extraStats?.cautionsRetenues || 0)}
+              </span>
             </div>
           </div>
         </div>
@@ -831,7 +912,11 @@ export const ReportsStatsView: React.FC = () => {
             </div>
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200">
               <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Interventions Closes</span>
-              <span className="text-2xl font-black text-emerald-700 block mt-1">100 %</span>
+              <span className="text-2xl font-black text-emerald-700 block mt-1">
+                {realDataset?.extraStats?.resolvedTicketsRatio != null && (realDataset.extraStats.totalTickets > 0 || currentPeriodSummary.maintenanceTickets > 0)
+                  ? `${realDataset.extraStats.resolvedTicketsRatio} %`
+                  : '0 %'}
+              </span>
             </div>
             <div className="p-4 rounded-2xl bg-orange-50 dark:bg-orange-950/40 border border-orange-200">
               <span className="text-xs font-bold text-orange-800 dark:text-orange-300">Dépenses Période</span>

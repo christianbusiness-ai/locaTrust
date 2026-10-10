@@ -36,6 +36,18 @@ export interface RealAccountingDataset {
   activeTenantsCount: number;
   activeContractsCount: number;
   monthlyBreakdown: MonthAccountingRecord[];
+  extraStats: {
+    pendingSignaturesCount: number;
+    expiringSoonCount: number;
+    expiredCount: number;
+    terminatedCount: number;
+    reservedCount: number;
+    finContratCount: number;
+    disabledCount: number;
+    cautionsRetenues: number;
+    resolvedTicketsRatio: number;
+    totalTickets: number;
+  };
 }
 
 const MONTH_NAMES = [
@@ -43,45 +55,71 @@ const MONTH_NAMES = [
   'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
 ];
 
+// Cache mémoire ultrarapide pour fluidité instantanée
+const accountingCache = new Map<string, { data: RealAccountingDataset; timestamp: number }>();
+const CACHE_TTL_MS = 30000; // 30 secondes
+
+export function invalidateAccountingCache() {
+  accountingCache.clear();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('locatrust:payments-updated', invalidateAccountingCache);
+  window.addEventListener('locatrust:contracts-updated', invalidateAccountingCache);
+  window.addEventListener('locatrust:properties-updated', invalidateAccountingCache);
+}
+
 export async function fetchRealAccountingData(userId?: string, targetYear: string = '2026'): Promise<RealAccountingDataset> {
   const currentYearNum = parseInt(targetYear, 10) || new Date().getFullYear();
+  const cacheKey = `${userId || 'anonymous'}_${targetYear}`;
+
+  const cached = accountingCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
 
   try {
-    // 0. Profil propriétaire
-    let ownerProfile: any = null;
-    if (userId) {
-      const { data: prof } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-      ownerProfile = prof;
-    }
-
-    // 1. Biens
+    // 1. Préparation des requêtes parallèles optimisées
     let pQuery = supabase.from('properties').select('*').is('deleted_at', null);
     if (userId) pQuery = pQuery.eq('owner_id', userId);
-    const { data: properties } = await pQuery;
-    const realProps = properties || [];
 
-    // 2. Contrats
     let cQuery = supabase.from('contracts').select('*, property:properties(*), tenant:users!tenant_id(*)');
     if (userId) cQuery = cQuery.eq('owner_id', userId);
-    const { data: contracts } = await cQuery;
-    const realContracts = contracts || [];
 
-    // 3. Paiements de loyers
     let pmQuery = supabase.from('rent_payments').select('*, property:properties(*), tenant:users!tenant_id(*)');
     if (userId) pmQuery = pmQuery.eq('owner_id', userId);
-    const { data: payments } = await pmQuery;
-    const realPayments = payments || [];
 
-    // 4. Cautions
     let cauQuery = supabase.from('cautions').select('*, property:properties(*), tenant:users!tenant_id(*)');
     if (userId) cauQuery = cauQuery.eq('owner_id', userId);
-    const { data: cautions } = await cauQuery;
-    const realCautions = cautions || [];
 
-    // 5. Maintenance
     let mQuery = supabase.from('maintenance_tickets').select('*, property:properties(*)');
     if (userId) mQuery = mQuery.eq('owner_id', userId);
-    const { data: tickets } = await mQuery;
+
+    let profQuery = userId 
+      ? supabase.from('users').select('*').eq('id', userId).maybeSingle()
+      : Promise.resolve({ data: null });
+
+    // 2. Exécution ultra-rapide en parallèle via Promise.all
+    const [
+      { data: ownerProfile },
+      { data: properties },
+      { data: contracts },
+      { data: payments },
+      { data: cautions },
+      { data: tickets }
+    ] = await Promise.all([
+      profQuery,
+      pQuery,
+      cQuery,
+      pmQuery,
+      cauQuery,
+      mQuery
+    ]);
+
+    const realProps = properties || [];
+    const realContracts = contracts || [];
+    const realPayments = payments || [];
+    const realCautions = cautions || [];
     const realTickets = tickets || [];
 
     // Calculs réels dynamiques
@@ -217,7 +255,51 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       address: ownerProfile?.address || 'Abidjan, Côte d\'Ivoire'
     };
 
-    return {
+    // Statistiques complémentaires 100% réelles issues de la base
+    const pendingSignaturesCount = realContracts.filter(
+      (c) => c.status === 'en_attente' || c.status === 'en_attente_signature'
+    ).length;
+
+    const now = new Date();
+    const sixtyDaysLater = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    const expiringSoonCount = realContracts.filter((c) => {
+      if (!c.end_date) return false;
+      const d = new Date(c.end_date);
+      return d > now && d <= sixtyDaysLater;
+    }).length;
+
+    const expiredCount = realContracts.filter(
+      (c) => c.status === 'expire' || c.status === 'archive'
+    ).length;
+
+    const terminatedCount = realContracts.filter(
+      (c) => c.status === 'resilie' || c.status === 'annule'
+    ).length;
+
+    const reservedCount = realProps.filter(
+      (p) => p.status === 'reserve' || p.status === 'en_cours'
+    ).length;
+
+    const finContratCount = expiringSoonCount;
+
+    const disabledCount = realProps.filter(
+      (p) => p.status === 'desactive' || p.is_archived
+    ).length;
+
+    const cautionsRetenues = realCautions.reduce(
+      (s, c) => s + (Number(c.deduction_amount) || 0),
+      0
+    );
+
+    const resolvedTickets = realTickets.filter(
+      (t) => t.status === 'resolu' || t.status === 'cloture' || t.status === 'termine'
+    ).length;
+
+    const resolvedTicketsRatio = realTickets.length > 0 
+      ? Math.round((resolvedTickets / realTickets.length) * 100) 
+      : 0;
+
+    const result: RealAccountingDataset = {
       ownerName,
       owner,
       synthesis: {
@@ -243,8 +325,23 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       activePropertiesCount: realProps.length,
       activeTenantsCount: activeContracts.length,
       activeContractsCount: activeContracts.length,
-      monthlyBreakdown
+      monthlyBreakdown,
+      extraStats: {
+        pendingSignaturesCount,
+        expiringSoonCount,
+        expiredCount,
+        terminatedCount,
+        reservedCount,
+        finContratCount,
+        disabledCount,
+        cautionsRetenues,
+        resolvedTicketsRatio,
+        totalTickets: realTickets.length
+      }
     };
+
+    accountingCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
   } catch (err) {
     console.warn('Real accounting fetch error:', err);
     return {
@@ -272,7 +369,19 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       activePropertiesCount: 0,
       activeTenantsCount: 0,
       activeContractsCount: 0,
-      monthlyBreakdown: []
+      monthlyBreakdown: [],
+      extraStats: {
+        pendingSignaturesCount: 0,
+        expiringSoonCount: 0,
+        expiredCount: 0,
+        terminatedCount: 0,
+        reservedCount: 0,
+        finContratCount: 0,
+        disabledCount: 0,
+        cautionsRetenues: 0,
+        resolvedTicketsRatio: 0,
+        totalTickets: 0
+      }
     };
   }
 }

@@ -935,7 +935,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                   type="date"
                   value={desiredDate}
                   onChange={(e) => setDesiredDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full bg-blue-50/40 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 [color-scheme:light]"
                   required
                 />
               </div>
@@ -1025,7 +1025,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       {/* MODAL: Demande envoyée avec succès (Vue mobile screenshot) */}
       {/* ======================================================== */}
       {applySuccessModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center text-center gap-4 border border-slate-100">
             <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
               <CheckCircle2 className="w-10 h-10" />

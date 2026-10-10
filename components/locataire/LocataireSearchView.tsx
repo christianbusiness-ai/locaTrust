@@ -30,6 +30,7 @@ import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
+import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
 
 export const LocataireSearchView: React.FC = () => {
   const { user, profile } = useAuth();
@@ -54,6 +55,11 @@ export const LocataireSearchView: React.FC = () => {
   const [visitDate, setVisitDate] = useState('');
   const [applyMessage, setApplyMessage] = useState('');
   const [reportReason, setReportReason] = useState('');
+  const [visitConfirmation, setVisitConfirmation] = useState<{
+    isOpen: boolean;
+    propertyTitle: string;
+    date: string;
+  } | null>(null);
 
   const navigate = useNavigate();
   const isVerified = profile?.verification_status === 'verifie';
@@ -134,10 +140,30 @@ export const LocataireSearchView: React.FC = () => {
 
   const handleSendVisitRequest = (e: React.FormEvent) => {
     e.preventDefault();
-    setActionFeedback(`Demande de visite pour le ${visitDate} transmise avec succès au bailleur !`);
+    if (!visitDate) return;
+
+    let formattedDate = visitDate;
+    try {
+      const parsed = new Date(visitDate);
+      if (!isNaN(parsed.getTime())) {
+        formattedDate = parsed.toLocaleDateString('fr-FR', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      }
+    } catch (_) {}
+
+    setVisitConfirmation({
+      isOpen: true,
+      propertyTitle: selectedProperty?.title || 'Bien immobilier',
+      date: formattedDate
+    });
     setShowVisitModal(false);
     setVisitDate('');
-    setTimeout(() => setActionFeedback(null), 5000);
   };
 
   const handleSendRentalApplication = async (e: React.FormEvent) => {
@@ -425,37 +451,104 @@ export const LocataireSearchView: React.FC = () => {
 
       {/* Visit Modal */}
       {showVisitModal && selectedProperty && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
           <form onSubmit={handleSendVisitRequest} className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4">
             <div className="flex items-center justify-between border-b pb-3">
-              <h3 className="text-base font-black text-slate-900">Demander une Visite</h3>
-              <button type="button" onClick={() => setShowVisitModal(false)} className="text-slate-400 font-bold">✕</button>
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Demander une Visite</h3>
+                  <p className="text-[11px] text-slate-500">Planifiez un rendez-vous avec le bailleur</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowVisitModal(false)} className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 font-bold">✕</button>
             </div>
 
-            <span className="text-xs font-bold text-blue-600">{selectedProperty.title}</span>
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-slate-900">{selectedProperty.title}</span>
+                <span className="text-[11px] text-slate-500">{selectedProperty.location?.commune || selectedProperty.location?.city}</span>
+              </div>
+              <span className="text-xs font-extrabold text-blue-700">{formatFCFA(selectedProperty.rent)}/mois</span>
+            </div>
 
-            <div>
-              <label className="text-xs font-extrabold text-slate-800 block mb-1">Date & Heure souhaitée</label>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-extrabold text-slate-800 flex items-center justify-between">
+                <span>Date & Heure souhaitée</span>
+                <span className="text-[11px] text-blue-600 font-bold">● Créneau de visite</span>
+              </label>
               <input
                 type="datetime-local"
                 required
                 value={visitDate}
                 onChange={(e) => setVisitDate(e.target.value)}
-                className="w-full p-2.5 rounded-xl border text-xs font-bold"
+                className="w-full px-3.5 py-3 rounded-2xl border border-blue-200 bg-blue-50/40 hover:bg-white focus:bg-white text-slate-900 font-bold text-xs focus:border-blue-600 focus:ring-4 focus:ring-blue-600/10 [color-scheme:light] transition-all outline-none"
               />
+
+              {/* Suggestions rapides de créneaux */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <span className="text-[10px] font-bold text-slate-400">Suggestions :</span>
+                {[
+                  { label: 'Demain à 10h', offsetDays: 1, hour: 10 },
+                  { label: 'Demain à 15h', offsetDays: 1, hour: 15 },
+                  { label: 'Samedi à 11h', isSaturday: true, hour: 11 },
+                  { label: 'Samedi à 15h', isSaturday: true, hour: 15 }
+                ].map((slot, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      if (slot.isSaturday) {
+                        const day = d.getDay();
+                        const diff = (6 - day + 7) % 7 || 7;
+                        d.setDate(d.getDate() + diff);
+                      } else {
+                        d.setDate(d.getDate() + (slot.offsetDays || 1));
+                      }
+                      d.setHours(slot.hour, 0, 0, 0);
+                      const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+                      setVisitDate(iso);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    {slot.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="flex justify-end gap-3 pt-3 border-t">
-              <button type="button" onClick={() => setShowVisitModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-bold">Annuler</button>
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-extrabold shadow">Confirmer la demande</button>
+              <button type="button" onClick={() => setShowVisitModal(false)} className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors">
+                Annuler
+              </button>
+              <button type="submit" className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white text-xs font-extrabold shadow-md shadow-blue-600/25 transition-all active:scale-95">
+                Confirmer la demande
+              </button>
             </div>
           </form>
         </div>
       )}
 
+      {/* Confirmation Modale Après Demande de Visite */}
+      {visitConfirmation && (
+        <ActionConfirmationModal
+          isOpen={visitConfirmation.isOpen}
+          onClose={() => setVisitConfirmation(null)}
+          type="sent"
+          title="Demande de Visite Transmise !"
+          message={`Votre demande de visite pour « ${visitConfirmation.propertyTitle} » a été transmise avec succès au bailleur certifié.`}
+          details={`Créneau souhaité : ${visitConfirmation.date}`}
+          confirmText="Super, merci !"
+          withCelebration={true}
+        />
+      )}
+
       {/* Apply Modal */}
       {showApplyModal && selectedProperty && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
           <form onSubmit={handleSendRentalApplication} className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-base font-black text-slate-900">Envoyer ma Demande de Location</h3>
@@ -485,7 +578,7 @@ export const LocataireSearchView: React.FC = () => {
 
       {/* Report Ad Modal */}
       {showReportModal && selectedProperty && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
           <form onSubmit={handleSendReport} className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-base font-black text-rose-600">Signaler cette annonce</h3>
@@ -516,7 +609,7 @@ export const LocataireSearchView: React.FC = () => {
 
       {/* Modal Blocage KYC (Audio client: interdiction d'envoyer location ou visite si non vérifié) */}
       {showKycBlockModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 text-center">
             <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
               <ShieldAlert className="w-8 h-8" />
