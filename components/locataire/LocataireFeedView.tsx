@@ -36,6 +36,7 @@ import { Property } from '@/types/database.types';
 import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 
 interface LocataireFeedViewProps {
   onOpenMessages?: (landlordName?: string) => void;
@@ -727,10 +728,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
         {/* ÉTATS : LOADER, ERREUR, OU VIDE */}
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl border border-slate-200/90 shadow-sm text-center">
-            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-sm font-bold text-slate-800">Chargement des logements disponibles...</p>
-            <p className="text-xs text-slate-400 mt-1">Interrogation de la base de données certifiée Supabase</p>
+          <div className="w-full py-2">
+            <PropertyGridSkeleton count={6} />
           </div>
         ) : loadError ? (
           <div className="p-6 bg-rose-50 border border-rose-200 rounded-2xl text-center shadow-sm">

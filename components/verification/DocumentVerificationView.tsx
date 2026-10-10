@@ -210,12 +210,21 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
           </div>
         </header>
 
-        <main className="max-w-xl mx-auto px-4 py-20 flex flex-col items-center justify-center text-center gap-4 w-full">
-          <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
-          <h2 className="text-lg font-black text-slate-900">Contrôle de l'empreinte cryptographique...</h2>
-          <p className="text-xs text-slate-500 max-w-sm">
-            Interrogation du registre sécurisé de conformité LocaTrust et des registres fonciers certifiés.
-          </p>
+        <main className="max-w-xl mx-auto px-4 py-12 flex flex-col items-center gap-6 w-full">
+          <div className="w-full bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-8 shadow-sm space-y-6 text-center flex flex-col items-center">
+            <div className="w-16 h-16 rounded-2xl animate-shimmer flex items-center justify-center">
+              <ShieldCheck className="w-8 h-8 text-blue-600 opacity-60" />
+            </div>
+            <div className="space-y-2 w-full flex flex-col items-center">
+              <div className="h-5 w-64 animate-shimmer rounded-lg" />
+              <div className="h-3.5 w-80 max-w-full animate-shimmer rounded" />
+            </div>
+            <div className="w-full space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <div className="h-10 animate-shimmer rounded-xl w-full" />
+              <div className="h-10 animate-shimmer rounded-xl w-full" />
+              <div className="h-10 animate-shimmer rounded-xl w-full" />
+            </div>
+          </div>
         </main>
       </div>
     );

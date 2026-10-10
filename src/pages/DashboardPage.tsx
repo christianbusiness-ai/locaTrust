@@ -7,12 +7,7 @@ const ProprietaireDashboardPage = lazy(() => import('@/app/(proprietaire)/dashbo
 const AgencyDashboardPage = lazy(() => import('@/app/(agence)/dashboard/page'));
 const AdminDashboardPage = lazy(() => import('@/app/(admin)/dashboard/page'));
 
-const DashboardSpinner: React.FC = () => (
-  <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-    <div className="w-10 h-10 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mb-3"></div>
-    <span className="text-xs font-bold text-slate-500">Chargement de votre espace de gestion...</span>
-  </div>
-);
+import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 
 export const DashboardPage: React.FC = () => {
   const { profile, signOut } = useAuth();
@@ -33,7 +28,7 @@ export const DashboardPage: React.FC = () => {
   };
 
   return (
-    <Suspense fallback={<DashboardSpinner />}>
+    <Suspense fallback={<DashboardPageSkeleton />}>
       {profile?.role === 'admin' ? (
         <AdminDashboardPage currentRole="admin" isDemo={false} onExitToLanding={handleExitToLanding} />
       ) : profile?.account_type === 'proprietaire' ? (

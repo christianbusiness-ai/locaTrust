@@ -31,8 +31,8 @@ import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
-import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { TableRowsSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
 
 interface TenantReceiptItem {
   id: string;
@@ -275,10 +275,10 @@ export const HistoriqueView: React.FC = () => {
       {activeTab === 'locataires' && (
         <div className="flex flex-col gap-3">
           {isLoading && (
-            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
-              <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4" />
-              <p className="text-slate-700 font-bold text-sm">Chargement de l'historique locatif...</p>
-              <p className="text-slate-400 text-xs mt-1">Synchronisation sécurisée avec Supabase</p>
+            <div className="space-y-3">
+              <TenantCardSkeleton />
+              <TenantCardSkeleton />
+              <TenantCardSkeleton />
             </div>
           )}
 
@@ -444,33 +444,25 @@ export const HistoriqueView: React.FC = () => {
                   <th className="p-4 text-center">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {isLoading && (
-                  <tr>
-                    <td colSpan={6} className="p-12 text-center">
-                      <div className="flex flex-col items-center justify-center">
-                        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3" />
-                        <span className="text-slate-700 font-bold text-xs">Chargement des contrats de bail...</span>
-                      </div>
-                    </td>
-                  </tr>
-                )}
+              {isLoading ? (
+                <TableRowsSkeleton rows={5} cols={6} />
+              ) : (
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {loadError && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center bg-rose-50/50">
+                        <div className="flex flex-col items-center justify-center">
+                          <AlertTriangle className="w-8 h-8 text-rose-500 mb-2" />
+                          <span className="text-slate-800 font-bold text-xs">{loadError}</span>
+                          <button onClick={loadHistory} className="mt-3 px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer">
+                            Réessayer
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
 
-                {!isLoading && loadError && (
-                  <tr>
-                    <td colSpan={6} className="p-8 text-center bg-rose-50/50">
-                      <div className="flex flex-col items-center justify-center">
-                        <AlertTriangle className="w-8 h-8 text-rose-500 mb-2" />
-                        <span className="text-slate-800 font-bold text-xs">{loadError}</span>
-                        <button onClick={loadHistory} className="mt-3 px-3 py-1.5 bg-rose-600 text-white font-bold text-xs rounded-xl hover:bg-rose-700 transition cursor-pointer">
-                          Réessayer
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-
-                {!isLoading && !loadError && filteredContracts.length === 0 && (
+                  {!loadError && filteredContracts.length === 0 && (
                   <tr>
                     <td colSpan={6} className="p-12 text-center">
                       <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
@@ -548,6 +540,7 @@ export const HistoriqueView: React.FC = () => {
                   </tr>
                 ))}
               </tbody>
+            )}
             </table>
           </div>
         </div>

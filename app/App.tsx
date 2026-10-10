@@ -24,12 +24,8 @@ const DocumentVerificationView = lazy(() => import('@/components/verification/Do
 const RegisterModal = lazy(() => import('@/components/auth/RegisterModal').then(m => ({ default: m.RegisterModal })));
 const LoginModal = lazy(() => import('@/components/auth/LoginModal').then(m => ({ default: m.LoginModal })));
 
-const PageLoadingSpinner: React.FC = () => (
-  <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-    <div className="w-10 h-10 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin mb-3"></div>
-    <span className="text-xs font-bold text-slate-500">Chargement sécurisé de LocaTrust...</span>
-  </div>
-);
+import { TopProgressBar } from '@/components/common/TopProgressBar';
+import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 
 // Composant de vérification publique QR Code
 const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' }> = ({ forcedType }) => {
@@ -39,7 +35,7 @@ const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' }> = ({ 
   const typeParam = (params.type || forcedType || 'contrat') as 'contrat' | 'recu';
 
   return (
-    <Suspense fallback={<PageLoadingSpinner />}>
+    <Suspense fallback={<DashboardPageSkeleton />}>
       <DocumentVerificationView
         type={typeParam}
         token={token}
@@ -107,8 +103,9 @@ const HomePage: React.FC = () => {
 export default function App() {
   return (
     <BrowserRouter>
+      <TopProgressBar />
       <AuthProvider>
-        <Suspense fallback={<PageLoadingSpinner />}>
+        <Suspense fallback={<DashboardPageSkeleton />}>
           <Routes>
             {/* Routes Publiques d'Authentification */}
             <Route path="/login" element={<LoginPage />} />

@@ -14,6 +14,7 @@ import { ContactOwnerModal } from '@/components/feed/ContactOwnerModal';
 import { Image as ImageIcon, Video, Search, Sparkles, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
+import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 
 export default function FeedPage() {
   const { user, profile } = useAuth();
@@ -171,10 +172,7 @@ export default function FeedPage() {
           {/* Property Cards List */}
           <div className="flex flex-col gap-6">
             {loading && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center flex flex-col items-center justify-center gap-3">
-                <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-                <p className="text-xs font-bold text-slate-600">Chargement des biens vérifiés...</p>
-              </div>
+              <PropertyGridSkeleton count={4} />
             )}
 
             {error && !loading && (

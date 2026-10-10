@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { Property } from '@/types/database.types';
+import { PropertyDetailSkeleton } from '@/components/common/SkeletonLoader';
 
 export default function PropertyDetailPage() {
   const params = useParams();
@@ -75,10 +76,7 @@ export default function PropertyDetailPage() {
 
           {/* STATE 1: LOADER */}
           {loading && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-16 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
-              <p className="text-sm font-bold text-slate-700">Chargement de la fiche du logement...</p>
-            </div>
+            <PropertyDetailSkeleton />
           )}
 
           {/* STATE 2: ERROR */}

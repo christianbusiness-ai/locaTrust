@@ -441,9 +441,17 @@ export const AbonnementView: React.FC = () => {
 
       {/* Loading state */}
       {loading && (
-        <div className="p-8 bg-white rounded-3xl border border-slate-200 flex flex-col items-center justify-center gap-3">
-          <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-          <p className="text-sm font-bold text-slate-600">Calcul de votre formule d'abonnement en cours...</p>
+        <div className="p-8 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 space-y-4 shadow-sm w-full">
+          <div className="flex items-center justify-between">
+            <div className="h-6 w-48 animate-shimmer rounded-lg" />
+            <div className="h-6 w-24 animate-shimmer rounded-full" />
+          </div>
+          <div className="h-10 w-36 animate-shimmer rounded-xl" />
+          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="h-4 w-3/4 animate-shimmer rounded" />
+            <div className="h-4 w-2/3 animate-shimmer rounded" />
+            <div className="h-4 w-1/2 animate-shimmer rounded" />
+          </div>
         </div>
       )}
 

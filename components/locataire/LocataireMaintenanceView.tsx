@@ -15,6 +15,7 @@ import {
 import { MaintenanceTicket } from '@/types/database.types';
 import { getMaintenanceTickets, createMaintenanceTicket, getContracts } from '@/src/lib/db';
 import { useAuth } from '@/src/context/AuthContext';
+import { TicketsListSkeleton } from '@/components/common/SkeletonLoader';
 
 export const LocataireMaintenanceView: React.FC = () => {
   const { user } = useAuth();
@@ -119,9 +120,8 @@ export const LocataireMaintenanceView: React.FC = () => {
 
       {/* ÉTATS : LOADER, ERREUR, OU VIDE */}
       {isLoading ? (
-        <div className="flex flex-col items-center justify-center p-12 bg-white rounded-3xl border border-slate-200 text-center shadow-sm">
-          <div className="w-10 h-10 border-4 border-amber-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="mt-4 text-sm font-bold text-slate-800">Chargement de vos signalements...</p>
+        <div className="w-full py-2">
+          <TicketsListSkeleton count={3} />
         </div>
       ) : loadError ? (
         <div className="p-6 bg-rose-50 border border-rose-200 rounded-3xl text-center shadow-sm">

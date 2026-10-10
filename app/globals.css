@@ -202,3 +202,90 @@ html.dark .glass-card {
   background: #0F172A;
   border-color: #334155;
 }
+
+/* ========================================================================= */
+/* SKELETON SHIMMER & VAGUE LUMINEUSE ("Lumière qui entre et qui sort")       */
+/* ========================================================================= */
+@keyframes shimmerWave {
+  0% {
+    background-position: -200% 0;
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    background-position: 200% 0;
+    opacity: 0.85;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #e2e8f0 0%,
+    #f1f5f9 25%,
+    #ffffff 50%,
+    #f1f5f9 75%,
+    #e2e8f0 100%
+  );
+  background-size: 250% 100%;
+  animation: shimmerWave 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+html.dark .animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #1e293b 0%,
+    #334155 25%,
+    #475569 50%,
+    #334155 75%,
+    #1e293b 100%
+  );
+  background-size: 250% 100%;
+  animation: shimmerWave 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Apparition fluide du contenu final ("tout à coup tout sort en douceur") */
+@keyframes contentFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-reveal {
+  animation: contentFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Barre de chargement supérieure discrète et élégante (Top Progress Bar) */
+@keyframes topProgressGlide {
+  0% {
+    left: -40%;
+    width: 30%;
+  }
+  50% {
+    left: 20%;
+    width: 65%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
+}
+
+.top-progress-bar-glow {
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.7), 0 0 4px rgba(245, 158, 11, 0.6);
+}
+
+.top-progress-glide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  animation: topProgressGlide 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+

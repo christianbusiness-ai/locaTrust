@@ -8,9 +8,9 @@ import { formatFCFA, formatDateFr } from '@/lib/utils';
 import { generateReceiptPDF } from '@/lib/pdf/generator';
 import { Receipt, Download, QrCode, FileCheck, ShieldCheck, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
+import { QuittanceGridSkeleton } from '@/components/common/SkeletonLoader';
 
 export default function QuittancesPage() {
   const { user, profile } = useAuth();
@@ -93,10 +93,7 @@ export default function QuittancesPage() {
 
           {/* STATE 1: LOADER */}
           {loading && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-12 flex flex-col items-center justify-center gap-3">
-              <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-              <p className="text-xs font-bold text-slate-600">Chargement de vos quittances officielles...</p>
-            </div>
+            <QuittanceGridSkeleton count={6} />
           )}
 
           {/* STATE 2: ERROR */}

@@ -22,6 +22,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
+import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 
 interface LocataireDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -120,9 +121,20 @@ export const LocataireDashboardView: React.FC<LocataireDashboardViewProps> = ({
 
       {/* STATE 1: LOADER */}
       {loading && (
-        <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center gap-3">
-          <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
-          <p className="text-sm font-bold text-slate-700">Chargement de votre espace locataire...</p>
+        <div className="space-y-6 w-full">
+          <KpiGridSkeleton count={3} />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-6 space-y-4 shadow-sm">
+              <div className="h-5 w-40 animate-shimmer rounded-md" />
+              <div className="h-28 animate-shimmer rounded-2xl w-full" />
+              <div className="h-10 animate-shimmer rounded-xl w-32" />
+            </div>
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 p-6 space-y-4 shadow-sm">
+              <div className="h-5 w-40 animate-shimmer rounded-md" />
+              <div className="h-28 animate-shimmer rounded-2xl w-full" />
+              <div className="h-10 animate-shimmer rounded-xl w-32" />
+            </div>
+          </div>
         </div>
       )}
 
