@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShieldCheck,
   Search,
@@ -21,7 +21,12 @@ import {
   Eye,
   PenTool,
   Upload,
-  AlertCircle
+  AlertCircle,
+  Camera,
+  Trash2,
+  ZoomIn,
+  UploadCloud,
+  Image as ImageIcon
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { Deposit } from '@/types/database.types';
@@ -85,7 +90,27 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const [declareMethod, setDeclareMethod] = useState<string>('Wave CI');
   const [declareReference, setDeclareReference] = useState<string>('WAVE-CI-98213904');
   const [declareComment, setDeclareComment] = useState<string>('Paiement de la caution effectué ce jour via Wave.');
-  const [declareProofUrl, setDeclareProofUrl] = useState<string>('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80');
+  const [declareProofUrl, setDeclareProofUrl] = useState<string | null>(null);
+  const [declareProofFileName, setDeclareProofFileName] = useState<string | null>(null);
+  const [declareProofFileSize, setDeclareProofFileSize] = useState<string | null>(null);
+  const [previewProofModalUrl, setPreviewProofModalUrl] = useState<string | null>(null);
+  const proofFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDeclareProofFileName(file.name);
+    const sizeKb = Math.round(file.size / 1024);
+    const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} Mo` : `${sizeKb} Ko`;
+    setDeclareProofFileSize(sizeStr);
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setDeclareProofUrl(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Étape 2 : Modal vérification preuve par le propriétaire
   const [proofToVerifyDeposit, setProofToVerifyDeposit] = useState<Deposit | null>(null);
@@ -235,14 +260,17 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       amount: Number(declareAmount),
       reference: autoRef,
       method: isEspeces ? 'Espèces' : declareMethod,
-      proofUrl: isEspeces ? '' : declareProofUrl,
+      proofUrl: isEspeces ? '' : (declareProofUrl || ''),
       comment: declareComment
     });
 
     reloadDeposits();
     setIsDeclareCautionOpen(false);
+    setDeclareProofUrl(null);
+    setDeclareProofFileName(null);
+    setDeclareProofFileSize(null);
     setSuccessFeedback(
-      "Le locataire a signalé le paiement de sa caution. Une notification a été envoyée immédiatement au propriétaire."
+      "Le locataire a signalé le paiement de sa caution avec la preuve jointe. Une notification a été envoyée immédiatement au propriétaire."
     );
   };
 
@@ -868,15 +896,22 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 <FileText className="w-4 h-4 text-blue-600" />
                 <span>Preuve fournie par le locataire (Capture d'écran / Reçu Mobile Money) :</span>
               </span>
-              <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 max-h-56 relative group">
+              <div
+                onClick={() => setPreviewProofModalUrl(proofToVerifyDeposit.proof_url || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80')}
+                className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 max-h-56 relative group cursor-pointer"
+                title="Cliquer pour agrandir la preuve"
+              >
                 <img
                   src={proofToVerifyDeposit.proof_url || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80'}
                   alt="Preuve de caution"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                 />
+                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                  <ZoomIn className="w-6 h-6 drop-shadow" />
+                </div>
                 <div className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-xs flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                  <span>Document joint</span>
+                  <span>Document joint (Cliquer pour zoom)</span>
                 </div>
               </div>
             </div>
@@ -1022,21 +1057,96 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
               {/* Preuve — masquée si Espèces */}
               {declareMethod !== 'Espèces' && (
-                <div>
-                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
-                    Capture d'écran / Photo du reçu Mobile Money
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block">
+                    Capture d'écran / Photo du reçu Mobile Money *
                   </label>
-                  <div className="flex items-center gap-3 p-3 rounded-2xl border border-dashed border-blue-300 bg-blue-50/50">
-                    <img
-                      src={declareProofUrl}
-                      alt="Aperçu reçu"
-                      className="w-14 h-14 object-cover rounded-xl border border-slate-200"
-                    />
-                    <div className="flex-1 flex flex-col">
-                      <span className="font-bold text-slate-800 text-xs">Reçu_caution_MobileMoney.jpg</span>
-                      <span className="text-[10px] text-emerald-600 font-semibold">✓ Image prête à l'envoi</span>
+
+                  <input
+                    type="file"
+                    ref={proofFileInputRef}
+                    accept="image/*,application/pdf"
+                    onChange={handleProofFileSelect}
+                    className="hidden"
+                  />
+
+                  {declareProofUrl ? (
+                    <div className="flex items-center gap-3 p-3 rounded-2xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20">
+                      <div
+                        onClick={() => setPreviewProofModalUrl(declareProofUrl)}
+                        className="relative w-16 h-16 rounded-xl overflow-hidden border border-emerald-200 dark:border-emerald-800 cursor-pointer group shrink-0"
+                        title="Cliquer pour agrandir la preuve"
+                      >
+                        <img
+                          src={declareProofUrl}
+                          alt="Aperçu du reçu"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                        />
+                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                          <ZoomIn className="w-4 h-4" />
+                        </div>
+                      </div>
+
+                      <div className="flex-1 flex flex-col min-w-0">
+                        <span className="font-bold text-slate-900 dark:text-white text-xs truncate">
+                          {declareProofFileName || 'Reçu_caution_mobile.jpg'}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {declareProofFileSize ? `${declareProofFileSize} • ` : ''}Fichier prêt à l'envoi
+                        </span>
+                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Preuve enregistrée
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => proofFileInputRef.current?.click()}
+                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 transition"
+                        >
+                          Changer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeclareProofUrl(null);
+                            setDeclareProofFileName(null);
+                            setDeclareProofFileSize(null);
+                            if (proofFileInputRef.current) proofFileInputRef.current.value = '';
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition flex items-center justify-center"
+                          title="Supprimer la preuve"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div
+                      onClick={() => proofFileInputRef.current?.click()}
+                      className="border-2 border-dashed border-blue-300 dark:border-blue-700 hover:border-blue-500 rounded-2xl p-5 bg-blue-50/40 dark:bg-blue-950/20 hover:bg-blue-50/70 transition-all cursor-pointer flex flex-col items-center justify-center text-center gap-2 group"
+                    >
+                      <div className="w-12 h-12 rounded-2xl bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center group-hover:scale-110 transition-transform shadow-xs">
+                        <UploadCloud className="w-6 h-6" />
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-extrabold text-blue-900 dark:text-blue-300 text-xs">
+                          Cliquez pour téléverser votre capture d'écran / reçu
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Prend en charge JPG, PNG, PDF ou capture caméra mobile
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="mt-1 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs flex items-center gap-1.5 pointer-events-none"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Sélectionner une photo / fichier</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1529,6 +1639,40 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL ZOOM / LIGHTBOX PREUVE DE PAIEMENT */}
+      {previewProofModalUrl && (
+        <div
+          onClick={() => setPreviewProofModalUrl(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn cursor-zoom-out"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-2xl w-full p-4 border border-slate-700 shadow-2xl flex flex-col gap-3 animate-scaleUp"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <span className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <span>Aperçu de la preuve de paiement</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setPreviewProofModalUrl(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-auto rounded-2xl flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-2">
+              <img
+                src={previewProofModalUrl}
+                alt="Preuve agrandie"
+                className="max-h-[70vh] w-auto object-contain rounded-xl shadow-md"
+              />
+            </div>
           </div>
         </div>
       )}

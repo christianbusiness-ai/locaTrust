@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   CreditCard,
   CheckCircle2,
@@ -16,7 +16,12 @@ import {
   FileCheck,
   Check,
   X,
-  Search
+  Search,
+  Camera,
+  Trash2,
+  UploadCloud,
+  ZoomIn,
+  FileText
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
@@ -55,6 +60,25 @@ export const LocatairePaiementsView: React.FC = () => {
   const [cautionAmount, setCautionAmount] = useState<number>(300000);
   const [cautionMethod, setCautionMethod] = useState('Wave CI');
   const [cautionReference, setCautionReference] = useState('');
+  const [cautionProofUrl, setCautionProofUrl] = useState<string | null>(null);
+  const [cautionProofFileName, setCautionProofFileName] = useState<string | null>(null);
+  const [cautionProofFileSize, setCautionProofFileSize] = useState<string | null>(null);
+  const cautionProofFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCautionProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCautionProofFileName(file.name);
+    const sizeKb = Math.round(file.size / 1024);
+    const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} Mo` : `${sizeKb} Ko`;
+    setCautionProofFileSize(sizeStr);
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setCautionProofUrl(ev.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const fetchPaymentsData = async () => {
     if (!user) {
@@ -161,7 +185,8 @@ export const LocatairePaiementsView: React.FC = () => {
       amount_paid: cautionAmount,
       status: 'declare',
       declared_reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-      declared_at: new Date().toISOString()
+      declared_at: new Date().toISOString(),
+      proof_url: cautionProofUrl || null
     };
 
     const { data } = await supabase.from('cautions').insert(cautionData).select().single();
@@ -171,6 +196,9 @@ export const LocatairePaiementsView: React.FC = () => {
 
     setShowCautionModal(false);
     setCautionReference('');
+    setCautionProofUrl(null);
+    setCautionProofFileName(null);
+    setCautionProofFileSize(null);
     setSuccessModalMessage({
       title: 'Paiement de caution signalé !',
       desc: `Votre règlement de garantie de ${formatFCFA(cautionAmount)} a été notifié à votre bailleur sous le statut "Caution à confirmer".`
@@ -517,6 +545,79 @@ export const LocatairePaiementsView: React.FC = () => {
               {cautionMethod === 'Espèces' && (
                 <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-semibold flex items-center gap-2">
                   💵 Paiement en espèces — aucune référence de transaction requise.
+                </div>
+              )}
+              {cautionMethod !== 'Espèces' && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-extrabold text-slate-800 block">
+                    Capture d'écran / Photo du reçu Mobile Money
+                  </label>
+
+                  <input
+                    type="file"
+                    ref={cautionProofFileInputRef}
+                    accept="image/*,application/pdf"
+                    onChange={handleCautionProofFileSelect}
+                    className="hidden"
+                  />
+
+                  {cautionProofUrl ? (
+                    <div className="flex items-center gap-3 p-3 rounded-2xl border border-emerald-300 bg-emerald-50/50">
+                      <img
+                        src={cautionProofUrl}
+                        alt="Aperçu reçu"
+                        className="w-14 h-14 object-cover rounded-xl border border-emerald-200 shrink-0"
+                      />
+                      <div className="flex-1 flex flex-col min-w-0">
+                        <span className="font-bold text-slate-900 text-xs truncate">
+                          {cautionProofFileName || 'Reçu_caution.jpg'}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {cautionProofFileSize ? `${cautionProofFileSize} • ` : ''}Fichier prêt
+                        </span>
+                        <span className="text-[11px] text-emerald-600 font-bold flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Preuve enregistrée
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => cautionProofFileInputRef.current?.click()}
+                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition"
+                        >
+                          Changer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCautionProofUrl(null);
+                            setCautionProofFileName(null);
+                            setCautionProofFileSize(null);
+                            if (cautionProofFileInputRef.current) cautionProofFileInputRef.current.value = '';
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition flex items-center justify-center"
+                          title="Supprimer la preuve"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => cautionProofFileInputRef.current?.click()}
+                      className="border-2 border-dashed border-amber-300 hover:border-amber-500 rounded-2xl p-4 bg-amber-50/30 hover:bg-amber-50/60 transition-all cursor-pointer flex flex-col items-center justify-center text-center gap-1.5 group"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <UploadCloud className="w-5 h-5" />
+                      </div>
+                      <span className="font-extrabold text-amber-900 text-xs">
+                        Cliquez pour ajouter la preuve / capture d'écran
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        Prend en charge PNG, JPG, PDF ou photo caméra
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
