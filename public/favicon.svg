@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Corps Maison Bleu Royal -->
+  <path
+    d="M12 28L32 10L52 28V52C52 54.2091 50.2091 56 48 56H16C13.7909 56 12 54.2091 12 52V28Z"
+    fill="#1D4ED8"
+  />
+  <!-- Toit Doré Accent -->
+  <path
+    d="M32 6L6 29.5L11 34L32 15L53 34L58 29.5L32 6Z"
+    fill="#F59E0B"
+  />
+  <!-- Bouclier Certifié Intérieur -->
+  <path
+    d="M32 25C38 25 43 27 43 33C43 42 32 48 32 48C32 48 21 42 21 33C21 27 26 25 32 25Z"
+    fill="#0F172A"
+    stroke="#F59E0B"
+    stroke-width="2.5"
+  />
+  <!-- Coche de Validation -->
+  <path
+    d="M27 36L30.5 39.5L37 32"
+    stroke="#F59E0B"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

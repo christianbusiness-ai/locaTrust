@@ -397,6 +397,21 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
+          {/* PWA Install Button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('locatrust:open_pwa_install'));
+              }
+            }}
+            title="Installer l'application LocaTrust sur votre appareil pour y accéder sans navigateur"
+            className="hidden sm:flex h-8 sm:h-9 px-2.5 rounded-full items-center gap-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-xs font-bold border border-blue-200 dark:border-blue-800 transition-colors shrink-0 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span className="hidden md:inline">Installer l'app</span>
+          </button>
+
           {/* Dark Mode Toggle */}
           <button
             type="button"

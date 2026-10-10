@@ -26,6 +26,7 @@ const LoginModal = lazy(() => import('@/components/auth/LoginModal').then(m => (
 
 import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
+import { PwaInstallPrompt } from '@/components/common/PwaInstallPrompt';
 
 // Composant de vérification publique QR Code
 const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' }> = ({ forcedType }) => {
@@ -146,6 +147,9 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
+
+        {/* Bannière et Modal d'installation PWA (Accessible sur tout le site) */}
+        <PwaInstallPrompt />
       </AuthProvider>
     </BrowserRouter>
   );

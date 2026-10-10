@@ -467,22 +467,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <p className="text-[10px] text-slate-400 leading-tight">
           Consultez notre centre d'aide et assistance LocaTrust.
         </p>
-        <button
-          type="button"
-          onClick={() => {
-            if (onOpenSupport) {
-              onOpenSupport();
-            } else if (onSelectTab) {
-              onSelectTab('support');
-            } else if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('locatrust:open_support'));
-            }
-          }}
-          className="w-full py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold text-center shadow-sm shadow-blue-600/30 transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
-        >
-          <HelpCircle className="w-3.5 h-3.5" />
-          <span>Centre d'aide</span>
-        </button>
+        <div className="flex flex-col gap-1.5 mt-1">
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('locatrust:open_pwa_install'));
+              }
+            }}
+            className="w-full py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-[11px] font-bold text-center border border-slate-700/80 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+          >
+            <Download className="w-3.5 h-3.5 text-amber-400" />
+            <span>Installer l'application</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenSupport) {
+                onOpenSupport();
+              } else if (onSelectTab) {
+                onSelectTab('support');
+              } else if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('locatrust:open_support'));
+              }
+            }}
+            className="w-full py-1.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold text-center shadow-sm shadow-blue-600/30 transition-all active:scale-95 flex items-center justify-center gap-1 cursor-pointer"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            <span>Centre d'aide</span>
+          </button>
+        </div>
       </div>
 
     </aside>

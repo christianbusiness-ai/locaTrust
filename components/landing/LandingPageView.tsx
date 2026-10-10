@@ -41,7 +41,8 @@ import {
   Zap,
   Clock,
   Compass,
-  ArrowUpRight
+  ArrowUpRight,
+  Download
 } from 'lucide-react';
 import { UserRole } from '@/types/database.types';
 import { formatFCFA } from '@/lib/utils';
@@ -257,6 +258,20 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <div className="flex items-center gap-1 sm:gap-2">
               <button
                 type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('locatrust:open_pwa_install'));
+                  }
+                }}
+                className="hidden lg:inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full transition-all active:scale-95 cursor-pointer shadow-xs border border-blue-200/60"
+                title="Installer l'application sur votre appareil pour y accéder sans navigateur"
+              >
+                <Download className="w-3.5 h-3.5 text-blue-600" />
+                <span>Installer l'app</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={onOpenLogin}
                 className="hidden sm:inline-flex text-xs font-bold text-slate-700 hover:text-slate-950 px-2.5 sm:px-3 py-1.5 transition-colors"
               >
@@ -346,6 +361,19 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             Contact
           </button>
           <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('locatrust:open_pwa_install'));
+                }
+              }}
+              className="w-full py-2.5 rounded-full text-center text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              <span>Installer l'application</span>
+            </button>
             <button
               type="button"
               onClick={onOpenLogin}
