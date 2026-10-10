@@ -36,6 +36,7 @@ import { Logo } from '@/components/common/Logo';
 import { UserRole } from '@/types/database.types';
 import { getActiveUser } from '@/lib/authStore';
 import { useAuth } from '@/src/context/AuthContext';
+import { getUnreadMessagesCountForUser } from '@/lib/messagingStore';
 
 interface SidebarProps {
   currentRole: UserRole;
@@ -140,17 +141,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         setContractCount(countContracts);
 
-        const msgsRaw = localStorage.getItem('locatrust_chat_messages_v4');
-        let countMsgs = 0;
-        if (msgsRaw) {
-          const msgs = JSON.parse(msgsRaw);
-          if (Array.isArray(msgs)) {
-            countMsgs = msgs.filter((m: any) => 
-              (m.status === 'sent' || m.status === 'delivered') &&
-              ((user?.id && m.receiver_id === user.id) || (user?.email && m.receiver_email === user.email))
-            ).length;
-          }
-        }
+        const countMsgs = getUnreadMessagesCountForUser(
+          user ? { id: user.id, email: user.email, role: user.role || currentRole } : { role: currentRole }
+        );
         setMsgCount(countMsgs);
       } catch (e) {
         setAppCount(0);

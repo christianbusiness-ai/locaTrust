@@ -42,6 +42,7 @@ import {
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
 import { supabase } from '@/src/lib/supabase';
+import { getUnreadMessagesCountForUser } from '@/lib/messagingStore';
 
 interface NotificationItem {
   id: string;
@@ -143,23 +144,17 @@ export const Header: React.FC<HeaderProps> = ({
   useEffect(() => {
     const updateUnread = () => {
       try {
-        const raw = localStorage.getItem('locatrust_chat_messages_v4');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            const count = parsed.filter((m: any) => m.status === 'sent' || m.status === 'delivered').length;
-            setUnreadMessagesCount(count);
-            return;
-          }
-        }
-      } catch (e) {}
-      setUnreadMessagesCount(0);
+        const count = getUnreadMessagesCountForUser(currentUser);
+        setUnreadMessagesCount(count);
+      } catch (e) {
+        setUnreadMessagesCount(0);
+      }
     };
 
     updateUnread();
     window.addEventListener('locatrust:messages_updated', updateUnread);
     return () => window.removeEventListener('locatrust:messages_updated', updateUnread);
-  }, []);
+  }, [currentUser]);
 
   // Synchronisation dynamique des compteurs de candidatures et de contrats
   useEffect(() => {
@@ -321,6 +316,7 @@ export const Header: React.FC<HeaderProps> = ({
       const updated = prev.map((n) => ({ ...n, read: true }));
       try {
         localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
       } catch (e) {
         console.warn(e);
       }
@@ -343,6 +339,7 @@ export const Header: React.FC<HeaderProps> = ({
       const updated = prev.map((n) => (n.id === item.id ? { ...n, read: true } : n));
       try {
         localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
       } catch (e) {
         console.warn(e);
       }

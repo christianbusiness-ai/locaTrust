@@ -149,6 +149,82 @@ export function sendChatMessage(senderId: string, receiverId: string, text: stri
   return newMsg;
 }
 
+export function markMessagesAsRead(contactId: string, currentUserId?: string): boolean {
+  if (typeof window === 'undefined') return false;
+  const current = getStoredMessages();
+  let changed = false;
+
+  const updated = current.map((m) => {
+    // Tout message reçu de ce contact
+    const isFromContact = m.sender_id === contactId;
+
+    if (isFromContact && m.status !== 'read') {
+      changed = true;
+      return { ...m, status: 'read' as const };
+    }
+    return m;
+  });
+
+  if (changed) {
+    saveStoredMessages(updated);
+    return true;
+  }
+  return false;
+}
+
+export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
+  if (typeof window === 'undefined') return false;
+  const current = getStoredMessages();
+  let changed = false;
+
+  const updated = current.map((m) => {
+    // Tout message non lu qui n'a pas été envoyé par l'utilisateur courant
+    const isFromMe = Boolean(currentUserId && m.sender_id === currentUserId);
+    if (!isFromMe && m.status !== 'read') {
+      changed = true;
+      return { ...m, status: 'read' as const };
+    }
+    return m;
+  });
+
+  if (changed) {
+    saveStoredMessages(updated);
+    return true;
+  }
+  return false;
+}
+
+export function getUnreadMessagesCountForUser(user?: { id?: string; email?: string; role?: string } | null): number {
+  if (typeof window === 'undefined') return 0;
+  const messages = getStoredMessages();
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+
+  const role = user?.role || 'proprietaire';
+  const userId = user?.id || '';
+  const userEmail = (user?.email || '').toLowerCase();
+  const defaultId = role === 'locataire' ? 'usr_tenant_1' : role === 'agence' ? 'usr_agency' : 'usr_owner_1';
+
+  return messages.filter((m) => {
+    // Si déjà lu, pas compté
+    if (m.status === 'read') return false;
+
+    // Ne jamais compter ses propres messages envoyés
+    const isFromMe = (userId && m.sender_id === userId) || m.sender_id === defaultId || m.sender_id === 'usr_owner' || m.sender_id === 'usr_tenant';
+    if (isFromMe) return false;
+
+    // Le message doit être adressé à l'utilisateur
+    const isForMe =
+      (userId && m.receiver_id === userId) ||
+      (userEmail && m.receiver_id === userEmail) ||
+      m.receiver_id === defaultId ||
+      m.receiver_id === 'usr_tenant' ||
+      m.receiver_id === 'usr_owner' ||
+      (!m.receiver_id && !isFromMe);
+
+    return isForMe;
+  }).length;
+}
+
 export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment): ChatMessage {
   const current = getStoredMessages();
   const newMsg: ChatMessage = {

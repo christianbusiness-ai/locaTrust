@@ -51,6 +51,9 @@ import {
   getStoredMessages,
   saveStoredMessages,
   sendChatMessage,
+  markMessagesAsRead,
+  markAllMessagesAsReadForUser,
+  getUnreadMessagesCountForUser,
   downloadQuittancePdfFromAttachment
 } from '@/lib/messagingStore';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
@@ -192,6 +195,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   const activeContact = roleContacts.find((c) => c.id === selectedContactId) || roleContacts[0];
 
+  // Marquer immédiatement les messages du contact actif comme lus
+  useEffect(() => {
+    if (activeContact?.id && currentUserId) {
+      markMessagesAsRead(activeContact.id, currentUserId);
+    }
+  }, [activeContact?.id, currentUserId, messages.length]);
+
   // Filter messages between current user and active contact
   const currentConversationMessages = (Array.isArray(messages) ? messages : []).filter(
     (m) =>
@@ -204,6 +214,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     (c) =>
       c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.propertyTitle.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const totalUnread = getUnreadMessagesCountForUser(
+    user ? { id: user.id, email: user.email, role: user.role || userRole } : { role: userRole }
   );
 
   // Call Timer Hooks (Point 6)
@@ -775,7 +789,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           } w-full md:w-80 lg:w-96 border-r border-slate-200 dark:border-slate-800 flex-col bg-slate-50 dark:bg-slate-950/60 shrink-0 h-full`}
         >
           {/* Search Contacts Bar - Fixed Header */}
-          <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+          <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 flex flex-col gap-2">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -786,6 +800,24 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600/30"
               />
             </div>
+            {totalUnread > 0 && (
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  {totalUnread} non lu{totalUnread > 1 ? 's' : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    markAllMessagesAsReadForUser(currentUserId);
+                    refreshMessages();
+                  }}
+                  className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <CheckCheck className="w-3 h-3" />
+                  <span>Tout marquer comme lu</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Contacts List - Scrollable */}
@@ -794,10 +826,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const isSelected = selectedContactId === contact.id;
               const contactMsgs = (messages || []).filter(
                 (m) =>
+                  (m.sender_id === currentUserId && m.receiver_id === contact.id) ||
+                  (m.sender_id === contact.id && m.receiver_id === currentUserId) ||
                   (m.sender_id === 'usr_owner_1' && m.receiver_id === contact.id) ||
                   (m.sender_id === contact.id && m.receiver_id === 'usr_owner_1')
               );
               const lastMsg = contactMsgs[contactMsgs.length - 1];
+
+              // Nombre de messages non lus spécifiquement reçus de ce contact
+              const contactUnreadCount = (messages || []).filter(
+                (m) => m.sender_id === contact.id && m.status !== 'read'
+              ).length;
 
               return (
                 <div
@@ -805,6 +844,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                   onClick={() => {
                     setSelectedContactId(contact.id);
                     setShowMobileChat(true);
+                    markMessagesAsRead(contact.id, currentUserId);
+                    refreshMessages();
                   }}
                   className={`p-3.5 flex items-center gap-3 cursor-pointer transition-all ${
                     isSelected
@@ -841,9 +882,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate pr-2">
                         {lastMsg ? lastMsg.text : 'Démarrer la conversation...'}
                       </p>
-                      {contact.unreadCount && contact.unreadCount > 0 && (
-                        <span className="w-5 h-5 rounded-full bg-emerald-500 text-white font-black text-[10px] flex items-center justify-center shrink-0">
-                          {contact.unreadCount}
+                      {contactUnreadCount > 0 && (
+                        <span className="w-5 h-5 rounded-full bg-emerald-500 text-white font-black text-[10px] flex items-center justify-center shrink-0 shadow-sm animate-pulse">
+                          {contactUnreadCount}
                         </span>
                       )}
                     </div>
