@@ -54,8 +54,10 @@ export function registerSingleAdmin(data: {
     };
   }
 
-  // Token de sécurité Master (doit être configuré via la variable d'environnement VITE_ADMIN_SETUP_TOKEN)
-  const masterToken = import.meta.env?.VITE_ADMIN_SETUP_TOKEN;
+  // Token de sécurité Master (compatible VITE_ADMIN_SETUP_TOKEN et ADMIN_SETUP_TOKEN)
+  const masterToken =
+    (import.meta.env?.VITE_ADMIN_SETUP_TOKEN as string) ||
+    (import.meta.env?.ADMIN_SETUP_TOKEN as string);
   if (!masterToken || !data.token || data.token.trim() !== masterToken.trim()) {
     return {
       success: false,
