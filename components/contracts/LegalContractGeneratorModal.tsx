@@ -1085,14 +1085,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
               {/* Owner Conditions */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-1.5">
                   <label className="font-bold text-slate-800 text-xs">
                     Conditions Particulières du Propriétaire (obligations, règles maison, stationnement, travaux, etc.)
                   </label>
                   <button
                     type="button"
                     onClick={() => handleToggleVoiceInput('owner')}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${
                       listeningField === 'owner'
                         ? 'bg-rose-600 text-white animate-pulse shadow-rose-500/30'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
@@ -1160,14 +1160,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
               {/* Tenant Requests */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-1.5">
                   <label className="font-bold text-slate-800 text-xs">
                     Demandes Particulières du Locataire (aménagements, paiements, etc.)
                   </label>
                   <button
                     type="button"
                     onClick={() => handleToggleVoiceInput('tenant')}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${
                       listeningField === 'tenant'
                         ? 'bg-rose-600 text-white animate-pulse shadow-rose-500/30'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
@@ -1235,14 +1235,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
               {/* Property Specific Rules */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-1.5">
                   <label className="font-bold text-slate-800 text-xs">
                     Règles Particulières du Logement & Copropriété (faïence, poubelles, équipements)
                   </label>
                   <button
                     type="button"
                     onClick={() => handleToggleVoiceInput('property')}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${
                       listeningField === 'property'
                         ? 'bg-rose-600 text-white animate-pulse shadow-rose-500/30'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'

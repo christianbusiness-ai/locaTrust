@@ -26,9 +26,17 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON public.profiles(role);
 CREATE INDEX IF NOT EXISTS idx_profiles_account_type ON public.profiles(account_type);
 
--- Vue de compatibilité 'users' -> 'profiles'
-CREATE OR REPLACE VIEW public.users AS
-  SELECT * FROM public.profiles;
+-- Compatibilité 'users' -> 'profiles' (sécurisé si 'users' existe déjà comme table)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'users'
+  ) THEN
+    CREATE VIEW public.users AS SELECT * FROM public.profiles;
+  END IF;
+END $$;
 
 -- 3. FONCTION DE SÉCURITÉ is_admin()
 CREATE OR REPLACE FUNCTION public.is_admin()

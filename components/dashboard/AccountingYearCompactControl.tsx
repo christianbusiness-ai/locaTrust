@@ -241,7 +241,7 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
 
           {/* Menu déroulant des années archivées */}
           {isDropdownOpen && (
-            <div className="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-40 animate-scaleUp">
+            <div className="absolute left-0 sm:right-0 sm:left-auto mt-1.5 w-48 max-w-[calc(100vw-2.5rem)] bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-40 animate-scaleUp">
               <div className="px-3 py-1 text-[10px] font-black text-slate-400 uppercase tracking-wider border-b border-slate-100">
                 Archives clôturées
               </div>

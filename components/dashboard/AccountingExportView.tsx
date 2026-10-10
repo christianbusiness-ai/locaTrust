@@ -260,14 +260,14 @@ export const AccountingExportView: React.FC = () => {
         </div>
 
         {/* Period Selector */}
-        <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200">
+        <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-2xl border border-slate-200 w-full sm:w-auto min-w-0 max-w-full shrink-0">
           <Calendar className="w-4 h-4 text-blue-600 ml-1 shrink-0" />
-          <div className="flex flex-col">
+          <div className="flex flex-col min-w-0 flex-1">
             <span className="text-[10px] font-extrabold uppercase text-slate-400">Période comptable</span>
             <select
               value={selectedPeriod}
               onChange={(e) => setSelectedPeriod(e.target.value)}
-              className="bg-transparent font-black text-xs text-slate-900 focus:outline-none cursor-pointer pr-2"
+              className="bg-transparent font-black text-xs text-slate-900 focus:outline-none cursor-pointer pr-4 w-full max-w-full truncate"
             >
               {ACCOUNTING_PERIODS.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -296,12 +296,12 @@ export const AccountingExportView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0">
             <label className="text-xs font-bold text-slate-600 shrink-0">Mandant :</label>
             <select
               value={selectedMandant}
               onChange={(e) => setSelectedMandant(e.target.value)}
-              className="px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50/50 text-xs font-black text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer"
+              className="w-full sm:w-auto max-w-full truncate px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50/50 text-xs font-black text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer"
             >
               <option value="all">🏢 Tous les mandants (Global Agence Consolidé)</option>
               {mandantsList.map((m) => (

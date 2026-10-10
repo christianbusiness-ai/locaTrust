@@ -246,7 +246,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     setActiveAudioCall({ seconds: 0, isMuted: false, isSpeaker: false });
   };
 
-  const handleEndAudioCall = () => {
+  const handleEndAudioCall = (e?: React.SyntheticEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (activeAudioCall && activeAudioCall.seconds > 0) {
       const mins = Math.floor(activeAudioCall.seconds / 60);
       const secs = activeAudioCall.seconds % 60;
@@ -263,6 +267,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       refreshMessages();
     }
     setActiveAudioCall(null);
+    setShowMobileChat(true);
   };
 
   const animationIntervalRef = useRef<any>(null);
@@ -320,22 +325,30 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return canvas.captureStream(30);
   };
 
-  // Video Call Handlers (Points 1 & 2 du prompt)
+  // Video Call Handlers (Mobile-First Real Camera + Simulation Fallback)
   const handleStartVideoCall = async () => {
     setActiveVideoCall({ seconds: 0, isMuted: false, isCamOff: false, isFrontCam: true });
     let stream: MediaStream | null = null;
 
     try {
       if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        // Try getting both camera and audio
+        // Tentative 1 : Caméra avant mobile + micro (sans contraintes de dimensions rigides)
         try {
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+            video: { facingMode: 'user' },
             audio: true
           });
-        } catch (audioFail) {
-          // Fallback to video only
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch (cam1Error) {
+          // Tentative 2 : Caméra générale sans filtre facingMode
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: true
+            });
+          } catch (cam2Error) {
+            // Tentative 3 : Caméra vidéo seule (si le micro est réservé par un autre processus)
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
         }
       }
     } catch (err) {
@@ -380,8 +393,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     setActiveVideoCall({ ...activeVideoCall, isCamOff: newCamOff });
   };
 
-  // Hang Up Video Call (Point 2.1 du prompt)
-  const handleEndVideoCall = () => {
+  // Hang Up Video Call (Sécurisé sans rechargement ni fermeture de page)
+  const handleEndVideoCall = (e?: React.SyntheticEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (streamRef.current) {
       try {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -411,6 +428,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       refreshMessages();
     }
     setActiveVideoCall(null);
+    setShowMobileChat(true);
   };
 
   // File Handlers: Image & Document (Point 6)
@@ -1847,8 +1865,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
               <button
                 type="button"
-                onClick={handleEndAudioCall}
-                className="p-5 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-xl shadow-red-600/30 transition-all active:scale-95"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleEndAudioCall(e);
+                }}
+                className="p-5 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-xl shadow-red-600/30 transition-all active:scale-95 cursor-pointer z-30"
                 title="Raccrocher"
               >
                 <PhoneOff className="w-6 h-6" />
@@ -1927,7 +1949,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                   autoPlay
                   playsInline
                   muted
-                  className="w-full h-full object-cover"
+                  controls={false}
+                  className="w-full h-full object-cover pointer-events-none"
                 />
               )}
 
@@ -1987,11 +2010,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 </span>
               </button>
 
-              {/* 3. Bouton Raccrocher */}
+              {/* 3. Bouton Raccrocher (Sécurisé sur mobile sans sortie d'application) */}
               <button
                 type="button"
-                onClick={handleEndVideoCall}
-                className="px-5 py-2.5 sm:px-6 sm:py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-black text-xs shadow-xl shadow-red-600/40 transition-all active:scale-95 flex items-center gap-2"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleEndVideoCall(e);
+                }}
+                className="px-5 py-2.5 sm:px-6 sm:py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-black text-xs shadow-xl shadow-red-600/40 transition-all active:scale-95 flex items-center gap-2 cursor-pointer z-30"
                 title="Terminer l'appel vidéo"
               >
                 <PhoneOff className="w-4 h-4" />
