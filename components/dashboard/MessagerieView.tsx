@@ -97,7 +97,24 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         }
         if (Array.isArray(apps)) {
           apps.forEach((app: any) => {
+            // Ignorer strictement les démos fictives
+            if (
+              !app ||
+              app.id === 'app_demo_1' ||
+              app.id === 'app_demo_2' ||
+              app.tenant_name === 'Kouassi Jean-Philippe' ||
+              app.tenant_name === 'Awa Touré'
+            ) {
+              return;
+            }
+
             if (userRole === 'locataire') {
+              // Vérifier si cette candidature appartient au locataire connecté
+              const isMyApplication =
+                app.tenant_id === currentUserId ||
+                (user?.email && app.tenant_email?.toLowerCase() === user.email.toLowerCase());
+              if (!isMyApplication && user?.id) return;
+
               const ownerName = app.owner_name || 'Bailleur Propriétaire';
               const ownerId = app.owner_id || `owner_${app.property_id || app.id}`;
               if (!list.some((c) => c.id === ownerId || c.name === ownerName)) {
@@ -112,6 +129,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 });
               }
             } else {
+              // Propriétaire ou Agence : uniquement les candidatures de ses propres biens
+              const isMyPropertyApplication =
+                app.owner_id === currentUserId ||
+                app.agency_id === currentUserId ||
+                (!app.owner_id && !user?.id);
+
+              if (!isMyPropertyApplication && user?.id) return;
+
               const tenantId = app.tenant_id || `tenant_${app.id}`;
               if (app.tenant_name && !list.some((c) => c.id === tenantId || c.id === `tenant_${app.id}`)) {
                 list.push({
@@ -128,15 +153,25 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           });
         }
 
-        // Intégration dynamique depuis l'historique des messages pour ne jamais perdre un échange
+        // Intégration dynamique depuis l'historique des messages réels
         const storedMsgs = getStoredMessages();
         storedMsgs.forEach((m) => {
-          const otherId = m.sender_id === currentUserId || (userRole !== 'locataire' && (m.sender_id === 'usr_owner' || m.sender_id === 'usr_owner_1'))
-            ? m.receiver_id
-            : m.sender_id;
+          // L'utilisateur connecté doit obligatoirement être impliqué (expéditeur ou destinataire)
+          const involvesMe = m.sender_id === currentUserId || m.receiver_id === currentUserId;
+          if (!involvesMe) return;
 
-          if (otherId && otherId !== currentUserId && otherId !== 'usr_owner' && otherId !== 'usr_owner_1' && otherId !== 'usr_tenant' && !list.some((c) => c.id === otherId)) {
-            const matchingApp = apps.find((a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId);
+          const otherId = m.sender_id === currentUserId ? m.receiver_id : m.sender_id;
+
+          if (
+            otherId &&
+            otherId !== currentUserId &&
+            otherId !== 'usr_owner_1' &&
+            otherId !== 'usr_tenant_1' &&
+            !list.some((c) => c.id === otherId)
+          ) {
+            const matchingApp = apps.find(
+              (a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId
+            );
             list.push({
               id: otherId,
               name: matchingApp
@@ -154,9 +189,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
 
     return list;
-  }, [userRole, currentUserId]);
+  }, [userRole, currentUserId, user?.id, user?.email]);
 
-  const [selectedContactId, setSelectedContactId] = useState<string>(() => roleContacts[0]?.id || 'usr_tenant_1');
+  const [selectedContactId, setSelectedContactId] = useState<string>(() => roleContacts[0]?.id || 'usr_support');
   const [inputMessage, setInputMessage] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -168,7 +203,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   // Sync selectedContactId if role contacts change
   useEffect(() => {
     if (!roleContacts.some((c) => c.id === selectedContactId)) {
-      setSelectedContactId(roleContacts[0]?.id || 'usr_tenant_1');
+      setSelectedContactId(roleContacts[0]?.id || 'usr_support');
     }
   }, [roleContacts, selectedContactId]);
 
@@ -247,15 +282,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
   }, [activeContact?.id, currentUserId, messages.length]);
 
-  // Filter messages between current user and active contact (avec gestion souple des alias et rôles)
+  // Filter messages between current user and active contact
   const currentConversationMessages = (Array.isArray(messages) ? messages : []).filter(
     (m) =>
-      (m.sender_id === currentUserId && m.receiver_id === activeContact?.id) ||
-      (m.sender_id === activeContact?.id && m.receiver_id === currentUserId) ||
-      (userRole !== 'locataire' && (m.receiver_id === 'usr_owner' || m.receiver_id === 'usr_owner_1' || m.receiver_id === currentUserId) && m.sender_id === activeContact?.id) ||
-      (userRole !== 'locataire' && (m.sender_id === 'usr_owner' || m.sender_id === 'usr_owner_1' || m.sender_id === currentUserId) && m.receiver_id === activeContact?.id) ||
-      (userRole === 'locataire' && (m.receiver_id === 'usr_tenant' || m.receiver_id === 'usr_tenant_1' || m.receiver_id === currentUserId) && m.sender_id === activeContact?.id) ||
-      (userRole === 'locataire' && (m.sender_id === 'usr_tenant' || m.sender_id === 'usr_tenant_1' || m.sender_id === currentUserId) && m.receiver_id === activeContact?.id)
+      Boolean(activeContact?.id) &&
+      ((m.sender_id === currentUserId && m.receiver_id === activeContact?.id) ||
+       (m.sender_id === activeContact?.id && m.receiver_id === currentUserId))
   );
 
   // Filter contacts by search
@@ -971,7 +1003,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       // Post confirmation notification message in conversation
       sendChatMessage(
         activeContact.id,
-        'usr_owner_1',
+        currentUserId,
         `✍️ Le bail d'habitation N° ${targetNum} a été officiellement signé avec succès. Le document est désormais certifié conforme Loi n° 2019-576.`
       );
 
@@ -1001,7 +1033,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
       sendChatMessage(
         activeContact.id,
-        'usr_owner_1',
+        currentUserId,
         `✓ Reçu N° ${targetRef} validé et contresigné par le locataire.`
       );
 
@@ -1093,9 +1125,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const contactMsgs = (messages || []).filter(
                 (m) =>
                   (m.sender_id === currentUserId && m.receiver_id === contact.id) ||
-                  (m.sender_id === contact.id && m.receiver_id === currentUserId) ||
-                  (m.sender_id === 'usr_owner_1' && m.receiver_id === contact.id) ||
-                  (m.sender_id === contact.id && m.receiver_id === 'usr_owner_1')
+                  (m.sender_id === contact.id && m.receiver_id === currentUserId)
               );
               const lastMsg = contactMsgs[contactMsgs.length - 1];
 

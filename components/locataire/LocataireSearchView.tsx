@@ -171,11 +171,11 @@ export const LocataireSearchView: React.FC = () => {
     if (!selectedProperty) return;
     try {
       setIsSubmitting(true);
-      const applicantId = user?.id || profile?.id || 'usr_tenant_1';
-      const applicantName = profile?.full_name || user?.email || 'Kouassi Jean-Philippe';
-      const applicantPhone = profile?.phone || '+225 07 89 45 12 30';
+      const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
+      const applicantName = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
+      const applicantPhone = profile?.phone || '+225 07 00 00 00 00';
       const applicantEmail = user?.email || 'locataire@locatrust.ci';
-      const targetOwnerId = selectedProperty.owner_id || (selectedProperty.owner as any)?.id || 'usr_owner_1';
+      const targetOwnerId = selectedProperty.owner_id || (selectedProperty.owner as any)?.id || '';
 
       const newApp = {
         id: `app_${Date.now()}`,

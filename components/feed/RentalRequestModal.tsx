@@ -32,12 +32,12 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const applicantId = user?.id || profile?.id || 'usr_tenant_1';
-    const applicantName = profile?.full_name || user?.user_metadata?.full_name || 'Kouassi Jean-Philippe';
-    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 89 45 12 30';
+    const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
+    const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
+    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
     const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-    const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner_1';
+    const targetOwnerId = property.owner_id || property.owner?.id || '';
 
     const newApp = {
       id: `app_${Date.now()}`,

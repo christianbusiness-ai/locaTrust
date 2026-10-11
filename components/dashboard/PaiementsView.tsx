@@ -150,9 +150,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     // Add new payment entry to history with exact periods covered text
     const newPmt: RentPayment = {
       id: `pmt_${Date.now()}`,
-      contract_id: 'LT-2026-CI-000492',
-      tenant_id: 'usr_tenant_1',
-      owner_id: 'usr_owner_1',
+      contract_id: payments[0]?.contract_id || 'LT-CONTRAT-01',
+      tenant_id: payments[0]?.tenant_id || 'usr_tenant',
+      owner_id: user?.id || 'usr_owner',
       target_month: result.generatedReceipt.periods_covered_text,
       amount: amountToPay,
       payment_date: new Date().toISOString().split('T')[0],
@@ -160,10 +160,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       status: 'confirme',
       created_at: new Date().toISOString(),
       tenant: {
-        id: 'usr_tenant_1',
+        id: payments[0]?.tenant_id || 'usr_tenant',
         role: 'locataire',
-        full_name: user?.user_metadata?.full_name || 'Bailleur',
-        email: 'bailleur@locatrust.ci',
+        full_name: payments[0]?.tenant?.full_name || 'Locataire',
+        email: payments[0]?.tenant?.email || 'locataire@locatrust.ci',
         phone: '+225 07 08 09 10 11',
         verification_status: 'verifie',
         created_at: '2025-01-15'

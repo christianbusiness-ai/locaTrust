@@ -118,7 +118,19 @@ export function getStoredMessages(): ChatMessage[] {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed;
+    // Nettoyage automatique des messages de démonstration fictifs (Kouassi Jean-Philippe, Awa Touré, usr_tenant_1, usr_owner_1)
+    const cleaned = parsed.filter((m: any) => {
+      if (!m) return false;
+      if (m.sender_id === 'usr_tenant_1' || m.receiver_id === 'usr_tenant_1') return false;
+      if (m.sender_id === 'usr_owner_1' || m.receiver_id === 'usr_owner_1') return false;
+      if (m.text && (m.text.includes('Kouassi Jean-Philippe') || m.text.includes('Awa Touré'))) return false;
+      return true;
+    });
+
+    if (cleaned.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch (e) {
     return [];
   }
@@ -202,7 +214,7 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
   const role = user?.role || 'proprietaire';
   const userId = user?.id || '';
   const userEmail = (user?.email || '').toLowerCase();
-  const defaultId = role === 'locataire' ? 'usr_tenant_1' : role === 'agence' ? 'usr_agency' : 'usr_owner_1';
+  const defaultId = role === 'locataire' ? 'usr_tenant' : role === 'agence' ? 'usr_agency' : 'usr_owner';
 
   return messages.filter((m) => {
     // Si déjà lu, pas compté
@@ -216,21 +228,18 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
     const isForMe =
       (userId && m.receiver_id === userId) ||
       (userEmail && m.receiver_id === userEmail) ||
-      m.receiver_id === defaultId ||
-      m.receiver_id === 'usr_tenant' ||
-      m.receiver_id === 'usr_owner' ||
-      (!m.receiver_id && !isFromMe);
+      (!userId && (m.receiver_id === defaultId || m.receiver_id === 'usr_tenant' || m.receiver_id === 'usr_owner'));
 
     return isForMe;
   }).length;
 }
 
-export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment): ChatMessage {
+export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, senderId?: string, receiverId?: string): ChatMessage {
   const current = getStoredMessages();
   const newMsg: ChatMessage = {
     id: `msg_quittance_${Date.now()}`,
-    sender_id: 'usr_owner_1',
-    receiver_id: 'usr_tenant_1',
+    sender_id: senderId || 'usr_owner',
+    receiver_id: receiverId || 'usr_tenant',
     text: `📄 Quittance de Loyer Officielle Émise (N° ${quittance.receiptNumber})\nVotre bailleur a validé votre règlement et a apposé sa signature manuscrite certifiée. La quittance est disponible au téléchargement.`,
     created_at: new Date().toISOString(),
     quittance,
@@ -270,11 +279,11 @@ export function getStoredTenantReceipts(): ChatQuittanceAttachment[] {
   }
 }
 
-export function sendContractToTenant(tenantId: string, contract: ChatContractAttachment): ChatMessage {
+export function sendContractToTenant(tenantId: string, contract: ChatContractAttachment, senderId?: string): ChatMessage {
   const current = getStoredMessages();
   const newMsg: ChatMessage = {
     id: `msg_contract_${Date.now()}`,
-    sender_id: 'usr_owner_1',
+    sender_id: senderId || 'usr_owner',
     receiver_id: tenantId,
     text: `📑 Contrat de Bail Officiel Transmis (N° ${contract.contractNumber})\nVotre propriétaire vous a transmis le bail d'habitation pour le logement : ${contract.propertyTitle}.\nVeuillez consulter les articles et apposer votre signature électronique pour officialiser la location.`,
     created_at: new Date().toISOString(),
@@ -291,12 +300,13 @@ export function sendContractReminderToTenant(
   tenantId: string,
   contractNumber: string,
   tenantName: string,
-  propertyTitle: string
+  propertyTitle: string,
+  senderId?: string
 ): ChatMessage {
   const current = getStoredMessages();
   const newMsg: ChatMessage = {
     id: `msg_reminder_${Date.now()}`,
-    sender_id: 'usr_owner_1',
+    sender_id: senderId || 'usr_owner',
     receiver_id: tenantId,
     text: `⚠️ RAPPEL DE SIGNATURE : Contrat N° ${contractNumber}\nBonjour ${tenantName}, votre bailleur a déjà signé et validé le bail pour « ${propertyTitle} ». Votre signature électronique est attendue pour finaliser officiellement l'entrée dans les lieux.`,
     created_at: new Date().toISOString(),

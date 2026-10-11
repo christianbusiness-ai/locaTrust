@@ -63,7 +63,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
     if (e) e.stopPropagation();
 
     // Envoi réel dans la messagerie interne LocaTrust du locataire
-    sendContractReminderToTenant('usr_tenant_1', contractId, tenantName, bien);
+    const targetContract = (contracts || []).find((c) => c.id === contractId);
+    const targetTenantId = (targetContract as any)?.tenant_id || (targetContract as any)?.tenant?.id || 'usr_support';
+    sendContractReminderToTenant(targetTenantId, contractId, tenantName, bien);
 
     setConfirmationModal({
       isOpen: true,

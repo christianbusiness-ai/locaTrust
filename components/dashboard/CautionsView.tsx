@@ -248,8 +248,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       alert('Veuillez renseigner la référence de transaction Mobile Money ou bancaire.');
       return;
     }
-    const targetContract = deposits[0]?.contract_id || 'LT-2026-CI-000492';
-    const targetTenant = deposits[0]?.tenant?.id || 'usr_tenant_1';
+    const targetContract = deposits[0]?.contract_id || '';
+    const targetTenant = deposits[0]?.tenant?.id || user?.id || 'usr_support';
     const targetName = deposits[0]?.tenant?.full_name || "Locataire";
     const autoRef = isEspeces ? `ESP-${Date.now()}` : declareReference;
 

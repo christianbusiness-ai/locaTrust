@@ -83,54 +83,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
 
-  const DEFAULT_DEMO_APPLICATIONS: RentalApplication[] = [
-    {
-      id: 'app_demo_1',
-      property_id: 'prop_cocody_1',
-      property_title: 'Appartement 3 pièces standing - Riviera Golf',
-      property_address: 'Riviera Golf, Cocody, Abidjan',
-      rent_amount: 350000,
-      caution_amount: 700000,
-      date_received: '2026-10-08',
-      status: 'en_attente',
-      dossier_status: 'complet',
-      tenant_id: 'usr_tenant_1',
-      tenant_name: 'Kouassi Jean-Philippe',
-      tenant_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-      tenant_phone: '+225 07 89 45 12 30',
-      tenant_email: 'jp.kouassi@gmail.com',
-      tenant_cni: 'CI-ABJ-2024-B-89412',
-      tenant_signed: false,
-      documents: {
-        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
-      }
-    },
-    {
-      id: 'app_demo_2',
-      property_id: 'prop_cocody_1',
-      property_title: 'Appartement 3 pièces standing - Riviera Golf',
-      property_address: 'Riviera Golf, Cocody, Abidjan',
-      rent_amount: 350000,
-      caution_amount: 700000,
-      date_received: '2026-10-09',
-      status: 'en_attente',
-      dossier_status: 'complet',
-      tenant_id: 'usr_tenant_2',
-      tenant_name: 'Awa Touré',
-      tenant_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
-      tenant_phone: '+225 05 44 22 11 00',
-      tenant_email: 'awa.toure@yahoo.fr',
-      tenant_cni: 'CI-ABJ-2023-A-11029',
-      tenant_signed: false,
-      documents: {
-        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80'
-      }
-    }
-  ];
-
   const loadFromDatabase = async () => {
     setIsLoading(true);
     setLoadError(null);
@@ -139,24 +91,75 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_rental_applications');
-          if (raw) localApps = JSON.parse(raw);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              // Nettoyer définitivement les candidatures de démonstration fictives
+              localApps = parsed.filter(
+                (a: any) =>
+                  a &&
+                  a.id !== 'app_demo_1' &&
+                  a.id !== 'app_demo_2' &&
+                  !a.id?.startsWith('app_demo_') &&
+                  a.tenant_name !== 'Kouassi Jean-Philippe' &&
+                  a.tenant_name !== 'Awa Touré' &&
+                  a.property_id !== 'prop_cocody_1'
+              );
+            }
+          }
         } catch {}
       }
 
+      // 1. Récupérer les identifiants des biens appartenant au bailleur ou à l'agence connectée
+      const userPropertyIds = new Set<string>();
+      if (user?.id) {
+        try {
+          const { data: myProperties } = await supabase
+            .from('properties')
+            .select('id')
+            .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+          if (myProperties) {
+            myProperties.forEach((p: any) => userPropertyIds.add(p.id));
+          }
+        } catch (e) {
+          console.warn('Erreur récupération propriétés utilisateur:', e);
+        }
+      }
+
+      // 2. Charger les candidatures réelles depuis la base de données Supabase
       const { data, error } = await supabase
         .from('rental_applications')
         .select('*')
         .order('created_at', { ascending: false });
 
-      let combined: RentalApplication[] = [];
-      if (error || !data || data.length === 0) {
-        if (localApps.length > 0) {
-          combined = localApps;
-        } else {
-          combined = DEFAULT_DEMO_APPLICATIONS;
+      const isAdmin = profile?.role === 'admin' || (user as any)?.role === 'admin';
+
+      // Filtrer strictement les candidatures appartenant à l'utilisateur
+      const isRelevantForUser = (appItem: any) => {
+        if (!appItem) return false;
+        // Éliminer toute donnée fictive
+        if (
+          appItem.id === 'app_demo_1' ||
+          appItem.id === 'app_demo_2' ||
+          appItem.id?.startsWith('app_demo_') ||
+          appItem.tenant_name === 'Kouassi Jean-Philippe' ||
+          appItem.tenant_name === 'Awa Touré'
+        ) {
+          return false;
         }
-      } else {
-        const dbApps: RentalApplication[] = (data || []).map((dbA: any) => ({
+        if (isAdmin) return true;
+        if (!user?.id) return false;
+        // Appartient au bailleur ou à l'agence si c'est pour l'un de ses biens
+        return (
+          appItem.owner_id === user.id ||
+          appItem.agency_id === user.id ||
+          userPropertyIds.has(appItem.property_id)
+        );
+      };
+
+      const dbApps: RentalApplication[] = (data || [])
+        .filter(isRelevantForUser)
+        .map((dbA: any) => ({
           ...dbA,
           property_title: dbA.property_title || dbA.property?.title || 'Bien immobilier',
           property_address: dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`,
@@ -174,21 +177,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             ? dbA.documents
             : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
         }));
-        const dbIds = new Set(dbApps.map((a) => a.id));
-        combined = [...localApps.filter((a) => !dbIds.has(a.id)), ...dbApps];
-      }
+
+      const relevantLocalApps = localApps.filter(isRelevantForUser);
+      const dbIds = new Set(dbApps.map((a) => a.id));
+      const combined = [...relevantLocalApps.filter((a) => !dbIds.has(a.id)), ...dbApps];
 
       setApplications(combined);
       if (typeof window !== 'undefined') {
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(combined));
       }
     } catch (err: any) {
-      if (typeof window !== 'undefined') {
-        try {
-          const raw = localStorage.getItem('locatrust_rental_applications');
-          if (raw) setApplications(JSON.parse(raw));
-        } catch {}
-      }
+      console.warn('Erreur chargement candidatures:', err);
+      setApplications([]);
     } finally {
       setIsLoading(false);
     }

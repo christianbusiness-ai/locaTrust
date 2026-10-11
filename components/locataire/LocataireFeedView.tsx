@@ -130,12 +130,12 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     e.preventDefault();
     if (!selectedRental) return;
 
-    const applicantId = user?.id || profile?.id || 'usr_tenant_1';
-    const applicantName = profile?.full_name || user?.user_metadata?.full_name || 'Kouassi Jean-Philippe';
-    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 89 45 12 30';
+    const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
+    const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
+    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
     const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-    const targetOwnerId = selectedRental.ownerId || 'usr_owner_1';
+    const targetOwnerId = selectedRental.ownerId || '';
 
     const newApp = {
       id: `app_${Date.now()}`,
@@ -214,8 +214,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     e.preventDefault();
     if (!selectedRental) return;
 
-    const applicantId = user?.id || profile?.id || 'usr_tenant_1';
-    const targetOwnerId = selectedRental.ownerId || 'usr_owner_1';
+    const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
+    const targetOwnerId = selectedRental.ownerId || '';
 
     try {
       sendChatMessage(applicantId, targetOwnerId, directMessageText);
@@ -342,7 +342,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
     return {
       id: p.id,
-      ownerId: p.owner_id || p.owner?.id || p.mandant_id || 'usr_owner_1',
+      ownerId: p.owner_id || p.owner?.id || p.mandant_id || '',
       ownerName: p.owner?.full_name || p.mandant_name || 'Bailleur certifié',
       ownerPhone: p.owner?.phone || p.mandant_phone || '+225 07 00 00 00 00',
       ownerAvatar: p.owner?.avatar_url || '',

@@ -182,7 +182,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   const handleRelanceInternal = (canal: 'Messagerie' | 'WhatsApp' | 'SMS' = 'Messagerie') => {
     // Liaison réelle avec la messagerie interne LocaTrust du locataire
-    sendContractReminderToTenant('usr_tenant_1', contractNumber, tenantData.name, tenantData.propertyTitle);
+    const targetTenantId = (contract as any)?.tenant_id || (tenantData as any)?.id || 'usr_support';
+    sendContractReminderToTenant(targetTenantId, contractNumber, tenantData.name, tenantData.propertyTitle);
     
     setRelanceSuccess(`Relance enregistrée dans la boîte LocaTrust de ${tenantData.name} (${tenantData.phone})`);
     setTimeout(() => setRelanceSuccess(null), 6000);
@@ -240,7 +241,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
   };
 
   const handleSendContractToTenantInbox = () => {
-    sendContractToTenant('usr_tenant_1', {
+    const targetTenantId = (contract as any)?.tenant_id || (tenantData as any)?.id || 'usr_support';
+    sendContractToTenant(targetTenantId, {
       contractNumber,
       propertyTitle: tenantData.propertyTitle,
       propertyAddress: tenantData.propertyAddress,
