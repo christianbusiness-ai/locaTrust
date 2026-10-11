@@ -47,10 +47,12 @@ import {
   Activity,
   Briefcase,
   Home,
-  CheckCheck
+  CheckCheck,
+  LifeBuoy
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { triggerCelebration } from '@/lib/celebration';
+import { getStoredMessages, sendChatMessage, ChatMessage } from '@/lib/messagingStore';
 
 // =========================================================================
 // TYPES & DATA STRUCTURES
@@ -101,6 +103,60 @@ export interface AdminUserAccount {
   registered_at: string;
   active_contracts: number;
 }
+
+export interface AdminSupportTicket {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: 'locataire' | 'proprietaire' | 'agence' | 'admin';
+  sender_phone?: string;
+  sender_email?: string;
+  subject: string;
+  message: string;
+  status: 'en_attente' | 'ouvert' | 'resolu';
+  created_at: string;
+  admin_reply?: string;
+}
+
+const INITIAL_SUPPORT_TICKETS: AdminSupportTicket[] = [
+  {
+    id: 'TICK-2026-001',
+    sender_id: 'usr_owner_kone',
+    sender_name: 'Mamadou Koné',
+    sender_role: 'proprietaire',
+    sender_phone: '+225 07 48 99 21 00',
+    sender_email: 'mamadou.kone@gmail.com',
+    subject: 'Plafond caution pour bail commercial (AUDCG OHADA vs Loi 2019-576)',
+    message: 'Bonjour l\'équipe support, je loue un magasin commercial à Treichville. La Loi 2019-576 plafonne à 2 mois, mais mon notaire dit que l\'AUDCG OHADA prévaut pour les locaux professionnels. LocaTrust permet-il de paramétrer 3 mois pour un bail commercial ?',
+    status: 'en_attente',
+    created_at: 'Aujourd\'hui à 10:14'
+  },
+  {
+    id: 'TICK-2026-002',
+    sender_id: 'usr_tenant_aya',
+    sender_name: 'Aya Marie-Josée',
+    sender_role: 'locataire',
+    sender_phone: '+225 05 55 12 34 56',
+    sender_email: 'aya.mariejosee@outlook.ci',
+    subject: 'Délai légal de restitution de mon dépôt de garantie',
+    message: 'Bonjour, j\'ai libéré mon appartement à Cocody Riviera le 30 du mois dernier avec un état des lieux de sortie vierge. Mon bailleur tarde à me restituer les 600 000 FCFA de caution. Quel recours ai-je avec mon contrat LocaTrust ?',
+    status: 'en_attente',
+    created_at: 'Aujourd\'hui à 09:30'
+  },
+  {
+    id: 'TICK-2026-003',
+    sender_id: 'usr_agency_ivoire',
+    sender_name: 'Cabinet Ivoire Prestige Immo',
+    sender_role: 'agence',
+    sender_phone: '+225 27 20 22 33 44',
+    sender_email: 'direction@ivoireimmo.ci',
+    subject: 'Validation KYC & Agrément Agence Immobilière',
+    message: 'Bonjour la modération, nous avons soumis notre RCCM et agrément ministériel pour certifier notre compte agence multi-mandats. Quand pourrons-nous publier nos mandats exclusifs ?',
+    status: 'resolu',
+    created_at: 'Hier à 16:45',
+    admin_reply: 'Bonjour Cabinet Ivoire Prestige, votre dossier a été audité et validé. Votre badge Agence Agréée est actif !'
+  }
+];
 
 // Initial Clean States (Données réelles chargées depuis Supabase)
 const INITIAL_DOC_REQUESTS: DocumentVerificationRequest[] = [];
@@ -291,6 +347,179 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   const pendingDocsCount = docRequests.filter(d => d.status === 'en_attente').length;
   const activeDisputesCount = disputes.filter(d => d.status !== 'resolu').length;
+
+  // =========================================================================
+  // SUPPORT TICKETS & ASSISTANCE CLIENTS (ADMIN INBOX)
+  // =========================================================================
+  const [supportTickets, setSupportTickets] = useState<AdminSupportTicket[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_support_tickets');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((item: any, idx: number) => ({
+              id: item.id || `TICK-2026-${idx + 10}`,
+              sender_id: item.sender_id || item.user_id || 'usr_client',
+              sender_name: item.sender_name || item.name || 'Utilisateur LocaTrust',
+              sender_role: (item.sender_role || 'locataire') as any,
+              sender_phone: item.sender_phone || item.phone || '+225 07 00 00 00 00',
+              sender_email: item.sender_email || item.email || 'support@locatrust.ci',
+              subject: item.subject || 'Demande d\'assistance',
+              message: item.message || '',
+              status: (item.status === 'resolu' || item.status === 'répondu') ? 'resolu' : 'en_attente',
+              created_at: item.date || item.created_at || 'Récemment',
+              admin_reply: item.adminResponse || item.admin_reply
+            }));
+          }
+        }
+      } catch {}
+    }
+    return INITIAL_SUPPORT_TICKETS;
+  });
+
+  const [selectedSupportTicket, setSelectedSupportTicket] = useState<AdminSupportTicket | null>(null);
+  const [supportReplyText, setSupportReplyText] = useState('');
+  const [supportFilter, setSupportFilter] = useState<'all' | 'pending' | 'resolved'>('all');
+  const [supportSearchQuery, setSupportSearchQuery] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
+
+  const syncSupportData = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem('locatrust_support_tickets');
+      let baseList: AdminSupportTicket[] = [...INITIAL_SUPPORT_TICKETS];
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          baseList = parsed.map((item: any, idx: number) => ({
+            id: item.id || `TICK-2026-${idx + 10}`,
+            sender_id: item.sender_id || item.user_id || 'usr_client',
+            sender_name: item.sender_name || item.name || 'Utilisateur LocaTrust',
+            sender_role: (item.sender_role || 'locataire') as any,
+            sender_phone: item.sender_phone || item.phone || '+225 07 00 00 00 00',
+            sender_email: item.sender_email || item.email || 'support@locatrust.ci',
+            subject: item.subject || 'Demande d\'assistance',
+            message: item.message || '',
+            status: (item.status === 'resolu' || item.status === 'répondu') ? 'resolu' : 'en_attente',
+            created_at: item.date || item.created_at || 'Récemment',
+            admin_reply: item.adminResponse || item.admin_reply
+          }));
+        }
+      }
+
+      // Scanner getStoredMessages pour récupérer les messages envoyés à usr_support
+      const allMsgs = getStoredMessages();
+      const supportMsgs = allMsgs.filter(m => m.receiver_id === 'usr_support' || m.sender_id === 'usr_support');
+      const senders = new Set(supportMsgs.map(m => m.sender_id === 'usr_support' ? m.receiver_id : m.sender_id));
+      senders.forEach(senderId => {
+        if (!senderId || senderId === 'usr_support') return;
+        if (!baseList.some(t => t.sender_id === senderId)) {
+          const userMsgs = supportMsgs.filter(m => m.sender_id === senderId || m.receiver_id === senderId);
+          const firstMsg = userMsgs.find(m => m.sender_id === senderId) || userMsgs[0];
+          const hasReply = userMsgs.some(m => m.sender_id === 'usr_support');
+          baseList.unshift({
+            id: `CHAT-SUPP-${senderId.slice(-6)}`,
+            sender_id: senderId,
+            sender_name: senderId.includes('owner') ? 'Propriétaire Bailleur' : senderId.includes('agency') ? 'Agence Partenaire' : 'Locataire Demandeur',
+            sender_role: (senderId.includes('owner') ? 'proprietaire' : senderId.includes('agency') ? 'agence' : 'locataire') as any,
+            sender_phone: '+225 07 00 00 00 00',
+            sender_email: `${senderId}@locatrust.ci`,
+            subject: 'Message direct assistance & support',
+            message: firstMsg?.text || 'Demande d\'assistance sur la messagerie.',
+            status: hasReply ? 'resolu' : 'en_attente',
+            created_at: firstMsg?.created_at ? new Date(firstMsg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'Récemment'
+          });
+        }
+      });
+
+      setSupportTickets(baseList);
+    } catch (e) {
+      console.warn('Sync support tickets error:', e);
+    }
+  };
+
+  useEffect(() => {
+    syncSupportData();
+    const handleSync = () => syncSupportData();
+    window.addEventListener('locatrust:support_tickets_updated', handleSync);
+    window.addEventListener('locatrust:messages_updated', handleSync);
+    return () => {
+      window.removeEventListener('locatrust:support_tickets_updated', handleSync);
+      window.removeEventListener('locatrust:messages_updated', handleSync);
+    };
+  }, []);
+
+  const handleSendAdminReply = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedSupportTicket || !supportReplyText.trim()) return;
+
+    setIsSendingReply(true);
+    try {
+      sendChatMessage('usr_support', selectedSupportTicket.sender_id, supportReplyText.trim());
+
+      const updated = supportTickets.map(t => {
+        if (t.id === selectedSupportTicket.id) {
+          return {
+            ...t,
+            status: 'resolu' as const,
+            admin_reply: supportReplyText.trim()
+          };
+        }
+        return t;
+      });
+
+      setSupportTickets(updated);
+      setSelectedSupportTicket(prev => prev ? { ...prev, status: 'resolu', admin_reply: supportReplyText.trim() } : null);
+
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('locatrust_support_tickets', JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('locatrust:support_tickets_updated'));
+        } catch {}
+      }
+
+      showToast(`Réponse officielle transmise avec succès à ${selectedSupportTicket.sender_name}.`, 'success');
+      triggerCelebration();
+      setSupportReplyText('');
+    } catch (err) {
+      showToast('Erreur lors de l\'envoi de la réponse.', 'error');
+    } finally {
+      setIsSendingReply(false);
+    }
+  };
+
+  const handleMarkTicketResolved = (ticketId: string) => {
+    const updated = supportTickets.map(t => {
+      if (t.id === ticketId) {
+        return {
+          ...t,
+          status: 'resolu' as const
+        };
+      }
+      return t;
+    });
+    setSupportTickets(updated);
+    if (selectedSupportTicket?.id === ticketId) {
+      setSelectedSupportTicket(prev => prev ? { ...prev, status: 'resolu' } : null);
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('locatrust_support_tickets', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:support_tickets_updated'));
+      } catch {}
+    }
+    showToast('Le ticket a été clôturé et marqué comme résolu.', 'success');
+  };
+
+  const selectedConversationMessages = React.useMemo(() => {
+    if (!selectedSupportTicket) return [];
+    const allMsgs = getStoredMessages();
+    return allMsgs.filter(
+      m => (m.sender_id === selectedSupportTicket.sender_id && m.receiver_id === 'usr_support') ||
+           (m.sender_id === 'usr_support' && m.receiver_id === selectedSupportTicket.sender_id)
+    );
+  }, [selectedSupportTicket, supportTickets]);
 
   // =========================================================================
   // ACTIONS : CNI & RCCM VERIFICATION & SMS AVEC PERSISTANCE SUPABASE
@@ -533,8 +762,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </div>
       )}
 
-      {/* Top 4 Interactive KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Top 5 Interactive KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         
         {/* Card 1: Supervision */}
         <div
@@ -612,6 +841,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           </span>
           <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[11px] text-amber-700 font-bold">
             <span>MRR SaaS Mensuel ({statsDashboard.proprietairesAbonnesPayes} abonnés)</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </div>
+        </div>
+
+        {/* Card 5: Assistance & Support */}
+        <div
+          onClick={() => onSelectTab('support')}
+          className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between cursor-pointer transition-all duration-300 hover:scale-[1.02] active:scale-98 ${
+            activeTab === 'support' ? 'border-indigo-500 bg-indigo-50/50 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200 hover:border-indigo-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-500">Support & Assistance</span>
+            <LifeBuoy className="w-4 h-4 text-indigo-600" />
+          </div>
+          <span className="text-2xl font-black text-indigo-950 mt-2">
+            {supportTickets.filter(t => t.status === 'en_attente').length} en attente
+          </span>
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[11px] text-indigo-700 font-bold">
+            <span>{supportTickets.length} ticket(s) enregistrés</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </div>
         </div>
@@ -1261,6 +1510,306 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-xs text-slate-300">Gestion jusqu'à 10 lots, quittances automatiques et médiation juridique incluse</span>
               </div>
               <span className="text-xs font-bold text-emerald-400">124 propriétaires abonnés actifs</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION 5-BIS: ASSISTANCE & SUPPORT CLIENTS (ADMIN INBOX)                */}
+      {/* ========================================================================= */}
+      {activeTab === 'support' && (
+        <div className="flex flex-col gap-6 animate-fadeIn">
+          {/* Header Card */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 flex flex-col gap-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
+                    <LifeBuoy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">
+                      Centre d'Assistance & Support Utilisateurs
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Répondez directement aux locataires, bailleurs et agences. Traitez les questions juridiques (Loi 2019-576 & OHADA) et réclamations.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    syncSupportData();
+                    showToast('Tickets d\'assistance actualisés.');
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Actualiser</span>
+                </button>
+                <span className="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-black flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Canal Support 24/7 Connecté
+                </span>
+              </div>
+            </div>
+
+            {/* Quick KPI stats row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-500 block uppercase">Total Demandes</span>
+                  <span className="text-2xl font-black text-slate-900">{supportTickets.length}</span>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-amber-700 block uppercase">En attente de réponse</span>
+                  <span className="text-2xl font-black text-amber-900">
+                    {supportTickets.filter(t => t.status === 'en_attente').length}
+                  </span>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-800 flex items-center justify-center">
+                  <Clock className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-emerald-700 block uppercase">Tickets Traités / Résolus</span>
+                  <span className="text-2xl font-black text-emerald-900">
+                    {supportTickets.filter(t => t.status === 'resolu').length}
+                  </span>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-emerald-200 text-emerald-800 flex items-center justify-center">
+                  <CheckCheck className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-blue-700 block uppercase">Engagement Réponse (SLA)</span>
+                  <span className="text-2xl font-black text-blue-900">&lt; 15 min</span>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-blue-200 text-blue-800 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+              </div>
+            </div>
+
+            {/* Search and Filters */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Rechercher par nom, téléphone, sujet ou message..."
+                  value={supportSearchQuery}
+                  onChange={(e) => setSupportSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setSupportFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    supportFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tous ({supportTickets.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSupportFilter('pending')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    supportFilter === 'pending' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  En attente ({supportTickets.filter(t => t.status === 'en_attente').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSupportFilter('resolved')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    supportFilter === 'resolved' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Résolus ({supportTickets.filter(t => t.status === 'resolu').length})
+                </button>
+              </div>
+            </div>
+
+            {/* Tickets Grid / List */}
+            <div className="flex flex-col gap-3 pt-2">
+              {supportTickets
+                .filter(t => {
+                  if (supportFilter === 'pending' && t.status !== 'en_attente') return false;
+                  if (supportFilter === 'resolved' && t.status !== 'resolu') return false;
+                  if (supportSearchQuery.trim()) {
+                    const q = supportSearchQuery.toLowerCase();
+                    return (
+                      t.sender_name.toLowerCase().includes(q) ||
+                      t.subject.toLowerCase().includes(q) ||
+                      t.message.toLowerCase().includes(q) ||
+                      (t.sender_phone || '').toLowerCase().includes(q)
+                    );
+                  }
+                  return true;
+                })
+                .length === 0 ? (
+                <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
+                    <LifeBuoy className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-700">Aucun ticket d'assistance trouvé</h4>
+                    <p className="text-xs text-slate-400 mt-0.5">Aucune demande ne correspond à vos filtres actuels.</p>
+                  </div>
+                </div>
+              ) : (
+                supportTickets
+                  .filter(t => {
+                    if (supportFilter === 'pending' && t.status !== 'en_attente') return false;
+                    if (supportFilter === 'resolved' && t.status !== 'resolu') return false;
+                    if (supportSearchQuery.trim()) {
+                      const q = supportSearchQuery.toLowerCase();
+                      return (
+                        t.sender_name.toLowerCase().includes(q) ||
+                        t.subject.toLowerCase().includes(q) ||
+                        t.message.toLowerCase().includes(q) ||
+                        (t.sender_phone || '').toLowerCase().includes(q)
+                      );
+                    }
+                    return true;
+                  })
+                  .map((ticket) => (
+                    <div
+                      key={ticket.id}
+                      className="p-5 rounded-2xl border border-slate-200 hover:border-indigo-300 transition-all bg-white hover:shadow-md flex flex-col gap-3"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 ${
+                            ticket.sender_role === 'proprietaire'
+                              ? 'bg-blue-100 text-blue-800'
+                              : ticket.sender_role === 'agence'
+                              ? 'bg-indigo-100 text-indigo-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {ticket.sender_name.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-extrabold text-slate-900 text-sm">{ticket.sender_name}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                ticket.sender_role === 'proprietaire'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : ticket.sender_role === 'agence'
+                                  ? 'bg-indigo-100 text-indigo-800'
+                                  : 'bg-emerald-100 text-emerald-800'
+                              }`}>
+                                {ticket.sender_role === 'proprietaire' ? 'Propriétaire' : ticket.sender_role === 'agence' ? 'Agence' : 'Locataire'}
+                              </span>
+                              <span className="text-slate-400 text-xs">• {ticket.id}</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+                              {ticket.sender_phone && (
+                                <span className="flex items-center gap-1">
+                                  <Phone className="w-3 h-3 text-slate-400" />
+                                  <span>{ticket.sender_phone}</span>
+                                </span>
+                              )}
+                              {ticket.sender_email && (
+                                <span className="flex items-center gap-1 hidden sm:flex">
+                                  <Mail className="w-3 h-3 text-slate-400" />
+                                  <span>{ticket.sender_email}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            <span>{ticket.created_at}</span>
+                          </span>
+                          {ticket.status === 'en_attente' ? (
+                            <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>En attente</span>
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-black flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Résolu</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Ticket content */}
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs font-black text-slate-900">{ticket.subject}</span>
+                        <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-700 leading-relaxed">
+                          {ticket.message}
+                        </div>
+                      </div>
+
+                      {/* Last Admin Reply if exists */}
+                      {ticket.admin_reply && (
+                        <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 text-xs text-indigo-950 flex flex-col gap-1">
+                          <span className="text-[10px] font-black uppercase text-indigo-700 flex items-center gap-1">
+                            <ShieldCheck className="w-3 h-3 text-indigo-600" />
+                            <span>Réponse officielle transmise au client</span>
+                          </span>
+                          <p className="font-medium">{ticket.admin_reply}</p>
+                        </div>
+                      )}
+
+                      {/* Card Action Buttons */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                        <span className="text-[11px] text-slate-400">
+                          {ticket.admin_reply ? 'Dernière réponse enregistrée' : 'Nécessite une réponse administrateur'}
+                        </span>
+
+                        <div className="flex items-center gap-2">
+                          {ticket.status === 'en_attente' && (
+                            <button
+                              type="button"
+                              onClick={() => handleMarkTicketResolved(ticket.id)}
+                              className="px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-extrabold flex items-center gap-1 transition-colors"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Marquer résolu</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSupportTicket(ticket);
+                              setSupportReplyText(ticket.admin_reply || '');
+                            }}
+                            className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>Répondre au client</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+              )}
             </div>
           </div>
         </div>
@@ -1974,6 +2523,150 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 7 (CENTRÉE) : RÉPONDRE AU TICKET D'ASSISTANCE & SUPPORT             */}
+      {/* ========================================================================= */}
+      {selectedSupportTicket && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn font-sans">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-7 shadow-2xl border border-slate-200 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-800 flex items-center justify-center font-black text-sm">
+                  <LifeBuoy className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-slate-900 text-base">
+                      Répondre à {selectedSupportTicket.sender_name}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-100 text-indigo-800">
+                      {selectedSupportTicket.sender_role}
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-400">
+                    {selectedSupportTicket.id} • {selectedSupportTicket.sender_phone} • {selectedSupportTicket.sender_email}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedSupportTicket(null)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Client Issue Summary */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+              <span className="text-xs font-black text-slate-900">{selectedSupportTicket.subject}</span>
+              <p className="text-xs text-slate-700 leading-relaxed">{selectedSupportTicket.message}</p>
+              <span className="text-[10px] text-slate-400 mt-1">Reçu le {selectedSupportTicket.created_at}</span>
+            </div>
+
+            {/* Conversation Messages Thread if any in messagerie */}
+            {selectedConversationMessages.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-bold text-slate-700">Fil d'échanges messagerie ({selectedConversationMessages.length} message(s)) :</span>
+                <div className="max-h-48 overflow-y-auto p-3 rounded-2xl bg-slate-100/70 border border-slate-200 flex flex-col gap-2">
+                  {selectedConversationMessages.map((msg) => {
+                    const isAdmin = msg.sender_id === 'usr_support';
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col max-w-[85%] rounded-2xl px-3.5 py-2 text-xs ${
+                          isAdmin
+                            ? 'self-end bg-indigo-600 text-white rounded-br-none shadow-sm'
+                            : 'self-start bg-white text-slate-800 border border-slate-200 rounded-bl-none shadow-sm'
+                        }`}
+                      >
+                        <span className={`text-[10px] font-black mb-0.5 ${isAdmin ? 'text-indigo-200' : 'text-slate-400'}`}>
+                          {isAdmin ? 'Support LocaTrust' : selectedSupportTicket.sender_name}
+                        </span>
+                        <span>{msg.text}</span>
+                        <span className={`text-[9px] mt-1 self-end ${isAdmin ? 'text-indigo-200' : 'text-slate-400'}`}>
+                          {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Quick response chips */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                Réponses types recommandées (Loi N° 2019-576 & Conformité) :
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  "Bonjour, votre demande a bien été examinée et validée par notre équipe.",
+                  "Conformément à l'Art. 414 de la Loi 2019-576, le dépôt de garantie est strictement plafonné à 2 mois.",
+                  "La restitution de la caution doit intervenir sous 30 jours maximum après la remise des clés.",
+                  "Votre dossier KYC est complet et votre badge officiel 'Vérifié' a été activé."
+                ].map((chip, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setSupportReplyText(chip)}
+                    className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 text-[11px] font-semibold transition-colors border border-slate-200"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reply Form */}
+            <form onSubmit={handleSendAdminReply} className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-black text-slate-900">
+                  Votre réponse officielle d'administrateur :
+                </label>
+                <textarea
+                  rows={4}
+                  value={supportReplyText}
+                  onChange={(e) => setSupportReplyText(e.target.value)}
+                  placeholder="Rédigez votre réponse officielle ici..."
+                  className="w-full p-3 rounded-2xl border border-slate-200 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => handleMarkTicketResolved(selectedSupportTicket.id)}
+                  className="px-4 py-2 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-extrabold flex items-center gap-1.5 transition-colors"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Clôturer le ticket</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSupportTicket(null)}
+                    className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-bold transition-colors"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSendingReply || !supportReplyText.trim()}
+                    className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-black flex items-center gap-1.5 shadow-md transition-all active:scale-95"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>{isSendingReply ? 'Envoi en cours...' : 'Envoyer la réponse'}</span>
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

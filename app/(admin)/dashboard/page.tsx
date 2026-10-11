@@ -51,10 +51,11 @@ export default function AdminDashboardPage({
       <Header
         currentUser={currentUser}
         onSearch={(t) => console.log('Recherche Admin:', t)}
-        onOpenMessages={() => setActiveTab('messages')}
-        onOpenNotifications={() => setActiveTab('messages')}
+        onOpenMessages={() => setActiveTab('support')}
+        onOpenNotifications={() => setActiveTab('verifications')}
         onOpenRegisterModal={onOpenRegisterModal}
         onExitToLanding={onExitToLanding}
+        onNavigateTab={setActiveTab}
         showCreateAccountBtn={false}
       />
 

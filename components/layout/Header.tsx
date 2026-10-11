@@ -666,6 +666,80 @@ export const Header: React.FC<HeaderProps> = ({
                       <span>Aide & Support</span>
                     </button>
                   </div>
+                ) : currentUser.role === 'admin' ? (
+                  <div className="py-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('supervision');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold flex items-center gap-2.5 text-blue-600 dark:text-blue-400"
+                    >
+                      <LayoutDashboard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Console d'Administration</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('verifications');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <span>Queue CNI & RCCM</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('users');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <Users className="w-4 h-4 text-slate-500" />
+                      <span>Gestion Utilisateurs</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('subscriptions');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <CreditCard className="w-4 h-4 text-amber-600" />
+                      <span>Gestion Abonnements</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('support');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <LifeBuoy className="w-4 h-4 text-purple-600" />
+                      <span>Support & Assistance Clients</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigateTab?.('settings');
+                      }}
+                      className="w-full px-4 py-2 text-left text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium flex items-center gap-2.5"
+                    >
+                      <Settings className="w-4 h-4 text-slate-500" />
+                      <span>Paramètres Système</span>
+                    </button>
+                  </div>
                 ) : (
                   <div className="py-1">
                     <button

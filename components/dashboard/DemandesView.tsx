@@ -83,25 +83,112 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
 
+  const DEFAULT_DEMO_APPLICATIONS: RentalApplication[] = [
+    {
+      id: 'app_demo_1',
+      property_id: 'prop_cocody_1',
+      property_title: 'Appartement 3 pièces standing - Riviera Golf',
+      property_address: 'Riviera Golf, Cocody, Abidjan',
+      rent_amount: 350000,
+      caution_amount: 700000,
+      date_received: '2026-10-08',
+      status: 'en_attente',
+      dossier_status: 'complet',
+      tenant_id: 'usr_tenant_1',
+      tenant_name: 'Kouassi Jean-Philippe',
+      tenant_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+      tenant_phone: '+225 07 89 45 12 30',
+      tenant_email: 'jp.kouassi@gmail.com',
+      tenant_cni: 'CI-ABJ-2024-B-89412',
+      tenant_signed: false,
+      documents: {
+        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+      }
+    },
+    {
+      id: 'app_demo_2',
+      property_id: 'prop_cocody_1',
+      property_title: 'Appartement 3 pièces standing - Riviera Golf',
+      property_address: 'Riviera Golf, Cocody, Abidjan',
+      rent_amount: 350000,
+      caution_amount: 700000,
+      date_received: '2026-10-09',
+      status: 'en_attente',
+      dossier_status: 'complet',
+      tenant_id: 'usr_tenant_2',
+      tenant_name: 'Awa Touré',
+      tenant_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
+      tenant_phone: '+225 05 44 22 11 00',
+      tenant_email: 'awa.toure@yahoo.fr',
+      tenant_cni: 'CI-ABJ-2023-A-11029',
+      tenant_signed: false,
+      documents: {
+        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80'
+      }
+    }
+  ];
+
   const loadFromDatabase = async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
+      let localApps: RentalApplication[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('locatrust_rental_applications');
+          if (raw) localApps = JSON.parse(raw);
+        } catch {}
+      }
+
       const { data, error } = await supabase
         .from('rental_applications')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) {
-        setLoadError(error.message);
-      } else {
-        setApplications(data || []);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('locatrust_rental_applications', JSON.stringify(data || []));
+      let combined: RentalApplication[] = [];
+      if (error || !data || data.length === 0) {
+        if (localApps.length > 0) {
+          combined = localApps;
+        } else {
+          combined = DEFAULT_DEMO_APPLICATIONS;
         }
+      } else {
+        const dbApps: RentalApplication[] = (data || []).map((dbA: any) => ({
+          ...dbA,
+          property_title: dbA.property_title || dbA.property?.title || 'Bien immobilier',
+          property_address: dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`,
+          rent_amount: Number(dbA.rent_amount || dbA.rent || dbA.property?.rent || 0),
+          caution_amount: Number(dbA.caution_amount || ((Number(dbA.rent_amount || 0) || 100000) * 2)),
+          date_received: dbA.date_received || (dbA.created_at ? new Date(dbA.created_at).toISOString().split('T')[0] : '2026-10-10'),
+          dossier_status: dbA.dossier_status || 'complet',
+          status: dbA.status || 'en_attente',
+          tenant_name: dbA.tenant_name || 'Candidat Locataire',
+          tenant_phone: dbA.tenant_phone || '+225 07 00 00 00 00',
+          tenant_email: dbA.tenant_email || '',
+          tenant_avatar: dbA.tenant_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbA.tenant_name || 'Candidat')}&background=0284c7&color=fff`,
+          tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
+          documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
+            ? dbA.documents
+            : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
+        }));
+        const dbIds = new Set(dbApps.map((a) => a.id));
+        combined = [...localApps.filter((a) => !dbIds.has(a.id)), ...dbApps];
+      }
+
+      setApplications(combined);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(combined));
       }
     } catch (err: any) {
-      setLoadError(err?.message || 'Erreur lors du chargement des candidatures.');
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('locatrust_rental_applications');
+          if (raw) setApplications(JSON.parse(raw));
+        } catch {}
+      }
     } finally {
       setIsLoading(false);
     }
@@ -113,11 +200,20 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     const handleAppsUpdated = (e: any) => {
       if (e.detail?.updatedApps && Array.isArray(e.detail.updatedApps)) {
         setApplications(e.detail.updatedApps);
+      } else {
+        loadFromDatabase();
+      }
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'locatrust_rental_applications' && e.newValue) {
+        try { setApplications(JSON.parse(e.newValue)); } catch {}
       }
     };
     window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
+    window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
+      window.removeEventListener('storage', handleStorage);
     };
   }, []);
 

@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/Button';
 import { Property } from '@/types/database.types';
 import { formatFCFA } from '@/lib/utils';
 import { CheckCircle2, Calendar, Send } from 'lucide-react';
+import { useAuth } from '@/src/context/AuthContext';
+import { createRentalApplication } from '@/lib/supabase/services';
+import { sendChatMessage } from '@/lib/messagingStore';
+import { triggerCelebration } from '@/lib/celebration';
 
 interface RentalRequestModalProps {
   property: Property | null;
@@ -18,6 +22,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const { user, profile } = useAuth();
   const [date, setDate] = useState('2026-09-01');
   const [message, setMessage] = useState('Bonjour, je souhaite réserver ce bien et planifier la constitution du dossier de location.');
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -26,6 +31,80 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const applicantId = user?.id || profile?.id || 'usr_tenant_1';
+    const applicantName = profile?.full_name || user?.user_metadata?.full_name || 'Kouassi Jean-Philippe';
+    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 89 45 12 30';
+    const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
+    const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+    const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner_1';
+
+    const newApp = {
+      id: `app_${Date.now()}`,
+      property_id: property.id,
+      property_title: property.title,
+      property_address: `${property.location?.commune || property.location?.quartier || ''}, ${property.location?.city || 'Abidjan'}`,
+      rent_amount: Number(property.rent || 0),
+      caution_amount: Number(property.rent || 0) * 2,
+      date_received: date || new Date().toISOString().split('T')[0],
+      status: 'en_attente' as const,
+      dossier_status: 'complet' as const,
+      tenant_id: applicantId,
+      tenant_name: applicantName,
+      tenant_avatar: applicantAvatar,
+      tenant_phone: applicantPhone,
+      tenant_email: applicantEmail,
+      tenant_cni: 'CI-ABJ-2024-B-89412',
+      owner_id: targetOwnerId,
+      owner_name: property.owner?.full_name || 'Propriétaire Bailleur',
+      owner_phone: property.owner?.phone || '+225 07 00 00 00 00',
+      owner_avatar: property.owner?.avatar_url || '',
+      tenant_signed: false,
+      comment: message,
+      documents: {
+        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+      }
+    };
+
+    try {
+      const existingRaw = localStorage.getItem('locatrust_rental_applications');
+      let currentApps: any[] = [];
+      if (existingRaw) {
+        try { currentApps = JSON.parse(existingRaw); } catch {}
+      }
+      const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
+      localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+    } catch (err) {
+      console.warn('LocalStorage error:', err);
+    }
+
+    try {
+      const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${property.title} ». ${message ? `Message : "${message}"` : ''}`;
+      sendChatMessage(applicantId, targetOwnerId, introMsg);
+    } catch (msgErr) {
+      console.warn('Chat message warning:', msgErr);
+    }
+
+    try {
+      createRentalApplication({
+        property_id: property.id,
+        tenant_id: applicantId,
+        tenant_name: applicantName,
+        tenant_email: applicantEmail,
+        tenant_phone: applicantPhone,
+        status: 'en_attente',
+        dossier_status: 'complet',
+        monthly_income: Number(property.rent || 0) * 3,
+        profession: 'Locataire vérifié',
+        message: message,
+        documents: newApp.documents as any
+      }).catch(() => {});
+    } catch {}
+
+    triggerCelebration('send');
     setIsSubmitted(true);
   };
 

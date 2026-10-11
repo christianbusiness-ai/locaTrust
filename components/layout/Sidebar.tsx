@@ -189,6 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'subscriptions', name: 'Gestion abonnements', icon: CreditCard },
     { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileCheck },
     { id: 'disputes', name: 'Litiges & Fraude', icon: ShieldAlert },
+    { id: 'support', name: 'Assistance & Support Clients', icon: LifeBuoy, badge: msgCount > 0 ? msgCount : undefined },
     { id: 'settings', name: 'Paramètres système', icon: Settings },
   ];
 

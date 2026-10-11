@@ -37,6 +37,8 @@ import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
+import { createRentalApplication } from '@/lib/supabase/services';
+import { sendChatMessage } from '@/lib/messagingStore';
 
 interface LocataireFeedViewProps {
   onOpenMessages?: (landlordName?: string) => void;
@@ -124,8 +126,85 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     setIsMessageModalOpen(true);
   };
 
-  const submitApplication = (e: React.FormEvent) => {
+  const submitApplication = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedRental) return;
+
+    const applicantId = user?.id || profile?.id || 'usr_tenant_1';
+    const applicantName = profile?.full_name || user?.user_metadata?.full_name || 'Kouassi Jean-Philippe';
+    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 89 45 12 30';
+    const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
+    const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+    const targetOwnerId = selectedRental.ownerId || 'usr_owner_1';
+
+    const newApp = {
+      id: `app_${Date.now()}`,
+      property_id: selectedRental.id,
+      property_title: selectedRental.title,
+      property_address: selectedRental.location,
+      rent_amount: Number(selectedRental.price || 0),
+      caution_amount: Number(selectedRental.price || 0) * 2,
+      date_received: desiredDate || new Date().toISOString().split('T')[0],
+      status: 'en_attente' as const,
+      dossier_status: 'complet' as const,
+      tenant_id: applicantId,
+      tenant_name: applicantName,
+      tenant_avatar: applicantAvatar,
+      tenant_phone: applicantPhone,
+      tenant_email: applicantEmail,
+      tenant_cni: 'CI-ABJ-2024-B-89412',
+      owner_id: targetOwnerId,
+      owner_name: selectedRental.authorName || 'Propriétaire Bailleur',
+      owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+      owner_avatar: selectedRental.authorAvatar || '',
+      tenant_signed: false,
+      comment: applyComment,
+      documents: {
+        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+      }
+    };
+
+    // 1. Sauvegarde dans localStorage immédiat pour que le bailleur voie la demande
+    try {
+      const existingRaw = localStorage.getItem('locatrust_rental_applications');
+      let currentApps: any[] = [];
+      if (existingRaw) {
+        try { currentApps = JSON.parse(existingRaw); } catch {}
+      }
+      const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
+      localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+    } catch (err) {
+      console.warn('LocalStorage applications write warning:', err);
+    }
+
+    // 2. Envoi message automatique dans la messagerie du propriétaire
+    try {
+      const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
+      sendChatMessage(applicantId, targetOwnerId, introMsg);
+    } catch (msgErr) {
+      console.warn('Chat message warning:', msgErr);
+    }
+
+    // 3. Sauvegarde asynchrone Supabase (avec fallback transparent)
+    try {
+      createRentalApplication({
+        property_id: selectedRental.id,
+        tenant_id: applicantId,
+        tenant_name: applicantName,
+        tenant_email: applicantEmail,
+        tenant_phone: applicantPhone,
+        status: 'en_attente',
+        dossier_status: 'complet',
+        monthly_income: Number(selectedRental.price || 0) * 3,
+        profession: 'Locataire vérifié',
+        message: applyComment,
+        documents: newApp.documents as any
+      }).catch(() => {});
+    } catch {}
+
     setIsApplyModalOpen(false);
     setApplySuccessModal(true);
     triggerCelebration('send');
@@ -133,8 +212,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
   const submitMessage = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedRental) return;
+
+    const applicantId = user?.id || profile?.id || 'usr_tenant_1';
+    const targetOwnerId = selectedRental.ownerId || 'usr_owner_1';
+
+    try {
+      sendChatMessage(applicantId, targetOwnerId, directMessageText);
+    } catch (err) {
+      console.warn('Erreur envoi message:', err);
+    }
+
     triggerCelebration('send');
-    alert(`Votre message a été envoyé à ${selectedRental?.authorName} dans la messagerie LocaTrust !`);
     setIsMessageModalOpen(false);
     if (onOpenMessages) onOpenMessages(selectedRental?.authorName);
   };
@@ -201,8 +290,63 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     const photos: string[] = Array.isArray(p.photos) && p.photos.length > 0 
       ? p.photos 
       : [];
+    const typeLower = (p.type || '').toLowerCase();
+    const isCommercial = ['magasin', 'boutique', 'commerce'].some(t => typeLower.includes(t));
+    const isParking = typeLower.includes('parking') || typeLower.includes('box');
+    const isBureau = typeLower.includes('bureau');
+    const isEntrepot = typeLower.includes('entrepot') || typeLower.includes('hangar');
+    const isTerrain = typeLower.includes('terrain');
+
+    let dynamicAmenities: { label: string; icon: any }[] = [];
+
+    if (isCommercial) {
+      dynamicAmenities = [
+        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
+        p.vitrine_length ? { label: `Vitrine ${p.vitrine_length}m`, icon: Building } : null,
+        p.has_rideau ? { label: 'Rideau métallique', icon: ShieldCheck } : null,
+        p.has_reserve ? { label: 'Arrière-boutique / Réserve', icon: Layers } : null,
+        p.bathrooms && Number(p.bathrooms) > 0 ? { label: `Sanitaires`, icon: Bath } : null,
+      ].filter(Boolean) as any[];
+    } else if (isParking) {
+      dynamicAmenities = [
+        p.parking_places ? { label: `${p.parking_places} Place${Number(p.parking_places) > 1 ? 's' : ''}`, icon: Key } : { label: 'Place sécurisée', icon: Key },
+        p.parking_type ? { label: p.parking_type, icon: ShieldCheck } : null,
+        { label: 'Badge / Accès sécurisé', icon: ShieldCheck },
+      ].filter(Boolean) as any[];
+    } else if (isBureau) {
+      dynamicAmenities = [
+        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
+        p.rooms && Number(p.rooms) > 0 ? { label: `${p.rooms} Bureau${Number(p.rooms) > 1 ? 'x' : ''}`, icon: Building2 } : null,
+        p.bathrooms && Number(p.bathrooms) > 0 ? { label: `${p.bathrooms} Sanitaire${Number(p.bathrooms) > 1 ? 's' : ''}`, icon: Bath } : null,
+        { label: 'Fibre & Climatisation', icon: Sparkles },
+      ].filter(Boolean) as any[];
+    } else if (isEntrepot) {
+      dynamicAmenities = [
+        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m² stockage`, icon: Maximize2 } : null,
+        p.ceiling_height ? { label: `HSP ${p.ceiling_height}m`, icon: Building } : null,
+        { label: 'Accès Poids Lourds', icon: Building2 },
+      ].filter(Boolean) as any[];
+    } else if (isTerrain) {
+      dynamicAmenities = [
+        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
+        { label: 'Viabilisé & Titré', icon: ShieldCheck },
+      ].filter(Boolean) as any[];
+    } else {
+      dynamicAmenities = [
+        p.rooms && Number(p.rooms) > 0 ? { label: `${p.rooms} Pièce${Number(p.rooms) > 1 ? 's' : ''}`, icon: Sofa } : null,
+        p.bedrooms && Number(p.bedrooms) > 0 ? { label: `${p.bedrooms} Chambre${Number(p.bedrooms) > 1 ? 's' : ''}`, icon: Bed } : null,
+        p.bathrooms && Number(p.bathrooms) > 0 ? { label: `${p.bathrooms} Salle${Number(p.bathrooms) > 1 ? 's' : ''} d'eau`, icon: Bath } : null,
+        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
+      ].filter(Boolean) as any[];
+    }
+
     return {
       id: p.id,
+      ownerId: p.owner_id || p.owner?.id || p.mandant_id || 'usr_owner_1',
+      ownerName: p.owner?.full_name || p.mandant_name || 'Bailleur certifié',
+      ownerPhone: p.owner?.phone || p.mandant_phone || '+225 07 00 00 00 00',
+      ownerAvatar: p.owner?.avatar_url || '',
+      ownerEmail: p.owner?.email || 'bailleur@locatrust.ci',
       authorName: p.owner?.full_name || p.mandant_name || 'Bailleur certifié',
       authorAvatar: p.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.owner?.full_name || p.mandant_name || 'Bailleur')}&background=0D8ABC&color=fff`,
       isVerified: true,
@@ -216,12 +360,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       type: p.type || 'Appartement',
       price: Number(p.rent || 0),
       location: `${p.commune ? p.commune + ', ' : ''}${p.city || 'Abidjan'}`,
-      amenities: [
-        p.rooms && Number(p.rooms) > 0 ? { label: `${p.rooms} Pièce${Number(p.rooms) > 1 ? 's' : ''}`, icon: Sofa } : null,
-        p.bedrooms && Number(p.bedrooms) > 0 ? { label: `${p.bedrooms} Chambre${Number(p.bedrooms) > 1 ? 's' : ''}`, icon: Bed } : null,
-        p.bathrooms && Number(p.bathrooms) > 0 ? { label: `${p.bathrooms} Salle${Number(p.bathrooms) > 1 ? 's' : ''} d'eau`, icon: Bath } : null,
-        p.surface && Number(p.surface) > 0 ? { label: `${p.surface} m²`, icon: Maximize2 } : null,
-      ].filter(Boolean) as { label: string; icon: any }[],
+      amenities: dynamicAmenities,
       images: {
         all: photos,
         main: photos[0] || '',

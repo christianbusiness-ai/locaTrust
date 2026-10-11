@@ -105,6 +105,26 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const [bedrooms, setBedrooms] = useState<string>('');
   const [bathrooms, setBathrooms] = useState<string>('');
 
+  // Caractéristiques adaptatives selon le type de bien (Magasin, Parking, Bureau, Entrepôt, Terrain)
+  const [vitrineLength, setVitrineLength] = useState<string>('');
+  const [ceilingHeight, setCeilingHeight] = useState<string>('');
+  const [hasRideau, setHasRideau] = useState<boolean>(true);
+  const [hasReserve, setHasReserve] = useState<boolean>(false);
+  const [hasIndepCounters, setHasIndepCounters] = useState<boolean>(true);
+  const [parkingPlaces, setParkingPlaces] = useState<string>('1');
+  const [parkingType, setParkingType] = useState<string>('Box fermé');
+  const [parkingSecure, setParkingSecure] = useState<boolean>(true);
+  const [hasClim, setHasClim] = useState<boolean>(true);
+  const [hasFibre, setHasFibre] = useState<boolean>(true);
+  const [hasHeavyTruckAccess, setHasHeavyTruckAccess] = useState<boolean>(true);
+  const [isServiced, setIsServiced] = useState<boolean>(true);
+
+  const isCommercial = ['magasin', 'boutique'].includes(propertyType);
+  const isParking = propertyType === 'parking';
+  const isBureau = propertyType === 'bureau';
+  const isEntrepot = propertyType === 'entrepot';
+  const isTerrain = propertyType === 'terrain';
+
   const handleRentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let raw = e.target.value.replace(/\D/g, '');
     if (!raw) {
@@ -274,10 +294,17 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       const finalTitle = title.trim() || `${finalType.charAt(0).toUpperCase() + finalType.slice(1)} de standing - ${finalCommune}`;
       const numericRent = Number(rent) || 250000;
       const numericCaution = Number(caution) || (numericRent * 2);
+
+      const isComm = ['magasin', 'boutique'].includes(propertyType);
+      const isPark = propertyType === 'parking';
+      const isBur = propertyType === 'bureau';
+      const isEnt = propertyType === 'entrepot';
+      const isTerr = propertyType === 'terrain';
+
       const numericSurface = surface.trim() ? Number(surface) : null;
-      const numericRooms = rooms.trim() ? Number(rooms) : null;
-      const numericBedrooms = bedrooms.trim() ? Number(bedrooms) : null;
-      const numericBathrooms = bathrooms.trim() ? Number(bathrooms) : null;
+      const numericRooms = isComm || isPark || isTerr ? null : (rooms.trim() ? Number(rooms) : null);
+      const numericBedrooms = (isComm || isPark || isBur || isEnt || isTerr) ? null : (bedrooms.trim() ? Number(bedrooms) : null);
+      const numericBathrooms = isPark || isTerr ? null : (bathrooms.trim() ? Number(bathrooms) : null);
 
       // Rapprochement du Mandant pour les Agences Immobilières
       let finalMandantName: string | undefined = undefined;
@@ -322,6 +349,18 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         rooms: numericRooms,
         bedrooms: numericBedrooms,
         bathrooms: numericBathrooms,
+        vitrine_length: isComm && vitrineLength.trim() ? Number(vitrineLength) : undefined,
+        ceiling_height: (isComm || isEnt) && ceilingHeight.trim() ? Number(ceilingHeight) : undefined,
+        has_rideau: isComm ? hasRideau : undefined,
+        has_reserve: isComm ? hasReserve : undefined,
+        has_indep_counters: isComm ? hasIndepCounters : undefined,
+        parking_places: isPark && parkingPlaces.trim() ? Number(parkingPlaces) : undefined,
+        parking_type: isPark ? parkingType : undefined,
+        parking_secure: isPark ? parkingSecure : undefined,
+        has_clim: isBur ? hasClim : undefined,
+        has_fibre: isBur ? hasFibre : undefined,
+        has_heavy_truck_access: isEnt ? hasHeavyTruckAccess : undefined,
+        is_serviced: isTerr ? isServiced : undefined,
         rent: numericRent,
         caution: numericCaution,
         description: description.trim(),
@@ -779,61 +818,369 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
               </div>
             </div>
 
-            {/* CARACTÉRISTIQUES RÉELLES DU LOGEMENT (Strict respect de ce qui est saisi) */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2.5">
-              <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                <span>Caractéristiques réelles (Ne remplissez que ce qui s'applique)</span>
-              </span>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Surface (m²)</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={surface}
-                    onChange={handleSurfaceChange}
-                    placeholder="ex: 75"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Nombre de pièces</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={rooms}
-                    onChange={(e) => setRooms(e.target.value.replace(/\D/g, ''))}
-                    placeholder="ex: 3"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Chambres</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={bedrooms}
-                    onChange={(e) => setBedrooms(e.target.value.replace(/\D/g, ''))}
-                    placeholder="ex: 2"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Salles d'eau / SDB</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={bathrooms}
-                    onChange={(e) => setBathrooms(e.target.value.replace(/\D/g, ''))}
-                    placeholder="ex: 1"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
-                  />
-                </div>
+            {/* CARACTÉRISTIQUES ADAPTATIVES PAR TYPE DE BIEN (Magasin, Parking, Bureau, Entrepôt, Terrain, Résidentiel) */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                  <span>
+                    {isCommercial
+                      ? 'Caractéristiques Commerciales (Magasin / Boutique)'
+                      : isParking
+                      ? 'Caractéristiques Emplacement Parking'
+                      : isBureau
+                      ? 'Caractéristiques Bureaux Professionnels'
+                      : isEntrepot
+                      ? 'Caractéristiques Entrepôt & Stockage'
+                      : isTerrain
+                      ? 'Caractéristiques du Terrain'
+                      : 'Caractéristiques du Logement'}
+                  </span>
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                  {propertyType.toUpperCase()}
+                </span>
               </div>
+
+              {/* 1. CAS MAGASIN / BOUTIQUE : ZÉRO CHAMBRE, SPÉCIFIQUEMENT ADAPTÉ AU COMMERCE */}
+              {isCommercial && (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Surface vente (m²)</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={surface}
+                        onChange={handleSurfaceChange}
+                        placeholder="ex: 45"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Linéaire Vitrine (m)</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={vitrineLength}
+                        onChange={(e) => setVitrineLength(e.target.value.replace(/\D/g, ''))}
+                        placeholder="ex: 6"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Hauteur Plafond (m)</label>
+                      <input
+                        type="text"
+                        value={ceilingHeight}
+                        onChange={(e) => setCeilingHeight(e.target.value)}
+                        placeholder="ex: 3.2"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Sanitaires / WC</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={bathrooms}
+                        onChange={(e) => setBathrooms(e.target.value.replace(/\D/g, ''))}
+                        placeholder="ex: 1"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-slate-200">
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasRideau}
+                        onChange={(e) => setHasRideau(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Rideau métallique sécurisé</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasReserve}
+                        onChange={(e) => setHasReserve(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Arrière-boutique / Réserve</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasIndepCounters}
+                        onChange={(e) => setHasIndepCounters(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Compteurs CIE/SODECI dédiés</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. CAS PARKING / BOX : ZÉRO PIÈCE, ZÉRO CHAMBRE, ZÉRO SDB */}
+              {isParking && (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Nombre de places de stationnement</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={parkingPlaces}
+                        onChange={(e) => setParkingPlaces(e.target.value.replace(/\D/g, ''))}
+                        placeholder="ex: 1"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Type d'emplacement</label>
+                      <select
+                        value={parkingType}
+                        onChange={(e) => setParkingType(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      >
+                        <option value="Box fermé">Box fermé individuel</option>
+                        <option value="Place couverte (sous-sol)">Place couverte (sous-sol)</option>
+                        <option value="Place extérieure sécurisée">Place extérieure sécurisée</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={parkingSecure}
+                        onChange={(e) => setParkingSecure(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Badge d'accès / Portail automatique</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={true}
+                        readOnly
+                        className="rounded text-blue-600"
+                      />
+                      <span>Gardiennage & surveillance 24/7</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. CAS BUREAU : BUREAUX, SANITAIRES, FIBRE, CLIM (ZÉRO CHAMBRE) */}
+              {isBureau && (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Surface bureaux (m²)</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={surface}
+                        onChange={handleSurfaceChange}
+                        placeholder="ex: 120"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Nombre de bureaux / postes</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={rooms}
+                        onChange={(e) => setRooms(e.target.value.replace(/\D/g, ''))}
+                        placeholder="ex: 4"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Sanitaires / Toilettes</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={bathrooms}
+                        onChange={(e) => setBathrooms(e.target.value.replace(/\D/g, ''))}
+                        placeholder="ex: 2"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasClim}
+                        onChange={(e) => setHasClim(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Climatisation installée</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasFibre}
+                        onChange={(e) => setHasFibre(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Câblage réseau / Fibre optique</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* 4. CAS ENTREPÔT : SURFACE, HAUTEUR, QUAI (ZÉRO CHAMBRE) */}
+              {isEntrepot && (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Surface stockage (m²)</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={surface}
+                        onChange={handleSurfaceChange}
+                        placeholder="ex: 500"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">Hauteur sous plafond (m)</label>
+                      <input
+                        type="text"
+                        value={ceilingHeight}
+                        onChange={(e) => setCeilingHeight(e.target.value)}
+                        placeholder="ex: 7.5"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasHeavyTruckAccess}
+                        onChange={(e) => setHasHeavyTruckAccess(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Accès semi-remorques & gros porteurs</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={true}
+                        readOnly
+                        className="rounded text-blue-600"
+                      />
+                      <span>Zone sécurisée & clôturée</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* 5. CAS TERRAIN : SURFACE, ACD, VIABILITÉ (ZÉRO CHAMBRE, ZÉRO SDB) */}
+              {isTerrain && (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Superficie du terrain (m²)</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={surface}
+                      onChange={handleSurfaceChange}
+                      placeholder="ex: 600"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200">
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={isServiced}
+                        onChange={(e) => setIsServiced(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
+                      <span>Viabilisé CIE / SODECI</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white border border-slate-200 text-[11px] font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={true}
+                        readOnly
+                        className="rounded text-blue-600"
+                      />
+                      <span>Arrêté ACD / Titre foncier approuvé</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* 6. CAS RÉSIDENTIEL : APPARTEMENT, MAISON, VILLA, DUPLEX, STUDIO */}
+              {!isCommercial && !isParking && !isBureau && !isEntrepot && !isTerrain && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 animate-fadeIn">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Surface (m²)</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={surface}
+                      onChange={handleSurfaceChange}
+                      placeholder="ex: 75"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Nombre de pièces</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={rooms}
+                      onChange={(e) => setRooms(e.target.value.replace(/\D/g, ''))}
+                      placeholder="ex: 3"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Chambres</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={bedrooms}
+                      onChange={(e) => setBedrooms(e.target.value.replace(/\D/g, ''))}
+                      placeholder="ex: 2"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Salles d'eau / SDB</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={bathrooms}
+                      onChange={(e) => setBathrooms(e.target.value.replace(/\D/g, ''))}
+                      placeholder="ex: 1"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:ring-2 focus:ring-blue-600 focus:outline-none bg-white"
+                    />
+                  </div>
+                </div>
+              )}
+
               <p className="text-[10px] text-slate-500 italic">
-                Laisser vide les champs non pertinents (magasin, bureau, studio, terrain, etc.). Seules les caractéristiques réelles saisies s'afficheront sur le fil locataire.
+                {isCommercial
+                  ? "• Local commercial : Les mentions obligatoires pour boutique/magasin sont transmises au contrat de bail professionnel (OHADA AUDCG)."
+                  : isParking
+                  ? "• Emplacement parking : Bail d'emplacement de véhicule avec conditions d'accès et sécurité."
+                  : "• Seules les caractéristiques réelles saisies s'afficheront sur le fil locataire."}
               </p>
             </div>
 

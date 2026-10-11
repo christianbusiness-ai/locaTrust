@@ -39,6 +39,7 @@ import {
 } from '@/lib/reports/accountingHistoryStore';
 import { ACCENT_THEMES, applyAccentTheme } from '@/lib/themeHelper';
 import { AccountingYearCompactControl } from './AccountingYearCompactControl';
+import { sendChatMessage } from '@/lib/messagingStore';
 
 interface AdminTicket {
   id: string;
@@ -255,11 +256,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   // Support / Admin Tickets State
-  const [tickets, setTickets] = useState<AdminTicket[]>(INITIAL_SUPPORT_TICKETS);
+  const [tickets, setTickets] = useState<AdminTicket[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_support_tickets');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return INITIAL_SUPPORT_TICKETS;
+  });
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
   const [ticketFile, setTicketFile] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    const handleSync = () => {
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('locatrust_support_tickets');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) setTickets(parsed);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('locatrust:support_tickets_updated', handleSync);
+    return () => window.removeEventListener('locatrust:support_tickets_updated', handleSync);
+  }, []);
 
   // Property & Subscription auto calculations
   const [activePropertiesCount, setActivePropertiesCount] = useState<number>(0);
@@ -387,7 +415,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       date: new Date().toLocaleDateString('fr-FR') + ' à ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
     };
 
-    setTickets([newTicket, ...tickets]);
+    const updatedTickets = [newTicket, ...tickets];
+    setTickets(updatedTickets);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('locatrust_support_tickets', JSON.stringify(updatedTickets));
+        window.dispatchEvent(new CustomEvent('locatrust:support_tickets_updated'));
+      } catch {}
+    }
+
+    try {
+      const senderId = user?.id || (userRole === 'locataire' ? 'usr_tenant' : userRole === 'agence' ? 'usr_agency' : 'usr_owner');
+      sendChatMessage(senderId, 'usr_support', `[Ticket Support: ${ticketSubject}] ${ticketMessage}`);
+    } catch {}
+
     setIsSupportModalOpen(false);
     setTicketSubject('');
     setTicketMessage('');

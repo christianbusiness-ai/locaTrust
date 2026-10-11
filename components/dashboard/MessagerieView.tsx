@@ -91,44 +91,70 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     if (typeof window !== 'undefined') {
       try {
         const appsRaw = localStorage.getItem('locatrust_rental_applications');
+        let apps: any[] = [];
         if (appsRaw) {
-          const apps = JSON.parse(appsRaw);
-          if (Array.isArray(apps)) {
-            apps.forEach((app: any) => {
-              if (userRole === 'locataire') {
-                const ownerName = app.owner_name || 'Bailleur Propriétaire';
-                if (!list.some((c) => c.name === ownerName)) {
-                  list.push({
-                    id: `owner_${app.property_id || app.id}`,
-                    name: ownerName,
-                    phone: app.owner_phone || '+225 07 00 00 00 00',
-                    role: 'Propriétaire Bailleur',
-                    propertyTitle: app.property_title || 'Logement',
-                    avatar: app.owner_avatar || '',
-                    online: true
-                  });
-                }
-              } else {
-                if (app.tenant_name && !list.some((c) => c.id === `tenant_${app.id}`)) {
-                  list.push({
-                    id: `tenant_${app.id}`,
-                    name: app.tenant_name,
-                    phone: app.tenant_phone || '+225 05 00 00 00 00',
-                    role: 'Candidat Locataire',
-                    propertyTitle: app.property_title || 'Bien immobilier',
-                    avatar: app.tenant_avatar || '',
-                    online: true
-                  });
-                }
+          try { apps = JSON.parse(appsRaw); } catch {}
+        }
+        if (Array.isArray(apps)) {
+          apps.forEach((app: any) => {
+            if (userRole === 'locataire') {
+              const ownerName = app.owner_name || 'Bailleur Propriétaire';
+              const ownerId = app.owner_id || `owner_${app.property_id || app.id}`;
+              if (!list.some((c) => c.id === ownerId || c.name === ownerName)) {
+                list.push({
+                  id: ownerId,
+                  name: ownerName,
+                  phone: app.owner_phone || '+225 07 00 00 00 00',
+                  role: 'Propriétaire Bailleur',
+                  propertyTitle: app.property_title || 'Logement',
+                  avatar: app.owner_avatar || '',
+                  online: true
+                });
               }
+            } else {
+              const tenantId = app.tenant_id || `tenant_${app.id}`;
+              if (app.tenant_name && !list.some((c) => c.id === tenantId || c.id === `tenant_${app.id}`)) {
+                list.push({
+                  id: tenantId,
+                  name: app.tenant_name,
+                  phone: app.tenant_phone || '+225 05 00 00 00 00',
+                  role: 'Candidat Locataire',
+                  propertyTitle: app.property_title || 'Bien immobilier',
+                  avatar: app.tenant_avatar || '',
+                  online: true
+                });
+              }
+            }
+          });
+        }
+
+        // Intégration dynamique depuis l'historique des messages pour ne jamais perdre un échange
+        const storedMsgs = getStoredMessages();
+        storedMsgs.forEach((m) => {
+          const otherId = m.sender_id === currentUserId || (userRole !== 'locataire' && (m.sender_id === 'usr_owner' || m.sender_id === 'usr_owner_1'))
+            ? m.receiver_id
+            : m.sender_id;
+
+          if (otherId && otherId !== currentUserId && otherId !== 'usr_owner' && otherId !== 'usr_owner_1' && otherId !== 'usr_tenant' && !list.some((c) => c.id === otherId)) {
+            const matchingApp = apps.find((a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId);
+            list.push({
+              id: otherId,
+              name: matchingApp
+                ? (userRole === 'locataire' ? matchingApp.owner_name : matchingApp.tenant_name)
+                : (otherId.includes('owner') ? 'Propriétaire Bailleur' : 'Locataire Candidat'),
+              phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
+              role: otherId.includes('owner') ? 'Bailleur' : 'Locataire',
+              propertyTitle: matchingApp?.property_title || 'Échange direct',
+              avatar: '',
+              online: true
             });
           }
-        }
+        });
       } catch (e) {}
     }
 
     return list;
-  }, [userRole]);
+  }, [userRole, currentUserId]);
 
   const [selectedContactId, setSelectedContactId] = useState<string>(() => roleContacts[0]?.id || 'usr_tenant_1');
   const [inputMessage, setInputMessage] = useState<string>('');
@@ -221,11 +247,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
   }, [activeContact?.id, currentUserId, messages.length]);
 
-  // Filter messages between current user and active contact
+  // Filter messages between current user and active contact (avec gestion souple des alias et rôles)
   const currentConversationMessages = (Array.isArray(messages) ? messages : []).filter(
     (m) =>
-      (m.sender_id === currentUserId && m.receiver_id === activeContact.id) ||
-      (m.sender_id === activeContact.id && m.receiver_id === currentUserId)
+      (m.sender_id === currentUserId && m.receiver_id === activeContact?.id) ||
+      (m.sender_id === activeContact?.id && m.receiver_id === currentUserId) ||
+      (userRole !== 'locataire' && (m.receiver_id === 'usr_owner' || m.receiver_id === 'usr_owner_1' || m.receiver_id === currentUserId) && m.sender_id === activeContact?.id) ||
+      (userRole !== 'locataire' && (m.sender_id === 'usr_owner' || m.sender_id === 'usr_owner_1' || m.sender_id === currentUserId) && m.receiver_id === activeContact?.id) ||
+      (userRole === 'locataire' && (m.receiver_id === 'usr_tenant' || m.receiver_id === 'usr_tenant_1' || m.receiver_id === currentUserId) && m.sender_id === activeContact?.id) ||
+      (userRole === 'locataire' && (m.sender_id === 'usr_tenant' || m.sender_id === 'usr_tenant_1' || m.sender_id === currentUserId) && m.receiver_id === activeContact?.id)
   );
 
   // Filter contacts by search
