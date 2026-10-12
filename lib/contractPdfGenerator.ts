@@ -60,7 +60,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       startDate = '01/07/2026',
       rent = isProfessional ? 350000 : 75000,
       cautionMonths = isProfessional ? 3 : 2,
-      chargesAmount = isProfessional ? 25000 : 5000,
+      chargesAmount = Number(data.chargesAmount ?? (data as any)?.charges ?? 0),
       dueDay = 5,
       authorizedActivity = isProfessional ? 'Bureaux administratifs et commerciaux' : undefined
     } = data;
@@ -298,18 +298,18 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 5 : PROVISION SUR CHARGES D\'EXPLOITATION', 18, 135);
+      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES D\'EXPLOITATION' : 'ARTICLE 5 : CHARGES D\'EXPLOITATION (AUCUNE PROVISION)', 18, 135);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Charges communes, eau, électricité et gardiennage liées à l'activité professionnelle.`, 18, 139);
+      doc.text(chargesAmount > 0 ? `Charges communes, eau, électricité et gardiennage liées à l'activité professionnelle.` : `Aucune provision exigée : charges d'exploitation incluses ou abonnements directs.`, 18, 139);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
       doc.roundedRect(145, 131.5, 42, 7.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(180, 83, 9);
-      doc.text(`${formatFCFA(chargesAmount)} / mois`, 147, 136.5);
+      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : '0 FCFA (Incluses)', 147, 136.5);
 
       // ARTICLES 6 & 7 : OBLIGATIONS ET RÉPARATIONS COMMERCIALES (2 COLONNES)
       doc.setDrawColor(226, 232, 240);
@@ -463,18 +463,18 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 5 : PROVISION SUR CHARGES LOCATIVES D\'USAGE (ART. 417)', 18, 135);
+      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES LOCATIVES D\'USAGE (ART. 417)' : 'ARTICLE 5 : CHARGES (AUCUNE PROVISION EXIGÉE)', 18, 135);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(51, 65, 85);
-      doc.text('Eau, électricité des communs et ordures ménagères. Les impôts fonciers incombent au bailleur.', 18, 139);
+      doc.text(chargesAmount > 0 ? 'Eau, électricité des communs et ordures ménagères. Les impôts fonciers incombent au bailleur.' : 'Aucune provision sur charges (charges incluses ou compteurs individuels directs CIE/SODECI).', 18, 139);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
       doc.roundedRect(145, 131.5, 42, 7.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(180, 83, 9);
-      doc.text(`${formatFCFA(chargesAmount)} / mois`, 147, 136.5);
+      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : '0 FCFA (Incluses)', 147, 136.5);
 
       // ARTICLE 6 & 7 : OBLIGATIONS (2 COLONNES)
       doc.setDrawColor(226, 232, 240);
@@ -672,14 +672,22 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.setTextColor(180, 83, 9);
     doc.text(isProfessional ? 'COMMERCE • SÉCURITÉ JURIDIQUE' : 'ABIDJAN • SÉCURITÉ JURIDIQUE', sealCenterX, sealCenterY + 11.2, { align: 'center' });
 
-    // Extraction et analyse des conditions particulières pour pagination
+    // Extraction, nettoyage et dédoublonnage des conditions particulières pour pagination
     const parseRuleLines = (raw?: string | string[]): string[] => {
       if (!raw) return [];
-      if (Array.isArray(raw)) return raw.filter((r) => typeof r === 'string' && r.trim().length > 0);
-      return raw
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
+      const lines = Array.isArray(raw) ? raw : raw.split('\n');
+      const seen = new Set<string>();
+      const result: string[] = [];
+      for (const item of lines) {
+        if (typeof item !== 'string') continue;
+        const cleaned = item.trim().replace(/^[\d\-•*.)]+\s*/, '');
+        if (!cleaned || cleaned.length < 3) continue;
+        const norm = cleaned.toLowerCase();
+        if (seen.has(norm)) continue;
+        seen.add(norm);
+        result.push(cleaned);
+      }
+      return result;
     };
 
     const ownerRules = parseRuleLines(data.ownerCustomConditions);

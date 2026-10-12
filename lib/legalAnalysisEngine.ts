@@ -209,7 +209,12 @@ export const IVORIAN_CITIES: IvorianCityOption[] = [
  * Nettoie une ligne de texte (retire préfixes numériques ex: "1.", "-", puces, etc.)
  */
 export function cleanClauseLine(line: string): string {
-  return line.replace(/^[\s\d\-•*.)]+\s*/, '').trim();
+  let cleaned = line.replace(/^[\s\d\-•*.)]+\s*/, '').trim();
+  // Remplacer les pointillés excessifs ("..." ou "....") par un simple point
+  cleaned = cleaned.replace(/\.{2,}/g, '.');
+  // Supprimer les répétitions de mots consécutifs oraux (ex: "le le", "de de", "pas pas")
+  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ]{2,})\s+\1\b/gi, '$1');
+  return cleaned.trim();
 }
 
 /**
@@ -230,12 +235,13 @@ export function normalizeSemanticText(text: string): string {
 
 /**
  * Découpe un bloc de texte en clauses logiques individuelles,
- * en gérant les retours à la ligne, les listes à puces, les numérotations et les points-virgules.
+ * en gérant les retours à la ligne, les listes à puces, les numérotations,
+ * et en fusionnant intelligemment les fragments de phrases coupés par les pauses micro.
  */
 export function extractLogicalClauses(text: string): string[] {
   if (!text || !text.trim()) return [];
   const rawLines = text.split(/\r?\n/);
-  const clauses: string[] = [];
+  const rawClauses: string[] = [];
 
   for (const line of rawLines) {
     const trimmed = line.trim();
@@ -246,7 +252,7 @@ export function extractLogicalClauses(text: string): string[] {
     if (numberedSubClauses.length > 1) {
       for (const sub of numberedSubClauses) {
         const cleaned = cleanClauseLine(sub);
-        if (cleaned && cleaned.length >= 3) clauses.push(cleaned);
+        if (cleaned && cleaned.length >= 3) rawClauses.push(cleaned);
       }
       continue;
     }
@@ -256,7 +262,7 @@ export function extractLogicalClauses(text: string): string[] {
     if (bulletSubClauses.length > 1) {
       for (const sub of bulletSubClauses) {
         const cleaned = cleanClauseLine(sub);
-        if (cleaned && cleaned.length >= 3) clauses.push(cleaned);
+        if (cleaned && cleaned.length >= 3) rawClauses.push(cleaned);
       }
       continue;
     }
@@ -266,18 +272,61 @@ export function extractLogicalClauses(text: string): string[] {
       const semiClauses = trimmed.split(/\s*;\s*/);
       for (const sub of semiClauses) {
         const cleaned = cleanClauseLine(sub);
-        if (cleaned && cleaned.length >= 3) clauses.push(cleaned);
+        if (cleaned && cleaned.length >= 3) rawClauses.push(cleaned);
       }
       continue;
     }
 
     const cleaned = cleanClauseLine(trimmed);
     if (cleaned && cleaned.length >= 3) {
-      clauses.push(cleaned);
+      rawClauses.push(cleaned);
     }
   }
 
-  return clauses;
+  // Fusion intelligente des fragments de phrases coupés lors de la dictée
+  // (ex: si la ligne précédente ne se termine pas par un point et que la suivante continue la phrase)
+  const mergedClauses: string[] = [];
+  for (let i = 0; i < rawClauses.length; i++) {
+    const current = rawClauses[i];
+
+    if (mergedClauses.length > 0) {
+      const prev = mergedClauses[mergedClauses.length - 1];
+      const prevEndsWithPunct = /[.!?:]$/.test(prev.trim());
+      const isContinuation = !prevEndsWithPunct && (
+        /^[a-zà-ÿ]/.test(current) ||
+        current.length < 25 ||
+        prev.length < 35
+      );
+
+      if (isContinuation) {
+        // Fusionner avec la précédente
+        mergedClauses[mergedClauses.length - 1] = `${prev.trim().replace(/\.+$/, '')} ${current.trim()}`;
+        continue;
+      }
+    }
+
+    mergedClauses.push(current);
+  }
+
+  // Dédoublonnage strict des clauses similaires ou répétées plusieurs fois
+  const finalClauses: string[] = [];
+  const seenNorm = new Set<string>();
+
+  for (const c of mergedClauses) {
+    let clean = c.trim();
+    // Nettoyer les pointillés en fin de phrase
+    clean = clean.replace(/\.{2,}$/, '.').replace(/\s*\.+$/, '.');
+    if (clean.length < 4) continue;
+
+    const norm = normalizeSemanticText(clean);
+    if (!norm || norm.length < 3) continue;
+    if (seenNorm.has(norm)) continue;
+    seenNorm.add(norm);
+
+    finalClauses.push(clean);
+  }
+
+  return finalClauses;
 }
 
 /**
@@ -1730,12 +1779,20 @@ export function reorganizeAndReformulateClauses({
       abuseReason
     });
 
+    // Dédoublonnage intelligent dans les catégories : ne pas ajouter une règle déjà présente
+    const normRef = normalizeSemanticText(reformulated);
     if (assignedField === 'owner') {
-      categorizedOwner.push(reformulated);
+      if (!categorizedOwner.some((existing) => normalizeSemanticText(existing) === normRef)) {
+        categorizedOwner.push(reformulated);
+      }
     } else if (assignedField === 'tenant') {
-      categorizedTenant.push(reformulated);
+      if (!categorizedTenant.some((existing) => normalizeSemanticText(existing) === normRef)) {
+        categorizedTenant.push(reformulated);
+      }
     } else {
-      categorizedProperty.push(reformulated);
+      if (!categorizedProperty.some((existing) => normalizeSemanticText(existing) === normRef)) {
+        categorizedProperty.push(reformulated);
+      }
     }
   }
 

@@ -148,7 +148,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [rent, setRent] = useState<number>(initialData?.rentAmount || 150000);
   const [advanceMonths, setAdvanceMonths] = useState<number>(2);
   const [cautionMonths, setCautionMonths] = useState<number>(2);
-  const [chargesAmount, setChargesAmount] = useState<number>(10000);
+  const [chargesAmount, setChargesAmount] = useState<number>(
+    initialData?.chargesAmount ?? (initialData as any)?.charges ?? 0
+  );
   const [dueDay, setDueDay] = useState<number>(5);
   const [cautionPaidAmount, setCautionPaidAmount] = useState<number>(initialData?.cautionAmount || 300000);
   const [cautionReceiptNumber, setCautionReceiptNumber] = useState<string>('DEP-2026-CI-00984');
@@ -263,15 +265,47 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
   const commitTextToField = React.useCallback(
     (field: 'owner' | 'tenant' | 'property', textToAppend: string) => {
-      const clean = textToAppend.trim();
+      let clean = textToAppend.trim();
       if (!clean) return;
 
+      // Nettoyer les répétitions immédiates de mots bégayés (ex: "le le" -> "le")
+      clean = clean.replace(/\b([a-zA-ZÀ-ÿ]{2,})\s+\1\b/gi, '$1');
+      // Nettoyer les pointillés excessifs
+      clean = clean.replace(/\.{2,}/g, '.');
+
+      const appendSmart = (prevText: string) => {
+        if (!prevText || !prevText.trim()) return clean;
+        const prevTrim = prevText.trim();
+
+        // Éviter de réinsérer deux fois la même phrase exactement à la fin
+        if (prevTrim.endsWith(clean)) return prevTrim;
+
+        // Si la fin du texte précédent ne se termine pas par une ponctuation finale (. ! ? :)
+        // cela signifie que l'utilisateur a juste marqué une pause dans sa phrase : on concatène avec un espace
+        const endsWithSentenceTerminator = /[.!?:]$/.test(prevTrim);
+        if (!endsWithSentenceTerminator) {
+          const prevWords = prevTrim.split(/\s+/);
+          const nextWords = clean.split(/\s+/);
+          if (
+            prevWords.length > 0 &&
+            nextWords.length > 0 &&
+            prevWords[prevWords.length - 1].toLowerCase() === nextWords[0].toLowerCase()
+          ) {
+            return `${prevTrim} ${nextWords.slice(1).join(' ')}`;
+          }
+          return `${prevTrim} ${clean}`;
+        }
+
+        // Si le texte précédent s'est bien terminé par un point, commencer une nouvelle ligne / règle
+        return `${prevTrim}\n${clean}`;
+      };
+
       if (field === 'owner') {
-        setOwnerCustomConditions((prev) => (prev ? `${prev}\n${clean}` : clean));
+        setOwnerCustomConditions((prev) => appendSmart(prev));
       } else if (field === 'tenant') {
-        setTenantCustomRequests((prev) => (prev ? `${prev}\n${clean}` : clean));
+        setTenantCustomRequests((prev) => appendSmart(prev));
       } else if (field === 'property') {
-        setPropertySpecificRules((prev) => (prev ? `${prev}\n${clean}` : clean));
+        setPropertySpecificRules((prev) => appendSmart(prev));
       }
     },
     []
@@ -698,9 +732,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       ownerCustomConditions,
       tenantCustomRequests,
       propertySpecificRules,
-      customConditions: compliantClauses
-        .filter((c) => c.fieldSource !== 'advanceMonths' && c.fieldSource !== 'cautionMonths')
-        .map((c) => c.reformulatedText || c.rawText)
+      customConditions: Array.from(
+        new Set(
+          compliantClauses
+            .filter((c) => c.fieldSource !== 'advanceMonths' && c.fieldSource !== 'cautionMonths')
+            .map((c) => (c.reformulatedText || c.rawText).trim())
+        )
+      )
     });
   };
 
@@ -1008,11 +1046,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 </div>
               </div>
 
-              {/* Grille financière 4 colonnes */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 items-end">
+              {/* Grille financière 5 colonnes avec Charges Mensuelles personnalisables */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 sm:gap-3 items-end">
                 <div className="flex flex-col">
-                  <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Loyer Mensuel (FCFA)">
-                    Loyer Mensuel (FCFA)
+                  <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Loyer Mensuel HC (FCFA)">
+                    Loyer HC (FCFA)
                   </label>
                   <input
                     type="number"
@@ -1020,6 +1058,20 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     value={rent}
                     onChange={(e) => setRent(Number(e.target.value))}
                     className="w-full h-10 px-3 rounded-xl border border-amber-300 font-extrabold text-xs bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Charges Mensuelles (FCFA) - 0 si comprises">
+                    Charges / mois (FCFA)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    value={chargesAmount}
+                    onChange={(e) => setChargesAmount(Math.max(0, Number(e.target.value)))}
+                    placeholder="0 si comprises"
+                    className="w-full h-10 px-3 rounded-xl border border-amber-300 font-bold text-xs bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                   />
                 </div>
                 <div className="flex flex-col">
@@ -1054,7 +1106,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     }`}
                   />
                 </div>
-                <div className="flex flex-col">
+                <div className="flex flex-col col-span-2 sm:col-span-1">
                   <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Jour d'échéance">
                     Jour d'échéance
                   </label>
@@ -1985,14 +2037,24 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 </div>
 
                 {/* Article 5 : Charges */}
-                <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex items-center justify-between gap-4">
+                <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-black text-slate-900 text-xs">ARTICLE 5 : CHARGES</span>
-                    <span className="text-xs text-slate-600">Le locataire paiera en plus du loyer, une provision sur charges (eau, électricité parties communes, ordures).</span>
-                    <span className="text-[11px] text-slate-500">Un décompte annuel sera effectué et la régularisation se fera si nécessaire.</span>
+                    <span className="font-black text-slate-900 text-xs">
+                      {chargesAmount > 0 ? "ARTICLE 5 : PROVISION SUR CHARGES LOCATIVES D'USAGE" : "ARTICLE 5 : CHARGES (AUCUNE PROVISION EXIGÉE)"}
+                    </span>
+                    <span className="text-xs text-slate-600">
+                      {chargesAmount > 0
+                        ? "Le locataire paiera en plus du loyer, une provision sur charges (eau, électricité parties communes, ordures). Décompte annuel et régularisation sur justificatifs."
+                        : "Aucune provision sur charges n'est exigée du preneur (charges comprises dans le loyer ou abonnement direct auprès des concessionnaires CIE / SODECI)."}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      {chargesAmount > 0
+                        ? "Les impôts fonciers et taxes grevant la propriété foncière demeurent à la charge exclusive du bailleur (Art. 417)."
+                        : "Les taxes et impôts fonciers incombent intégralement au bailleur."}
+                    </span>
                   </div>
-                  <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm shrink-0">
-                    {formatFCFA(chargesAmount)} / mois
+                  <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm shrink-0 self-end sm:self-center">
+                    {chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : "0 FCFA (Incluses)"}
                   </span>
                 </div>
 
@@ -2045,13 +2107,21 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     Dans le cadre de la liberté contractuelle et en conformité stricte avec les dispositions d'ordre public de la {leaseType === 'habitation' ? 'Loi n° 2019-576' : 'réglementation OHADA AUDCG'}, les parties ont convenu des conditions particulières suivantes, rédigées en termes juridiques :
                   </p>
                   <ul className="list-disc pl-4 space-y-1.5 text-slate-800 text-[11px] font-medium mt-1">
-                    {compliantClauses
-                      .filter((c) => c.fieldSource !== 'advanceMonths' && c.fieldSource !== 'cautionMonths')
-                      .map((c) => (
-                        <li key={c.id}>
-                          <strong>{c.reformulatedText || c.rawText}</strong>
-                        </li>
-                      ))}
+                    {Array.from(
+                      new Map(
+                        compliantClauses
+                          .filter((c) => c.fieldSource !== 'advanceMonths' && c.fieldSource !== 'cautionMonths')
+                          .map((c) => {
+                            const text = (c.reformulatedText || c.rawText).trim();
+                            const key = text.toLowerCase();
+                            return [key, { ...c, displayText: text }];
+                          })
+                      ).values()
+                    ).map((c) => (
+                      <li key={c.id}>
+                        <strong>{c.displayText}</strong>
+                      </li>
+                    ))}
                   </ul>
                 </div>
               )}

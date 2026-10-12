@@ -750,13 +750,21 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                 </span>
               </div>
 
-              <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex items-center justify-between">
+              <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
                 <div>
-                  <h5 className="font-extrabold text-slate-900">ARTICLE 5 : PROVISION SUR CHARGES</h5>
-                  <p className="text-[11px] text-slate-600">Eau, électricité, entretien des parties communes et ordures ménagères.</p>
+                  <h5 className="font-extrabold text-slate-900">
+                    {(tenantData.charges && tenantData.charges > 0)
+                      ? 'ARTICLE 5 : PROVISION SUR CHARGES LOCATIVES'
+                      : 'ARTICLE 5 : CHARGES (AUCUNE PROVISION EXIGÉE)'}
+                  </h5>
+                  <p className="text-[11px] text-slate-600">
+                    {(tenantData.charges && tenantData.charges > 0)
+                      ? 'Eau, électricité, entretien des parties communes et ordures ménagères.'
+                      : 'Aucune provision sur charges (charges incluses ou compteurs individuels directs CIE/SODECI).'}
+                  </p>
                 </div>
-                <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm">
-                  {formatFCFA(tenantData.charges)} / mois
+                <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm shrink-0 self-end sm:self-center">
+                  {(tenantData.charges && tenantData.charges > 0) ? `${formatFCFA(tenantData.charges)} / mois` : '0 FCFA (Incluses)'}
                 </span>
               </div>
             </div>
