@@ -234,7 +234,13 @@ export default function AgencyDashboardPage({
           {(activeTab === 'applications' || activeTab === 'requests' || activeTab === 'demandes') && (
             <ErrorBoundary>
               <DemandesView
-                onOpenMessages={() => setActiveTab('messages')}
+                onOpenMessages={(contactId?: string) => {
+                  if (contactId && typeof window !== 'undefined') {
+                    localStorage.setItem('locatrust_active_chat_contact', contactId);
+                    window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                  }
+                  setActiveTab('messages');
+                }}
               />
             </ErrorBoundary>
           )}
@@ -242,7 +248,13 @@ export default function AgencyDashboardPage({
           {/* TAB 7: Demandes de Visite */}
           {activeTab === 'visits' && (
             <VisitesView
-              onOpenMessages={() => setActiveTab('messages')}
+              onOpenMessages={(contactId?: string) => {
+                if (contactId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_active_chat_contact', contactId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                }
+                setActiveTab('messages');
+              }}
             />
           )}
 

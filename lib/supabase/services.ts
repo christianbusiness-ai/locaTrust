@@ -408,12 +408,39 @@ export async function fetchRentalApplications(propertyId?: string): Promise<Rent
   }
 }
 
-export async function createRentalApplication(app: Partial<RentalApplication>) {
+export async function createRentalApplication(app: Partial<RentalApplication> & Record<string, any>) {
+  const isValidUuid = (str?: string) =>
+    Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+  // Filtrer strictement les colonnes reconnues par la table rental_applications de Supabase
+  const payload: Record<string, any> = {
+    property_id: app.property_id,
+    tenant_name: app.tenant_name || 'Candidat Locataire',
+    tenant_phone: app.tenant_phone || '',
+    tenant_email: app.tenant_email || '',
+    tenant_cni: app.tenant_cni || '',
+    tenant_avatar: app.tenant_avatar || '',
+    property_title: app.property_title || '',
+    property_address: app.property_address || '',
+    rent_amount: Number(app.rent_amount || 0),
+    caution_amount: Number(app.caution_amount || 0),
+    status: app.status || 'en_attente',
+    dossier_status: app.dossier_status || 'complet',
+    documents: typeof app.documents === 'object' ? app.documents : {}
+  };
+
+  if (isValidUuid(app.tenant_id)) {
+    payload.tenant_id = app.tenant_id;
+  }
+  if (isValidUuid(app.id)) {
+    payload.id = app.id;
+  }
+
   const { data, error } = await supabase
     .from('rental_applications')
-    .insert([app])
+    .insert([payload])
     .select()
-    .single();
+    .maybeSingle();
 
   return { data, error };
 }

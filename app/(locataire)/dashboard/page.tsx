@@ -142,7 +142,13 @@ export default function TenantDashboardPage({
           {/* TAB 1: Fil d'actualité */}
           {(activeTab === 'feed' || activeTab === 'overview') && (
             <LocataireFeedView
-              onOpenMessages={() => setActiveTab('messages')}
+              onOpenMessages={(contactId?: string) => {
+                if (contactId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_active_chat_contact', contactId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                }
+                setActiveTab('messages');
+              }}
               onNavigateTab={setActiveTab}
             />
           )}

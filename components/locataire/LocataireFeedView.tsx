@@ -130,18 +130,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     e.preventDefault();
     if (!selectedRental) return;
 
-    const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
+    const applicantId = user?.id || profile?.id || 'usr_tenant';
     const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
     const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
     const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-    const targetOwnerId = selectedRental.ownerId || '';
+    const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
 
     const newApp = {
       id: `app_${Date.now()}`,
       property_id: selectedRental.id,
       property_title: selectedRental.title,
-      property_address: selectedRental.location,
+      property_address: selectedRental.location || 'Abidjan',
       rent_amount: Number(selectedRental.price || 0),
       caution_amount: Number(selectedRental.price || 0) * 2,
       date_received: desiredDate || new Date().toISOString().split('T')[0],
@@ -154,7 +154,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       tenant_email: applicantEmail,
       tenant_cni: 'CI-ABJ-2024-B-89412',
       owner_id: targetOwnerId,
-      owner_name: selectedRental.authorName || 'Propriétaire Bailleur',
+      agency_id: selectedRental.agency_id || undefined,
+      owner_name: selectedRental.authorName || selectedRental.ownerName || 'Propriétaire Bailleur',
       owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
       owner_avatar: selectedRental.authorAvatar || '',
       tenant_signed: false,
@@ -162,7 +163,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       documents: {
         cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
         quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80',
+        comment: applyComment
       }
     };
 
@@ -181,31 +183,52 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     }
 
     // 2. Envoi message automatique dans la messagerie du propriétaire
-    try {
-      const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
-      sendChatMessage(applicantId, targetOwnerId, introMsg);
-    } catch (msgErr) {
-      console.warn('Chat message warning:', msgErr);
+    if (targetOwnerId) {
+      try {
+        const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
+        sendChatMessage(applicantId, targetOwnerId, introMsg);
+
+        // Mémoriser les infos du propriétaire pour la messagerie
+        if (typeof window !== 'undefined') {
+          const contactInfo = {
+            id: targetOwnerId,
+            name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+            phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+            role: 'Propriétaire Bailleur',
+            propertyTitle: selectedRental.title || 'Bien immobilier',
+            avatar: selectedRental.authorAvatar || '',
+            online: true
+          };
+          localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify(contactInfo));
+        }
+      } catch (msgErr) {
+        console.warn('Chat message warning:', msgErr);
+      }
     }
 
     // 3. Sauvegarde asynchrone Supabase (avec fallback transparent)
     try {
-      createRentalApplication({
+      await createRentalApplication({
         property_id: selectedRental.id,
         tenant_id: applicantId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
+        tenant_avatar: applicantAvatar,
+        property_title: selectedRental.title,
+        property_address: selectedRental.location || 'Abidjan',
+        rent_amount: Number(selectedRental.price || 0),
+        caution_amount: Number(selectedRental.price || 0) * 2,
         status: 'en_attente',
         dossier_status: 'complet',
-        monthly_income: Number(selectedRental.price || 0) * 3,
-        profession: 'Locataire vérifié',
-        message: applyComment,
         documents: newApp.documents as any
-      }).catch(() => {});
-    } catch {}
+      });
+    } catch (dbErr) {
+      console.warn('Notice Supabase rental application:', dbErr);
+    }
 
     setIsApplyModalOpen(false);
+    setApplyComment('');
     setApplySuccessModal(true);
     triggerCelebration('send');
   };
@@ -214,8 +237,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     e.preventDefault();
     if (!selectedRental) return;
 
-    const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
-    const targetOwnerId = selectedRental.ownerId || '';
+    const applicantId = user?.id || profile?.id || 'usr_tenant';
+    const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_support';
 
     try {
       sendChatMessage(applicantId, targetOwnerId, directMessageText);
@@ -223,9 +246,30 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       console.warn('Erreur envoi message:', err);
     }
 
+    // Mémoriser le contact actif pour que la messagerie ouvre directement la bonne discussion
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+      const contactInfo = {
+        id: targetOwnerId,
+        name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+        phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+        role: 'Propriétaire Bailleur',
+        propertyTitle: selectedRental.title || 'Bien immobilier',
+        avatar: selectedRental.authorAvatar || '',
+        online: true
+      };
+      localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify(contactInfo));
+      window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
+    }
+
     triggerCelebration('send');
     setIsMessageModalOpen(false);
-    if (onOpenMessages) onOpenMessages(selectedRental?.authorName);
+    setDirectMessageText('');
+    if (onOpenMessages) {
+      onOpenMessages(targetOwnerId);
+    } else if (onNavigateTab) {
+      onNavigateTab('messages');
+    }
   };
 
   // State pour données réelles Supabase
@@ -342,13 +386,14 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
     return {
       id: p.id,
-      ownerId: p.owner_id || p.owner?.id || p.mandant_id || '',
-      ownerName: p.owner?.full_name || p.mandant_name || 'Bailleur certifié',
-      ownerPhone: p.owner?.phone || p.mandant_phone || '+225 07 00 00 00 00',
-      ownerAvatar: p.owner?.avatar_url || '',
-      ownerEmail: p.owner?.email || 'bailleur@locatrust.ci',
-      authorName: p.owner?.full_name || p.mandant_name || 'Bailleur certifié',
-      authorAvatar: p.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.owner?.full_name || p.mandant_name || 'Bailleur')}&background=0D8ABC&color=fff`,
+      ownerId: p.owner_id || p.owner?.id || p.agency_id || p.mandant_id || (p as any).ownerId || 'usr_owner',
+      agencyId: p.agency_id || undefined,
+      ownerName: p.owner?.full_name || p.mandant_name || (p as any).owner_name || 'Bailleur certifié',
+      ownerPhone: p.owner?.phone || p.mandant_phone || (p as any).owner_phone || '+225 07 00 00 00 00',
+      ownerAvatar: p.owner?.avatar_url || (p as any).owner_avatar || '',
+      ownerEmail: p.owner?.email || (p as any).owner_email || 'bailleur@locatrust.ci',
+      authorName: p.owner?.full_name || p.mandant_name || (p as any).owner_name || 'Bailleur certifié',
+      authorAvatar: p.owner?.avatar_url || (p as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.owner?.full_name || p.mandant_name || 'Bailleur')}&background=0D8ABC&color=fff`,
       isVerified: true,
       roleBadge: 'Propriétaire vérifié',
       locationPublished: `${p.city || 'Abidjan'}, ${p.commune || p.quartier || ''} • Publication certifiée`,
@@ -1074,7 +1119,6 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                   value={desiredDate}
                   onChange={(e) => setDesiredDate(e.target.value)}
                   className="w-full bg-blue-50/40 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600 [color-scheme:light]"
-                  required
                 />
               </div>
 
@@ -1095,9 +1139,11 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md transition-all"
+                id="btn-envoyer-demande"
+                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
               >
-                Envoyer la demande
+                <Key className="w-4 h-4" />
+                <span>Envoyer la demande</span>
               </button>
             </form>
           </div>
@@ -1142,6 +1188,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                   rows={4}
                   value={directMessageText}
                   onChange={(e) => setDirectMessageText(e.target.value)}
+                  placeholder="Bonjour, ce bien est-il toujours disponible ?"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
                   required
                 />
@@ -1149,7 +1196,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md transition-all flex items-center justify-center gap-2"
+                id="btn-envoyer-message-modal"
+                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Send className="w-4 h-4" />
                 <span>Envoyer le message</span>

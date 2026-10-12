@@ -253,7 +253,13 @@ export default function ProprietaireDashboardPage({
           {(activeTab === 'applications' || activeTab === 'demandes' || activeTab === 'requests') && (
             <ErrorBoundary>
               <DemandesView
-                onOpenMessages={() => setActiveTab('messages')}
+                onOpenMessages={(contactId?: string) => {
+                  if (contactId && typeof window !== 'undefined') {
+                    localStorage.setItem('locatrust_active_chat_contact', contactId);
+                    window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                  }
+                  setActiveTab('messages');
+                }}
                 isDemo={isDemo}
               />
             </ErrorBoundary>
@@ -262,7 +268,13 @@ export default function ProprietaireDashboardPage({
           {/* TAB 5: Visit Requests (Demandes de Visite - Strict visites, aucun contrat généré) */}
           {activeTab === 'visits' && (
             <VisitesView
-              onOpenMessages={() => setActiveTab('messages')}
+              onOpenMessages={(contactId?: string) => {
+                if (contactId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_active_chat_contact', contactId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                }
+                setActiveTab('messages');
+              }}
             />
           )}
 

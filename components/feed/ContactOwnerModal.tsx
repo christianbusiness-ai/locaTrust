@@ -5,37 +5,73 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Property } from '@/types/database.types';
 import { Send, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '@/src/context/AuthContext';
+import { sendChatMessage } from '@/lib/messagingStore';
+import { triggerCelebration } from '@/lib/celebration';
 
 interface ContactOwnerModalProps {
   property: Property | null;
   isOpen: boolean;
   onClose: () => void;
+  onOpenMessages?: (contactId?: string) => void;
 }
 
 export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
   property,
   isOpen,
   onClose,
+  onOpenMessages,
 }) => {
+  const { user, profile } = useAuth();
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
 
   if (!property) return null;
 
-  const defaultMsg = `Bonjour ${property.owner?.full_name}, je suis intéressé par votre annonce "${property.title}". Est-il toujours disponible pour une visite ?`;
+  const defaultMsg = `Bonjour ${property.owner?.full_name || 'Bailleur'}, je suis intéressé par votre annonce "${property.title}". Est-il toujours disponible pour une visite ?`;
+  const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner';
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
+    const applicantId = user?.id || profile?.id || 'usr_tenant';
+    const textToSend = message.trim() || defaultMsg;
+
+    // Sauvegarder les métadonnées de contact pour la messagerie
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+      localStorage.setItem(
+        'locatrust_contact_' + targetOwnerId,
+        JSON.stringify({
+          id: targetOwnerId,
+          name: property.owner?.full_name || 'Propriétaire Bailleur',
+          phone: property.owner?.phone || '+225 07 00 00 00 00',
+          role: 'Propriétaire Bailleur',
+          propertyTitle: property.title || 'Bien immobilier',
+          avatar: property.owner?.avatar_url || '',
+          online: true,
+        })
+      );
+      window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
+    }
+
+    try {
+      sendChatMessage(applicantId, targetOwnerId, textToSend);
+    } catch (err) {
+      console.warn('Erreur envoi chat:', err);
+    }
+
+    triggerCelebration('send');
     setSent(true);
   };
 
   const handleClose = () => {
     setSent(false);
+    setMessage('');
     onClose();
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={`Contacter ${property.owner?.full_name}`}>
+    <Modal isOpen={isOpen} onClose={handleClose} title={`Contacter ${property.owner?.full_name || 'le propriétaire'}`}>
       {sent ? (
         <div className="flex flex-col items-center justify-center p-6 text-center gap-3">
           <div className="w-14 h-14 rounded-full bg-blue-100 text-brand-600 flex items-center justify-center">
@@ -43,9 +79,27 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
           </div>
           <h4 className="font-bold text-slate-900 text-base">Message transmis !</h4>
           <p className="text-xs text-slate-500">
-            Votre message instantané a été envoyé dans la messagerie sécurisée de LocaTrust.
+            Votre message a été transmis dans la messagerie sécurisée de LocaTrust.
           </p>
-          <Button onClick={handleClose} className="w-full mt-2">Fermer</Button>
+          <div className="flex flex-col sm:flex-row gap-2 w-full mt-2">
+            <Button
+              type="button"
+              onClick={() => {
+                handleClose();
+                if (onOpenMessages) {
+                  onOpenMessages(targetOwnerId);
+                } else if (typeof window !== 'undefined') {
+                  window.location.href = '/dashboard?tab=messages';
+                }
+              }}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold"
+            >
+              Accéder à la messagerie
+            </Button>
+            <Button type="button" variant="outline" onClick={handleClose} className="flex-1">
+              Fermer
+            </Button>
+          </div>
         </div>
       ) : (
         <form onSubmit={handleSend} className="flex flex-col gap-4">

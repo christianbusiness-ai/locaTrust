@@ -37,7 +37,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
     const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-    const targetOwnerId = property.owner_id || property.owner?.id || '';
+    const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner';
 
     const newApp = {
       id: `app_${Date.now()}`,
@@ -77,6 +77,21 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+      
+      // Stocker les coordonnées du propriétaire pour la messagerie
+      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+      localStorage.setItem(
+        'locatrust_contact_' + targetOwnerId,
+        JSON.stringify({
+          id: targetOwnerId,
+          name: property.owner?.full_name || 'Propriétaire Bailleur',
+          phone: property.owner?.phone || '+225 07 00 00 00 00',
+          role: 'Propriétaire Bailleur',
+          propertyTitle: property.title,
+          avatar: property.owner?.avatar_url || '',
+          online: true,
+        })
+      );
     } catch (err) {
       console.warn('LocalStorage error:', err);
     }
@@ -89,17 +104,21 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     }
 
     try {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       createRentalApplication({
         property_id: property.id,
-        tenant_id: applicantId,
+        tenant_id: uuidRegex.test(applicantId) ? applicantId : undefined,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
+        tenant_cni: 'CI-ABJ-2024-B-89412',
+        tenant_avatar: applicantAvatar,
+        property_title: property.title,
+        property_address: `${property.location?.commune || property.location?.quartier || ''}, ${property.location?.city || 'Abidjan'}`,
+        rent_amount: Number(property.rent || 0),
+        caution_amount: Number(property.rent || 0) * 2,
         status: 'en_attente',
         dossier_status: 'complet',
-        monthly_income: Number(property.rent || 0) * 3,
-        profession: 'Locataire vérifié',
-        message: message,
         documents: newApp.documents as any
       }).catch(() => {});
     } catch {}
@@ -154,7 +173,6 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              required
               className="w-full bg-blue-50/40 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:border-blue-600 focus:outline-none [color-scheme:light]"
             />
           </div>
@@ -170,10 +188,10 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
           </div>
 
           <div className="flex items-center gap-3 pt-2">
-            <Button type="button" variant="outline" onClick={onClose} className="flex-1">
+            <Button type="button" variant="outline" onClick={onClose} className="flex-1 cursor-pointer">
               Annuler
             </Button>
-            <Button type="submit" variant="primary" className="flex-1 font-bold">
+            <Button type="submit" id="btn-envoyer-demande-feed-modal" variant="primary" className="flex-1 font-bold cursor-pointer">
               <Send className="w-4 h-4" />
               <span>Envoyer la demande</span>
             </Button>
