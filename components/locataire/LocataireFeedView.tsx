@@ -82,7 +82,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   };
 
   // Modals state
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const isVerified = profile?.verification_status === 'verifie';
   const [showKycBlockModal, setShowKycBlockModal] = useState<boolean>(false);
@@ -135,100 +135,108 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
     setIsSubmittingApp(true);
 
-    const applicantId = user?.id || profile?.id || 'usr_tenant';
-    const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
-    const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
-    const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
-    const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-    const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
-
-    const newApp = {
-      id: `app_${Date.now()}`,
-      property_id: selectedRental.id,
-      property_title: selectedRental.title,
-      property_address: selectedRental.location,
-      rent_amount: Number(selectedRental.price || 0),
-      caution_amount: Number(selectedRental.price || 0) * 2,
-      date_received: desiredDate || new Date().toISOString().split('T')[0],
-      status: 'en_attente' as const,
-      dossier_status: 'complet' as const,
-      tenant_id: applicantId,
-      tenant_name: applicantName,
-      tenant_avatar: applicantAvatar,
-      tenant_phone: applicantPhone,
-      tenant_email: applicantEmail,
-      tenant_cni: 'CI-ABJ-2024-B-89412',
-      owner_id: targetOwnerId,
-      owner_name: selectedRental.authorName || 'Propriétaire Bailleur',
-      owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-      owner_avatar: selectedRental.authorAvatar || '',
-      tenant_signed: false,
-      comment: applyComment,
-      documents: {
-        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
-      }
-    };
-
-    // 1. Sauvegarde dans localStorage immédiat pour que le bailleur voie la demande
     try {
-      const existingRaw = localStorage.getItem('locatrust_rental_applications');
-      let currentApps: any[] = [];
-      if (existingRaw) {
-        try { currentApps = JSON.parse(existingRaw); } catch {}
-      }
-      const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
-      localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
-      window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+      const applicantId = user?.id || profile?.id || 'usr_tenant';
+      const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
+      const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
+      const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
+      const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+      const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
 
-      // Stocker les coordonnées du propriétaire pour la messagerie
-      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
-      localStorage.setItem(
-        'locatrust_contact_' + targetOwnerId,
-        JSON.stringify({
-          id: targetOwnerId,
-          name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
-          phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-          role: 'Propriétaire Bailleur',
-          propertyTitle: selectedRental.title,
-          avatar: selectedRental.authorAvatar || '',
-          online: true,
-        })
-      );
-    } catch (err) {
-      console.warn('LocalStorage applications write warning:', err);
-    }
-
-    // 2. Envoi message automatique dans la messagerie du propriétaire
-    try {
-      const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
-      sendChatMessage(applicantId, targetOwnerId, introMsg);
-    } catch (msgErr) {
-      console.warn('Chat message warning:', msgErr);
-    }
-
-    // 3. Sauvegarde asynchrone Supabase (avec fallback transparent)
-    try {
-      createRentalApplication({
+      const newApp = {
+        id: `app_${Date.now()}`,
         property_id: selectedRental.id,
+        property_title: selectedRental.title,
+        property_address: selectedRental.location,
+        rent_amount: Number(selectedRental.price || 0),
+        caution_amount: Number(selectedRental.price || 0) * 2,
+        date_received: desiredDate || new Date().toISOString().split('T')[0],
+        status: 'en_attente' as const,
+        dossier_status: 'complet' as const,
         tenant_id: applicantId,
         tenant_name: applicantName,
-        tenant_email: applicantEmail,
+        tenant_avatar: applicantAvatar,
         tenant_phone: applicantPhone,
-        status: 'en_attente',
-        dossier_status: 'complet',
-        monthly_income: Number(selectedRental.price || 0) * 3,
-        profession: 'Locataire vérifié',
-        message: applyComment,
-        documents: newApp.documents as any
-      }).catch(() => {});
-    } catch {}
+        tenant_email: applicantEmail,
+        tenant_cni: 'CI-ABJ-2024-B-89412',
+        owner_id: targetOwnerId,
+        owner_name: selectedRental.authorName || 'Propriétaire Bailleur',
+        owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+        owner_avatar: selectedRental.authorAvatar || '',
+        tenant_signed: false,
+        comment: applyComment,
+        documents: {
+          cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+          quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
+          attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+        }
+      };
 
-    triggerCelebration('send');
-    setIsApplyModalOpen(false);
-    setIsSubmittingApp(false);
-    setApplySuccessModal(true);
+      // 1. Sauvegarde dans localStorage immédiat pour que le bailleur voie la demande
+      try {
+        const existingRaw = localStorage.getItem('locatrust_rental_applications');
+        let currentApps: any[] = [];
+        if (existingRaw) {
+          try { currentApps = JSON.parse(existingRaw); } catch {}
+        }
+        const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+
+        // Stocker les coordonnées du propriétaire pour la messagerie
+        localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+        localStorage.setItem(
+          'locatrust_contact_' + targetOwnerId,
+          JSON.stringify({
+            id: targetOwnerId,
+            name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+            phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+            role: 'Propriétaire Bailleur',
+            propertyTitle: selectedRental.title,
+            avatar: selectedRental.authorAvatar || '',
+            online: true,
+          })
+        );
+      } catch (err) {
+        console.warn('LocalStorage applications write warning:', err);
+      }
+
+      // 2. Envoi message automatique dans la messagerie du propriétaire
+      try {
+        const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
+        sendChatMessage(applicantId, targetOwnerId, introMsg);
+      } catch (msgErr) {
+        console.warn('Chat message warning:', msgErr);
+      }
+
+      // 3. Sauvegarde asynchrone Supabase (avec fallback transparent)
+      try {
+        createRentalApplication({
+          property_id: selectedRental.id,
+          tenant_id: applicantId,
+          tenant_name: applicantName,
+          tenant_email: applicantEmail,
+          tenant_phone: applicantPhone,
+          status: 'en_attente',
+          dossier_status: 'complet',
+          monthly_income: Number(selectedRental.price || 0) * 3,
+          profession: 'Locataire vérifié',
+          message: applyComment,
+          documents: newApp.documents as any
+        }).catch(() => {});
+      } catch {}
+
+      // Fermeture immédiate du modal et déclenchement de la célébration
+      setIsApplyModalOpen(false);
+      setApplySuccessModal(true);
+      triggerCelebration('send');
+    } catch (error) {
+      console.error('Error submitting rental application:', error);
+      setIsApplyModalOpen(false);
+      setApplySuccessModal(true);
+    } finally {
+      setIsSubmittingApp(false);
+    }
   };
 
   const submitMessage = (e?: React.FormEvent) => {
@@ -237,41 +245,47 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
     setIsSendingDirectMessage(true);
 
-    const applicantId = user?.id || profile?.id || 'usr_tenant';
-    const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
-    const textToSend = directMessageText.trim() || 'Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.';
-
     try {
-      sendChatMessage(applicantId, targetOwnerId, textToSend);
-    } catch (err) {
-      console.warn('Erreur envoi message:', err);
-    }
+      const applicantId = user?.id || profile?.id || 'usr_tenant';
+      const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
+      const textToSend = directMessageText.trim() || 'Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.';
 
-    // Mémoriser le contact actif pour que la messagerie ouvre directement la bonne discussion
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
-      const contactInfo = {
-        id: targetOwnerId,
-        name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
-        phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-        role: 'Propriétaire Bailleur',
-        propertyTitle: selectedRental.title || 'Bien immobilier',
-        avatar: selectedRental.authorAvatar || '',
-        online: true
-      };
-      localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify(contactInfo));
-      window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
-    }
+      try {
+        sendChatMessage(applicantId, targetOwnerId, textToSend);
+      } catch (err) {
+        console.warn('Erreur envoi message:', err);
+      }
 
-    triggerCelebration('send');
-    setIsMessageModalOpen(false);
-    setIsSendingDirectMessage(false);
-    setDirectMessageText('Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.');
+      // Mémoriser le contact actif pour que la messagerie ouvre directement la bonne discussion
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+        const contactInfo = {
+          id: targetOwnerId,
+          name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+          phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+          role: 'Propriétaire Bailleur',
+          propertyTitle: selectedRental.title || 'Bien immobilier',
+          avatar: selectedRental.authorAvatar || '',
+          online: true
+        };
+        localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify(contactInfo));
+        window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
+      }
 
-    if (onOpenMessages) {
-      onOpenMessages(targetOwnerId);
-    } else if (onNavigateTab) {
-      onNavigateTab('messages');
+      triggerCelebration('send');
+      setIsMessageModalOpen(false);
+      setDirectMessageText('Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.');
+
+      if (onOpenMessages) {
+        onOpenMessages(targetOwnerId);
+      } else if (onNavigateTab) {
+        onNavigateTab('messages');
+      }
+    } catch (error) {
+      console.error('Error sending direct message:', error);
+      setIsMessageModalOpen(false);
+    } finally {
+      setIsSendingDirectMessage(false);
     }
   };
 
@@ -1144,7 +1158,6 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <button
                 type="submit"
                 id="btn-envoyer-demande"
-                onClick={submitApplication}
                 disabled={isSubmittingApp}
                 className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer touch-manipulation disabled:opacity-50"
               >
@@ -1213,7 +1226,6 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <button
                 type="submit"
                 id="btn-envoyer-message-modal"
-                onClick={submitMessage}
                 disabled={isSendingDirectMessage}
                 className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer touch-manipulation disabled:opacity-50"
               >
