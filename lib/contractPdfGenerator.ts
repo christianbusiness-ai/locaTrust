@@ -20,6 +20,12 @@ export interface ContractPdfData {
   propertyTitle: string;
   propertyAddress: string;
   surface?: number;
+  rooms?: number;
+  bedrooms?: number;
+  bathrooms?: number;
+  equipments?: string[] | string;
+  amenities?: string[] | string;
+  propertyDescription?: string;
   durationMonths?: number;
   startDate?: string;
   rent: number;
@@ -56,6 +62,13 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       tenantRccm,
       propertyTitle = isProfessional ? 'Local Professionnel / Bureaux' : 'Appartement 3 pièces',
       propertyAddress = 'Cocody Riviera 3, Abidjan - Côte d\'Ivoire',
+      surface,
+      rooms,
+      bedrooms,
+      bathrooms,
+      equipments,
+      amenities,
+      propertyDescription,
       durationMonths = isProfessional ? 24 : 12,
       startDate = '01/07/2026',
       rent = isProfessional ? 350000 : 75000,
@@ -65,48 +78,53 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       authorizedActivity = isProfessional ? 'Bureaux administratifs et commerciaux' : undefined
     } = data;
 
+    const rawEquipments = equipments || amenities || [];
+    const equipmentsList = Array.isArray(rawEquipments)
+      ? rawEquipments.filter(Boolean).join(', ')
+      : (typeof rawEquipments === 'string' ? rawEquipments : '');
+
     // En-tête gauche : Logo Agence ou LocaTrust
     doc.setFont('helvetica', 'bold');
     if (isAgency) {
       doc.setFontSize(14);
       doc.setTextColor(29, 78, 216); // blue-700
-      doc.text(ownerName.toUpperCase(), 15, 20);
-      doc.setFontSize(8);
+      doc.text(ownerName.toUpperCase(), 15, 18);
+      doc.setFontSize(7.5);
       doc.setTextColor(100, 116, 139);
-      doc.text('AGENCE IMMOBILIÈRE MANDATAIRE AGRÉÉE', 15, 25);
+      doc.text('AGENCE IMMOBILIÈRE MANDATAIRE AGRÉÉE', 15, 23);
     } else {
       doc.setFontSize(16);
       doc.setTextColor(29, 78, 216); // blue-700
-      doc.text('LocaTrust', 15, 20);
-      doc.setFontSize(8);
+      doc.text('LocaTrust', 15, 18);
+      doc.setFontSize(7.5);
       doc.setTextColor(217, 119, 6); // amber-600
-      doc.text(isProfessional ? '— DROIT COMMERCIAL & IMMOBILIER PRO —' : '— GESTION LOCATIVE CONFORME —', 15, 25);
+      doc.text(isProfessional ? '— DROIT COMMERCIAL & IMMOBILIER PRO —' : '— GESTION LOCATIVE CONFORME —', 15, 23);
     }
 
-    // En-tête droite : CONTRAT DE BAIL + Badge N° + QR Code
+    // En-tête centre/droite : CONTRAT DE BAIL + Badge N°
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text(isProfessional ? 'BAIL À USAGE PROFESSIONNEL' : 'CONTRAT DE BAIL D\'HABITATION', 105, 17);
+    doc.text(isProfessional ? 'BAIL À USAGE PROFESSIONNEL' : 'CONTRAT DE BAIL D\'HABITATION', 88, 16);
 
-    doc.setFontSize(7);
+    doc.setFontSize(6.8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(71, 85, 105);
     doc.text(
       isProfessional
         ? 'RÉGIME OHADA AUDCG & LOI N° 2025-221 ART. 14'
         : 'LOI N° 2019-576 (HABITAT) & LOI N° 2025-221',
-      105,
-      21
+      88,
+      20
     );
 
     // Badge N° Contrat
     doc.setFillColor(245, 158, 11); // amber-500
-    doc.roundedRect(105, 23, 38, 6, 1.5, 1.5, 'F');
+    doc.roundedRect(88, 22.5, 38, 5.5, 1.2, 1.2, 'F');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
-    doc.text(`N° ${contractNumber}`, 108, 27.2);
+    doc.text(`N° ${contractNumber}`, 91, 26.3);
 
     // Enregistrement automatique dans le registre officiel de vérification LocaTrust
     const { registerContractInVerificationRegistry } = await import('@/lib/verificationRegistry');
@@ -120,66 +138,66 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       cautionAmount: rent * cautionMonths
     });
 
-    // QR Code officiel scannable calibré avec marge blanche et haute résolution
+    // QR Code officiel scannable calibré en haut à droite avec quiet zone et AUCUN chevauchement
     try {
       const { getLocaTrustVerificationQR } = await import('@/lib/qrCode');
       const publicVerifyUrl = `https://locatrust.com/verify/contrat/${token}`;
       const qrDataUrl = getLocaTrustVerificationQR(publicVerifyUrl, 360);
 
-      // Fond blanc propre pour quiet zone
+      // Fond blanc propre pour quiet zone (parfaitement cantonné entre Y=8.5 et Y=33)
       doc.setFillColor(255, 255, 255);
-      doc.roundedRect(164, 11, 32, 33, 1, 1, 'F');
+      doc.roundedRect(171, 8.5, 24, 25, 1, 1, 'F');
 
-      // QR Code 28x28 mm
-      doc.addImage(qrDataUrl, 'PNG', 166, 12, 28, 28);
-      doc.setFontSize(5);
+      // QR Code 18x18 mm
+      doc.addImage(qrDataUrl, 'PNG', 174, 9.5, 18, 18);
+      doc.setFontSize(4.5);
       doc.setTextColor(30, 41, 59);
       doc.setFont('helvetica', 'bold');
-      doc.text("SCANNER POUR VÉRIFIER", 180, 42, { align: 'center' });
-      doc.setFontSize(4.2);
+      doc.text("SCANNER POUR VÉRIFIER", 183, 29.5, { align: 'center' });
+      doc.setFontSize(3.8);
       doc.setTextColor(100, 116, 139);
       doc.setFont('helvetica', 'normal');
-      doc.text("Authentification publique sans abonnement", 180, 45, { align: 'center' });
+      doc.text("Authentification publique certifiée", 183, 32, { align: 'center' });
     } catch (err) {
       console.warn('QR Code embedding error in PDF:', err);
     }
 
-    // Entre les soussignés
+    // Entre les soussignés (Commence proprement sous le bandeau d'en-tête et le QR code)
     doc.setFont('helvetica', 'italic');
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(100, 116, 139);
-    doc.text('Entre les soussignés :', 15, 34);
+    doc.text('Entre les soussignés :', 15, 35.5);
 
-    // Boîtes Parties (Bailleur & Locataire)
+    // Boîtes Parties (Bailleur & Locataire) - Zéro chevauchement avec le QR Code qui se termine à Y=33
     doc.setDrawColor(226, 232, 240);
     doc.setFillColor(248, 250, 252);
-    doc.roundedRect(15, 36, 85, 25, 2, 2, 'FD');
-    doc.roundedRect(105, 36, 85, 25, 2, 2, 'FD');
+    doc.roundedRect(15, 37.5, 85, 24.5, 2, 2, 'FD');
+    doc.roundedRect(105, 37.5, 85, 24.5, 2, 2, 'FD');
 
     // Bailleur / Agence
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
     if (isAgency && mandantName) {
-      doc.text('L\'AGENCE IMMOBILIÈRE (MANDATAIRE)', 18, 41);
+      doc.text('L\'AGENCE IMMOBILIÈRE (MANDATAIRE)', 18, 42);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.8);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Agence : ${ownerName}`, 18, 45);
+      doc.text(`Agence : ${ownerName}`, 18, 46);
       doc.setFont('helvetica', 'bold');
-      doc.text(`Propriétaire Mandant : ${mandantName}`, 18, 49);
+      doc.text(`Propriétaire Mandant : ${mandantName}`, 18, 50);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Téléphone : ${ownerPhone}`, 18, 53);
-      doc.text(`Identifiant : Agence & Mandat vérifié`, 18, 57);
+      doc.text(`Téléphone : ${ownerPhone}`, 18, 54);
+      doc.text(`Identifiant : Agence & Mandat vérifié`, 18, 58);
     } else {
-      doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 41);
+      doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 42);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Nom / Raison : ${ownerName}`, 18, 46);
-      doc.text(`Téléphone : ${ownerPhone}`, 18, 50);
-      doc.text(`Adresse : Cocody, Abidjan - Côte d'Ivoire`, 18, 54);
-      doc.text(`Identifiant : CNI / RCCM vérifié`, 18, 58);
+      doc.text(`Nom / Raison : ${ownerName}`, 18, 46.5);
+      doc.text(`Téléphone : ${ownerPhone}`, 18, 50.5);
+      doc.text(`Adresse : Cocody, Abidjan - Côte d'Ivoire`, 18, 54.5);
+      doc.text(`Identifiant : CNI / RCCM vérifié`, 18, 58.5);
     }
 
     // Preneur (Personne physique ou morale)
@@ -191,25 +209,25 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
         ? (tenantRccm ? 'LE PRENEUR PROFESSIONNEL (SOCIÉTÉ)' : 'LE PRENEUR (ENTREPRISE / PROFESSIONNEL)')
         : 'LE LOCATAIRE (PRENEUR)',
       108,
-      41
+      42
     );
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(51, 65, 85);
-    doc.text(`Nom / Raison sociale : ${tenantName}`, 108, 46);
-    doc.text(`Téléphone : ${tenantPhone}`, 108, 50);
+    doc.text(`Nom / Raison sociale : ${tenantName}`, 108, 46.5);
+    doc.text(`Téléphone : ${tenantPhone}`, 108, 50.5);
     if (isProfessional && tenantRccm) {
-      doc.text(`Immatriculation RCCM : ${tenantRccm}`, 108, 54);
-      doc.text(`Représenté par titulaire CNI N° ${tenantCni}`, 108, 58);
+      doc.text(`Immatriculation RCCM : ${tenantRccm}`, 108, 54.5);
+      doc.text(`Représenté par titulaire CNI N° ${tenantCni}`, 108, 58.5);
     } else {
-      doc.text(`Adresse : Abidjan - Côte d'Ivoire`, 108, 54);
-      doc.text(`Pièce d'identité : CNI N° ${tenantCni}`, 108, 58);
+      doc.text(`Adresse : Abidjan - Côte d'Ivoire`, 108, 54.5);
+      doc.text(`Pièce d'identité : CNI N° ${tenantCni}`, 108, 58.5);
     }
 
     doc.setFont('helvetica', 'italic');
     doc.setFontSize(7.5);
     doc.setTextColor(100, 116, 139);
-    doc.text('Il a été arrêté et convenu ce qui suit :', 15, 65);
+    doc.text('Il a été arrêté et convenu ce qui suit :', 15, 65.5);
 
     // ========================================================================
     // CORPS DU CONTRAT : DEUX MODÈLES DISTINCTS (HABITATION vs PROFESSIONNEL)
@@ -222,25 +240,28 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 1 : DÉSIGNATION DU LOCAL & ACTIVITÉ COMMERCIALE AUTORISÉE', 15, 71);
+      doc.text('ARTICLE 1 : DÉSIGNATION DU LOCAL & CONSISTANCE RÉELLE (OHADA AUDCG)', 15, 70);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
+      doc.setFontSize(6.5);
       doc.setTextColor(51, 65, 85);
-      doc.text('Le bailleur donne à bail à usage professionnel au preneur les locaux décrits ci-dessous :', 15, 75);
+      doc.text('Le bailleur donne à bail à usage professionnel au preneur les locaux décrits ci-dessous :', 15, 73.5);
 
       doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 77, 175, 14, 2, 2, 'FD');
-      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 82);
-      doc.text(
-        `• Destination contractuelle exclusive (Art. 101/103 AUDCG) : ${authorizedActivity || 'Bureaux administratifs, commerciaux et exploitation'}.`,
-        18,
-        86
-      );
-      doc.text(
-        '• Autorisations administratives : Le preneur est seul responsable de l\'obtention de ses licences, RCCM et conformités ERP.',
-        18,
-        89.5
-      );
+      doc.roundedRect(15, 75, 175, 17, 2, 2, 'FD');
+
+      const surfaceProText = surface ? `${surface} m²` : 'Conforme au descriptif';
+      const roomsProList = [
+        rooms ? `${rooms} pièce(s)/bureau(x)` : null,
+        bathrooms ? `${bathrooms} point(s) d'eau` : null
+      ].filter(Boolean).join(' • ');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.4);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 78.8);
+      doc.text(`• Consistance réelle : Superficie exploitable : ${surfaceProText} | Agencement : ${roomsProList || 'Locaux professionnels aménagés'}`, 18, 82.5);
+      doc.text(`• Équipements & Installations : ${equipmentsList || 'Compteurs dédiés, installations électriques, réseau, sanitaires conformes ERP'}`, 18, 86.2);
+      doc.text(`• Activité contractuelle autorisée (Art. 101/103 AUDCG) : ${authorizedActivity || 'Bureaux administratifs, commerciaux et exploitation'}.`, 18, 89.8);
 
       // ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (Art. 104 AUDCG)
       doc.setFont('helvetica', 'bold');
@@ -379,25 +400,29 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 1 : DÉSIGNATION DU BIEN & DESTINATION EXCLUSIVE D\'HABITATION', 15, 71);
+      doc.text('ARTICLE 1 : DÉSIGNATION DU BIEN & CONSISTANCE RÉELLE (LOI N° 2019-576)', 15, 70);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
+      doc.setFontSize(6.5);
       doc.setTextColor(51, 65, 85);
-      doc.text('Le bailleur donne en location au preneur qui accepte, le bien immobilier suivant :', 15, 75);
+      doc.text('Le bailleur donne en location au preneur qui accepte, le bien immobilier dont la consistance réelle est désignée ci-après :', 15, 73.5);
 
       doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 77, 175, 14, 2, 2, 'FD');
-      doc.text(`• Type : ${propertyTitle} | Localisation : ${propertyAddress}`, 18, 82);
-      doc.text(
-        '• Destination exclusive : Logement d\'habitation principale du preneur et des siens (Art. 409 & 410 Loi 2019-576).',
-        18,
-        86
-      );
-      doc.text(
-        '• Exclusion d\'ordre public : Toute utilisation commerciale, industrielle ou artisanale est expressément prohibée.',
-        18,
-        89.5
-      );
+      doc.roundedRect(15, 75, 175, 17, 2, 2, 'FD');
+
+      const surfaceHabText = surface ? `${surface} m²` : 'Conforme au descriptif';
+      const roomsHabList = [
+        rooms ? `${rooms} pièce(s)` : null,
+        bedrooms ? `${bedrooms} chambre(s)` : null,
+        bathrooms ? `${bathrooms} salle(s) d'eau` : null
+      ].filter(Boolean).join(' • ');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.4);
+      doc.setTextColor(30, 41, 59);
+      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 78.8);
+      doc.text(`• Consistance réelle : Surface habitable : ${surfaceHabText} | Composition : ${roomsHabList || 'Logement complet aménagé'}`, 18, 82.5);
+      doc.text(`• Équipements réels : ${equipmentsList || 'Compteurs CIE & SODECI individuels, sanitaires, cuisine, installations conformes'}`, 18, 86.2);
+      doc.text('• Destination exclusive : Logement d\'habitation principale (Art. 409 & 410 Loi 2019-576). Exploitation commerciale prohibée.', 18, 89.8);
 
       // ARTICLE 2 : DURÉE
       doc.setFont('helvetica', 'bold');

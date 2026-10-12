@@ -207,6 +207,36 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     }
 
     const leaseType = (contract?.usage_destination || (contract?.property as any)?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
+    
+    let surface = (contract?.property as any)?.surface;
+    let rooms = (contract?.property as any)?.rooms;
+    let bedrooms = (contract?.property as any)?.bedrooms;
+    let bathrooms = (contract?.property as any)?.bathrooms;
+    let equipments = (contract?.property as any)?.equipments;
+    let propertyDescription = (contract?.property as any)?.description;
+
+    try {
+      const stored = localStorage.getItem('locatrust_properties');
+      if (stored) {
+        const parsedProps = JSON.parse(stored);
+        const match = parsedProps.find((p: any) =>
+          ((contract as any)?.property_id && (p.id === (contract as any)?.property_id || p._id === (contract as any)?.property_id)) ||
+          (tenantData.propertyTitle && p.title && p.title.toLowerCase().includes(tenantData.propertyTitle.toLowerCase())) ||
+          (tenantData.propertyAddress && p.location && tenantData.propertyAddress.toLowerCase().includes(p.location.toLowerCase()))
+        );
+        if (match) {
+          surface = surface || match.surface;
+          rooms = rooms || match.rooms;
+          bedrooms = bedrooms || match.bedrooms;
+          bathrooms = bathrooms || match.bathrooms;
+          equipments = equipments || match.equipments;
+          propertyDescription = propertyDescription || match.description;
+        }
+      }
+    } catch (e) {
+      console.warn('Property lookup error', e);
+    }
+
     await generateOfficialContractPdf({
       contractNumber,
       isAgency,
@@ -218,6 +248,13 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       tenantCni: tenantData.cni,
       propertyTitle: tenantData.propertyTitle,
       propertyAddress: tenantData.propertyAddress,
+      surface,
+      rooms,
+      bedrooms,
+      bathrooms,
+      equipments,
+      amenities: equipments,
+      propertyDescription,
       durationMonths: tenantData.duration,
       startDate: tenantData.startDate,
       rent: tenantData.rent,

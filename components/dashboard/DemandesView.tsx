@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
+import { SignatureModal } from '@/components/common/SignatureModal';
+import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { notifyWaitingListCandidatesOnLeaseFinalized, pushGlobalNotification } from '@/lib/waitingListNotifications';
@@ -53,6 +55,9 @@ export interface RentalApplication {
   dossier_status: 'complet' | 'en_cours';
   tenant_signed?: boolean;
   tenant_signed_at?: string;
+  tenant_signature_url?: string;
+  owner_signed?: boolean;
+  owner_signature_url?: string;
   contract_number?: string;
   contract_finalized?: boolean;
   unavailable_reason?: string;
@@ -328,20 +333,34 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   };
 
   // Validation effective de la signature par le locataire (Étape 1 & 2)
-  const handleConfirmTenantSignature = async (app: RentalApplication) => {
+  const handleConfirmTenantSignature = async (app: RentalApplication, signatureDataUrl?: string) => {
     const signedAt = new Date().toISOString();
+    const sigUrl = signatureDataUrl || getCertifiedSignatureDataUrl(
+      app.tenant_name,
+      'locataire',
+      (app as any).tenant_signature_url,
+      `${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+    );
     const updated = applications.map((a) =>
-      a.id === app.id ? { ...a, tenant_signed: true, tenant_signed_at: signedAt } : a
+      a.id === app.id
+        ? {
+            ...a,
+            tenant_signed: true,
+            tenant_signed_at: signedAt,
+            tenant_signature_url: sigUrl
+          }
+        : a
     );
     saveApplications(updated);
     setSigningTenantApp(null);
     setCandidateAlert(
-      `✍️ ${app.tenant_name} a signé et validé sa signature ! Le bouton « Finaliser le contrat » est désormais actif pour le bailleur.`
+      `✍️ ${app.tenant_name} a apposé sa signature manuscrite certifiée ! Le bouton « Finaliser le contrat » est désormais actif pour le bailleur.`
     );
     try {
       await supabase.from('rental_applications').update({
         tenant_signed: true,
-        tenant_signed_at: signedAt
+        tenant_signed_at: signedAt,
+        tenant_signature_url: sigUrl
       }).eq('id', app.id);
     } catch (e) {
       console.warn('Sync signature error:', e);
@@ -367,6 +386,24 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     const contractNumber = app.contract_number || `LT-2026-CI-000${Math.floor(100 + Math.random() * 900)}`;
 
+    const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
+    const ownerPhone = profile?.phone || "+225 07 00 00 00 00";
+    const isAgencyUser = profile?.role === 'agence' || profile?.role === 'agent';
+    const matchedProperty = getPropertyForApp(app.property_id);
+
+    const ownerSigUrl = (app as any).owner_signature_url || getCertifiedSignatureDataUrl(
+      ownerName,
+      isAgencyUser ? 'agence' : 'bailleur',
+      null,
+      `${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+    );
+    const tenantSigUrl = (app as any).tenant_signature_url || getCertifiedSignatureDataUrl(
+      app.tenant_name,
+      'locataire',
+      null,
+      `${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+    );
+
     // 1. Mettre à jour l'application retenue à 'contrat_actif'
     // 2. Mettre automatiquement toutes les autres demandes pour ce même logement à 'refusee'
     const competing = applications.filter(
@@ -380,7 +417,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           ...a,
           status: 'contrat_actif' as const,
           contract_finalized: true,
-          contract_number: contractNumber
+          contract_number: contractNumber,
+          owner_signed: true,
+          owner_signature_url: ownerSigUrl,
+          tenant_signature_url: tenantSigUrl
         };
       }
       if (a.property_id === app.property_id) {
@@ -400,7 +440,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       await supabase.from('rental_applications').update({
         status: 'contrat_actif',
         contract_finalized: true,
-        contract_number: contractNumber
+        contract_number: contractNumber,
+        owner_signed: true,
+        owner_signature_url: ownerSigUrl,
+        tenant_signature_url: tenantSigUrl
       }).eq('id', app.id);
 
       for (const comp of competing) {
@@ -426,9 +469,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     }
 
     // 4. Enregistrer dans le registre des contrats
-    const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
-    const ownerPhone = profile?.phone || "+225 07 00 00 00 00";
-
     try {
       await supabase.from('contracts').insert({
         contract_number: contractNumber,
@@ -436,7 +476,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         tenant_id: app.tenant_id || user?.id,
         owner_id: user?.id,
         rent_amount: app.rent_amount,
-        charges_amount: 10000,
+        charges_amount: matchedProperty?.charges ?? 10000,
         caution_amount: app.caution_amount,
         duration_months: 12,
         status: 'actif',
@@ -450,15 +490,27 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         id: `cnt_${app.id}_${Date.now()}`,
         contract_number: contractNumber,
         rent: app.rent_amount,
-        charges: 10000,
+        charges: matchedProperty?.charges ?? 10000,
         payment_due_day: 5,
         duration_months: 12,
         owner: { full_name: ownerName, phone: ownerPhone },
         tenant: { full_name: app.tenant_name, phone: app.tenant_phone },
         property: {
           title: app.property_title,
-          location: { city: 'Abidjan', quartier: 'Riviera', commune: 'Cocody' }
+          location: { city: matchedProperty?.city || 'Abidjan', quartier: matchedProperty?.quartier || 'Riviera', commune: matchedProperty?.commune || 'Cocody' },
+          surface: matchedProperty?.surface,
+          rooms: matchedProperty?.rooms,
+          bedrooms: matchedProperty?.bedrooms,
+          bathrooms: matchedProperty?.bathrooms,
+          equipments: matchedProperty?.equipments
         },
+        surface: matchedProperty?.surface,
+        rooms: matchedProperty?.rooms,
+        bedrooms: matchedProperty?.bedrooms,
+        bathrooms: matchedProperty?.bathrooms,
+        equipments: matchedProperty?.equipments,
+        owner_signature_url: ownerSigUrl,
+        tenant_signature_url: tenantSigUrl,
         status: 'actif',
         signed_date: new Date().toLocaleDateString('fr-FR')
       };
@@ -505,6 +557,19 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const isAgencyUser = profile?.role === 'agence' || profile?.role === 'agent';
 
+      const ownerSig = (app as any).owner_signature_url || getCertifiedSignatureDataUrl(
+        ownerName,
+        isAgencyUser ? 'agence' : 'bailleur',
+        null,
+        '01/10/2026 à 10:30'
+      );
+      const tenantSig = (app as any).tenant_signature_url || getCertifiedSignatureDataUrl(
+        app.tenant_name,
+        'locataire',
+        null,
+        '01/10/2026 à 11:15'
+      );
+
       await generateOfficialContractPdf({
         contractNumber: app.contract_number || 'LT-2026-CI-000492',
         isAgency: isAgencyUser,
@@ -516,12 +581,21 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         tenantCni: app.tenant_cni,
         propertyTitle: app.property_title,
         propertyAddress: app.property_address,
+        surface: matchedProperty?.surface,
+        rooms: matchedProperty?.rooms,
+        bedrooms: matchedProperty?.bedrooms,
+        bathrooms: matchedProperty?.bathrooms,
+        equipments: matchedProperty?.equipments,
+        amenities: matchedProperty?.equipments,
+        propertyDescription: matchedProperty?.description,
         durationMonths: 12,
         startDate: '01/10/2026',
         rent: app.rent_amount,
         cautionMonths: 2,
-        chargesAmount: 10000,
+        chargesAmount: matchedProperty?.charges ?? 10000,
         dueDay: 5,
+        ownerSignatureUrl: ownerSig,
+        tenantSignatureUrl: tenantSig,
         isSignedCopy: true,
         leaseType,
         usageDestination: leaseType,
@@ -1084,104 +1158,45 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               tenantName: selectedApplicationForContract.tenant_name,
               tenantPhone: selectedApplicationForContract.tenant_phone,
               tenantCni: selectedApplicationForContract.tenant_cni,
+              propertyId: selectedApplicationForContract.property_id,
               propertyTitle: selectedApplicationForContract.property_title,
               propertyAddress: selectedApplicationForContract.property_address,
+              propertySurface: matchedProperty?.surface,
+              propertyRooms: matchedProperty?.rooms,
+              propertyBedrooms: matchedProperty?.bedrooms,
+              propertyBathrooms: matchedProperty?.bathrooms,
+              propertyEquipments: matchedProperty?.equipments,
+              propertyPhotos: matchedProperty?.photos,
+              propertyDescription: matchedProperty?.description,
               mandantName: (matchedProperty as any)?.mandant_name,
               rentAmount: selectedApplicationForContract.rent_amount,
               cautionAmount: selectedApplicationForContract.caution_amount,
+              chargesAmount: matchedProperty?.charges ?? 10000,
               leaseType,
               usageDestination: leaseType,
               authorizedActivity: matchedProperty?.authorized_activity || '',
               propertyType: matchedProperty?.type || '',
-              ownerDestinationAuthorized: matchedProperty?.owner_destination_authorized ?? true
+              ownerDestinationAuthorized: matchedProperty?.owner_destination_authorized ?? true,
+              tenantSignatureUrl: (selectedApplicationForContract as any).tenant_signature_url,
+              ownerSignatureUrl: (selectedApplicationForContract as any).owner_signature_url
             }}
           />
         );
       })()}
 
-      {/* Interactive Tenant Signature Modal (Simulation / Signature effective du locataire) */}
+      {/* Interactive Tenant Signature Modal (Vraie signature manuscrite sur canvas numérique certifié) */}
       {signingTenantApp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fadeIn font-sans">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-5">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
-                  <PenTool className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">
-                    Signature & Validation Locataire
-                  </h3>
-                  <p className="text-xs text-slate-500 font-medium">
-                    {signingTenantApp.tenant_name} • CNI : {signingTenantApp.tenant_cni}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSigningTenantApp(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Récapitulatif du bien */}
-            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-2 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-700">Logement concerné :</span>
-                <span className="font-black text-slate-900">{signingTenantApp.property_title}</span>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Loyer mensuel :</span>
-                <strong className="text-blue-700 font-black">{formatFCFA(signingTenantApp.rent_amount)}/mois</strong>
-              </div>
-              <div className="flex items-center justify-between text-slate-600">
-                <span>Dépôt de garantie :</span>
-                <strong>{formatFCFA(signingTenantApp.caution_amount)} (2 mois max légal)</strong>
-              </div>
-            </div>
-
-            {/* Étape 1 : Signature manuscrite certifiée */}
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>1. Signature manuscrite numérique du locataire</span>
-              </span>
-              <div className="h-28 rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50/30 flex items-center justify-center p-3 relative overflow-hidden">
-                <div className="font-serif italic text-2xl text-blue-900 select-none tracking-wide">
-                  {signingTenantApp.tenant_name}
-                </div>
-                <div className="absolute bottom-2 right-3 text-[10px] font-mono text-emerald-700 font-bold bg-white/80 px-2 py-0.5 rounded border border-emerald-200">
-                  ✔ Certificat Numérique LocaTrust
-                </div>
-              </div>
-              <span className="text-[11px] text-slate-400 italic">
-                En apposant cette signature, le preneur déclare avoir pris connaissance des clauses et s'engage selon les dispositions de la Loi N° 2019-576.
-              </span>
-            </div>
-
-            {/* Étape 2 : Boutons d'action */}
-            <div className="flex items-center justify-between pt-3 border-t gap-3">
-              <button
-                type="button"
-                onClick={() => setSigningTenantApp(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
-              >
-                Annuler
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleConfirmTenantSignature(signingTenantApp)}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md flex items-center gap-2 transition-all cursor-pointer"
-              >
-                <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-                <span>2. Valider ma signature locataire</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <SignatureModal
+          isOpen={!!signingTenantApp}
+          onClose={() => setSigningTenantApp(null)}
+          onConfirmSignature={(signatureDataUrl) => {
+            handleConfirmTenantSignature(signingTenantApp, signatureDataUrl);
+          }}
+          signerName={signingTenantApp.tenant_name}
+          signerRole="locataire"
+          documentTitle={`Bail d'Habitation pour ${signingTenantApp.property_title}`}
+          documentNumber={signingTenantApp.contract_number || 'LT-2026-CI-000492'}
+        />
       )}
 
     </div>

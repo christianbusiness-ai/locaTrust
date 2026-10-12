@@ -61,10 +61,19 @@ interface LegalContractGeneratorModalProps {
     tenantName?: string;
     tenantPhone?: string;
     tenantCni?: string;
+    propertyId?: string;
     propertyTitle?: string;
     propertyAddress?: string;
+    propertySurface?: number;
+    propertyRooms?: number;
+    propertyBedrooms?: number;
+    propertyBathrooms?: number;
+    propertyEquipments?: string[];
+    propertyPhotos?: string[];
+    propertyDescription?: string;
     rentAmount?: number;
     cautionAmount?: number;
+    chargesAmount?: number;
     propertyCity?: string;
     propertyCommune?: string;
     durationMonths?: number;
@@ -75,6 +84,8 @@ interface LegalContractGeneratorModalProps {
     propertyType?: string;
     ownerDestinationAuthorized?: boolean;
     mandantName?: string;
+    ownerSignatureUrl?: string | null;
+    tenantSignatureUrl?: string | null;
   };
   onContractFinalized?: (contractData: {
     contractNumber: string;
@@ -174,6 +185,15 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [startDate, setStartDate] = useState<string>(initialData?.startDate || '2026-10-01');
   const [durationMonths, setDurationMonths] = useState<number>(initialData?.durationMonths || 12);
 
+  // Real Property Characteristics published by Landlord (Loi 2019-576 & bail certifié)
+  const [propertySurface, setPropertySurface] = useState<number | undefined>(initialData?.propertySurface);
+  const [propertyRooms, setPropertyRooms] = useState<number | undefined>(initialData?.propertyRooms);
+  const [propertyBedrooms, setPropertyBedrooms] = useState<number | undefined>(initialData?.propertyBedrooms);
+  const [propertyBathrooms, setPropertyBathrooms] = useState<number | undefined>(initialData?.propertyBathrooms);
+  const [propertyEquipments, setPropertyEquipments] = useState<string[]>(initialData?.propertyEquipments || []);
+  const [propertyPhotos, setPropertyPhotos] = useState<string[]>(initialData?.propertyPhotos || []);
+  const [propertyDescription, setPropertyDescription] = useState<string>(initialData?.propertyDescription || '');
+
   // Notifications des candidats en liste d'attente
   const [notifiedCandidates, setNotifiedCandidates] = useState<WaitingListCandidateNotification[]>([]);
   // Zoom QR Code modal
@@ -192,6 +212,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (initialData.propertyAddress) setPropertyAddress(initialData.propertyAddress);
         if (typeof initialData.rentAmount === 'number') setRent(initialData.rentAmount);
         if (typeof initialData.cautionAmount === 'number') setCautionPaidAmount(initialData.cautionAmount);
+        if (typeof initialData.chargesAmount === 'number') setChargesAmount(initialData.chargesAmount);
         if (typeof initialData.durationMonths === 'number') setDurationMonths(initialData.durationMonths);
         if (initialData.startDate) setStartDate(initialData.startDate);
         if (initialData.leaseType || initialData.usageDestination) {
@@ -209,6 +230,48 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               : 'Usage Professionnel / Commercial (OHADA AUDCG)'
           );
         }
+
+        // Récupération des informations réelles du bien publiées par le bailleur
+        let publishedProp: any = null;
+        if (typeof window !== 'undefined') {
+          try {
+            const rawProps = localStorage.getItem('locatrust_properties');
+            if (rawProps) {
+              const list = JSON.parse(rawProps);
+              if (Array.isArray(list)) {
+                if (initialData.propertyId) {
+                  publishedProp = list.find((p: any) => p.id === initialData.propertyId);
+                }
+                if (!publishedProp && initialData.propertyTitle) {
+                  publishedProp = list.find(
+                    (p: any) => p.title?.trim().toLowerCase() === initialData.propertyTitle?.trim().toLowerCase()
+                  );
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Erreur lecture locatrust_properties:', e);
+          }
+        }
+
+        const resSurface = initialData.propertySurface ?? publishedProp?.surface ?? 75;
+        const resRooms = initialData.propertyRooms ?? publishedProp?.rooms ?? 3;
+        const resBedrooms = initialData.propertyBedrooms ?? publishedProp?.bedrooms ?? 2;
+        const resBathrooms = initialData.propertyBathrooms ?? publishedProp?.bathrooms ?? 1;
+        const resEquipments = initialData.propertyEquipments ?? publishedProp?.equipments ?? ['Compteurs CIE/SODECI individuels', 'Sanitaires privatifs', 'Cuisine équipée'];
+        const resPhotos = initialData.propertyPhotos ?? publishedProp?.photos ?? [];
+        const resDesc = initialData.propertyDescription ?? publishedProp?.description ?? '';
+
+        setPropertySurface(resSurface);
+        setPropertyRooms(resRooms);
+        setPropertyBedrooms(resBedrooms);
+        setPropertyBathrooms(resBathrooms);
+        setPropertyEquipments(resEquipments);
+        setPropertyPhotos(resPhotos);
+        setPropertyDescription(resDesc);
+
+        if (initialData.tenantSignatureUrl) setTenantSignatureUrl(initialData.tenantSignatureUrl);
+        if (initialData.ownerSignatureUrl) setOwnerSignatureUrl(initialData.ownerSignatureUrl);
       }
     }
   }, [
@@ -216,19 +279,30 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.tenantName,
     initialData?.tenantPhone,
     initialData?.tenantCni,
+    initialData?.propertyId,
     initialData?.propertyTitle,
     initialData?.propertyAddress,
     initialData?.propertyCity,
     initialData?.propertyCommune,
+    initialData?.propertySurface,
+    initialData?.propertyRooms,
+    initialData?.propertyBedrooms,
+    initialData?.propertyBathrooms,
+    initialData?.propertyEquipments,
+    initialData?.propertyPhotos,
+    initialData?.propertyDescription,
     initialData?.rentAmount,
     initialData?.cautionAmount,
+    initialData?.chargesAmount,
     initialData?.durationMonths,
     initialData?.startDate,
     initialData?.leaseType,
     initialData?.usageDestination,
     initialData?.authorizedActivity,
     initialData?.propertyType,
-    initialData?.ownerDestinationAuthorized
+    initialData?.ownerDestinationAuthorized,
+    initialData?.tenantSignatureUrl,
+    initialData?.ownerSignatureUrl
   ]);
 
   // Conditions Particulières Saisies (Sections 1, 3, 4 du Cahier des Charges)
@@ -690,7 +764,19 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         ownerName,
         tenantName,
         ownerSigned: true,
-        tenantSigned: Boolean(tenantSignatureUrl)
+        tenantSigned: Boolean(tenantSignatureUrl),
+        ownerSignatureUrl: ownerSignatureUrl || undefined,
+        tenantSignatureUrl: tenantSignatureUrl || undefined,
+        surface: propertySurface,
+        rooms: propertyRooms,
+        bedrooms: propertyBedrooms,
+        bathrooms: propertyBathrooms,
+        equipments: propertyEquipments,
+        amenities: propertyEquipments,
+        propertyDescription: propertyDescription,
+        leaseType,
+        usageDestination: leaseType,
+        authorizedActivity
       };
 
       const allMsgs = getStoredMessages();
@@ -734,7 +820,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 contract_transmitted: true,
                 owner_signed: true,
                 owner_signature_url: ownerSignatureUrl,
-                tenant_signed: Boolean(tenantSignatureUrl)
+                tenant_signed: Boolean(tenantSignatureUrl),
+                tenant_signature_url: tenantSignatureUrl || a.tenant_signature_url
               };
             }
             return a;
@@ -763,7 +850,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           commune: propertyCommune,
           rent: rent,
           caution: rent * cautionMonths,
-          usage_destination: leaseType
+          usage_destination: leaseType,
+          surface: propertySurface,
+          rooms: propertyRooms,
+          bedrooms: propertyBedrooms,
+          bathrooms: propertyBathrooms,
+          equipments: propertyEquipments
         },
         owner: {
           id: targetOwnerId,
@@ -782,7 +874,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         start_date: startDate,
         status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
         owner_signed: true,
-        tenant_signed: Boolean(tenantSignatureUrl)
+        tenant_signed: Boolean(tenantSignatureUrl),
+        owner_signature_url: ownerSignatureUrl,
+        tenant_signature_url: tenantSignatureUrl,
+        surface: propertySurface,
+        rooms: propertyRooms,
+        bedrooms: propertyBedrooms,
+        bathrooms: propertyBathrooms,
+        equipments: propertyEquipments
       };
       const updatedContracts = [
         newContractRecord,
@@ -852,6 +951,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       tenantCni,
       propertyTitle,
       propertyAddress,
+      surface: propertySurface,
+      rooms: propertyRooms,
+      bedrooms: propertyBedrooms,
+      bathrooms: propertyBathrooms,
+      equipments: propertyEquipments,
+      amenities: propertyEquipments,
+      propertyDescription: propertyDescription,
       durationMonths,
       startDate,
       rent,
@@ -2118,16 +2224,34 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
                 <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row gap-4 items-center">
                   <img
-                    src="https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=600&q=80"
-                    alt="Bien immobilier"
+                    src={
+                      propertyPhotos && propertyPhotos.length > 0 && propertyPhotos[0]
+                        ? propertyPhotos[0]
+                        : 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=600&q=80'
+                    }
+                    alt={propertyTitle || 'Bien immobilier'}
                     className="w-full sm:w-44 h-32 rounded-xl object-cover border shrink-0"
                   />
                   <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-slate-700">
                     <div><strong>Type :</strong> {propertyTitle}</div>
                     <div><strong>Localisation :</strong> {propertyAddress}</div>
-                    <div><strong>Surface :</strong> 120 m²</div>
-                    <div><strong>Composition :</strong> 3 pièces, 2 chambres, 1 salon, 2 salles de bain, cuisine, balcon</div>
-                    <div className="sm:col-span-2"><strong>Équipements :</strong> Climatisation, chauffe-eau, groupe électrogène, parking</div>
+                    <div><strong>Surface réelle :</strong> {propertySurface ? `${propertySurface} m²` : 'Non renseignée'}</div>
+                    <div>
+                      <strong>Composition :</strong>{' '}
+                      {[
+                        propertyRooms ? `${propertyRooms} pièce(s)` : null,
+                        propertyBedrooms ? `${propertyBedrooms} chambre(s)` : null,
+                        propertyBathrooms ? `${propertyBathrooms} salle(s) d'eau` : null
+                      ]
+                        .filter(Boolean)
+                        .join(', ') || 'Logement complet aménagé'}
+                    </div>
+                    <div className="sm:col-span-2">
+                      <strong>Équipements déclarés :</strong>{' '}
+                      {propertyEquipments && propertyEquipments.length > 0
+                        ? propertyEquipments.join(', ')
+                        : 'Compteurs CIE/SODECI individuels, sanitaires privatifs'}
+                    </div>
                     <div className="sm:col-span-2"><strong>Usage :</strong> {propertyDestination}</div>
                   </div>
                 </div>

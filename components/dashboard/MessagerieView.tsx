@@ -1050,6 +1050,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     if (signingTarget.type === 'contract' && signingTarget.contract) {
       const targetNum = signingTarget.contract.contractNumber;
+      const isTenant = signingTarget.role === 'locataire';
       const updatedMessages = currentAll.map((msg) => {
         if (msg.contract && msg.contract.contractNumber === targetNum) {
           return {
@@ -1057,7 +1058,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             contract: {
               ...msg.contract,
               tenantSigned: true,
-              ownerSigned: true
+              ownerSigned: true,
+              tenantSignatureUrl: isTenant ? signatureDataUrl : (msg.contract.tenantSignatureUrl || signatureDataUrl),
+              ownerSignatureUrl: !isTenant ? signatureDataUrl : (msg.contract.ownerSignatureUrl || signatureDataUrl)
             }
           };
         }
@@ -1673,12 +1676,21 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                   tenantName: m.contract!.tenantName,
                                   propertyTitle: m.contract!.propertyTitle,
                                   propertyAddress: m.contract!.propertyAddress,
+                                  surface: m.contract!.surface,
+                                  rooms: m.contract!.rooms,
+                                  bedrooms: m.contract!.bedrooms,
+                                  bathrooms: m.contract!.bathrooms,
+                                  equipments: m.contract!.equipments,
+                                  amenities: m.contract!.equipments,
+                                  propertyDescription: m.contract!.propertyDescription,
                                   durationMonths: m.contract!.durationMonths,
                                   startDate: m.contract!.startDate,
                                   rent: m.contract!.rentAmount,
                                   cautionMonths: 2,
                                   chargesAmount: 5000,
                                   dueDay: 5,
+                                  ownerSignatureUrl: m.contract!.ownerSignatureUrl || (m.contract as any)?.owner_signature_url,
+                                  tenantSignatureUrl: m.contract!.tenantSignatureUrl || (m.contract as any)?.tenant_signature_url,
                                   leaseType: (m.contract as any)?.usage_destination || 'habitation',
                                   usageDestination: (m.contract as any)?.usage_destination || 'habitation',
                                   authorizedActivity: (m.contract as any)?.authorized_activity || ''
@@ -2044,6 +2056,36 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               <button
                 type="button"
                 onClick={async () => {
+                  let surface = previewingContract.surface;
+                  let rooms = previewingContract.rooms;
+                  let bedrooms = previewingContract.bedrooms;
+                  let bathrooms = previewingContract.bathrooms;
+                  let equipments = previewingContract.equipments;
+                  let propertyDescription = previewingContract.propertyDescription;
+
+                  if (!surface) {
+                    try {
+                      const stored = localStorage.getItem('locatrust_properties');
+                      if (stored) {
+                        const parsedProps = JSON.parse(stored);
+                        const match = parsedProps.find((p: any) =>
+                          (previewingContract.propertyTitle && p.title && p.title.toLowerCase().includes(previewingContract.propertyTitle.toLowerCase())) ||
+                          (previewingContract.propertyAddress && p.location && previewingContract.propertyAddress.toLowerCase().includes(p.location.toLowerCase()))
+                        );
+                        if (match) {
+                          surface = match.surface;
+                          rooms = match.rooms;
+                          bedrooms = match.bedrooms;
+                          bathrooms = match.bathrooms;
+                          equipments = match.equipments;
+                          propertyDescription = match.description;
+                        }
+                      }
+                    } catch (e) {
+                      console.warn('Property lookup error', e);
+                    }
+                  }
+
                   await generateOfficialContractPdf({
                     contractNumber: previewingContract.contractNumber,
                     isAgency: userRole === 'agence',
@@ -2051,12 +2093,21 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     tenantName: previewingContract.tenantName,
                     propertyTitle: previewingContract.propertyTitle,
                     propertyAddress: previewingContract.propertyAddress,
+                    surface,
+                    rooms,
+                    bedrooms,
+                    bathrooms,
+                    equipments,
+                    amenities: equipments,
+                    propertyDescription,
                     durationMonths: previewingContract.durationMonths,
                     startDate: previewingContract.startDate,
                     rent: previewingContract.rentAmount,
                     cautionMonths: 2,
                     chargesAmount: 5000,
                     dueDay: 5,
+                    ownerSignatureUrl: previewingContract.ownerSignatureUrl || (previewingContract as any)?.owner_signature_url,
+                    tenantSignatureUrl: previewingContract.tenantSignatureUrl || (previewingContract as any)?.tenant_signature_url,
                     leaseType: (previewingContract as any)?.usage_destination || 'habitation',
                     usageDestination: (previewingContract as any)?.usage_destination || 'habitation',
                     authorizedActivity: (previewingContract as any)?.authorized_activity || ''

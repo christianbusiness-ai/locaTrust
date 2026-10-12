@@ -31,6 +31,18 @@ export interface ChatContractAttachment {
   tenantName: string;
   ownerSigned: boolean;
   tenantSigned: boolean;
+  ownerSignatureUrl?: string | null;
+  tenantSignatureUrl?: string | null;
+  surface?: number;
+  rooms?: number;
+  bedrooms?: number;
+  bathrooms?: number;
+  equipments?: string[];
+  amenities?: string[];
+  propertyDescription?: string;
+  leaseType?: 'habitation' | 'professionnel';
+  usageDestination?: 'habitation' | 'professionnel';
+  authorizedActivity?: string;
 }
 
 export interface ChatAttachment {

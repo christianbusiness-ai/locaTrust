@@ -141,6 +141,37 @@ export const LocataireContratsView: React.FC = () => {
   const handleDownloadContract = async (cnt: any) => {
     const isAgency = cnt.owner?.account_type === 'agence' || false;
     const leaseType = (cnt.usage_destination || cnt.property?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
+
+    let surface = cnt.property?.surface;
+    let rooms = cnt.property?.rooms;
+    let bedrooms = cnt.property?.bedrooms;
+    let bathrooms = cnt.property?.bathrooms;
+    let equipments = cnt.property?.equipments;
+    let propertyDescription = cnt.property?.description;
+
+    if (!surface) {
+      try {
+        const stored = localStorage.getItem('locatrust_properties');
+        if (stored) {
+          const parsedProps = JSON.parse(stored);
+          const match = parsedProps.find((p: any) =>
+            (cnt.property_id && (p.id === cnt.property_id || p._id === cnt.property_id)) ||
+            (cnt.property?.title && p.title && p.title.toLowerCase().includes(cnt.property.title.toLowerCase()))
+          );
+          if (match) {
+            surface = match.surface;
+            rooms = match.rooms;
+            bedrooms = match.bedrooms;
+            bathrooms = match.bathrooms;
+            equipments = match.equipments;
+            propertyDescription = match.description;
+          }
+        }
+      } catch (e) {
+        console.warn('Property lookup error', e);
+      }
+    }
+
     await generateOfficialContractPdf({
       contractNumber: cnt.contract_number,
       isAgency,
@@ -151,12 +182,21 @@ export const LocataireContratsView: React.FC = () => {
       tenantCni: cnt.tenant?.cni_number || "CI000000000",
       propertyTitle: cnt.property?.title || "Logement loué",
       propertyAddress: `${cnt.property?.quartier || ''}, ${cnt.property?.commune || ''} - ${cnt.property?.city || 'Abidjan'}`,
+      surface,
+      rooms,
+      bedrooms,
+      bathrooms,
+      equipments,
+      amenities: equipments,
+      propertyDescription,
       durationMonths: cnt.duration_months || 12,
       startDate: cnt.start_date || '01/01/2026',
       rent: Number(cnt.rent || 0),
       cautionMonths: 2,
       chargesAmount: Number(cnt.charges || 0),
       dueDay: cnt.payment_due_day || 5,
+      ownerSignatureUrl: cnt.owner_signature_url || cnt.ownerSignatureUrl,
+      tenantSignatureUrl: cnt.tenant_signature_url || cnt.tenantSignatureUrl,
       leaseType,
       usageDestination: leaseType,
       authorizedActivity: cnt.authorized_activity || cnt.property?.authorized_activity || ''
