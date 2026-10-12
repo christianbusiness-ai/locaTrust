@@ -10,6 +10,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { createRentalApplication } from '@/lib/supabase/services';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
 interface RentalRequestModalProps {
   property: Property | null;
@@ -39,13 +40,20 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
     const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner';
 
+    const realRent = Number(property.rent || (property as any).price || 0);
+    const realCaution = Number(
+      (property as any).caution ||
+      (property as any).caution_amount ||
+      (realRent > 0 ? realRent * 2 : 0)
+    );
+
     const newApp = {
       id: `app_${Date.now()}`,
       property_id: property.id,
       property_title: property.title,
       property_address: `${property.location?.commune || property.location?.quartier || ''}, ${property.location?.city || 'Abidjan'}`,
-      rent_amount: Number(property.rent || 0),
-      caution_amount: Number(property.rent || 0) * 2,
+      rent_amount: realRent,
+      caution_amount: realCaution,
       date_received: date || new Date().toISOString().split('T')[0],
       status: 'en_attente' as const,
       dossier_status: 'complet' as const,
@@ -77,6 +85,14 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+
+      // Notification en temps réel pour le bailleur
+      pushGlobalNotification({
+        title: 'Nouvelle demande de location reçue',
+        description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
+        category: 'demande',
+        targetTab: 'applications'
+      });
 
       // Stocker les coordonnées du propriétaire pour la messagerie
       localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);

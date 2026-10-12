@@ -35,6 +35,7 @@ import { formatFCFA } from '@/lib/utils';
 import { getAvailableProperties } from '@/src/lib/db';
 import { Property } from '@/types/database.types';
 import { triggerCelebration } from '@/lib/celebration';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
@@ -143,13 +144,20 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
       const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
 
+      const realRent = Number(selectedRental.price || 0);
+      const realCaution = Number(
+        (selectedRental as any).caution ||
+        (selectedRental as any).caution_amount ||
+        (realRent > 0 ? realRent * 2 : 0)
+      );
+
       const newApp = {
         id: `app_${Date.now()}`,
         property_id: selectedRental.id,
         property_title: selectedRental.title,
         property_address: selectedRental.location,
-        rent_amount: Number(selectedRental.price || 0),
-        caution_amount: Number(selectedRental.price || 0) * 2,
+        rent_amount: realRent,
+        caution_amount: realCaution,
         date_received: desiredDate || new Date().toISOString().split('T')[0],
         status: 'en_attente' as const,
         dossier_status: 'complet' as const,
@@ -182,6 +190,14 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+
+        // Notification temps réel immédiate pour le bailleur
+        pushGlobalNotification({
+          title: 'Nouvelle demande de location reçue',
+          description: `${applicantName} a postulé pour le bien « ${selectedRental.title} ».`,
+          category: 'demande',
+          targetTab: 'applications'
+        });
 
         // Stocker les coordonnées du propriétaire pour la messagerie
         localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
@@ -421,6 +437,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       district: p.commune || p.quartier || 'Abidjan',
       type: p.type || 'Appartement',
       price: Number(p.rent || 0),
+      caution: Number(p.caution || (p as any).caution_amount || (Number(p.rent || 0) * 2)),
       location: `${p.commune ? p.commune + ', ' : ''}${p.city || 'Abidjan'}`,
       amenities: dynamicAmenities,
       images: {

@@ -27,7 +27,8 @@ import { formatFCFA } from '@/lib/utils';
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
-import { notifyWaitingListCandidatesOnLeaseFinalized } from '@/lib/waitingListNotifications';
+import { notifyWaitingListCandidatesOnLeaseFinalized, pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { sendChatMessage } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
@@ -74,6 +75,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   isDemo = false
 }) => {
   const { user, profile } = useAuth();
+  const currentUserId = user?.id || profile?.id || 'usr_owner';
   const [applications, setApplications] = useState<RentalApplication[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -87,6 +89,58 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     setIsLoading(true);
     setLoadError(null);
     try {
+      // Charger les propriétés enregistrées pour récupérer les vrais montants (loyer et caution)
+      let storedProperties: any[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          const rawProps = localStorage.getItem('locatrust_properties');
+          if (rawProps) storedProperties = JSON.parse(rawProps);
+        } catch {}
+      }
+
+      const getPropInfo = (propId: string, propTitle?: string) => {
+        let found = storedProperties.find((p: any) => p && p.id === propId);
+        if (!found && propTitle) {
+          found = storedProperties.find(
+            (p: any) => p && p.title && p.title.toLowerCase().trim() === propTitle.toLowerCase().trim()
+          );
+        }
+        return found;
+      };
+
+      const enrichAppItem = (dbA: any): RentalApplication => {
+        const pInfo = getPropInfo(dbA.property_id, dbA.property_title);
+        const rent = Number(
+          (pInfo && (pInfo.rent || pInfo.price))
+            ? (pInfo.rent || pInfo.price)
+            : (dbA.rent_amount || dbA.rent || dbA.property?.rent || 0)
+        );
+        const caution = Number(
+          (pInfo && (pInfo.caution || pInfo.caution_amount))
+            ? (pInfo.caution || pInfo.caution_amount)
+            : (dbA.caution_amount || (pInfo?.rent ? Number(pInfo.rent) * 2 : 0) || (rent > 0 ? rent * 2 : 0))
+        );
+
+        return {
+          ...dbA,
+          property_title: pInfo?.title || dbA.property_title || dbA.property?.title || 'Bien immobilier',
+          property_address: pInfo?.commune ? `${pInfo.commune}, ${pInfo.city || 'Abidjan'}` : (dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`),
+          rent_amount: rent,
+          caution_amount: caution,
+          date_received: dbA.date_received || (dbA.created_at ? new Date(dbA.created_at).toISOString().split('T')[0] : '2026-10-10'),
+          dossier_status: dbA.dossier_status || 'complet',
+          status: dbA.status || 'en_attente',
+          tenant_name: dbA.tenant_name || 'Candidat Locataire',
+          tenant_phone: dbA.tenant_phone || '+225 07 00 00 00 00',
+          tenant_email: dbA.tenant_email || '',
+          tenant_avatar: dbA.tenant_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbA.tenant_name || 'Candidat')}&background=0284c7&color=fff`,
+          tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
+          documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
+            ? dbA.documents
+            : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
+        };
+      };
+
       let localApps: RentalApplication[] = [];
       if (typeof window !== 'undefined') {
         try {
@@ -160,26 +214,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const dbApps: RentalApplication[] = (data || [])
         .filter(isRelevantForUser)
-        .map((dbA: any) => ({
-          ...dbA,
-          property_title: dbA.property_title || dbA.property?.title || 'Bien immobilier',
-          property_address: dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`,
-          rent_amount: Number(dbA.rent_amount || dbA.rent || dbA.property?.rent || 0),
-          caution_amount: Number(dbA.caution_amount || ((Number(dbA.rent_amount || 0) || 100000) * 2)),
-          date_received: dbA.date_received || (dbA.created_at ? new Date(dbA.created_at).toISOString().split('T')[0] : '2026-10-10'),
-          dossier_status: dbA.dossier_status || 'complet',
-          status: dbA.status || 'en_attente',
-          tenant_name: dbA.tenant_name || 'Candidat Locataire',
-          tenant_phone: dbA.tenant_phone || '+225 07 00 00 00 00',
-          tenant_email: dbA.tenant_email || '',
-          tenant_avatar: dbA.tenant_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbA.tenant_name || 'Candidat')}&background=0284c7&color=fff`,
-          tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
-          documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
-            ? dbA.documents
-            : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
-        }));
+        .map(enrichAppItem);
 
-      const relevantLocalApps = localApps.filter(isRelevantForUser);
+      const relevantLocalApps = localApps.filter(isRelevantForUser).map(enrichAppItem);
       const dbIds = new Set(dbApps.map((a) => a.id));
       const combined = [...relevantLocalApps.filter((a) => !dbIds.has(a.id)), ...dbApps];
 
@@ -235,11 +272,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     return applications.some((a) => a.property_id === propertyId && a.status === 'contrat_actif');
   };
 
-  // Choix d'un candidat pour établir le contrat
+  // Choix d'un candidat : Rejette automatiquement les concurrents et les notifie en temps réel
   const handleSelectAndSignWithCandidate = (chosenApp: RentalApplication) => {
     // Contrôle d'état : si le logement est déjà pris
     if (propertyHasActiveContract(chosenApp.property_id)) {
-      alert("Ce logement est déjà loué sous contrat actif. Impossible de créer un nouveau contrat.");
+      alert("Ce logement est déjà loué sous contrat actif. Impossible de sélectionner un nouveau candidat.");
       return;
     }
 
@@ -249,24 +286,44 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     const updated = applications.map((app) => {
       if (app.id === chosenApp.id) {
-        return { ...app, status: 'validee' as const, tenant_signed: false };
+        return { ...app, status: 'validee' as const, candidate_selected: true, tenant_signed: false };
       }
-      if (app.property_id === chosenApp.property_id && app.status !== 'refusee') {
-        return { ...app, status: 'liste_d_attente' as const };
+      if (app.property_id === chosenApp.property_id) {
+        return {
+          ...app,
+          status: 'refusee' as const,
+          unavailable_reason: "Le logement demandé est déjà pris et n'est plus disponible."
+        };
       }
       return app;
     });
 
     saveApplications(updated);
-    setSelectedApplicationForContract(chosenApp);
 
-    const competingNames = competingCandidates.map((c) => c.tenant_name).join(', ');
+    // Envoi immédiat des notifications et messages aux candidats non retenus
+    competingCandidates.forEach((comp) => {
+      pushGlobalNotification({
+        title: "Logement non disponible",
+        description: `Le logement « ${comp.property_title} » a été attribué et n'est plus disponible.`,
+        category: 'demande',
+        targetTab: 'applications'
+      });
+
+      const compTenantId = comp.tenant_id || `tenant_${comp.id}`;
+      try {
+        sendChatMessage(
+          currentUserId,
+          compTenantId,
+          `Bonjour ${comp.tenant_name}, nous vous informons que le logement « ${comp.property_title} » a été attribué et n'est plus disponible. Votre demande a donc été classée sans suite. Merci de votre confiance.`
+        );
+      } catch {}
+    });
+
+    // Ne pas ouvrir la modale automatiquement : le bailleur clique sur "Créer le contrat"
+    setSelectedApplicationForContract(null);
+
     setCandidateAlert(
-      `✔ ${chosenApp.tenant_name} retenu pour ${chosenApp.property_title} ! Le contrat lui a été transmis pour consultation et signature. ${
-        competingCandidates.length > 0
-          ? `Les autres candidats (${competingNames}) sont en liste d'attente.`
-          : ''
-      }`
+      `✔ ${chosenApp.tenant_name} retenu pour « ${chosenApp.property_title} ». Les autres candidats ont été automatiquement notifiés que le logement est déjà pris. Vous pouvez maintenant cliquer sur « Créer le contrat » pour préparer le bail.`
     );
   };
 
@@ -763,7 +820,33 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 {/* CAS C : Candidat retenu en cours de finalisation */}
                 {!isRefused && !isThisActive && app.status === 'validee' && (
                   <>
-                    {/* Tant que le locataire n'a pas signé : bouton présent mais DÉSACTIVÉ / NON CLIQUABLE */}
+                    {/* Badge / Bouton indiquant que ce candidat a été retenu (Désactivé) */}
+                    <button
+                      type="button"
+                      disabled
+                      className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs border border-emerald-200 cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                      title="Ce candidat a été retenu pour ce logement."
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>✓ Candidat retenu</span>
+                    </button>
+
+                    {/* Bouton dédié Créer le contrat */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedApplicationForContract(app);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                      title="Créer et paramétrer le contrat de bail certifié"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Créer le contrat</span>
+                    </button>
+
+                    {/* Tant que le locataire n'a pas signé : bouton Finaliser présent mais DÉSACTIVÉ / NON CLIQUABLE */}
                     {!app.tenant_signed ? (
                       <>
                         <button
@@ -798,21 +881,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                         <span>Finaliser le contrat</span>
                       </button>
                     )}
-
-                    {/* Bouton Contrat pour voir ou ajuster les clauses avant clôture */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setSelectedApplicationForContract(app);
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                      title="Consulter le contrat de bail"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>Contrat</span>
-                    </button>
                   </>
                 )}
 
@@ -824,7 +892,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                         type="button"
                         onClick={() => handleSelectAndSignWithCandidate(app)}
                         className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
-                        title="Choisir ce candidat et lui transmettre le contrat"
+                        title="Choisir ce candidat et rejeter automatiquement les autres demandes concurrentes"
                       >
                         <Check className="w-3.5 h-3.5" />
                         <span>Signer avec {app.tenant_name.split(' ')[0]}</span>
@@ -839,23 +907,13 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                         setSelectedApplicationForContract(app);
                       }}
                       className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                      title="Générer immédiatement le contrat de bail officiel"
+                      title="Créer immédiatement le contrat de bail officiel"
                     >
                       <FileText className="w-3.5 h-3.5" />
-                      <span>Contrat</span>
+                      <span>Créer le contrat</span>
                     </button>
                   </>
                 )}
-
-                {/* Message */}
-                <button
-                  type="button"
-                  onClick={() => onOpenMessages?.(app.id)}
-                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
-                  title="Envoyer un message au candidat"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                </button>
               </div>
             </div>
           );

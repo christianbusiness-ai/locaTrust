@@ -31,6 +31,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
 export const LocataireSearchView: React.FC = () => {
   const { user, profile } = useAuth();
@@ -177,13 +178,20 @@ export const LocataireSearchView: React.FC = () => {
       const applicantEmail = user?.email || 'locataire@locatrust.ci';
       const targetOwnerId = selectedProperty.owner_id || (selectedProperty.owner as any)?.id || '';
 
+      const realRent = Number(selectedProperty.rent || (selectedProperty as any).price || 0);
+      const realCaution = Number(
+        selectedProperty.caution ||
+        (selectedProperty as any).caution_amount ||
+        (realRent > 0 ? realRent * 2 : 0)
+      );
+
       const newApp = {
         id: `app_${Date.now()}`,
         property_id: selectedProperty.id,
         property_title: selectedProperty.title,
         property_address: `${selectedProperty.location?.commune || selectedProperty.location?.quartier || ''}, ${selectedProperty.location?.city || 'Abidjan'}`,
-        rent_amount: Number(selectedProperty.rent || 0),
-        caution_amount: Number(selectedProperty.rent || 0) * 2,
+        rent_amount: realRent,
+        caution_amount: realCaution,
         date_received: new Date().toISOString().split('T')[0],
         status: 'en_attente' as const,
         dossier_status: 'complet' as const,
@@ -214,6 +222,14 @@ export const LocataireSearchView: React.FC = () => {
         const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+
+        // Notification push in-app temps réel pour le bailleur
+        pushGlobalNotification({
+          title: 'Nouvelle demande de location reçue',
+          description: `${applicantName} a candidaté pour « ${selectedProperty.title} ».`,
+          category: 'demande',
+          targetTab: 'applications'
+        });
       } catch (err) {
         console.warn('LocalStorage error:', err);
       }

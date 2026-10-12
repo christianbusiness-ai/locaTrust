@@ -39,12 +39,14 @@ import {
   Minimize2,
   Radio,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Lock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { formatFCFA } from '@/lib/utils';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import {
   ChatMessage,
   ChatContact,
@@ -309,9 +311,26 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       refreshMessages();
     };
 
+    const handleStorage = (e: StorageEvent) => {
+      if (
+        e.key === 'locatrust_chat_messages_v4' ||
+        e.key === 'locatrust_rental_applications' ||
+        e.key === 'locatrust_contracts'
+      ) {
+        refreshMessages();
+      }
+    };
+
     window.addEventListener('locatrust:messages_updated', handleMessagesUpdated);
+    window.addEventListener('storage', handleStorage);
+
+    // Heartbeat toutes les 2 secondes pour synchroniser automatiquement les échanges en temps réel sans rechargement
+    const heartbeat = setInterval(refreshMessages, 2000);
+
     return () => {
       window.removeEventListener('locatrust:messages_updated', handleMessagesUpdated);
+      window.removeEventListener('storage', handleStorage);
+      clearInterval(heartbeat);
     };
   }, []);
 
@@ -1051,8 +1070,75 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       sendChatMessage(
         activeContact.id,
         currentUserId,
-        `✍️ Le bail d'habitation N° ${targetNum} a été officiellement signé avec succès. Le document est désormais certifié conforme Loi n° 2019-576.`
+        `✍️ Le locataire a signé et validé le bail N° ${targetNum} avec succès. Le document est désormais scellé et certifié conforme Loi n° 2019-576.`
       );
+
+      // Mettre à jour locatrust_rental_applications
+      try {
+        const appsRaw = localStorage.getItem('locatrust_rental_applications');
+        if (appsRaw) {
+          const appsList = JSON.parse(appsRaw);
+          if (Array.isArray(appsList)) {
+            const updatedApps = appsList.map((a: any) => {
+              if (
+                a.contract_number === targetNum ||
+                a.property_title === signingTarget.contract?.propertyTitle
+              ) {
+                return {
+                  ...a,
+                  status: 'contrat_actif' as const,
+                  contract_finalized: true,
+                  tenant_signed: true,
+                  tenant_signed_at: new Date().toISOString(),
+                  tenant_signature_url: signatureDataUrl
+                };
+              }
+              return a;
+            });
+            localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+            window.dispatchEvent(
+              new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } })
+            );
+          }
+        }
+      } catch (e) {
+        console.warn('Erreur mise à jour candidatures post signature:', e);
+      }
+
+      // Mettre à jour locatrust_contracts
+      try {
+        const contractsRaw = localStorage.getItem('locatrust_contracts');
+        if (contractsRaw) {
+          const contractsList = JSON.parse(contractsRaw);
+          if (Array.isArray(contractsList)) {
+            const updatedContracts = contractsList.map((c: any) => {
+              if (c.contract_number === targetNum) {
+                return {
+                  ...c,
+                  status: 'actif',
+                  tenant_signed: true,
+                  tenant_signature_url: signatureDataUrl
+                };
+              }
+              return c;
+            });
+            localStorage.setItem('locatrust_contracts', JSON.stringify(updatedContracts));
+            window.dispatchEvent(
+              new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updatedContracts } })
+            );
+          }
+        }
+      } catch (e) {
+        console.warn('Erreur mise à jour contrats post signature:', e);
+      }
+
+      // Notification officielle pour le bailleur
+      pushGlobalNotification({
+        title: 'Bail signé par le locataire !',
+        description: `${signingTarget.contract.tenantName} a signé et validé le bail N° ${targetNum}. Le contrat est désormais téléchargeable.`,
+        category: 'contrat',
+        targetTab: 'applications'
+      });
 
       if (previewingContract && previewingContract.contractNumber === targetNum) {
         setPreviewingContract({
@@ -1576,33 +1662,49 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                               {m.contract!.tenantSigned && m.contract!.ownerSigned ? 'Signé ✓' : 'Signer'}
                             </span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              await generateOfficialContractPdf({
-                                contractNumber: m.contract!.contractNumber,
-                                isAgency: userRole === 'agence',
-                                ownerName: m.contract!.ownerName,
-                                tenantName: m.contract!.tenantName,
-                                propertyTitle: m.contract!.propertyTitle,
-                                propertyAddress: m.contract!.propertyAddress,
-                                durationMonths: m.contract!.durationMonths,
-                                startDate: m.contract!.startDate,
-                                rent: m.contract!.rentAmount,
-                                cautionMonths: 2,
-                                chargesAmount: 5000,
-                                dueDay: 5,
-                                leaseType: (m.contract as any)?.usage_destination || 'habitation',
-                                usageDestination: (m.contract as any)?.usage_destination || 'habitation',
-                                authorizedActivity: (m.contract as any)?.authorized_activity || ''
-                              });
-                            }}
-                            className="py-2 px-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95"
-                            title="Télécharger l'exemplaire officiel PDF"
-                          >
-                            <Download className="w-3.5 h-3.5 shrink-0" />
-                            <span className="truncate">Télécharger</span>
-                          </button>
+                          {m.contract!.tenantSigned && m.contract!.ownerSigned ? (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await generateOfficialContractPdf({
+                                  contractNumber: m.contract!.contractNumber,
+                                  isAgency: userRole === 'agence',
+                                  ownerName: m.contract!.ownerName,
+                                  tenantName: m.contract!.tenantName,
+                                  propertyTitle: m.contract!.propertyTitle,
+                                  propertyAddress: m.contract!.propertyAddress,
+                                  durationMonths: m.contract!.durationMonths,
+                                  startDate: m.contract!.startDate,
+                                  rent: m.contract!.rentAmount,
+                                  cautionMonths: 2,
+                                  chargesAmount: 5000,
+                                  dueDay: 5,
+                                  leaseType: (m.contract as any)?.usage_destination || 'habitation',
+                                  usageDestination: (m.contract as any)?.usage_destination || 'habitation',
+                                  authorizedActivity: (m.contract as any)?.authorized_activity || ''
+                                });
+                              }}
+                              className="py-2 px-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95"
+                              title="Télécharger l'exemplaire officiel PDF certifié"
+                            >
+                              <Download className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">Télécharger</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                alert(
+                                  "Téléchargement bloqué : Le contrat officiel final ne peut pas être téléchargé tant que les deux parties (bailleur et locataire) n'ont pas apposé leur signature certifiée."
+                                )
+                              }
+                              className="py-2 px-1.5 rounded-xl bg-slate-100 text-slate-400 text-[11px] font-bold flex items-center justify-center gap-1 border border-slate-200 cursor-not-allowed opacity-60"
+                              title="Téléchargement bloqué : En attente de signature des deux parties"
+                            >
+                              <Lock className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                              <span className="truncate">Bloqué</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}

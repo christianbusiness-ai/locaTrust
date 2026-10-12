@@ -158,6 +158,38 @@ export function sendChatMessage(senderId: string, receiverId: string, text: stri
   };
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
+
+  // Émission d'une notification push in-app pour le destinataire
+  if (typeof window !== 'undefined') {
+    try {
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      let senderName = 'Correspondant';
+      const contactRaw = localStorage.getItem(`locatrust_contact_${senderId}`);
+      if (contactRaw) {
+        try { senderName = JSON.parse(contactRaw).name || senderName; } catch {}
+      }
+      const notifItem = {
+        id: `notif_msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        title: `Nouveau message de ${senderName}`,
+        description: text.length > 70 ? `${text.slice(0, 70)}...` : text,
+        timestamp: "À l'instant",
+        category: 'demande',
+        read: false,
+        targetTab: 'messages'
+      };
+      const combinedNotifs = [notifItem, ...currentNotifs.slice(0, 49)];
+      localStorage.setItem('locatrust_notifications', JSON.stringify(combinedNotifs));
+      window.dispatchEvent(
+        new CustomEvent('locatrust:notifications-updated', {
+          detail: { notifications: combinedNotifs }
+        })
+      );
+    } catch (e) {
+      // Ignore notification write error
+    }
+  }
+
   return newMsg;
 }
 

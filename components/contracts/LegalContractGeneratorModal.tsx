@@ -43,8 +43,15 @@ import {
 } from '@/lib/legalAnalysisEngine';
 import {
   notifyWaitingListCandidatesOnLeaseFinalized,
+  pushGlobalNotification,
   WaitingListCandidateNotification
 } from '@/lib/waitingListNotifications';
+import {
+  getStoredMessages,
+  saveStoredMessages,
+  ChatMessage,
+  ChatContractAttachment
+} from '@/lib/messagingStore';
 
 interface LegalContractGeneratorModalProps {
   isOpen: boolean;
@@ -643,6 +650,16 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [activeVerificationToken, setActiveVerificationToken] = useState<string>('tok_cnt_ci2026_000492');
 
   const handleFinalSignAndTransmit = async () => {
+    // 0. Le bailleur doit obligatoirement avoir apposé sa propre signature
+    if (!ownerSignatureUrl) {
+      alert("Veuillez d'abord apposer votre signature manuscrite certifiée en tant que bailleur.");
+      setActiveSigningParty('bailleur');
+      return;
+    }
+
+    const targetTenantId = (initialData as any)?.tenant_id || (initialData as any)?.tenantId || 'usr_tenant';
+    const targetOwnerId = (initialData as any)?.owner_id || (initialData as any)?.ownerId || 'usr_owner';
+
     // 1. Enregistrement automatique et dynamique dans le registre de vérification officiel LocaTrust
     try {
       const { registerContractInVerificationRegistry } = await import('@/lib/verificationRegistry');
@@ -660,7 +677,126 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       console.warn('Contract registry error:', err);
     }
 
-    // 2. Notification automatique aux demandeurs en liste d'attente pour ce logement
+    // 2. Transmettre le contrat de bail directement dans la boîte de messagerie du locataire
+    try {
+      const contractAttachment: ChatContractAttachment = {
+        contractNumber,
+        propertyTitle,
+        propertyAddress,
+        rentAmount: rent,
+        cautionAmount: rent * cautionMonths,
+        durationMonths,
+        startDate,
+        ownerName,
+        tenantName,
+        ownerSigned: true,
+        tenantSigned: Boolean(tenantSignatureUrl)
+      };
+
+      const allMsgs = getStoredMessages();
+      const contractChatMessage: ChatMessage = {
+        id: `msg_cnt_${Date.now()}`,
+        sender_id: targetOwnerId,
+        receiver_id: targetTenantId,
+        text: `📄 Bonjour ${tenantName}, je vous transmets officiellement le contrat de bail certifié N° ${contractNumber} pour « ${propertyTitle} » pour signature électronique.`,
+        contract: contractAttachment,
+        created_at: new Date().toISOString(),
+        status: 'delivered'
+      };
+      saveStoredMessages([...allMsgs, contractChatMessage]);
+
+      // Notification en temps réel pour le locataire
+      pushGlobalNotification({
+        title: 'Bail officiel reçu pour signature',
+        description: `Votre bailleur vous a transmis le bail N° ${contractNumber} pour « ${propertyTitle} ». Veuillez y apposer votre signature certifiée.`,
+        category: 'contrat',
+        targetTab: 'contracts'
+      });
+    } catch (msgErr) {
+      console.warn('Erreur transmission contrat chat:', msgErr);
+    }
+
+    // 3. Mise à jour de la candidature dans le localStorage pour verrouiller l'état
+    try {
+      const appsRaw = localStorage.getItem('locatrust_rental_applications');
+      if (appsRaw) {
+        const appsList = JSON.parse(appsRaw);
+        if (Array.isArray(appsList)) {
+          const updatedApps = appsList.map((a: any) => {
+            if (
+              a.id === (initialData as any)?.id ||
+              (a.tenant_name === tenantName && a.property_title === propertyTitle)
+            ) {
+              return {
+                ...a,
+                status: 'validee',
+                contract_number: contractNumber,
+                contract_transmitted: true,
+                owner_signed: true,
+                owner_signature_url: ownerSignatureUrl,
+                tenant_signed: Boolean(tenantSignatureUrl)
+              };
+            }
+            return a;
+          });
+          localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+          window.dispatchEvent(
+            new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } })
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur mise à jour candidatures:', e);
+    }
+
+    // 4. Inscription dans le registre des contrats (locatrust_contracts)
+    try {
+      const contractsRaw = localStorage.getItem('locatrust_contracts');
+      const existingContracts = contractsRaw ? JSON.parse(contractsRaw) : [];
+      const newContractRecord = {
+        id: `cnt_${Date.now()}`,
+        contract_number: contractNumber,
+        property: {
+          id: (initialData as any)?.property_id || `prop_${Date.now()}`,
+          title: propertyTitle,
+          city: propertyCity,
+          commune: propertyCommune,
+          rent: rent,
+          caution: rent * cautionMonths,
+          usage_destination: leaseType
+        },
+        owner: {
+          id: targetOwnerId,
+          full_name: ownerName,
+          phone: ownerPhone
+        },
+        tenant: {
+          id: targetTenantId,
+          full_name: tenantName,
+          phone: tenantPhone
+        },
+        rent,
+        caution_amount: rent * cautionMonths,
+        charges: chargesAmount,
+        duration_months: durationMonths,
+        start_date: startDate,
+        status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
+        owner_signed: true,
+        tenant_signed: Boolean(tenantSignatureUrl)
+      };
+      const updatedContracts = [
+        newContractRecord,
+        ...existingContracts.filter((c: any) => c.contract_number !== contractNumber)
+      ];
+      localStorage.setItem('locatrust_contracts', JSON.stringify(updatedContracts));
+      window.dispatchEvent(
+        new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updatedContracts } })
+      );
+    } catch (e) {
+      console.warn('Erreur registre contrats:', e);
+    }
+
+    // 5. Notification automatique aux demandeurs en liste d'attente pour ce logement
     try {
       const notified = notifyWaitingListCandidatesOnLeaseFinalized({
         propertyTitle,
@@ -686,14 +822,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       }
     }
 
-    // 3. Animation festive et vivante de célébration (pluie de pétales/confettis de joie)
+    // 6. Animation festive et vivante de célébration
     try {
       const confettiModule = await import('canvas-confetti');
       const fn = (confettiModule as any)?.default || confettiModule;
       if (typeof fn === 'function') {
-        // Premier tir festif
         fn({ particleCount: 80, spread: 70, origin: { y: 0.6 }, colors: ['#0038FF', '#10B981', '#F59E0B', '#EC4899'] });
-        // Deuxième salve de pétales
         setTimeout(() => {
           fn({ particleCount: 60, spread: 90, origin: { y: 0.4 }, colors: ['#34D399', '#60A5FA', '#FBBF24'] });
         }, 300);
@@ -702,7 +836,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       console.warn('Confetti error:', e);
     }
 
-    // 4. Bascule vers l'écran de confirmation compact et professionnel
+    // 7. Bascule vers l'écran de confirmation
     setCurrentStep('success');
   };
 
@@ -2206,14 +2340,15 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                           className="max-h-16 max-w-full object-contain"
                         />
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => setActiveSigningParty('locataire')}
-                          className="px-3.5 py-1.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-extrabold text-xs flex items-center gap-1.5 transition-all shadow-sm"
-                        >
-                          <PenTool className="w-3.5 h-3.5" />
-                          <span>Signer le contrat (Locataire)</span>
-                        </button>
+                        <div className="flex flex-col items-center justify-center p-2.5 text-center bg-slate-100 rounded-xl border border-dashed border-slate-300 w-full">
+                          <Lock className="w-4 h-4 text-slate-500 mb-1" />
+                          <span className="text-[11px] font-black text-slate-800">
+                            Réservé au locataire ({tenantName})
+                          </span>
+                          <span className="text-[9.5px] text-slate-500 mt-0.5 leading-tight">
+                            Le bailleur ne peut pas signer à la place du preneur (Art. 408)
+                          </span>
+                        </div>
                       )}
                     </div>
 

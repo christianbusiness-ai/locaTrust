@@ -188,3 +188,37 @@ export function notifyWaitingListCandidatesOnLeaseFinalized({
 
   return notificationsGenerated;
 }
+
+/**
+ * Envoie une notification officielle en temps réel dans le centre de notifications (Header Bell)
+ */
+export function pushGlobalNotification(notif: {
+  title: string;
+  description: string;
+  category: 'demande' | 'visite' | 'paiement' | 'contrat' | 'caution' | 'maintenance' | 'abonnement';
+  targetTab?: string;
+}) {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+    const currentNotifs: GlobalNotificationItem[] = raw ? JSON.parse(raw) : [];
+    const newNotif: GlobalNotificationItem = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      title: notif.title,
+      description: notif.description,
+      timestamp: "À l'instant",
+      category: notif.category,
+      read: false,
+      targetTab: notif.targetTab || (notif.category === 'demande' ? 'applications' : 'contracts')
+    };
+    const combined = [newNotif, ...currentNotifs.slice(0, 49)];
+    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(combined));
+    window.dispatchEvent(
+      new CustomEvent('locatrust:notifications-updated', {
+        detail: { notifications: combined }
+      })
+    );
+  } catch (e) {
+    console.warn('Error pushing notification:', e);
+  }
+}
