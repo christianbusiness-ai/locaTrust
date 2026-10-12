@@ -31,8 +31,8 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
   const defaultMsg = `Bonjour ${property.owner?.full_name || 'Bailleur'}, je suis intéressé par votre annonce "${property.title}". Est-il toujours disponible pour une visite ?`;
   const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner';
 
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSend = (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
     const applicantId = user?.id || profile?.id || 'usr_tenant';
     const textToSend = message.trim() || defaultMsg;
 
@@ -92,11 +92,11 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
                   window.location.href = '/dashboard?tab=messages';
                 }
               }}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold"
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer"
             >
               Accéder à la messagerie
             </Button>
-            <Button type="button" variant="outline" onClick={handleClose} className="flex-1">
+            <Button type="button" variant="outline" onClick={handleClose} className="flex-1 cursor-pointer">
               Fermer
             </Button>
           </div>
@@ -105,13 +105,13 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
         <form onSubmit={handleSend} className="flex flex-col gap-4">
           <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
             <img
-              src={property.owner?.avatar_url}
+              src={property.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(property.owner?.full_name || 'Bailleur')}&background=0284c7&color=fff`}
               alt={property.owner?.full_name}
               className="w-10 h-10 rounded-full object-cover"
             />
             <div className="flex flex-col">
-              <span className="text-xs font-bold text-slate-900">{property.owner?.full_name}</span>
-              <span className="text-[11px] text-slate-500">Propriétaire vérifié LocaTrust</span>
+              <span className="text-xs font-bold text-slate-900">{property.owner?.full_name || 'Propriétaire certifié'}</span>
+              <span className="text-[11px] text-emerald-600 font-bold">● Propriétaire vérifié en ligne</span>
             </div>
           </div>
 
@@ -126,10 +126,16 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            <Button type="button" variant="outline" onClick={onClose} className="flex-1">
+            <Button type="button" variant="outline" onClick={onClose} className="flex-1 cursor-pointer">
               Annuler
             </Button>
-            <Button type="submit" variant="primary" className="flex-1 font-bold">
+            <Button
+              type="submit"
+              id="btn-envoyer-message-feed-card"
+              onClick={handleSend}
+              variant="primary"
+              className="flex-1 font-bold cursor-pointer touch-manipulation active:scale-95 flex items-center justify-center gap-2"
+            >
               <Send className="w-4 h-4" />
               <span>Envoyer le message</span>
             </Button>
@@ -139,3 +145,4 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
     </Modal>
   );
 };
+

@@ -28,7 +28,8 @@ import {
   Sparkles,
   AlertCircle,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  Loader2
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { getAvailableProperties } from '@/src/lib/db';
@@ -94,6 +95,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   const [applyComment, setApplyComment] = useState('Bonjour, je souhaite visiter et candidater pour ce logement. Mon dossier est complet.');
   const [directMessageText, setDirectMessageText] = useState('Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.');
   const [applySuccessModal, setApplySuccessModal] = useState(false);
+  const [isSubmittingApp, setIsSubmittingApp] = useState(false);
+  const [isSendingDirectMessage, setIsSendingDirectMessage] = useState(false);
 
   const toggleLike = (id: string) => {
     setLikedPosts(prev => {
@@ -126,9 +129,11 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     setIsMessageModalOpen(true);
   };
 
-  const submitApplication = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRental) return;
+  const submitApplication = async (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    if (!selectedRental || isSubmittingApp) return;
+
+    setIsSubmittingApp(true);
 
     const applicantId = user?.id || profile?.id || 'usr_tenant';
     const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
@@ -141,7 +146,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       id: `app_${Date.now()}`,
       property_id: selectedRental.id,
       property_title: selectedRental.title,
-      property_address: selectedRental.location || 'Abidjan',
+      property_address: selectedRental.location,
       rent_amount: Number(selectedRental.price || 0),
       caution_amount: Number(selectedRental.price || 0) * 2,
       date_received: desiredDate || new Date().toISOString().split('T')[0],
@@ -154,8 +159,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       tenant_email: applicantEmail,
       tenant_cni: 'CI-ABJ-2024-B-89412',
       owner_id: targetOwnerId,
-      agency_id: selectedRental.agency_id || undefined,
-      owner_name: selectedRental.authorName || selectedRental.ownerName || 'Propriétaire Bailleur',
+      owner_name: selectedRental.authorName || 'Propriétaire Bailleur',
       owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
       owner_avatar: selectedRental.authorAvatar || '',
       tenant_signed: false,
@@ -163,8 +167,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       documents: {
         cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
         quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80',
-        comment: applyComment
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
       }
     };
 
@@ -178,70 +181,68 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+
+      // Stocker les coordonnées du propriétaire pour la messagerie
+      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+      localStorage.setItem(
+        'locatrust_contact_' + targetOwnerId,
+        JSON.stringify({
+          id: targetOwnerId,
+          name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+          phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+          role: 'Propriétaire Bailleur',
+          propertyTitle: selectedRental.title,
+          avatar: selectedRental.authorAvatar || '',
+          online: true,
+        })
+      );
     } catch (err) {
       console.warn('LocalStorage applications write warning:', err);
     }
 
     // 2. Envoi message automatique dans la messagerie du propriétaire
-    if (targetOwnerId) {
-      try {
-        const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
-        sendChatMessage(applicantId, targetOwnerId, introMsg);
-
-        // Mémoriser les infos du propriétaire pour la messagerie
-        if (typeof window !== 'undefined') {
-          const contactInfo = {
-            id: targetOwnerId,
-            name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
-            phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-            role: 'Propriétaire Bailleur',
-            propertyTitle: selectedRental.title || 'Bien immobilier',
-            avatar: selectedRental.authorAvatar || '',
-            online: true
-          };
-          localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify(contactInfo));
-        }
-      } catch (msgErr) {
-        console.warn('Chat message warning:', msgErr);
-      }
+    try {
+      const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
+      sendChatMessage(applicantId, targetOwnerId, introMsg);
+    } catch (msgErr) {
+      console.warn('Chat message warning:', msgErr);
     }
 
     // 3. Sauvegarde asynchrone Supabase (avec fallback transparent)
     try {
-      await createRentalApplication({
+      createRentalApplication({
         property_id: selectedRental.id,
         tenant_id: applicantId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
-        tenant_avatar: applicantAvatar,
-        property_title: selectedRental.title,
-        property_address: selectedRental.location || 'Abidjan',
-        rent_amount: Number(selectedRental.price || 0),
-        caution_amount: Number(selectedRental.price || 0) * 2,
         status: 'en_attente',
         dossier_status: 'complet',
+        monthly_income: Number(selectedRental.price || 0) * 3,
+        profession: 'Locataire vérifié',
+        message: applyComment,
         documents: newApp.documents as any
-      });
-    } catch (dbErr) {
-      console.warn('Notice Supabase rental application:', dbErr);
-    }
+      }).catch(() => {});
+    } catch {}
 
-    setIsApplyModalOpen(false);
-    setApplyComment('');
-    setApplySuccessModal(true);
     triggerCelebration('send');
+    setIsApplyModalOpen(false);
+    setIsSubmittingApp(false);
+    setApplySuccessModal(true);
   };
 
-  const submitMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedRental) return;
+  const submitMessage = (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    if (!selectedRental || isSendingDirectMessage) return;
+
+    setIsSendingDirectMessage(true);
 
     const applicantId = user?.id || profile?.id || 'usr_tenant';
-    const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_support';
+    const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
+    const textToSend = directMessageText.trim() || 'Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.';
 
     try {
-      sendChatMessage(applicantId, targetOwnerId, directMessageText);
+      sendChatMessage(applicantId, targetOwnerId, textToSend);
     } catch (err) {
       console.warn('Erreur envoi message:', err);
     }
@@ -264,7 +265,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
     triggerCelebration('send');
     setIsMessageModalOpen(false);
-    setDirectMessageText('');
+    setIsSendingDirectMessage(false);
+    setDirectMessageText('Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.');
+
     if (onOpenMessages) {
       onOpenMessages(targetOwnerId);
     } else if (onNavigateTab) {
@@ -1084,16 +1087,17 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       {/* MODAL: Demander cette location (Fidèle à l'image mobile) */}
       {/* ======================================================== */}
       {isApplyModalOpen && selectedRental && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl flex flex-col gap-5 border border-slate-100">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl flex flex-col gap-4 sm:gap-5 border border-slate-100 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
-                <Key className="w-5 h-5 text-blue-600" />
+                <Key className="w-5 h-5 text-blue-600 shrink-0" />
                 <h3 className="font-black text-slate-900 text-base">Demander cette location</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setIsApplyModalOpen(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1103,10 +1107,10 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <img
                 src={selectedRental.images.main}
                 alt=""
-                className="w-12 h-12 rounded-lg object-cover"
+                className="w-12 h-12 rounded-lg object-cover shrink-0"
               />
-              <div className="flex flex-col">
-                <span className="text-xs font-black text-slate-900">{selectedRental.title}</span>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-black text-slate-900 truncate">{selectedRental.title}</span>
                 <span className="text-xs font-bold text-blue-700">{formatFCFA(selectedRental.price)} / mois</span>
               </div>
             </div>
@@ -1129,21 +1133,32 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                   value={applyComment}
                   onChange={(e) => setApplyComment(e.target.value)}
                   placeholder="Bonjour, je souhaite visiter cet appartement. Merci."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
                 />
               </div>
 
-              <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-100 text-[11px] text-blue-800 font-medium">
+              <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-100 text-[11px] text-blue-800 font-medium leading-relaxed">
                 🛡️ Votre dossier certifié (CNI, quittances) sera automatiquement transmis au propriétaire <strong>{selectedRental.authorName}</strong>.
               </div>
 
               <button
                 type="submit"
                 id="btn-envoyer-demande"
-                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                onClick={submitApplication}
+                disabled={isSubmittingApp}
+                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer touch-manipulation disabled:opacity-50"
               >
-                <Key className="w-4 h-4" />
-                <span>Envoyer la demande</span>
+                {isSubmittingApp ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Envoi de la demande...</span>
+                  </>
+                ) : (
+                  <>
+                    <Key className="w-4 h-4 shrink-0" />
+                    <span>Envoyer la demande</span>
+                  </>
+                )}
               </button>
             </form>
           </div>
@@ -1154,16 +1169,17 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       {/* MODAL: Contacter le propriétaire                        */}
       {/* ======================================================== */}
       {isMessageModalOpen && selectedRental && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl flex flex-col gap-5 border border-slate-100">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl flex flex-col gap-4 sm:gap-5 border border-slate-100 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-blue-600" />
+                <MessageSquare className="w-5 h-5 text-blue-600 shrink-0" />
                 <h3 className="font-black text-slate-900 text-base">Contacter le propriétaire</h3>
               </div>
               <button
+                type="button"
                 onClick={() => setIsMessageModalOpen(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1173,10 +1189,10 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <img
                 src={selectedRental.authorAvatar}
                 alt=""
-                className="w-10 h-10 rounded-full object-cover"
+                className="w-10 h-10 rounded-full object-cover shrink-0"
               />
-              <div className="flex flex-col">
-                <span className="text-xs font-black text-slate-900">{selectedRental.authorName}</span>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-black text-slate-900 truncate">{selectedRental.authorName}</span>
                 <span className="text-[11px] text-emerald-600 font-bold">● Propriétaire vérifié en ligne</span>
               </div>
             </div>
@@ -1188,8 +1204,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                   rows={4}
                   value={directMessageText}
                   onChange={(e) => setDirectMessageText(e.target.value)}
-                  placeholder="Bonjour, ce bien est-il toujours disponible ?"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  placeholder="Bonjour, ce logement est-il toujours disponible ?"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600 resize-none"
                   required
                 />
               </div>
@@ -1197,10 +1213,21 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <button
                 type="submit"
                 id="btn-envoyer-message-modal"
-                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                onClick={submitMessage}
+                disabled={isSendingDirectMessage}
+                className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer touch-manipulation disabled:opacity-50"
               >
-                <Send className="w-4 h-4" />
-                <span>Envoyer le message</span>
+                {isSendingDirectMessage ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Envoi en cours...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 shrink-0" />
+                    <span>Envoyer le message</span>
+                  </>
+                )}
               </button>
             </form>
           </div>

@@ -90,30 +90,6 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     if (typeof window !== 'undefined') {
       try {
-        // 1. Lire tous les contacts directs enregistrés (locatrust_contact_*)
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith('locatrust_contact_')) {
-            try {
-              const cRaw = localStorage.getItem(k);
-              if (cRaw) {
-                const parsedC = JSON.parse(cRaw);
-                if (parsedC && parsedC.id && !list.some((c) => c.id === parsedC.id)) {
-                  list.push({
-                    id: parsedC.id,
-                    name: parsedC.name || 'Propriétaire Bailleur',
-                    phone: parsedC.phone || '+225 07 00 00 00 00',
-                    role: parsedC.role || (userRole === 'locataire' ? 'Propriétaire Bailleur' : 'Locataire'),
-                    propertyTitle: parsedC.propertyTitle || 'Bien immobilier',
-                    avatar: parsedC.avatar || '',
-                    online: true
-                  });
-                }
-              }
-            } catch {}
-          }
-        }
-
         const appsRaw = localStorage.getItem('locatrust_rental_applications');
         let apps: any[] = [];
         if (appsRaw) {
@@ -209,6 +185,22 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             });
           }
         });
+
+        // Charger tout contact directement sauvegardé suite à un message ou une candidature
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('locatrust_contact_')) {
+            try {
+              const rawContact = localStorage.getItem(key);
+              if (rawContact) {
+                const c = JSON.parse(rawContact);
+                if (c && c.id && !list.some((existing) => existing.id === c.id)) {
+                  list.push(c);
+                }
+              }
+            } catch {}
+          }
+        }
       } catch (e) {}
     }
 
@@ -235,30 +227,30 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return false;
   });
 
-  // Sync selectedContactId if role contacts change or when active chat is set
+  // Écouter l'événement d'ouverture immédiate d'un chat (desktop et mobile)
   useEffect(() => {
-    const handleActiveChat = () => {
-      const active = typeof window !== 'undefined' ? localStorage.getItem('locatrust_active_chat_contact') : null;
-      if (active) {
-        setSelectedContactId(active);
+    const handleOpenChat = (e: any) => {
+      const contactId = e.detail?.contactId;
+      if (contactId) {
+        setSelectedContactId(contactId);
         setShowMobileChat(true);
       }
     };
-    window.addEventListener('locatrust:open_chat', handleActiveChat);
-    handleActiveChat();
-    return () => {
-      window.removeEventListener('locatrust:open_chat', handleActiveChat);
-    };
+    window.addEventListener('locatrust:open_chat', handleOpenChat);
+    return () => window.removeEventListener('locatrust:open_chat', handleOpenChat);
   }, []);
 
+  // Sync selectedContactId if role contacts change
   useEffect(() => {
     if (!roleContacts.some((c) => c.id === selectedContactId)) {
-      const active = typeof window !== 'undefined' ? localStorage.getItem('locatrust_active_chat_contact') : null;
-      if (active && roleContacts.some((c) => c.id === active)) {
-        setSelectedContactId(active);
-      } else if (roleContacts[0]) {
-        setSelectedContactId(roleContacts[0]?.id || 'usr_support');
+      if (typeof window !== 'undefined') {
+        const active = localStorage.getItem('locatrust_active_chat_contact');
+        if (active && roleContacts.some((c) => c.id === active)) {
+          setSelectedContactId(active);
+          return;
+        }
       }
+      setSelectedContactId(roleContacts[0]?.id || 'usr_support');
     }
   }, [roleContacts, selectedContactId]);
 
@@ -1789,18 +1781,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               </div>
             </div>
           ) : (
-            /* Input Box (Fixed at bottom - wrapped in form for flawless mobile & desktop submit) */
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendMessage();
-              }}
-              className="p-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-2 shrink-0"
-            >
+            /* Input Box (Fixed at bottom) */
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={() => docInputRef.current?.click()}
-                className="p-2.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-500 hover:text-blue-600 transition-colors shrink-0 cursor-pointer"
+                className="p-2.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-500 hover:text-blue-600 transition-colors"
                 title="Joindre un document officiel (PDF, bail, quittance...)"
               >
                 <Paperclip className="w-4 h-4" />
@@ -1808,7 +1794,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               <button
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
-                className="p-2.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-500 hover:text-blue-600 transition-colors shrink-0 cursor-pointer"
+                className="p-2.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-500 hover:text-blue-600 transition-colors"
                 title="Envoyer une photo / capture"
               >
                 <ImageIcon className="w-4 h-4" />
@@ -1816,20 +1802,19 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
               <input
                 type="text"
-                id="chat-message-input"
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 placeholder="Écrivez votre message..."
-                autoComplete="off"
+                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                 className="flex-1 p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600/30"
               />
 
               {inputMessage.trim() ? (
                 <button
-                  type="submit"
-                  id="btn-envoyer-message-chat"
-                  className="p-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0"
-                  title="Envoyer le message"
+                  type="button"
+                  onClick={handleSendMessage}
+                  className="p-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center justify-center transition-all active:scale-95"
+                  title="Envoyer"
                 >
                   <Send className="w-4 h-4" />
                 </button>
@@ -1837,13 +1822,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 <button
                   type="button"
                   onClick={handleStartVoiceRecording}
-                  className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-all flex items-center justify-center group active:scale-95 cursor-pointer shrink-0"
+                  className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition-all flex items-center justify-center group active:scale-95"
                   title="Enregistrer une note vocale"
                 >
                   <Mic className="w-4 h-4 text-blue-600 group-hover:scale-110 transition-transform" />
                 </button>
               )}
-            </form>
+            </div>
           )}
         </div>
       </div>

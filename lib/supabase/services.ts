@@ -412,7 +412,6 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
   const isValidUuid = (str?: string) =>
     Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
-  // Filtrer strictement les colonnes reconnues par la table rental_applications de Supabase
   const payload: Record<string, any> = {
     property_id: app.property_id,
     tenant_name: app.tenant_name || 'Candidat Locataire',

@@ -29,10 +29,10 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
 
   if (!property) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
 
-    const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
+    const applicantId = user?.id || profile?.id || 'usr_tenant';
     const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
     const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
@@ -77,7 +77,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
-      
+
       // Stocker les coordonnées du propriétaire pour la messagerie
       localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
       localStorage.setItem(
@@ -104,21 +104,17 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     }
 
     try {
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       createRentalApplication({
         property_id: property.id,
-        tenant_id: uuidRegex.test(applicantId) ? applicantId : undefined,
+        tenant_id: applicantId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
-        tenant_cni: 'CI-ABJ-2024-B-89412',
-        tenant_avatar: applicantAvatar,
-        property_title: property.title,
-        property_address: `${property.location?.commune || property.location?.quartier || ''}, ${property.location?.city || 'Abidjan'}`,
-        rent_amount: Number(property.rent || 0),
-        caution_amount: Number(property.rent || 0) * 2,
         status: 'en_attente',
         dossier_status: 'complet',
+        monthly_income: Number(property.rent || 0) * 3,
+        profession: 'Locataire vérifié',
+        message: message,
         documents: newApp.documents as any
       }).catch(() => {});
     } catch {}
@@ -173,6 +169,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
+              required
               className="w-full bg-blue-50/40 border border-blue-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:border-blue-600 focus:outline-none [color-scheme:light]"
             />
           </div>
@@ -191,7 +188,13 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
             <Button type="button" variant="outline" onClick={onClose} className="flex-1 cursor-pointer">
               Annuler
             </Button>
-            <Button type="submit" id="btn-envoyer-demande-feed-modal" variant="primary" className="flex-1 font-bold cursor-pointer">
+            <Button
+              type="submit"
+              id="btn-envoyer-demande-feed-modal"
+              onClick={handleSubmit}
+              variant="primary"
+              className="flex-1 font-bold cursor-pointer touch-manipulation active:scale-95 flex items-center justify-center gap-2"
+            >
               <Send className="w-4 h-4" />
               <span>Envoyer la demande</span>
             </Button>

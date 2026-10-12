@@ -112,20 +112,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       // 1. Récupérer les identifiants des biens appartenant au bailleur ou à l'agence connectée
       const userPropertyIds = new Set<string>();
-      if (typeof window !== 'undefined') {
-        try {
-          const rawProps = localStorage.getItem('locatrust_properties');
-          if (rawProps) {
-            const parsedProps = JSON.parse(rawProps);
-            if (Array.isArray(parsedProps)) {
-              parsedProps.forEach((p: any) => {
-                if (p && p.id) userPropertyIds.add(p.id);
-              });
-            }
-          }
-        } catch {}
-      }
-
       if (user?.id) {
         try {
           const { data: myProperties } = await supabase
@@ -148,7 +134,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const isAdmin = profile?.role === 'admin' || (user as any)?.role === 'admin';
 
-      // Filtrer les candidatures pertinentes
+      // Filtrer strictement les candidatures appartenant à l'utilisateur
       const isRelevantForUser = (appItem: any) => {
         if (!appItem) return false;
         // Éliminer toute donnée fictive
@@ -162,13 +148,13 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           return false;
         }
         if (isAdmin) return true;
-        if (!user?.id) return true; // Sans utilisateur connecté ou en mode démo, garder visible
+        if (!user?.id) return isDemo || !appItem.owner_id || appItem.owner_id === 'usr_owner';
         // Appartient au bailleur ou à l'agence si c'est pour l'un de ses biens
         return (
           appItem.owner_id === user.id ||
           appItem.agency_id === user.id ||
           userPropertyIds.has(appItem.property_id) ||
-          !appItem.owner_id
+          appItem.owner_id === 'usr_owner'
         );
       };
 
@@ -199,15 +185,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       setApplications(combined);
       if (typeof window !== 'undefined') {
-        const storedRaw = localStorage.getItem('locatrust_rental_applications');
-        let currentStored: any[] = [];
-        try { if (storedRaw) currentStored = JSON.parse(storedRaw); } catch {}
-        const combinedIds = new Set(combined.map((c) => c.id));
-        const mergedToPersist = [
-          ...combined,
-          ...currentStored.filter((item: any) => item && !combinedIds.has(item.id))
-        ];
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(mergedToPersist));
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(combined));
       }
     } catch (err: any) {
       console.warn('Erreur chargement candidatures:', err);
@@ -705,7 +683,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedDossierApp(app)}
-                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs inline-flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs inline-flex items-center gap-1 transition-all whitespace-nowrap"
                   title="Voir le dossier de candidature"
                 >
                   <Eye className="w-3.5 h-3.5 text-slate-500" />
