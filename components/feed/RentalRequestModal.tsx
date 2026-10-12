@@ -37,8 +37,13 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
     const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
-    const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-    const targetOwnerId = property.owner_id || property.owner?.id || 'usr_owner';
+    const applicantAvatar = profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+
+    const targetOwnerId = property.owner_id || (property as any).agency_id || property.owner?.id || 'usr_owner';
+    const targetOwnerName = (property as any).agency_name || property.owner?.full_name || (property as any).owner_name || (property as any).mandant_name || 'Propriétaire Bailleur';
+    const targetOwnerAvatar = property.owner?.avatar_url || (property as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(targetOwnerName)}&background=1E40AF&color=fff`;
+    const targetOwnerPhone = property.owner?.phone || (property as any).owner_phone || '+225 07 00 00 00 00';
+    const isAgency = Boolean((property as any).is_agency || (property as any).agency_name || property.owner?.account_type === 'agence');
 
     const realRent = Number(property.rent || (property as any).price || 0);
     const realCaution = Number(
@@ -64,9 +69,12 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       tenant_email: applicantEmail,
       tenant_cni: 'CI-ABJ-2024-B-89412',
       owner_id: targetOwnerId,
-      owner_name: property.owner?.full_name || 'Propriétaire Bailleur',
-      owner_phone: property.owner?.phone || '+225 07 00 00 00 00',
-      owner_avatar: property.owner?.avatar_url || '',
+      owner_name: targetOwnerName,
+      owner_phone: targetOwnerPhone,
+      owner_avatar: targetOwnerAvatar,
+      agency_id: (property as any).agency_id,
+      agency_name: (property as any).agency_name,
+      is_agency: isAgency,
       tenant_signed: false,
       comment: message,
       documents: {
@@ -86,25 +94,39 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
-      // Notification en temps réel pour le bailleur
+      // Notification ciblée pour le bailleur
       pushGlobalNotification({
         title: 'Nouvelle demande de location reçue',
         description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
         category: 'demande',
-        targetTab: 'applications'
+        targetTab: 'applications',
+        targetUserId: targetOwnerId,
+        senderUserId: applicantId
       });
 
-      // Stocker les coordonnées du propriétaire pour la messagerie
+      // Stocker les coordonnées des deux interlocuteurs pour la messagerie
       localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
       localStorage.setItem(
         'locatrust_contact_' + targetOwnerId,
         JSON.stringify({
           id: targetOwnerId,
-          name: property.owner?.full_name || 'Propriétaire Bailleur',
-          phone: property.owner?.phone || '+225 07 00 00 00 00',
-          role: 'Propriétaire Bailleur',
+          name: targetOwnerName,
+          phone: targetOwnerPhone,
+          role: isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
           propertyTitle: property.title,
-          avatar: property.owner?.avatar_url || '',
+          avatar: targetOwnerAvatar,
+          online: true,
+        })
+      );
+      localStorage.setItem(
+        'locatrust_contact_' + applicantId,
+        JSON.stringify({
+          id: applicantId,
+          name: applicantName,
+          phone: applicantPhone,
+          role: 'Candidat Locataire',
+          propertyTitle: property.title,
+          avatar: applicantAvatar,
           online: true,
         })
       );

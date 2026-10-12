@@ -779,25 +779,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         authorizedActivity
       };
 
-      const allMsgs = getStoredMessages();
-      const contractChatMessage: ChatMessage = {
-        id: `msg_cnt_${Date.now()}`,
-        sender_id: targetOwnerId,
-        receiver_id: targetTenantId,
-        text: `📄 Bonjour ${tenantName}, je vous transmets officiellement le contrat de bail certifié N° ${contractNumber} pour « ${propertyTitle} » pour signature électronique.`,
-        contract: contractAttachment,
-        created_at: new Date().toISOString(),
-        status: 'delivered'
-      };
-      saveStoredMessages([...allMsgs, contractChatMessage]);
-
-      // Notification en temps réel pour le locataire
-      pushGlobalNotification({
-        title: 'Bail officiel reçu pour signature',
-        description: `Votre bailleur vous a transmis le bail N° ${contractNumber} pour « ${propertyTitle} ». Veuillez y apposer votre signature certifiée.`,
-        category: 'contrat',
-        targetTab: 'contracts'
-      });
+      sendContractToTenant(targetTenantId, contractAttachment, targetOwnerId);
     } catch (msgErr) {
       console.warn('Erreur transmission contrat chat:', msgErr);
     }
@@ -808,14 +790,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       if (appsRaw) {
         const appsList = JSON.parse(appsRaw);
         if (Array.isArray(appsList)) {
+          const targetAppId = (initialData as any)?.id;
           const updatedApps = appsList.map((a: any) => {
-            if (
-              a.id === (initialData as any)?.id ||
-              (a.tenant_name === tenantName && a.property_title === propertyTitle)
-            ) {
+            const isMatch =
+              (targetAppId && a.id === targetAppId) ||
+              (a.tenant_name === tenantName && a.property_title === propertyTitle) ||
+              (a.property_id && (initialData as any)?.propertyId && a.property_id === (initialData as any)?.propertyId && a.tenant_name === tenantName);
+
+            if (isMatch) {
               return {
                 ...a,
-                status: 'validee',
+                status: 'validee' as const,
+                candidate_selected: true,
                 contract_number: contractNumber,
                 contract_transmitted: true,
                 owner_signed: true,
@@ -830,6 +816,17 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           window.dispatchEvent(
             new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } })
           );
+
+          if (targetAppId) {
+            try {
+              supabase.from('rental_applications').update({
+                status: 'validee',
+                contract_number: contractNumber,
+                owner_signed: true,
+                owner_signature_url: ownerSignatureUrl
+              }).eq('id', targetAppId);
+            } catch {}
+          }
         }
       }
     } catch (e) {

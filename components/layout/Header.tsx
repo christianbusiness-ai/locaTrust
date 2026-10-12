@@ -237,18 +237,43 @@ export const Header: React.FC<HeaderProps> = ({
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            // Filtrer les fausses notifications mock générées ou résiduelles
-            const cleaned = parsed.filter((n: any) => {
+            // Filtrer les fausses notifications mock générées ou résiduelles + filtrage strict destinataire vs expéditeur
+            const userRole = currentUser.role || 'proprietaire';
+            const userId = currentUser.id || '';
+            const userEmail = (currentUser.email || '').toLowerCase();
+
+            const isNotificationForMe = (n: any) => {
               if (!n) return false;
               const id = String(n.id || '');
               if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
               if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
               if (n.description && (n.description.includes('Kwame Koffi') || n.description.includes('Moussa Touré'))) return false;
+
+              // Règle absolue : L'expéditeur ne reçoit JAMAIS sa propre notification de message !
+              if (n.senderUserId) {
+                if (n.senderUserId === userId) return false;
+                if (userRole === 'locataire' && n.senderUserId === 'usr_tenant') return false;
+                if (userRole === 'proprietaire' && n.senderUserId === 'usr_owner') return false;
+                if (userRole === 'agence' && n.senderUserId === 'usr_agency') return false;
+              }
+
+              // Si un destinataire ciblé est défini, vérifier la correspondance
+              if (n.targetUserId) {
+                const matchesMe =
+                  n.targetUserId === userId ||
+                  (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
+                  (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
+                  (userRole === 'proprietaire' && n.targetUserId === 'usr_owner') ||
+                  (userRole === 'agence' && n.targetUserId === 'usr_agency');
+                if (!matchesMe) return false;
+              } else if (n.targetRole && n.targetRole !== userRole) {
+                return false;
+              }
+
               return true;
-            });
-            if (cleaned.length !== parsed.length) {
-              localStorage.setItem('locatrust_notifications', JSON.stringify(cleaned));
-            }
+            };
+
+            const cleaned = parsed.filter(isNotificationForMe);
             setNotifications(cleaned);
             return;
           }
@@ -262,12 +287,38 @@ export const Header: React.FC<HeaderProps> = ({
 
     const handleNotifsUpdated = (e: any) => {
       if (e.detail?.notifications && Array.isArray(e.detail.notifications)) {
+        const userRole = currentUser.role || 'proprietaire';
+        const userId = currentUser.id || '';
+        const userEmail = (currentUser.email || '').toLowerCase();
+
         const cleaned = e.detail.notifications.filter((n: any) => {
           if (!n) return false;
           const id = String(n.id || '');
           if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
           if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
           if (n.description && (n.description.includes('Kwame Koffi') || n.description.includes('Moussa Touré'))) return false;
+
+          // Règle absolue : L'expéditeur ne reçoit JAMAIS sa propre notification
+          if (n.senderUserId) {
+            if (n.senderUserId === userId) return false;
+            if (userRole === 'locataire' && n.senderUserId === 'usr_tenant') return false;
+            if (userRole === 'proprietaire' && n.senderUserId === 'usr_owner') return false;
+            if (userRole === 'agence' && n.senderUserId === 'usr_agency') return false;
+          }
+
+          // Si un destinataire ciblé est défini
+          if (n.targetUserId) {
+            const matchesMe =
+              n.targetUserId === userId ||
+              (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
+              (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
+              (userRole === 'proprietaire' && n.targetUserId === 'usr_owner') ||
+              (userRole === 'agence' && n.targetUserId === 'usr_agency');
+            if (!matchesMe) return false;
+          } else if (n.targetRole && n.targetRole !== userRole) {
+            return false;
+          }
+
           return true;
         });
         setNotifications(cleaned);

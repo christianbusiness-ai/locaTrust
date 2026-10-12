@@ -197,13 +197,17 @@ export const LocataireSearchView: React.FC = () => {
         dossier_status: 'complet' as const,
         tenant_id: applicantId,
         tenant_name: applicantName,
-        tenant_avatar: profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`,
+        tenant_avatar: profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`,
         tenant_phone: applicantPhone,
         tenant_email: applicantEmail,
         tenant_cni: 'CI-ABJ-2024-B-89412',
         owner_id: targetOwnerId,
-        owner_name: (selectedProperty.owner as any)?.full_name || 'Propriétaire Bailleur',
-        owner_phone: (selectedProperty.owner as any)?.phone || '+225 07 00 00 00 00',
+        owner_name: (selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || (selectedProperty as any).owner_name || (selectedProperty as any).mandant_name || 'Propriétaire Bailleur',
+        owner_phone: (selectedProperty.owner as any)?.phone || (selectedProperty as any).owner_phone || '+225 07 00 00 00 00',
+        owner_avatar: (selectedProperty.owner as any)?.avatar_url || (selectedProperty as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || 'Bailleur')}&background=1E40AF&color=fff`,
+        agency_id: (selectedProperty as any).agency_id,
+        agency_name: (selectedProperty as any).agency_name,
+        is_agency: Boolean((selectedProperty as any).is_agency || (selectedProperty as any).agency_name || selectedProperty.owner?.account_type === 'agence'),
         tenant_signed: false,
         comment: applyMessage,
         documents: {
@@ -223,13 +227,42 @@ export const LocataireSearchView: React.FC = () => {
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
-        // Notification push in-app temps réel pour le bailleur
+        // Notification ciblée pour le bailleur
         pushGlobalNotification({
           title: 'Nouvelle demande de location reçue',
           description: `${applicantName} a candidaté pour « ${selectedProperty.title} ».`,
           category: 'demande',
-          targetTab: 'applications'
+          targetTab: 'applications',
+          targetUserId: targetOwnerId,
+          senderUserId: applicantId
         });
+
+        // Stocker les coordonnées des deux interlocuteurs pour la messagerie
+        localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+        localStorage.setItem(
+          'locatrust_contact_' + targetOwnerId,
+          JSON.stringify({
+            id: targetOwnerId,
+            name: newApp.owner_name,
+            phone: newApp.owner_phone,
+            role: newApp.is_agency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
+            propertyTitle: selectedProperty.title,
+            avatar: newApp.owner_avatar,
+            online: true,
+          })
+        );
+        localStorage.setItem(
+          'locatrust_contact_' + applicantId,
+          JSON.stringify({
+            id: applicantId,
+            name: applicantName,
+            phone: applicantPhone,
+            role: 'Candidat Locataire',
+            propertyTitle: selectedProperty.title,
+            avatar: newApp.tenant_avatar,
+            online: true,
+          })
+        );
       } catch (err) {
         console.warn('LocalStorage error:', err);
       }

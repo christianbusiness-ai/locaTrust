@@ -79,7 +79,7 @@ const compressImageToDataUrl = (file: File, maxWidth = 1280, maxHeight = 1280, q
 
 // 1. Ajouter un bien Modal
 export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const isVerified = profile?.verification_status === 'verifie';
   const isSubscriptionExpired = typeof window !== 'undefined' && localStorage.getItem('locatrust_subscription_status') === 'expire';
@@ -335,6 +335,11 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         finalVideos.push(videoFile.url);
       }
 
+      const currentPublisherId = user?.id || profile?.id || (isAgency ? 'usr_agency' : 'usr_owner');
+      const currentPublisherName = profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur');
+      const currentPublisherAvatar = profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentPublisherName)}&background=1E40AF&color=fff`;
+      const currentPublisherPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
+
       const newPropPayload = {
         title: finalTitle,
         type: finalType,
@@ -367,6 +372,13 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         status: 'disponible',
         photos: finalPhotos,
         videos: finalVideos,
+        owner_id: currentPublisherId,
+        owner_name: currentPublisherName,
+        owner_avatar: currentPublisherAvatar,
+        owner_phone: currentPublisherPhone,
+        agency_id: isAgency ? currentPublisherId : undefined,
+        agency_name: isAgency ? currentPublisherName : undefined,
+        is_agency: isAgency,
         mandant_id: finalMandantId,
         mandant_name: finalMandantName
       };
@@ -395,6 +407,20 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
           ...newPropPayload,
           id: 'prop_' + Date.now(),
           created_at: new Date().toISOString(),
+          owner_id: currentPublisherId,
+          owner_name: currentPublisherName,
+          owner_avatar: currentPublisherAvatar,
+          owner_phone: currentPublisherPhone,
+          agency_id: isAgency ? currentPublisherId : undefined,
+          agency_name: isAgency ? currentPublisherName : undefined,
+          is_agency: isAgency,
+          owner: {
+            id: currentPublisherId,
+            full_name: currentPublisherName,
+            avatar_url: currentPublisherAvatar,
+            phone: currentPublisherPhone,
+            account_type: isAgency ? 'agence' : 'proprietaire'
+          },
           location: { city: finalCity, commune: finalCommune, quartier: quartier.trim() || 'Centre' },
           pricing: { monthly_rent: numericRent, deposit_months: Math.round(numericCaution / numericRent) || 2 },
           surface: numericSurface,
@@ -408,6 +434,19 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
           mandant_name: finalMandantName
         };
         list.unshift(propToSave);
+
+        // Sauvegarder également les coordonnées du publieur dans locatrust_contact_ pour la messagerie
+        try {
+          localStorage.setItem(`locatrust_contact_${currentPublisherId}`, JSON.stringify({
+            id: currentPublisherId,
+            name: currentPublisherName,
+            phone: currentPublisherPhone,
+            role: isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
+            propertyTitle: finalTitle,
+            avatar: currentPublisherAvatar,
+            online: true
+          }));
+        } catch {}
 
         try {
           localStorage.setItem('locatrust_properties', JSON.stringify(list));

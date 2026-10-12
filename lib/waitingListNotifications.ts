@@ -25,6 +25,9 @@ export interface GlobalNotificationItem {
   category: 'demande' | 'visite' | 'paiement' | 'contrat' | 'caution' | 'maintenance' | 'abonnement';
   read: boolean;
   targetTab: string;
+  targetUserId?: string;
+  targetRole?: 'proprietaire' | 'locataire' | 'agence';
+  senderUserId?: string;
 }
 
 // Candidats par défaut (vide pour garantir des données réelles uniquement)
@@ -197,6 +200,9 @@ export function pushGlobalNotification(notif: {
   description: string;
   category: 'demande' | 'visite' | 'paiement' | 'contrat' | 'caution' | 'maintenance' | 'abonnement';
   targetTab?: string;
+  targetUserId?: string;
+  targetRole?: 'proprietaire' | 'locataire' | 'agence';
+  senderUserId?: string;
 }) {
   if (typeof window === 'undefined') return;
   try {
@@ -209,7 +215,10 @@ export function pushGlobalNotification(notif: {
       timestamp: "À l'instant",
       category: notif.category,
       read: false,
-      targetTab: notif.targetTab || (notif.category === 'demande' ? 'applications' : 'contracts')
+      targetTab: notif.targetTab || (notif.category === 'demande' ? 'applications' : 'contracts'),
+      targetUserId: notif.targetUserId,
+      targetRole: notif.targetRole,
+      senderUserId: notif.senderUserId
     };
     const combined = [newNotif, ...currentNotifs.slice(0, 49)];
     localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(combined));

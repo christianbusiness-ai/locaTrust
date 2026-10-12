@@ -77,6 +77,18 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const { user, profile } = useAuth();
   const currentUserId = user?.id || (userRole === 'locataire' ? 'usr_tenant' : userRole === 'agence' ? 'usr_agency' : 'usr_owner');
 
+  const myAliases = React.useMemo(() => {
+    const s = new Set<string>();
+    if (user?.id) s.add(user.id);
+    if (user?.email) s.add(user.email.toLowerCase());
+    if (profile?.id) s.add(profile.id);
+    if (currentUserId) s.add(currentUserId);
+    if (userRole === 'locataire') s.add('usr_tenant');
+    if (userRole === 'agence') s.add('usr_agency');
+    if (userRole === 'proprietaire') s.add('usr_owner');
+    return s;
+  }, [user?.id, user?.email, profile?.id, currentUserId, userRole]);
+
   const roleContacts = React.useMemo(() => {
     const list: ChatContact[] = [
       {
@@ -85,7 +97,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         phone: '+225 25 20 00 11 22',
         role: 'Assistance Client 24/7',
         propertyTitle: 'Support Technique & Juridique',
-        avatar: '',
+        avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80',
         online: true
       }
     ];
@@ -111,43 +123,54 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             }
 
             if (userRole === 'locataire') {
-              // Vérifier si cette candidature appartient au locataire connecté
+              // Vérifier si cette candidature concerne le locataire connecté
               const isMyApplication =
-                app.tenant_id === currentUserId ||
+                !user?.id ||
+                myAliases.has(app.tenant_id) ||
+                app.tenant_id === 'usr_tenant' ||
                 (user?.email && app.tenant_email?.toLowerCase() === user.email.toLowerCase());
-              if (!isMyApplication && user?.id) return;
 
-              const ownerName = app.owner_name || 'Bailleur Propriétaire';
-              const ownerId = app.owner_id || `owner_${app.property_id || app.id}`;
+              if (!isMyApplication) return;
+
+              const ownerName = app.agency_name || app.owner_name || (app.owner as any)?.full_name || 'Bailleur Propriétaire';
+              const ownerId = app.agency_id || app.owner_id || `owner_${app.property_id || app.id}`;
+              const ownerRole = app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur';
+              const ownerAvatar = app.owner_avatar || (app.owner as any)?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(ownerName)}&background=1E40AF&color=fff`;
+
               if (!list.some((c) => c.id === ownerId || c.name === ownerName)) {
                 list.push({
                   id: ownerId,
                   name: ownerName,
                   phone: app.owner_phone || '+225 07 00 00 00 00',
-                  role: 'Propriétaire Bailleur',
+                  role: ownerRole,
                   propertyTitle: app.property_title || 'Logement',
-                  avatar: app.owner_avatar || '',
+                  avatar: ownerAvatar,
                   online: true
                 });
               }
             } else {
               // Propriétaire ou Agence : uniquement les candidatures de ses propres biens
               const isMyPropertyApplication =
-                app.owner_id === currentUserId ||
-                app.agency_id === currentUserId ||
-                (!app.owner_id && !user?.id);
+                !user?.id ||
+                myAliases.has(app.owner_id) ||
+                myAliases.has(app.agency_id) ||
+                app.owner_id === 'usr_owner' ||
+                app.agency_id === 'usr_agency';
 
-              if (!isMyPropertyApplication && user?.id) return;
+              if (!isMyPropertyApplication) return;
 
               const tenantId = app.tenant_id || `tenant_${app.id}`;
-              if (app.tenant_name && !list.some((c) => c.id === tenantId || c.id === `tenant_${app.id}`)) {
+              const tenantName = app.tenant_name || 'Candidat Locataire';
+              const tenantAvatar = app.tenant_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(tenantName)}&background=059669&color=fff`;
+
+              if (app.tenant_name && !list.some((c) => c.id === tenantId || c.name === tenantName)) {
                 list.push({
                   id: tenantId,
-                  name: app.tenant_name,
+                  name: tenantName,
                   phone: app.tenant_phone || '+225 05 00 00 00 00',
                   role: 'Candidat Locataire',
                   propertyTitle: app.property_title || 'Bien immobilier',
-                  avatar: app.tenant_avatar || '',
+                  avatar: tenantAvatar,
                   online: true
                 });
               }
@@ -159,14 +182,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         const storedMsgs = getStoredMessages();
         storedMsgs.forEach((m) => {
           // L'utilisateur connecté doit obligatoirement être impliqué (expéditeur ou destinataire)
-          const involvesMe = m.sender_id === currentUserId || m.receiver_id === currentUserId;
+          const involvesMe = myAliases.has(m.sender_id) || myAliases.has(m.receiver_id);
           if (!involvesMe) return;
 
-          const otherId = m.sender_id === currentUserId ? m.receiver_id : m.sender_id;
+          const otherId = myAliases.has(m.sender_id) ? m.receiver_id : m.sender_id;
 
           if (
             otherId &&
-            otherId !== currentUserId &&
+            !myAliases.has(otherId) &&
             otherId !== 'usr_owner_1' &&
             otherId !== 'usr_tenant_1' &&
             !list.some((c) => c.id === otherId)
@@ -174,15 +197,37 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             const matchingApp = apps.find(
               (a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId
             );
+
+            let contactName = matchingApp
+              ? (userRole === 'locataire' ? matchingApp.owner_name : matchingApp.tenant_name)
+              : undefined;
+
+            if (!contactName && m.contract) {
+              contactName = userRole === 'locataire' ? m.contract.ownerName : m.contract.tenantName;
+            }
+
+            if (!contactName) {
+              const savedContactRaw = localStorage.getItem(`locatrust_contact_${otherId}`);
+              if (savedContactRaw) {
+                try { contactName = JSON.parse(savedContactRaw).name; } catch {}
+              }
+            }
+
+            if (!contactName) {
+              contactName = otherId.includes('owner') || otherId.includes('agency') ? 'Bailleur Propriétaire' : 'Locataire Candidat';
+            }
+
+            const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
+            const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire Candidat';
+            const contactAvatar = matchingApp?.tenant_avatar || matchingApp?.owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(contactName)}&background=${userRole === 'locataire' ? '1E40AF' : '059669'}&color=fff`;
+
             list.push({
               id: otherId,
-              name: matchingApp
-                ? (userRole === 'locataire' ? matchingApp.owner_name : matchingApp.tenant_name)
-                : (otherId.includes('owner') ? 'Propriétaire Bailleur' : 'Locataire Candidat'),
+              name: contactName,
               phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
-              role: otherId.includes('owner') ? 'Bailleur' : 'Locataire',
-              propertyTitle: matchingApp?.property_title || 'Échange direct',
-              avatar: '',
+              role: contactRole,
+              propertyTitle: matchingApp?.property_title || m.contract?.propertyTitle || 'Échange direct',
+              avatar: contactAvatar,
               online: true
             });
           }
@@ -196,8 +241,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const rawContact = localStorage.getItem(key);
               if (rawContact) {
                 const c = JSON.parse(rawContact);
-                if (c && c.id && !list.some((existing) => existing.id === c.id)) {
-                  list.push(c);
+                if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing.id === c.id || existing.name === c.name)) {
+                  list.push({
+                    ...c,
+                    avatar: c.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=1E40AF&color=fff`
+                  });
                 }
               }
             } catch {}
@@ -350,10 +398,25 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Filter messages between current user and active contact
   const currentConversationMessages = (Array.isArray(messages) ? messages : []).filter(
-    (m) =>
-      Boolean(activeContact?.id) &&
-      ((m.sender_id === currentUserId && m.receiver_id === activeContact?.id) ||
-       (m.sender_id === activeContact?.id && m.receiver_id === currentUserId))
+    (m) => {
+      if (!activeContact?.id) return false;
+      const contactAliases = new Set([
+        activeContact.id,
+        activeContact.name,
+        `tenant_${activeContact.id}`,
+        `owner_${activeContact.id}`
+      ]);
+
+      const sentByMeToContact =
+        myAliases.has(m.sender_id) &&
+        (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle));
+
+      const sentByContactToMe =
+        (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle)) &&
+        myAliases.has(m.receiver_id);
+
+      return sentByMeToContact || sentByContactToMe;
+    }
   );
 
   // Filter contacts by search
@@ -1071,8 +1134,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
       // Post confirmation notification message in conversation
       sendChatMessage(
-        activeContact.id,
         currentUserId,
+        activeContact.id,
         `✍️ Le locataire a signé et validé le bail N° ${targetNum} avec succès. Le document est désormais scellé et certifié conforme Loi n° 2019-576.`
       );
 
@@ -1258,16 +1321,25 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           <div className="flex-1 flex flex-col divide-y divide-slate-100 dark:divide-slate-800/80 overflow-y-auto">
             {filteredContacts.map((contact) => {
               const isSelected = selectedContactId === contact.id;
+              const contactAliases = new Set([
+                contact.id,
+                contact.name,
+                `tenant_${contact.id}`,
+                `owner_${contact.id}`
+              ]);
               const contactMsgs = (messages || []).filter(
                 (m) =>
-                  (m.sender_id === currentUserId && m.receiver_id === contact.id) ||
-                  (m.sender_id === contact.id && m.receiver_id === currentUserId)
+                  (myAliases.has(m.sender_id) && (contactAliases.has(m.receiver_id) || m.receiver_id === contact.id || (contact.propertyTitle && m.contract?.propertyTitle === contact.propertyTitle))) ||
+                  ((contactAliases.has(m.sender_id) || m.sender_id === contact.id || (contact.propertyTitle && m.contract?.propertyTitle === contact.propertyTitle)) && myAliases.has(m.receiver_id))
               );
               const lastMsg = contactMsgs[contactMsgs.length - 1];
 
               // Nombre de messages non lus spécifiquement reçus de ce contact
               const contactUnreadCount = (messages || []).filter(
-                (m) => m.sender_id === contact.id && m.status !== 'read'
+                (m) =>
+                  (contactAliases.has(m.sender_id) || m.sender_id === contact.id) &&
+                  myAliases.has(m.receiver_id) &&
+                  m.status !== 'read'
               ).length;
 
               return (

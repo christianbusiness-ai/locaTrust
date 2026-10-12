@@ -222,8 +222,31 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         .map(enrichAppItem);
 
       const relevantLocalApps = localApps.filter(isRelevantForUser).map(enrichAppItem);
+      
+      // Fusion intelligente : si le local a un état contractuel avancé (validee, contrat_actif, etc.), IL PRIME sur la base
+      const localMap = new Map(relevantLocalApps.map((a) => [a.id, a]));
       const dbIds = new Set(dbApps.map((a) => a.id));
-      const combined = [...relevantLocalApps.filter((a) => !dbIds.has(a.id)), ...dbApps];
+
+      const mergedDbApps = dbApps.map((dbItem) => {
+        const localItem = localMap.get(dbItem.id);
+        if (localItem) {
+          if (
+            localItem.status === 'contrat_actif' ||
+            localItem.status === 'validee' ||
+            localItem.status === 'refusee' ||
+            localItem.contract_number ||
+            localItem.tenant_signed
+          ) {
+            return { ...dbItem, ...localItem };
+          }
+        }
+        return dbItem;
+      });
+
+      const combined = [
+        ...relevantLocalApps.filter((a) => !dbIds.has(a.id)),
+        ...mergedDbApps
+      ];
 
       setApplications(combined);
       if (typeof window !== 'undefined') {
@@ -273,8 +296,28 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   };
 
   // Vérifier si un logement a déjà un contrat actif / finalisé
-  const propertyHasActiveContract = (propertyId: string) => {
-    return applications.some((a) => a.property_id === propertyId && a.status === 'contrat_actif');
+  const propertyHasActiveContract = (propertyId: string, propertyTitle?: string) => {
+    // 1. Vérifier si un contrat actif ou transmis existe dans les candidatures
+    const hasActiveApp = applications.some((a) =>
+      (a.property_id === propertyId || (propertyTitle && a.property_title === propertyTitle)) &&
+      (a.status === 'contrat_actif' || (a.status === 'validee' && (a as any).contract_transmitted))
+    );
+    if (hasActiveApp) return true;
+
+    // 2. Vérifier dans le registre officiel des contrats (locatrust_contracts)
+    try {
+      const stored = localStorage.getItem('locatrust_contracts');
+      if (stored) {
+        const contracts = JSON.parse(stored);
+        if (Array.isArray(contracts)) {
+          return contracts.some((c: any) =>
+            (c.property?.id === propertyId || c.property_id === propertyId || (propertyTitle && c.property?.title === propertyTitle))
+          );
+        }
+      }
+    } catch {}
+
+    return false;
   };
 
   // Choix d'un candidat : Rejette automatiquement les concurrents et les notifie en temps réel
@@ -920,7 +963,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       <span>Créer le contrat</span>
                     </button>
 
-                    {/* Tant que le locataire n'a pas signé : bouton Finaliser présent mais DÉSACTIVÉ / NON CLIQUABLE */}
+                    {/* Tant que le locataire n'a pas signé : statut d'attente (Le bailleur ne peut pas signer à la place du locataire) */}
                     {!app.tenant_signed ? (
                       <>
                         <button
@@ -933,27 +976,34 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                           <span>Finaliser le contrat</span>
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => setSigningTenantApp(app)}
-                          className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs border border-blue-200 flex items-center gap-1 transition-all whitespace-nowrap shadow-xs cursor-pointer"
-                          title="Consulter et valider la signature locataire"
+                        <div
+                          className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200 flex items-center gap-1.5 whitespace-nowrap shadow-xs"
+                          title="Le bail officiel a été transmis au locataire dans sa boîte de messagerie. En attente de sa signature électronique sur son espace."
                         >
-                          <PenTool className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Signature locataire</span>
-                        </button>
+                          <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse shrink-0" />
+                          <span>Statut : Signature locataire en attente</span>
+                        </div>
                       </>
                     ) : (
-                      /* Dès que le locataire a signé et validé : bouton actif et cliquable */
-                      <button
-                        type="button"
-                        onClick={() => handleFinalizeContract(app)}
-                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
-                        title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                        <span>Finaliser le contrat</span>
-                      </button>
+                      /* Dès que le locataire a signé et validé : badge vert et bouton de finalisation actif */
+                      <>
+                        <div
+                          className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-bold text-xs border border-emerald-200 flex items-center gap-1.5 whitespace-nowrap shadow-xs"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>Signé par le locataire</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleFinalizeContract(app)}
+                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
+                          title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                          <span>Finaliser le contrat</span>
+                        </button>
+                      </>
                     )}
                   </>
                 )}
@@ -1155,6 +1205,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               );
             }}
             initialData={{
+              id: selectedApplicationForContract.id,
+              tenantId: selectedApplicationForContract.tenant_id,
+              tenantEmail: selectedApplicationForContract.tenant_email,
+              ownerId: selectedApplicationForContract.owner_id || user?.id,
+              ownerName: profile?.full_name || user?.user_metadata?.full_name || (profile?.role === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
+              ownerPhone: profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00',
               tenantName: selectedApplicationForContract.tenant_name,
               tenantPhone: selectedApplicationForContract.tenant_phone,
               tenantCni: selectedApplicationForContract.tenant_cni,

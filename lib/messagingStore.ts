@@ -186,9 +186,11 @@ export function sendChatMessage(senderId: string, receiverId: string, text: stri
         title: `Nouveau message de ${senderName}`,
         description: text.length > 70 ? `${text.slice(0, 70)}...` : text,
         timestamp: "À l'instant",
-        category: 'demande',
+        category: 'demande' as const,
         read: false,
-        targetTab: 'messages'
+        targetTab: 'messages',
+        targetUserId: receiverId,
+        senderUserId: senderId
       };
       const combinedNotifs = [notifItem, ...currentNotifs.slice(0, 49)];
       localStorage.setItem('locatrust_notifications', JSON.stringify(combinedNotifs));
@@ -325,11 +327,12 @@ export function getStoredTenantReceipts(): ChatQuittanceAttachment[] {
 
 export function sendContractToTenant(tenantId: string, contract: ChatContractAttachment, senderId?: string): ChatMessage {
   const current = getStoredMessages();
+  const finalSenderId = senderId || 'usr_owner';
   const newMsg: ChatMessage = {
     id: `msg_contract_${Date.now()}`,
-    sender_id: senderId || 'usr_owner',
+    sender_id: finalSenderId,
     receiver_id: tenantId,
-    text: `📑 Contrat de Bail Officiel Transmis (N° ${contract.contractNumber})\nVotre propriétaire vous a transmis le bail d'habitation pour le logement : ${contract.propertyTitle}.\nVeuillez consulter les articles et apposer votre signature électronique pour officialiser la location.`,
+    text: `📑 Contrat de Bail Officiel Transmis (N° ${contract.contractNumber})\nVotre bailleur vous a transmis le bail d'habitation pour le logement : ${contract.propertyTitle}.\nVeuillez consulter les articles et apposer votre signature électronique pour officialiser la location.`,
     created_at: new Date().toISOString(),
     contract,
     status: 'delivered'
@@ -337,6 +340,56 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
 
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
+
+  // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`locatrust_contact_${finalSenderId}`, JSON.stringify({
+        id: finalSenderId,
+        name: contract.ownerName,
+        phone: '+225 07 00 00 00 00',
+        role: contract.ownerName.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
+        propertyTitle: contract.propertyTitle,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.ownerName)}&background=1E40AF&color=fff`,
+        online: true
+      }));
+
+      localStorage.setItem(`locatrust_contact_${tenantId}`, JSON.stringify({
+        id: tenantId,
+        name: contract.tenantName,
+        phone: '+225 05 00 00 00 00',
+        role: 'Locataire Preneur',
+        propertyTitle: contract.propertyTitle,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.tenantName)}&background=059669&color=fff`,
+        online: true
+      }));
+
+      // Notification push in-app ciblée EXCLUSIVEMENT pour le locataire
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const notifItem = {
+        id: `notif_cnt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        title: `Bail officiel reçu pour signature (N° ${contract.contractNumber})`,
+        description: `${contract.ownerName} vous a transmis le bail pour « ${contract.propertyTitle} ». Veuillez y apposer votre signature certifiée.`,
+        timestamp: "À l'instant",
+        category: 'contrat' as const,
+        read: false,
+        targetTab: 'messages',
+        targetUserId: tenantId,
+        senderUserId: finalSenderId
+      };
+      const combinedNotifs = [notifItem, ...currentNotifs.slice(0, 49)];
+      localStorage.setItem('locatrust_notifications', JSON.stringify(combinedNotifs));
+      window.dispatchEvent(
+        new CustomEvent('locatrust:notifications-updated', {
+          detail: { notifications: combinedNotifs }
+        })
+      );
+    } catch (e) {
+      console.warn('Error saving contacts/notification on contract send:', e);
+    }
+  }
+
   return newMsg;
 }
 
