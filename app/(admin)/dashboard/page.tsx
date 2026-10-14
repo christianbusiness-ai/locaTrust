@@ -31,6 +31,7 @@ export default function AdminDashboardPage({
     role: 'admin' as const,
     phone: profile?.phone || '',
     is_verified: true,
+    verification_status: 'verifie' as const,
     created_at: new Date().toISOString()
   };
   const [activeTab, setActiveTab] = useState<string>('supervision');

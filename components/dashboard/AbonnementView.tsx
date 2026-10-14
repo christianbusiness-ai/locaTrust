@@ -353,7 +353,7 @@ export const AbonnementView: React.FC = () => {
     try {
       const res = await SasPayService.createLiveCheckoutSession({
         userId: user?.id || 'usr_active',
-        customerEmail: user?.email || profile?.email || 'contact@locatrust.ci',
+        customerEmail: user?.email || (profile as any)?.email || 'contact@locatrust.ci',
         customerName: profile?.full_name || 'Bailleur LocaTrust',
         customerPhone: profile?.phone || '+2250700000000',
         amount: currentPlan.amount,

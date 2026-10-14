@@ -1016,13 +1016,13 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="p-3.5 mx-3 mt-3 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center gap-3">
               <img
                 src={avatarUrl}
-                alt={currentUser.full_name || currentUser.name}
+                alt={currentUser.full_name || (currentUser as any).name || currentUser.email}
                 className={`w-10 h-10 rounded-full object-cover border-2 shrink-0 ${
                   currentUser.verification_status === 'verifie' ? 'border-emerald-500' : 'border-amber-500'
                 }`}
               />
               <div className="overflow-hidden">
-                <span className="text-xs font-bold text-white block truncate">{currentUser.full_name || currentUser.name}</span>
+                <span className="text-xs font-bold text-white block truncate">{currentUser.full_name || (currentUser as any).name || currentUser.email}</span>
                 <span className={`text-[11px] font-semibold capitalize flex items-center gap-1 ${
                   currentUser.verification_status === 'verifie' ? 'text-emerald-400' : 'text-amber-400'
                 }`}>
@@ -1124,9 +1124,9 @@ export const Header: React.FC<HeaderProps> = ({
                           <Icon className="w-4 h-4 text-purple-400 shrink-0" />
                           <span>{item.name}</span>
                         </div>
-                        {item.badge && (
+                        {(item as any).badge && (
                           <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-black">
-                            {item.badge}
+                            {(item as any).badge}
                           </span>
                         )}
                       </button>

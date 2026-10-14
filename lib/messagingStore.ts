@@ -2,6 +2,7 @@
 
 import { generateOfficialReceiptPDF, OfficialReceiptData } from '@/lib/payments/officialReceiptPdfGenerator';
 import { triggerCelebration } from '@/lib/celebration';
+import { supabase } from '@/src/lib/supabase';
 
 export interface ChatQuittanceAttachment {
   receiptNumber: string;
@@ -66,7 +67,7 @@ export interface ChatRestitutionAttachment {
   restitutionMethod: string;
   ownerName: string;
   tenantName: string;
-  operationType: 'RESTITUTION_CAUTION';
+  operationType: 'RESTITUTION_CAUTION' | 'IMPUTATION_LOYERS';
 }
 
 export interface ChatMessage {
@@ -158,18 +159,100 @@ export function saveStoredMessages(messages: ChatMessage[]) {
   }
 }
 
-export function sendChatMessage(senderId: string, receiverId: string, text: string): ChatMessage {
+const isValidUuid = (str?: string) =>
+  Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+// Synchronisation asynchrone sécurisée avec Supabase Realtime & DB
+export async function syncMessageToSupabase(
+  newMsg: ChatMessage,
+  senderId: string,
+  receiverId: string,
+  text: string,
+  propertyId?: string
+) {
+  try {
+    // 1. Diffusion Realtime immédiate via channel Supabase
+    try {
+      const channel = supabase.channel('locatrust_chat_realtime');
+      channel.send({
+        type: 'broadcast',
+        event: 'new_message',
+        payload: { ...newMsg, senderId, receiverId }
+      });
+    } catch {}
+
+    // 2. Persistance BDD si identifiants UUID valides
+    if (isValidUuid(senderId) && isValidUuid(receiverId)) {
+      // Trouver ou créer la conversation
+      let convId: string | null = null;
+      const { data: convData } = await supabase
+        .from('conversations')
+        .select('id')
+        .or(`and(tenant_id.eq.${senderId},owner_id.eq.${receiverId}),and(tenant_id.eq.${receiverId},owner_id.eq.${senderId})`)
+        .maybeSingle();
+
+      if (convData?.id) {
+        convId = convData.id;
+      } else {
+        const { data: newConv } = await supabase
+          .from('conversations')
+          .insert({
+            tenant_id: senderId,
+            owner_id: receiverId,
+            property_id: isValidUuid(propertyId) ? propertyId : undefined
+          })
+          .select('id')
+          .maybeSingle();
+        if (newConv?.id) convId = newConv.id;
+      }
+
+      if (convId) {
+        await supabase.from('messages').insert({
+          conversation_id: convId,
+          sender_id: senderId,
+          content: text,
+          status: 'delivered'
+        });
+
+        // Persistance de la notification en BDD
+        await supabase.from('notifications').insert({
+          user_id: receiverId,
+          title: 'Nouveau message reçu',
+          message: text.length > 100 ? `${text.slice(0, 97)}...` : text,
+          type: 'info',
+          is_read: false
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Notice sync Supabase chat:', err);
+  }
+}
+
+export function sendChatMessage(
+  senderId: string,
+  receiverId: string,
+  text: string,
+  options?: { propertyId?: string; propertyTitle?: string; attachment?: any; contract?: any; quittance?: any; restitution?: any }
+): ChatMessage {
   const current = getStoredMessages();
   const newMsg: ChatMessage = {
-    id: `msg_${Date.now()}`,
+    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     sender_id: senderId,
     receiver_id: receiverId,
     text,
     created_at: new Date().toISOString(),
-    status: 'delivered'
+    status: 'delivered',
+    attachment: options?.attachment,
+    contract: options?.contract,
+    quittance: options?.quittance,
+    restitution: options?.restitution
   };
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
+
+  // Synchronisation BDD & Realtime
+  syncMessageToSupabase(newMsg, senderId, receiverId, text, options?.propertyId);
 
   // Émission d'une notification push in-app pour le destinataire
   if (typeof window !== 'undefined') {
@@ -207,6 +290,18 @@ export function sendChatMessage(senderId: string, receiverId: string, text: stri
   return newMsg;
 }
 
+export async function sendRealChatMessage(
+  senderId: string,
+  receiverId: string,
+  text: string,
+  options?: { propertyId?: string; propertyTitle?: string; attachment?: any; contract?: any; quittance?: any; restitution?: any }
+): Promise<ChatMessage> {
+  const msg = sendChatMessage(senderId, receiverId, text, options);
+  // Attendre la tentative de synchronisation réseau
+  await syncMessageToSupabase(msg, senderId, receiverId, text, options?.propertyId);
+  return msg;
+}
+
 export function markMessagesAsRead(contactId: string, currentUserId?: string): boolean {
   if (typeof window === 'undefined') return false;
   const current = getStoredMessages();
@@ -218,13 +313,18 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
 
     if (isFromContact && m.status !== 'read') {
       changed = true;
-      return { ...m, status: 'read' as const };
+      return { ...m, status: 'read' as const, is_read: true, read_at: new Date().toISOString() };
     }
     return m;
   });
 
   if (changed) {
     saveStoredMessages(updated);
+    if (isValidUuid(contactId)) {
+      try {
+        supabase.from('messages').update({ status: 'read' }).eq('sender_id', contactId).then(() => {});
+      } catch {}
+    }
     return true;
   }
   return false;
@@ -236,11 +336,10 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   let changed = false;
 
   const updated = current.map((m) => {
-    // Tout message non lu qui n'a pas été envoyé par l'utilisateur courant
     const isFromMe = Boolean(currentUserId && m.sender_id === currentUserId);
     if (!isFromMe && m.status !== 'read') {
       changed = true;
-      return { ...m, status: 'read' as const };
+      return { ...m, status: 'read' as const, is_read: true, read_at: new Date().toISOString() };
     }
     return m;
   });
@@ -262,20 +361,27 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
   const userEmail = (user?.email || '').toLowerCase();
   const defaultId = role === 'locataire' ? 'usr_tenant' : role === 'agence' ? 'usr_agency' : 'usr_owner';
 
+  // Identifiants appartenant à l'utilisateur connecté
+  const myIds = new Set<string>();
+  if (userId) myIds.add(userId);
+  if (userEmail) myIds.add(userEmail);
+  myIds.add(defaultId);
+  if (role === 'locataire') myIds.add('usr_tenant');
+  if (role === 'proprietaire') myIds.add('usr_owner');
+  if (role === 'agence') {
+    myIds.add('usr_agency');
+    myIds.add('usr_owner');
+  }
+
   return messages.filter((m) => {
-    // Si déjà lu, pas compté
-    if (m.status === 'read') return false;
+    // Message déjà lu
+    if (m.status === 'read' || (m as any).is_read) return false;
 
-    // Ne jamais compter ses propres messages envoyés
-    const isFromMe = (userId && m.sender_id === userId) || m.sender_id === defaultId || m.sender_id === 'usr_owner' || m.sender_id === 'usr_tenant';
-    if (isFromMe) return false;
+    // Ne JAMAIS compter ses propres messages envoyés
+    if (myIds.has(m.sender_id)) return false;
 
-    // Le message doit être adressé à l'utilisateur
-    const isForMe =
-      (userId && m.receiver_id === userId) ||
-      (userEmail && m.receiver_id === userEmail) ||
-      (!userId && (m.receiver_id === defaultId || m.receiver_id === 'usr_tenant' || m.receiver_id === 'usr_owner'));
-
+    // Le message doit être adressé à l'utilisateur connecté
+    const isForMe = myIds.has(m.receiver_id);
     return isForMe;
   }).length;
 }
@@ -294,6 +400,9 @@ export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, sender
 
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
+
+  // Synchronisation Supabase & Realtime pour la quittance
+  syncMessageToSupabase(newMsg, senderId || 'usr_owner', receiverId || 'usr_tenant', newMsg.text);
 
   // Also persist in tenant receipts store
   try {
@@ -340,6 +449,9 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
 
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
+
+  // Synchronisation Supabase & Realtime pour le contrat
+  syncMessageToSupabase(newMsg, finalSenderId, tenantId, newMsg.text);
 
   // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
   if (typeof window !== 'undefined') {
@@ -444,4 +556,80 @@ export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachm
   };
 
   await generateOfficialReceiptPDF(pdfData);
+}
+
+export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage[]> {
+  if (!isValidUuid(userId) || typeof window === 'undefined') return [];
+  try {
+    const { data: convs, error: convErr } = await supabase
+      .from('conversations')
+      .select('id, tenant_id, owner_id')
+      .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+
+    if (convErr || !convs || convs.length === 0) return [];
+
+    const convIds = convs.map((c) => c.id);
+    const { data: msgs, error: msgErr } = await supabase
+      .from('messages')
+      .select('*')
+      .in('conversation_id', convIds)
+      .order('created_at', { ascending: true });
+
+    if (msgErr || !msgs) return [];
+
+    const convMap = new Map<string, { tenant_id: string; owner_id: string }>();
+    convs.forEach((c) => convMap.set(c.id, c));
+
+    const currentLocal = getStoredMessages();
+    const existingIds = new Set(currentLocal.map((m) => m.id));
+    const newFromDb: ChatMessage[] = [];
+
+    msgs.forEach((m: any) => {
+      const conv = convMap.get(m.conversation_id);
+      const isSender = m.sender_id === userId;
+      const otherId = conv ? (conv.tenant_id === userId ? conv.owner_id : conv.tenant_id) : 'usr_contact';
+      const receiverId = isSender ? otherId : userId;
+
+      let parsedContract: any = undefined;
+      let parsedQuittance: any = undefined;
+      let parsedRestitution: any = undefined;
+      let parsedAttachment: any = undefined;
+
+      try {
+        if (m.content && m.content.startsWith('{') && m.content.includes('"type":')) {
+          const parsed = JSON.parse(m.content);
+          if (parsed.contract) parsedContract = parsed.contract;
+          if (parsed.quittance) parsedQuittance = parsed.quittance;
+          if (parsed.restitution) parsedRestitution = parsed.restitution;
+          if (parsed.attachment) parsedAttachment = parsed.attachment;
+        }
+      } catch {}
+
+      const formatted: ChatMessage = {
+        id: m.id,
+        sender_id: m.sender_id,
+        receiver_id: receiverId,
+        text: m.content || '',
+        created_at: m.created_at,
+        status: m.status || 'delivered',
+        contract: parsedContract,
+        quittance: parsedQuittance,
+        restitution: parsedRestitution,
+        attachment: parsedAttachment || (m.attachment_url ? { type: 'document', url: m.attachment_url } : undefined)
+      };
+
+      if (!existingIds.has(m.id)) {
+        newFromDb.push(formatted);
+      }
+    });
+
+    if (newFromDb.length > 0) {
+      const merged = [...currentLocal, ...newFromDb];
+      saveStoredMessages(merged);
+      return merged;
+    }
+  } catch (err) {
+    console.warn('Erreur synchronisation messages Supabase:', err);
+  }
+  return [];
 }

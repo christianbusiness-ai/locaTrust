@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
+    "types": ["vite/client", "node"],
     "incremental": true,
     "plugins": [
       {
@@ -22,6 +23,12 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "src/**/*",
+    "components/**/*",
+    "lib/**/*",
+    "types/**/*",
+    "vite.config.ts"
+  ],
+  "exclude": ["node_modules", "scratch", "app"]
 }

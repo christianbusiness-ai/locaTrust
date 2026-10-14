@@ -412,6 +412,53 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
   const isValidUuid = (str?: string) =>
     Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
+  // Contrôle strict anti-doublon (Point 3 : Locataire A + Logement B = 1 seule demande active)
+  try {
+    if (app.property_id) {
+      let checkQuery = supabase
+        .from('rental_applications')
+        .select('*')
+        .eq('property_id', app.property_id)
+        .neq('status', 'refusee');
+
+      if (isValidUuid(app.tenant_id)) {
+        checkQuery = checkQuery.eq('tenant_id', app.tenant_id);
+      } else if (app.tenant_email) {
+        checkQuery = checkQuery.eq('tenant_email', app.tenant_email);
+      }
+
+      const { data: existingApps } = await checkQuery.limit(1);
+      if (existingApps && existingApps.length > 0) {
+        return { data: existingApps[0], error: null, alreadyExists: true };
+      }
+    }
+  } catch (checkErr) {
+    console.warn('Vérification doublon candidature:', checkErr);
+  }
+
+  // Contrôle doublon dans le cache local également
+  if (typeof window !== 'undefined') {
+    try {
+      const appsRaw = localStorage.getItem('locatrust_rental_applications');
+      if (appsRaw) {
+        const localList = JSON.parse(appsRaw);
+        if (Array.isArray(localList)) {
+          const matchLocal = localList.find(
+            (a: any) =>
+              a.property_id === app.property_id &&
+              a.status !== 'refusee' &&
+              ((app.tenant_id && a.tenant_id === app.tenant_id) ||
+                (app.tenant_email && a.tenant_email?.toLowerCase() === app.tenant_email.toLowerCase()) ||
+                (app.tenant_name && a.tenant_name === app.tenant_name))
+          );
+          if (matchLocal) {
+            return { data: matchLocal, error: null, alreadyExists: true };
+          }
+        }
+      }
+    } catch {}
+  }
+
   const payload: Record<string, any> = {
     property_id: app.property_id,
     tenant_name: app.tenant_name || 'Candidat Locataire',
@@ -441,7 +488,7 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
     .select()
     .maybeSingle();
 
-  return { data, error };
+  return { data, error, alreadyExists: false };
 }
 
 export async function updateRentalApplication(id: string, updates: Partial<RentalApplication>) {

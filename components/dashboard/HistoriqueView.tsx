@@ -33,6 +33,7 @@ import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { TableRowsSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
+import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 
 interface TenantReceiptItem {
   id: string;

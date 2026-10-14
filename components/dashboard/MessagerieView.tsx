@@ -63,8 +63,11 @@ import {
   markMessagesAsRead,
   markAllMessagesAsReadForUser,
   getUnreadMessagesCountForUser,
-  downloadQuittancePdfFromAttachment
+  downloadQuittancePdfFromAttachment,
+  sendRealChatMessage,
+  fetchSupabaseMessages
 } from '@/lib/messagingStore';
+import { supabase } from '@/src/lib/supabase';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
 import { useAuth } from '@/src/context/AuthContext';
@@ -319,15 +322,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [audioVolume, setAudioVolume] = useState<number>(0);
 
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioAnalyserRef = useRef<AnalyserNode | null>(null);
   const activeAudioCallRef = useRef<any>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   // File Upload Refs (Point 6)
@@ -355,6 +358,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   useEffect(() => {
     refreshMessages();
 
+    // Charger les messages réels depuis Supabase dès l'ouverture
+    if (currentUserId) {
+      fetchSupabaseMessages(currentUserId).then((newMsgs) => {
+        if (newMsgs && newMsgs.length > 0) {
+          refreshMessages();
+        }
+      }).catch(() => {});
+    }
+
     const handleMessagesUpdated = () => {
       refreshMessages();
     };
@@ -372,15 +384,24 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     window.addEventListener('locatrust:messages_updated', handleMessagesUpdated);
     window.addEventListener('storage', handleStorage);
 
-    // Heartbeat toutes les 2 secondes pour synchroniser automatiquement les échanges en temps réel sans rechargement
+    // Écoute Supabase Realtime pour actualisation instantanée de la messagerie
+    const channel = supabase
+      .channel('locatrust_chat_realtime_view')
+      .on('broadcast', { event: 'new_message' }, () => {
+        refreshMessages();
+      })
+      .subscribe();
+
+    // Heartbeat toutes les 2 secondes pour synchroniser automatiquement les échanges
     const heartbeat = setInterval(refreshMessages, 2000);
 
     return () => {
       window.removeEventListener('locatrust:messages_updated', handleMessagesUpdated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(heartbeat);
+      supabase.removeChannel(channel);
     };
-  }, []);
+  }, [currentUserId]);
 
   // Scroll to bottom on message update
   useEffect(() => {
@@ -864,14 +885,6 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       };
       saveStoredMessages([...allMsgs, newMsg]);
       refreshMessages();
-
-      // Auto reply from contact
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        sendChatMessage(activeContact.id, currentUserId, "Photo bien reçue ! Je l'examine dès maintenant.");
-        refreshMessages();
-      }, 1500);
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -900,14 +913,6 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       };
       saveStoredMessages([...allMsgs, newMsg]);
       refreshMessages();
-
-      // Auto reply
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        sendChatMessage(activeContact.id, currentUserId, `Document "${file.name}" bien reçu et versé au dossier.`);
-        refreshMessages();
-      }, 1500);
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -1051,14 +1056,6 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     setAudioPreviewUrl(null);
     setRecordingSeconds(0);
     audioChunksRef.current = [];
-
-    // Réponse automatique courtoise
-    setIsTyping(true);
-    setTimeout(() => {
-      setIsTyping(false);
-      sendChatMessage(activeContact.id, currentUserId, "Message audio bien reçu, je l'écoute à l'instant !");
-      refreshMessages();
-    }, 1500);
   };
 
   const handleDownloadRestitutionPdf = async (rest: ChatRestitutionAttachment) => {
@@ -1081,28 +1078,21 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     });
   };
 
-  // Handle Send Message (with interactive reply)
+  // Handle Send Message (persistance réelle et temps réel)
   const handleSendMessage = () => {
     if (!inputMessage.trim() || !activeContact) return;
 
     const sentText = inputMessage.trim();
-    sendChatMessage(currentUserId, activeContact.id, sentText);
+    sendChatMessage(currentUserId, activeContact.id, sentText, {
+      propertyTitle: activeContact.propertyTitle
+    });
+    sendRealChatMessage(currentUserId, activeContact.id, sentText, {
+      propertyTitle: activeContact.propertyTitle
+    }).catch((err) => {
+      console.warn('Real chat message sync notice:', err);
+    });
     setInputMessage('');
     refreshMessages();
-
-    // Réponse d'accueil de l'assistance Support LocaTrust
-    if (activeContact.id === 'usr_support') {
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        sendChatMessage(
-          activeContact.id,
-          currentUserId,
-          "Bonjour ! Notre équipe d'assistance et support juridique LocaTrust a bien pris en compte votre message. Nous vous répondrons dans les plus brefs délais."
-        );
-        refreshMessages();
-      }, 1000);
-    }
   };
 
   // Confirm Signature for either contract or receipt

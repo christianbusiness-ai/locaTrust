@@ -431,7 +431,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
     const ownerPhone = profile?.phone || "+225 07 00 00 00 00";
-    const isAgencyUser = profile?.role === 'agence' || profile?.role === 'agent';
+    const isAgencyUser = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (profile?.role as string) === 'agent';
     const matchedProperty = getPropertyForApp(app.property_id);
 
     const ownerSigUrl = (app as any).owner_signature_url || getCertifiedSignatureDataUrl(
@@ -598,7 +598,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const matchedProperty = getPropertyForApp(app.property_id);
       const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
 
-      const isAgencyUser = profile?.role === 'agence' || profile?.role === 'agent';
+      const isAgencyUser = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (profile?.role as string) === 'agent';
 
       const ownerSig = (app as any).owner_signature_url || getCertifiedSignatureDataUrl(
         ownerName,
@@ -1185,7 +1185,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           <LegalContractGeneratorModal
             isOpen={true}
             onClose={() => setSelectedApplicationForContract(null)}
-            isAgency={profile?.role === 'agence' || profile?.role === 'agent'}
+            isAgency={(profile?.role as any) === 'agence' || (profile?.role as any) === 'agent'}
             onContractFinalized={({ contractNumber, tenantName, propertyTitle }) => {
               const chosenApp = selectedApplicationForContract;
               const competing = applications.filter(
@@ -1208,8 +1208,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               id: selectedApplicationForContract.id,
               tenantId: selectedApplicationForContract.tenant_id,
               tenantEmail: selectedApplicationForContract.tenant_email,
-              ownerId: selectedApplicationForContract.owner_id || user?.id,
-              ownerName: profile?.full_name || user?.user_metadata?.full_name || (profile?.role === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
+              ownerId: (selectedApplicationForContract as any).owner_id || user?.id,
+              ownerName: profile?.full_name || user?.user_metadata?.full_name || ((profile?.role as any) === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
               ownerPhone: profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00',
               tenantName: selectedApplicationForContract.tenant_name,
               tenantPhone: selectedApplicationForContract.tenant_phone,

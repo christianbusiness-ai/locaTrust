@@ -40,7 +40,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { createRentalApplication } from '@/lib/supabase/services';
-import { sendChatMessage } from '@/lib/messagingStore';
+import { sendChatMessage, sendRealChatMessage } from '@/lib/messagingStore';
 
 interface LocataireFeedViewProps {
   onOpenMessages?: (landlordName?: string) => void;
@@ -140,7 +140,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const applicantId = user?.id || profile?.id || 'usr_tenant';
       const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
       const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
-      const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
+      const applicantEmail = user?.email || (profile as any)?.email || 'locataire@locatrust.ci';
       const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
       const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
 
@@ -180,47 +180,65 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         }
       };
 
-      // 1. Sauvegarde dans localStorage immédiat pour que le bailleur voie la demande
-      try {
-        const existingRaw = localStorage.getItem('locatrust_rental_applications');
-        let currentApps: any[] = [];
-        if (existingRaw) {
-          try { currentApps = JSON.parse(existingRaw); } catch {}
-        }
-        const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
-        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+      // Contrôle strict anti-doublon (Point 3 : 1 seule demande active par locataire et bien)
+      const existingRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_rental_applications') : null;
+      let currentApps: any[] = [];
+      if (existingRaw) {
+        try { currentApps = JSON.parse(existingRaw); } catch {}
+      }
+      const isAlreadyActive = currentApps.some(
+        (a: any) =>
+          a.property_id === selectedRental.id &&
+          a.status !== 'refusee' &&
+          ((applicantId && a.tenant_id === applicantId) ||
+            (applicantEmail && a.tenant_email?.toLowerCase() === applicantEmail.toLowerCase()))
+      );
 
-        // Notification temps réel immédiate pour le bailleur
-        pushGlobalNotification({
-          title: 'Nouvelle demande de location reçue',
-          description: `${applicantName} a postulé pour le bien « ${selectedRental.title} ».`,
-          category: 'demande',
-          targetTab: 'applications'
-        });
+      if (isAlreadyActive) {
+        alert("Vous avez déjà envoyé une demande active pour ce logement. Votre candidature est actuellement en cours d'examen par le bailleur.");
+        setIsApplyModalOpen(false);
+        setIsSubmittingApp(false);
+        return;
+      }
 
-        // Stocker les coordonnées du propriétaire pour la messagerie
+      const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
+      localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+
+      // Notification temps réel immédiate pour le bailleur
+      pushGlobalNotification({
+        title: 'Nouvelle demande de location reçue',
+        description: `${applicantName} a postulé pour le bien « ${selectedRental.title} ».`,
+        category: 'demande',
+        targetTab: 'applications',
+        targetUserId: targetOwnerId,
+        senderUserId: applicantId
+      });
+
+      // Stocker les coordonnées du propriétaire pour la messagerie
+      if (typeof window !== 'undefined') {
         localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
         localStorage.setItem(
           'locatrust_contact_' + targetOwnerId,
           JSON.stringify({
             id: targetOwnerId,
-            name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+            name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur',
             phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-            role: 'Propriétaire Bailleur',
+            role: selectedRental.roleBadge || 'Propriétaire Bailleur',
             propertyTitle: selectedRental.title,
             avatar: selectedRental.authorAvatar || '',
             online: true,
           })
         );
-      } catch (err) {
-        console.warn('LocalStorage applications write warning:', err);
       }
 
       // 2. Envoi message automatique dans la messagerie du propriétaire
       try {
         const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
-        sendChatMessage(applicantId, targetOwnerId, introMsg);
+        sendRealChatMessage(applicantId, targetOwnerId, introMsg, {
+          propertyId: selectedRental.id,
+          propertyTitle: selectedRental.title
+        }).catch(() => {});
       } catch (msgErr) {
         console.warn('Chat message warning:', msgErr);
       }
@@ -255,7 +273,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     }
   };
 
-  const submitMessage = (e?: React.FormEvent) => {
+  const submitMessage = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     if (!selectedRental || isSendingDirectMessage) return;
 
@@ -266,20 +284,20 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
       const textToSend = directMessageText.trim() || 'Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.';
 
-      try {
-        sendChatMessage(applicantId, targetOwnerId, textToSend);
-      } catch (err) {
-        console.warn('Erreur envoi message:', err);
-      }
+      // Envoi réel dans Supabase + Cache Local
+      await sendRealChatMessage(applicantId, targetOwnerId, textToSend, {
+        propertyId: selectedRental.id,
+        propertyTitle: selectedRental.title
+      });
 
       // Mémoriser le contact actif pour que la messagerie ouvre directement la bonne discussion
       if (typeof window !== 'undefined') {
         localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
         const contactInfo = {
           id: targetOwnerId,
-          name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur certifié',
+          name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur',
           phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-          role: 'Propriétaire Bailleur',
+          role: selectedRental.roleBadge || 'Propriétaire Bailleur',
           propertyTitle: selectedRental.title || 'Bien immobilier',
           avatar: selectedRental.authorAvatar || '',
           online: true
@@ -299,7 +317,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       }
     } catch (error) {
       console.error('Error sending direct message:', error);
-      setIsMessageModalOpen(false);
+      alert("Impossible d'envoyer le message. Vérifiez votre connexion et réessayez.");
     } finally {
       setIsSendingDirectMessage(false);
     }
@@ -421,14 +439,28 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       id: p.id,
       ownerId: p.owner_id || p.owner?.id || p.agency_id || p.mandant_id || (p as any).ownerId || 'usr_owner',
       agencyId: p.agency_id || undefined,
-      ownerName: (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name || 'Bailleur certifié',
+      ownerName: (() => {
+        let name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
+        if (name && name.toLowerCase() === 'kk') name = 'KK';
+        return name || (Boolean(p.is_agency || p.owner?.account_type === 'agence') ? 'Agence Immobilière' : 'Bailleur certifié');
+      })(),
       ownerPhone: p.owner?.phone || p.mandant_phone || (p as any).owner_phone || '+225 07 00 00 00 00',
       ownerAvatar: p.owner?.avatar_url || (p as any).owner_avatar || '',
       ownerEmail: p.owner?.email || (p as any).owner_email || 'bailleur@locatrust.ci',
-      authorName: (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name || 'Bailleur certifié',
-      authorAvatar: p.owner?.avatar_url || (p as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name || 'Bailleur')}&background=0D8ABC&color=fff`,
+      authorName: (() => {
+        let name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
+        if (name && name.toLowerCase() === 'kk') name = 'KK';
+        return name || (Boolean(p.is_agency || p.owner?.account_type === 'agence') ? 'Agence Immobilière' : 'Bailleur certifié');
+      })(),
+      authorAvatar: (() => {
+        const real = p.owner?.avatar_url || (p as any).owner_avatar;
+        if (real) return real;
+        let name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
+        if (name && name.toLowerCase() === 'kk') name = 'KK';
+        return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Bailleur')}&background=1E40AF&color=fff`;
+      })(),
       isVerified: true,
-      roleBadge: Boolean(p.is_agency || (p as any).agency_name || p.owner?.account_type === 'agence') ? 'Agence Immobilière Agréée' : 'Propriétaire vérifié',
+      roleBadge: Boolean(p.is_agency || (p as any).agency_name || p.owner?.account_type === 'agence' || (p.owner?.role as string) === 'agence') ? 'Agence Immobilière Agréée' : 'Propriétaire vérifié',
       locationPublished: `${p.city || 'Abidjan'}, ${p.commune || p.quartier || ''} • Publication certifiée`,
       badge: 'À LOUER',
       title: p.title || `${p.type || 'Logement'} à ${p.commune || p.city}`,

@@ -27,6 +27,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
   const [date, setDate] = useState('2026-09-01');
   const [message, setMessage] = useState('Bonjour, je souhaite réserver ce bien et planifier la constitution du dossier de location.');
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
   if (!property) return null;
 
@@ -36,14 +37,14 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     const applicantId = user?.id || profile?.id || 'usr_tenant';
     const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
     const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
-    const applicantEmail = profile?.email || user?.email || 'locataire@locatrust.ci';
+    const applicantEmail = user?.email || (profile as any)?.email || 'locataire@locatrust.ci';
     const applicantAvatar = profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
 
     const targetOwnerId = property.owner_id || (property as any).agency_id || property.owner?.id || 'usr_owner';
     const targetOwnerName = (property as any).agency_name || property.owner?.full_name || (property as any).owner_name || (property as any).mandant_name || 'Propriétaire Bailleur';
     const targetOwnerAvatar = property.owner?.avatar_url || (property as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(targetOwnerName)}&background=1E40AF&color=fff`;
     const targetOwnerPhone = property.owner?.phone || (property as any).owner_phone || '+225 07 00 00 00 00';
-    const isAgency = Boolean((property as any).is_agency || (property as any).agency_name || property.owner?.account_type === 'agence');
+    const isAgency = Boolean((property as any).is_agency || (property as any).agency_name || (property.owner as any)?.account_type === 'agence');
 
     const realRent = Number(property.rent || (property as any).price || 0);
     const realCaution = Number(
@@ -90,6 +91,21 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       if (existingRaw) {
         try { currentApps = JSON.parse(existingRaw); } catch {}
       }
+
+      // Règle métier : 1 seule demande active autorisée pour le même tenant + property
+      const alreadyExists = currentApps.some(
+        (a: any) =>
+          a.property_id === property.id &&
+          (a.tenant_id === applicantId || (user?.email && a.tenant_email === user.email)) &&
+          a.status !== 'refusee'
+      );
+
+      if (alreadyExists) {
+        setDuplicateWarning("Vous avez déjà envoyé une demande active pour ce logement.");
+        return;
+      }
+
+      setDuplicateWarning(null);
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
@@ -185,6 +201,12 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {duplicateWarning && (
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs font-bold flex items-center gap-2 animate-fadeIn">
+              <span>⚠️</span>
+              <span>{duplicateWarning}</span>
+            </div>
+          )}
           <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-3">
             <img
               src={property.photos?.[0]}

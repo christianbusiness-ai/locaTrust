@@ -142,7 +142,7 @@ export function createZipArchive(files: ZipFileInput[]): Uint8Array {
 export function downloadZipArchive(filename: string, files: ZipFileInput[]): void {
   try {
     const zipBytes = createZipArchive(files);
-    const blob = new Blob([zipBytes], { type: 'application/zip' });
+    const blob = new Blob([zipBytes as any], { type: 'application/zip' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

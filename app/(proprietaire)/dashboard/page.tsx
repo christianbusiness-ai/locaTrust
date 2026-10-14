@@ -36,6 +36,7 @@ import {
 } from '@/components/modals/InteractiveModals';
 import { ShieldAlert, ArrowRight } from 'lucide-react';
 import { UserRole } from '@/types/database.types';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 interface ProprietaireDashboardPageProps {
   currentRole?: UserRole;

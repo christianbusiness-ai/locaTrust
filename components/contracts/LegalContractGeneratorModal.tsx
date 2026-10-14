@@ -50,14 +50,23 @@ import {
   getStoredMessages,
   saveStoredMessages,
   ChatMessage,
-  ChatContractAttachment
+  ChatContractAttachment,
+  sendContractToTenant
 } from '@/lib/messagingStore';
+import { supabase } from '@/src/lib/supabase';
+import { useAuth } from '@/src/context/AuthContext';
 
 interface LegalContractGeneratorModalProps {
   isOpen: boolean;
   onClose: () => void;
   isAgency?: boolean;
   initialData?: {
+    id?: string;
+    tenantId?: string;
+    tenantEmail?: string;
+    ownerId?: string;
+    ownerName?: string;
+    ownerPhone?: string;
     tenantName?: string;
     tenantPhone?: string;
     tenantCni?: string;
@@ -110,6 +119,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   initialData,
   onContractFinalized
 }) => {
+  const { user, profile } = useAuth();
+
   useEffect(() => {
     if (isOpen && typeof document !== 'undefined') {
       document.body.style.overflow = 'hidden';
@@ -126,9 +137,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [tenantPhone, setTenantPhone] = useState<string>(initialData?.tenantPhone || '+225 07 08 09 10 11');
   const [tenantCni, setTenantCni] = useState<string>(initialData?.tenantCni || 'CI-0029481920');
   const [ownerName, setOwnerName] = useState<string>(
-    isAgency ? 'Immobilière du Golf Abidjan' : 'Kouassi Amadou'
+    initialData?.ownerName || profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur')
   );
-  const [ownerPhone, setOwnerPhone] = useState<string>('+225 01 22 33 44 55');
+  const [ownerPhone, setOwnerPhone] = useState<string>(
+    initialData?.ownerPhone || profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00'
+  );
   const [mandantName, setMandantName] = useState<string>(initialData?.mandantName || '');
 
   const [propertyTitle, setPropertyTitle] = useState<string>(initialData?.propertyTitle || 'Appartement 3 pièces');
@@ -199,13 +212,26 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   // Zoom QR Code modal
   const [showQrZoomModal, setShowQrZoomModal] = useState<boolean>(false);
 
+  const prevIsOpenRef = React.useRef(false);
+
   React.useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       setCurrentStep('form');
+      if (initialData?.tenantName) {
+        setAccompanyingMessage(
+          `Bonjour ${initialData.tenantName}, voici le contrat de bail d'habitation certifié conforme Loi n° 2019-576 pour « ${initialData.propertyTitle || 'le logement'} ».\nJ'y ai apposé ma signature électronique certifiée. Merci de bien vouloir le relire et y apposer votre signature manuscrite pour finaliser la location.`
+        );
+      }
+    }
+    prevIsOpenRef.current = isOpen;
+
+    if (isOpen) {
       if (initialData) {
         if (initialData.tenantName) setTenantName(initialData.tenantName);
         if (initialData.tenantPhone) setTenantPhone(initialData.tenantPhone);
         if (initialData.tenantCni) setTenantCni(initialData.tenantCni);
+        if (initialData.ownerName) setOwnerName(initialData.ownerName);
+        if (initialData.ownerPhone) setOwnerPhone(initialData.ownerPhone);
         if (initialData.propertyTitle) setPropertyTitle(initialData.propertyTitle);
         if (initialData.propertyCity) setPropertyCity(initialData.propertyCity);
         if (initialData.propertyCommune) setPropertyCommune(initialData.propertyCommune);
@@ -316,8 +342,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     "1. Interdiction de percer les carreaux de faïence de la salle de bain.\n2. Utilisation conforme des espaces communs et tris des ordures dans le local poubelle."
   );
 
-  // Workflow steps: 'form' -> 'verification' -> 'preview' -> 'success'
-  const [currentStep, setCurrentStep] = useState<'form' | 'verification' | 'preview' | 'success'>('form');
+  // Workflow steps: 'form' -> 'verification' -> 'preview' -> 'transmission' -> 'success'
+  const [currentStep, setCurrentStep] = useState<'form' | 'verification' | 'preview' | 'transmission' | 'success'>('form');
+  const [isTransmitting, setIsTransmitting] = useState<boolean>(false);
+  const [accompanyingMessage, setAccompanyingMessage] = useState<string>(
+    `Bonjour, voici votre contrat de bail d'habitation certifié conforme Loi n° 2019-576. J'y ai apposé ma signature manuscrite électronique certifiée. Merci de bien vouloir le relire et y apposer votre signature pour finaliser la location.`
+  );
 
   // Real Handwritten Signature States (LocaTrust Legal Digital Signatures)
   const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(null);
@@ -727,12 +757,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     // 0. Le bailleur doit obligatoirement avoir apposé sa propre signature
     if (!ownerSignatureUrl) {
       alert("Veuillez d'abord apposer votre signature manuscrite certifiée en tant que bailleur.");
-      setActiveSigningParty('bailleur');
+      setActiveSigningParty('proprietaire');
       return;
     }
 
+    setIsTransmitting(true);
     const targetTenantId = (initialData as any)?.tenant_id || (initialData as any)?.tenantId || 'usr_tenant';
-    const targetOwnerId = (initialData as any)?.owner_id || (initialData as any)?.ownerId || 'usr_owner';
+    const targetOwnerId = (initialData as any)?.owner_id || (initialData as any)?.ownerId || user?.id || 'usr_owner';
 
     // 1. Enregistrement automatique et dynamique dans le registre de vérification officiel LocaTrust
     try {
@@ -831,6 +862,28 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       }
     } catch (e) {
       console.warn('Erreur mise à jour candidatures:', e);
+    }
+
+    // Inscription directe dans la table Supabase contracts
+    try {
+      await supabase.from('contracts').insert({
+        contract_number: contractNumber,
+        owner_id: targetOwnerId.startsWith('usr_') || targetOwnerId.includes('-') ? targetOwnerId : (user?.id || targetOwnerId),
+        tenant_id: targetTenantId,
+        property_id: (initialData as any)?.propertyId || (initialData as any)?.property_id,
+        rent: rent,
+        caution_amount: rent * cautionMonths,
+        charges: chargesAmount,
+        duration_months: durationMonths,
+        start_date: startDate,
+        status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
+        owner_signed: true,
+        tenant_signed: Boolean(tenantSignatureUrl),
+        owner_signature_url: ownerSignatureUrl,
+        tenant_signature_url: tenantSignatureUrl
+      });
+    } catch (dbErr) {
+      console.warn('Supabase contract insert notice:', dbErr);
     }
 
     // 4. Inscription dans le registre des contrats (locatrust_contracts)
@@ -933,6 +986,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     }
 
     // 7. Bascule vers l'écran de confirmation
+    setIsTransmitting(false);
     setCurrentStep('success');
   };
 
@@ -1005,6 +1059,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 {currentStep === 'form' && 'Formulaire de Préparation du Bail Certifié Ivoirien'}
                 {currentStep === 'verification' && 'Écran de Vérification & Compliance du Bail'}
                 {currentStep === 'preview' && 'Contrat de Bail Final Certifié (41 Points Légaux)'}
+                {currentStep === 'transmission' && 'Transmission du Contrat de Bail au Locataire'}
                 {currentStep === 'success' && 'Contrat Certifié & Transmis avec Succès !'}
               </h3>
               <p className="text-xs text-slate-500 font-medium">
@@ -1779,7 +1834,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                           </div>
                           <div>
                             <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1">
-                              ⚠️ {clause.alertLevelLabel || 'NIVEAU 3 - NON-CONFORMITÉ'}
+                              ⚠️ {(clause as any).alertLevelLabel || (clause.alertLevel ? `NIVEAU ${clause.alertLevel} - NON-CONFORMITÉ` : 'NIVEAU 3 - NON-CONFORMITÉ')}
                             </span>
                             <h4 className="text-sm font-black text-rose-950 mt-1">{clause.title}</h4>
                             <span className="text-[11px] font-extrabold text-rose-700">
@@ -1917,7 +1972,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       <div className="flex items-start justify-between">
                         <div>
                           <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white text-[9px] font-black uppercase tracking-wider mr-2 inline-block">
-                            {clause.alertLevelLabel || 'NIVEAU 2 - AVERTISSEMENT'}
+                            {(clause as any).alertLevelLabel || (clause.alertLevel ? `NIVEAU ${clause.alertLevel} - AVERTISSEMENT` : 'NIVEAU 2 - AVERTISSEMENT')}
                           </span>
                           <span className="font-black text-slate-900">{clause.title}</span>
                         </div>
@@ -1995,7 +2050,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     Avertissement Légal Officiel LocaTrust
                   </span>
                   <p className="text-[11px] text-slate-600 font-medium">
-                    {analysisReport.disclaimer || "LocaTrust est un assistant technologique d'aide à la rédaction et à la vérification de conformité contractuelle. Il ne se substitue ni au conseil d'un professionnel du droit habilité (avocat, notaire, commissaire de justice), ni au pouvoir souverain d'appréciation des juridictions ivoiriennes et communautaires compétentes."}
+                    {(analysisReport as any)?.disclaimer || "LocaTrust est un assistant technologique d'aide à la rédaction et à la vérification de conformité contractuelle. Il ne se substitue ni au conseil d'un professionnel du droit habilité (avocat, notaire, commissaire de justice), ni au pouvoir souverain d'appréciation des juridictions ivoiriennes et communautaires compétentes."}
                   </p>
                 </div>
               </div>
@@ -2554,13 +2609,144 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 )}
                 <button
                   type="button"
-                  onClick={handleFinalSignAndTransmit}
-                  className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-2"
+                  onClick={() => {
+                    if (!ownerSignatureUrl) {
+                      setActiveSigningParty('proprietaire');
+                    } else {
+                      setCurrentStep('transmission');
+                    }
+                  }}
+                  className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Signer & Transmettre au Locataire</span>
+                  <span>Transmettre le contrat</span>
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 3.5: TRANSMISSION FORM TO TENANT (Dedicated transmission screen) */}
+        {currentStep === 'transmission' && (
+          <div className="flex flex-col gap-5 py-3 animate-fadeIn max-w-2xl mx-auto w-full">
+            {/* Header info */}
+            <div className="p-4 rounded-2xl bg-blue-50/80 border border-blue-200 flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+                <Send className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <h4 className="text-sm font-black text-blue-950">
+                  Prêt pour transmission immédiate au locataire
+                </h4>
+                <p className="text-xs text-blue-800 leading-relaxed">
+                  Le contrat de bail 41-points va être envoyé directement dans la messagerie interne de <strong>{tenantName}</strong> avec vos signatures et le QR Code légal d'authenticité.
+                </p>
+              </div>
+            </div>
+
+            {/* Document Details Card */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-slate-900 text-white flex items-center justify-center shrink-0 shadow-md">
+                <FileText className="w-6 h-6 text-amber-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-black text-slate-900 text-sm truncate">
+                    {propertyTitle}
+                  </h4>
+                  <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200 shrink-0">
+                    N° {contractNumber}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">{propertyAddress}</p>
+                <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-600 font-semibold">
+                  <span>Loyer : <strong className="text-slate-900">{formatFCFA(rent)}/mois</strong></span>
+                  <span>•</span>
+                  <span>Caution : <strong className="text-slate-900">{formatFCFA(rent * cautionMonths)}</strong></span>
+                  <span>•</span>
+                  <span>Durée : <strong className="text-slate-900">{durationMonths} mois</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Destinataire Card */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-black text-sm shrink-0">
+                  {tenantName ? tenantName.slice(0, 2).toUpperCase() : 'LO'}
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Destinataire (Preneur)</span>
+                  <h4 className="text-sm font-black text-slate-900">{tenantName}</h4>
+                  <span className="text-xs text-slate-500 font-medium">{tenantPhone} • CNI: {tenantCni}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 shrink-0">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>Dossier certifié</span>
+              </div>
+            </div>
+
+            {/* Signature Status */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <PenTool className="w-5 h-5 text-blue-600" />
+                <div>
+                  <span className="text-xs font-black text-slate-900 block">Signature du bailleur</span>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    {ownerSignatureUrl ? 'Votre signature manuscrite certifiée est apposée.' : 'Signature requise avant la transmission.'}
+                  </span>
+                </div>
+              </div>
+              {ownerSignatureUrl ? (
+                <span className="px-3 py-1 rounded-xl bg-emerald-100 text-emerald-800 text-xs font-extrabold flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5" /> Signé
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveSigningParty('proprietaire')}
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow"
+                >
+                  Signer maintenant
+                </button>
+              )}
+            </div>
+
+            {/* Accompanying message textarea */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-black text-slate-700 flex items-center justify-between">
+                <span>Message d'accompagnement dans la messagerie</span>
+                <span className="text-[11px] text-slate-400 font-normal">Personnalisable</span>
+              </label>
+              <textarea
+                rows={4}
+                value={accompanyingMessage}
+                onChange={(e) => setAccompanyingMessage(e.target.value)}
+                className="w-full p-3.5 rounded-2xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none bg-slate-50/50 leading-relaxed"
+                placeholder="Écrivez un message accompagnant la transmission du bail..."
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-4 border-t gap-3">
+              <button
+                type="button"
+                onClick={() => setCurrentStep('preview')}
+                className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+              >
+                &laquo; Retour à l'aperçu
+              </button>
+
+              <button
+                type="button"
+                disabled={isTransmitting}
+                onClick={handleFinalSignAndTransmit}
+                className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs shadow-lg flex items-center gap-2 transition-all disabled:opacity-50"
+              >
+                <Send className="w-4 h-4" />
+                <span>{isTransmitting ? 'Envoi en cours...' : 'Envoyer le contrat au locataire'}</span>
+              </button>
             </div>
           </div>
         )}
@@ -2674,6 +2860,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
+              if (currentStep === 'preview') {
+                setCurrentStep('transmission');
+              }
             } else {
               setTenantSignatureUrl(signatureUrl);
             }

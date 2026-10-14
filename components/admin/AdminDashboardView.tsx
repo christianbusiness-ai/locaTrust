@@ -304,7 +304,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           doc_number: p.cni_number || (p.verification_status === 'en_attente' || p.verification_status === 'verifie' ? `CI-${p.id.slice(0, 8).toUpperCase()}` : 'Non renseigné'),
           file_url: p.id_document_url || '',
           issue_date: p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : 'Récent',
-          status: p.verification_status === 'verifie' ? 'verifie' : (p.verification_status === 'refuse' || p.verification_status === 'rejete' ? 'refuse' : (p.verification_status === 'en_attente' ? 'en_attente' : 'non_soumis')),
+          status: p.verification_status === 'verifie' ? 'verifie' : (p.verification_status === 'refuse' || p.verification_status === 'rejete' ? 'refuse' : 'en_attente'),
           submitted_at: p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : 'Récent'
         }));
       setDocRequests(docs);
@@ -1433,7 +1433,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <div className="flex flex-col">
                     <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
                       {u.name}
-                      {u.verified && <ShieldCheck className="w-3.5 h-3.5 text-blue-600" title="Identité CNI/RCCM Certifiée" />}
+                      {u.verified && <span title="Identité CNI/RCCM Certifiée"><ShieldCheck className="w-3.5 h-3.5 text-blue-600" /></span>}
                     </span>
                     <span className="text-[11px] text-slate-400">
                       {u.email} • {u.phone} • <strong className="capitalize text-slate-600">{u.role}</strong>

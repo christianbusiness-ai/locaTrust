@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { Heart } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 
@@ -34,7 +34,7 @@ export const FavoritesWidget: React.FC = () => {
     <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-card flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="font-bold text-slate-900 text-sm">Annonces favorites</span>
-        <Link href="/locataire/favoris" className="text-xs text-brand-600 font-semibold hover:underline">
+        <Link to="/locataire/favoris" className="text-xs text-brand-600 font-semibold hover:underline">
           Voir tout
         </Link>
       </div>

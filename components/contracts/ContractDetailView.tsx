@@ -24,7 +24,11 @@ import {
   MessageCircle,
   Send,
   Copy,
-  Check
+  Check,
+  Lock,
+  Scale,
+  RotateCcw,
+  PenTool
 } from 'lucide-react';
 import { Logo } from '@/components/common/Logo';
 import jsPDF from 'jspdf';
@@ -35,10 +39,10 @@ import { SignatureModal } from '@/components/common/SignatureModal';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { formatFCFA } from '@/lib/utils';
 import { sendContractReminderToTenant, sendContractToTenant } from '@/lib/messagingStore';
-import { LegalContractAnalyzerModal } from '@/components/contracts/LegalContractAnalyzerModal';
-import { PenTool, Lock, Scale } from 'lucide-react';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { triggerCelebration } from '@/lib/celebration';
+import { useAuth } from '@/src/context/AuthContext';
+import { LegalContractAnalyzerModal } from './LegalContractAnalyzerModal';
 
 interface ContractDetailViewProps {
   onBack?: () => void;
@@ -51,91 +55,89 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
   contractNumber = 'CT-2026-00058',
   isAgency = false,
 }) => {
+  const { user, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'details' | 'document'>('details');
 
-  const isPendingSignature = contractNumber === 'CT-2026-00059';
+  // Load real contract from localStorage or props
+  const realContract = React.useMemo(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_contracts');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            const found = parsed.find(
+              (c: any) => c.contract_number === contractNumber || c.id === contractNumber
+            );
+            if (found) return found;
+          }
+        }
+      } catch {}
+    }
+    return null;
+  }, [contractNumber]);
 
-  const tenantData = contractNumber === 'CT-2026-00059'
-    ? {
-        name: 'Kouamé Yves',
-        phone: '+225 07 45 89 12 00',
-        email: 'kouame.yves@email.com',
-        cni: 'CI004789123',
-        address: 'Angré 8ème Tranche, Cocody - Abidjan',
-        propertyTitle: 'Villa Duplex 4 pièces - Cocody Angré 8ème Tranche',
-        propertyAddress: 'Cocody Angré 8ème Tranche, Abidjan - Côte d\'Ivoire',
-        rent: 250000,
-        caution: 500000,
-        charges: 15000,
-        startDate: '01/10/2026',
-        duration: 12,
-        dateSignature: '24 septembre 2026',
-        periode: '01/10/2026 au 30/09/2027',
-        avatar: '',
-      }
-    : contractNumber === 'CT-2026-00060'
-    ? {
-        name: 'Touré Moussa',
-        phone: '+225 07 12 34 56 78',
-        email: 'toure.moussa@email.com',
-        cni: 'CI008912345',
-        address: 'Riviera Palmeraie, Cocody - Abidjan',
-        propertyTitle: 'Appartement 3 pièces Standing - Riviera Palmeraie',
-        propertyAddress: 'Riviera Palmeraie, Cocody, Abidjan - Côte d\'Ivoire',
-        rent: 180000,
-        caution: 360000,
-        charges: 10000,
-        startDate: '15/10/2026',
-        duration: 12,
-        dateSignature: '28 septembre 2026',
-        periode: '15/10/2026 au 14/10/2027',
-        avatar: '',
-      }
-    : contractNumber === 'CT-2026-00061'
-    ? {
-        name: 'Bamba Fatou',
-        phone: '+225 05 98 76 54 32',
-        email: 'bamba.fatou@email.com',
-        cni: 'CI003456789',
-        address: 'Zone 4, Marcory - Abidjan',
-        propertyTitle: 'Studio meublé moderne - Marcory Zone 4',
-        propertyAddress: 'Marcory Zone 4, Abidjan - Côte d\'Ivoire',
-        rent: 120000,
-        caution: 240000,
-        charges: 8000,
-        startDate: '01/11/2026',
-        duration: 12,
-        dateSignature: '30 septembre 2026',
-        periode: '01/11/2026 au 31/10/2027',
-        avatar: '',
-      }
-    : {
-        name: 'Locataire',
-        phone: '+225 05 67 89 45 12',
-        email: 'contact@locatrust.ci',
-        cni: 'CI002894129',
-        address: 'Riviera 3, Cocody - Abidjan',
-        propertyTitle: 'Appartement 3 pièces - Cocody Riviera 3',
-        propertyAddress: 'Cocody Riviera 3, Abidjan - Côte d\'Ivoire',
-        rent: 75000,
-        caution: 150000,
-        charges: 5000,
-        startDate: '01/07/2026',
-        duration: 12,
-        dateSignature: '01 juillet 2026',
-        periode: '01/07/2026 au 30/06/2027',
-        avatar: '',
+  const contract = realContract;
+
+  const ownerDisplayName =
+    realContract?.owner?.full_name ||
+    profile?.full_name ||
+    user?.user_metadata?.full_name ||
+    (isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur');
+
+  const ownerDisplayPhone =
+    realContract?.owner?.phone ||
+    profile?.phone ||
+    user?.user_metadata?.phone ||
+    '+225 07 00 00 00 00';
+
+  const tenantData = React.useMemo(() => {
+    if (realContract) {
+      return {
+        name: realContract.tenant?.full_name || realContract.tenant_name || 'Locataire',
+        phone: realContract.tenant?.phone || realContract.tenant_phone || '+225 07 00 00 00 00',
+        email: realContract.tenant?.email || realContract.tenant_email || 'locataire@locatrust.ci',
+        cni: realContract.tenant?.cni_number || realContract.tenant_cni || 'CI-00000000',
+        address: realContract.property?.address || realContract.property_address || 'Abidjan, Côte d\'Ivoire',
+        propertyTitle: realContract.property?.title || realContract.property_title || 'Logement loué',
+        propertyAddress: realContract.property?.address || realContract.property_address || 'Côte d\'Ivoire',
+        rent: Number(realContract.rent || 0),
+        caution: Number(realContract.caution_amount || 0),
+        charges: Number(realContract.charges || 0),
+        startDate: realContract.start_date || '01/10/2026',
+        duration: Number(realContract.duration_months || 12),
+        dateSignature: realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : 'Date non définie',
+        periode: `${realContract.start_date || '01/10/2026'} (12 mois)`,
+        avatar: realContract.tenant?.avatar_url || ''
       };
+    }
+    return {
+      name: 'Locataire Preneur',
+      phone: '+225 07 00 00 00 00',
+      email: 'locataire@locatrust.ci',
+      cni: 'CI002894129',
+      address: 'Abidjan, Côte d\'Ivoire',
+      propertyTitle: 'Bien immobilier',
+      propertyAddress: 'Abidjan - Côte d\'Ivoire',
+      rent: 150000,
+      caution: 300000,
+      charges: 10000,
+      startDate: '01/10/2026',
+      duration: 12,
+      dateSignature: '24 septembre 2026',
+      periode: '01/10/2026 au 30/09/2027',
+      avatar: ''
+    };
+  }, [realContract]);
 
   const [showQrZoomModal, setShowQrZoomModal] = useState(false);
 
-  // Real Handwritten Signature States
+  // Real Handwritten Signature States from real contract
   const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    const ownerName = isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur";
-    return getCertifiedSignatureDataUrl(ownerName, isAgency ? 'agence' : 'bailleur');
+    return realContract?.owner_signature_url || realContract?.ownerSignatureUrl || null;
   });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(() => {
-    return isPendingSignature ? null : getCertifiedSignatureDataUrl(tenantData.name, 'locataire');
+    return realContract?.tenant_signature_url || realContract?.tenantSignatureUrl || null;
   });
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -240,9 +242,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     await generateOfficialContractPdf({
       contractNumber,
       isAgency,
-      ownerName: isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur",
-      mandantName: isAgency ? ((contract?.property as any)?.mandant_name || (contract as any)?.mandant_name) : undefined,
-      ownerPhone: "+225 07 89 45 12 34",
+      ownerName: ownerDisplayName,
+      mandantName: isAgency ? ((realContract?.property as any)?.mandant_name || (realContract as any)?.mandant_name) : undefined,
+      ownerPhone: ownerDisplayPhone,
       tenantName: tenantData.name,
       tenantPhone: tenantData.phone,
       tenantCni: tenantData.cni,
@@ -287,7 +289,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       cautionAmount: tenantData.caution,
       durationMonths: tenantData.duration,
       startDate: tenantData.startDate,
-      ownerName: isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur",
+      ownerName: ownerDisplayName,
       tenantName: tenantData.name,
       ownerSigned: Boolean(ownerSignatureUrl),
       tenantSigned: Boolean(tenantSignatureUrl)
@@ -689,7 +691,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                     <Building2 className="w-6 h-6" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-xl font-black text-slate-900 tracking-tight">Société Immobilière de l'Éléphant</span>
+                    <span className="text-xl font-black text-slate-900 tracking-tight">{ownerDisplayName}</span>
                     <span className="text-xs text-blue-600 font-extrabold uppercase tracking-wider">Agence Immobilière Agréée</span>
                   </div>
                 </div>
@@ -863,7 +865,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   {isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE' : 'LE PROPRIÉTAIRE (BAILLEUR)'}
                 </span>
                 <span className="font-bold text-slate-900 text-xs">
-                  {isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur"}
+                  {ownerDisplayName}
                 </span>
 
                 <div className="min-h-[70px] flex items-center justify-center my-2 p-2 bg-white rounded-xl border border-slate-200 shadow-inner">
@@ -994,7 +996,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             }
             setActiveSigningParty(null);
           }}
-          signerName={activeSigningParty === 'proprietaire' ? (isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur") : contract?.tenant?.full_name || "Locataire"}
+          signerName={activeSigningParty === 'proprietaire' ? ownerDisplayName : tenantData.name}
           signerRole={activeSigningParty}
           documentTitle="Contrat de Bail d'Habitation"
           documentNumber={contractNumber}
@@ -1217,7 +1219,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col gap-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Bailleur :</span>
-                <span className="font-bold text-slate-900">{isAgency ? "Société Immobilière de l'Éléphant" : contract?.owner?.full_name || "Bailleur"}</span>
+                <span className="font-bold text-slate-900">{ownerDisplayName}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-semibold">Locataire lié :</span>

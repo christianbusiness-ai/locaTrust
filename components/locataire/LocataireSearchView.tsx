@@ -207,7 +207,7 @@ export const LocataireSearchView: React.FC = () => {
         owner_avatar: (selectedProperty.owner as any)?.avatar_url || (selectedProperty as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || 'Bailleur')}&background=1E40AF&color=fff`,
         agency_id: (selectedProperty as any).agency_id,
         agency_name: (selectedProperty as any).agency_name,
-        is_agency: Boolean((selectedProperty as any).is_agency || (selectedProperty as any).agency_name || selectedProperty.owner?.account_type === 'agence'),
+        is_agency: Boolean((selectedProperty as any).is_agency || (selectedProperty as any).agency_name || (selectedProperty.owner as any)?.account_type === 'agence'),
         tenant_signed: false,
         comment: applyMessage,
         documents: {
@@ -435,7 +435,7 @@ export const LocataireSearchView: React.FC = () => {
               {/* Media Container */}
               <div className="relative h-52 bg-slate-900 overflow-hidden">
                 <img
-                  src={property.photos[0]}
+                  src={property.photos?.[0] || 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=800&q=80'}
                   alt={property.title}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
                 />

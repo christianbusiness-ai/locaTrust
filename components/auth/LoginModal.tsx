@@ -29,6 +29,7 @@ import {
   resend2FAChallenge,
   TwoFactorChallenge
 } from '@/lib/supabase/services';
+import { supabase } from '@/src/lib/supabase';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -190,7 +191,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           id: data.user.id,
           role: userRole,
           full_name: profile?.full_name || data.user.user_metadata?.full_name || 'Utilisateur LocaTrust',
-          email: data.user.email,
+          email: data.user.email || emailToAuth,
           phone: profile?.phone || data.user.user_metadata?.phone || '',
           avatar_url: profile?.avatar_url || '',
           verification_status: profile?.verification_status || 'non_verifie',

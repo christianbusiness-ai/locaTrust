@@ -199,7 +199,8 @@ export const BiensView: React.FC<BiensViewProps> = ({
             Réservé
           </span>
         );
-      case 'fin_de_contrat':
+      case 'fin_contrat':
+      case 'fin_de_contrat' as any:
         return (
           <span className="px-3 py-1 rounded-full bg-purple-600 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
             <AlertCircle className="w-3 h-3 text-white" />

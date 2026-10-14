@@ -178,7 +178,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const videoInputRef = React.useRef<HTMLInputElement>(null);
 
   // Mandats spécifiques pour les Agences Immobilières (AUCUN mandant fictif)
-  const isAgency = profile?.account_type === 'agence' || profile?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
+  const isAgency = profile?.account_type === 'agence' || (profile?.role as any) === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
     if (typeof window !== 'undefined') {
       try {

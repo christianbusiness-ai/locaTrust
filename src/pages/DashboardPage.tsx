@@ -30,7 +30,7 @@ export const DashboardPage: React.FC = () => {
   return (
     <Suspense fallback={<DashboardPageSkeleton />}>
       {profile?.role === 'admin' ? (
-        <AdminDashboardPage currentRole="admin" isDemo={false} onExitToLanding={handleExitToLanding} />
+        <AdminDashboardPage currentRole="admin" onExitToLanding={handleExitToLanding} />
       ) : profile?.account_type === 'proprietaire' ? (
         <ProprietaireDashboardPage currentRole="proprietaire" isDemo={false} onExitToLanding={handleExitToLanding} />
       ) : profile?.account_type === 'agence' ? (

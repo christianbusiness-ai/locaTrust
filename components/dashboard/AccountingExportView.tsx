@@ -47,7 +47,7 @@ export const AccountingExportView: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats'>('resultats');
 
   // Mandants pour les agences (Multi-Bailleurs)
-  const isAgency = profile?.account_type === 'agence' || profile?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
+  const isAgency = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
     if (typeof window !== 'undefined') {
       try {
