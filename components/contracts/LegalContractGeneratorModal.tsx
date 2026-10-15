@@ -857,13 +857,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
           if (targetAppId) {
             try {
-              supabase.from('rental_applications').update({
+              await supabase.from('rental_applications').update({
                 status: 'validee',
-                contract_number: contractNumber,
-                owner_signed: true,
-                owner_signature_url: ownerSignatureUrl
+                contract_number: contractNumber
               }).eq('id', targetAppId);
-            } catch {}
+            } catch (err: any) {
+              console.warn('Erreur mise à jour rental_applications:', err?.message);
+            }
           }
         }
       }
@@ -871,24 +871,39 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       console.warn('Erreur mise à jour candidatures:', e);
     }
 
-    // Inscription directe dans la table Supabase contracts
+    // Inscription directe dans la table Supabase contracts avec les colonnes exactes
     try {
-      await supabase.from('contracts').insert({
-        contract_number: contractNumber,
-        owner_id: targetOwnerId.startsWith('usr_') || targetOwnerId.includes('-') ? targetOwnerId : (user?.id || targetOwnerId),
-        tenant_id: targetTenantId,
-        property_id: (initialData as any)?.propertyId || (initialData as any)?.property_id,
-        rent: rent,
-        caution_amount: rent * cautionMonths,
-        charges: chargesAmount,
-        duration_months: durationMonths,
-        start_date: startDate,
-        status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
-        owner_signed: true,
-        tenant_signed: Boolean(tenantSignatureUrl),
-        owner_signature_url: ownerSignatureUrl,
-        tenant_signature_url: tenantSignatureUrl
-      });
+      const isValidUuid = (str?: string) =>
+        Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+      const rawPropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
+      const finalOwnerId = isValidUuid(targetOwnerId) ? targetOwnerId : (user?.id && isValidUuid(user.id) ? user.id : null);
+      const finalTenantId = isValidUuid(targetTenantId) ? targetTenantId : null;
+      const finalPropId = isValidUuid(rawPropId) ? rawPropId : null;
+
+      if (finalOwnerId && finalTenantId && finalPropId) {
+        const { error: cntErr } = await supabase.from('contracts').insert({
+          contract_number: contractNumber,
+          owner_id: finalOwnerId,
+          tenant_id: finalTenantId,
+          property_id: finalPropId,
+          monthly_rent: Number(rent || 0),
+          caution_amount: Number(rent * cautionMonths || 0),
+          charges_amount: Number(chargesAmount || 0),
+          duration_months: Number(durationMonths || 12),
+          start_date: startDate || new Date().toISOString().split('T')[0],
+          status: 'actif',
+          owner_signed: true,
+          owner_signed_at: new Date().toISOString(),
+          tenant_signed: Boolean(tenantSignatureUrl),
+          tenant_signed_at: tenantSignatureUrl ? new Date().toISOString() : null,
+          owner_signature: ownerSignatureUrl || null,
+          tenant_signature: tenantSignatureUrl || null
+        });
+        if (cntErr) {
+          console.error('Erreur insertion Supabase contracts:', cntErr.message);
+        }
+      }
     } catch (dbErr) {
       console.warn('Supabase contract insert notice:', dbErr);
     }

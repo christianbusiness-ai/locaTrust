@@ -73,8 +73,17 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
       triggerCelebration('send');
       setSent(true);
     } catch (err: any) {
-      console.error('Erreur envoi chat:', err);
-      setErrorMessage("Impossible d'envoyer le message. Vérifiez votre connexion et réessayez.");
+      console.error('Erreur technique détaillée envoi message:', {
+        message: err?.message,
+        code: err?.code,
+        details: err?.details,
+        applicantId,
+        targetOwnerId
+      });
+      const userMsg = err?.message?.includes('violates')
+        ? "Action non autorisée. Veuillez vérifier votre session ou vous reconnecter."
+        : err?.message || "Impossible d'envoyer le message pour le moment. Veuillez réessayer.";
+      setErrorMessage(userMsg);
     } finally {
       setIsSending(false);
     }

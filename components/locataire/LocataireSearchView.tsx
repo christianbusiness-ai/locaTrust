@@ -27,6 +27,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { Property } from '@/types/database.types';
 import { supabase } from '@/src/lib/supabase';
+import { createRentalApplication } from '@/lib/supabase/services';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
@@ -284,20 +285,23 @@ export const LocataireSearchView: React.FC = () => {
         console.warn('LocalStorage error:', err);
       }
 
-      await supabase.from('rental_applications').insert([
-        {
-          property_id: selectedProperty.id,
-          tenant_id: applicantId,
-          tenant_name: applicantName,
-          tenant_email: applicantEmail,
-          tenant_phone: applicantPhone,
-          status: 'en_attente',
-          monthly_income: Number(selectedProperty.rent || 0) * 3,
-          profession: 'Candidat certifié LocaTrust',
-          message: applyMessage,
-          documents: [newApp.documents.cni_url]
-        }
-      ]).select().single();
+      await createRentalApplication({
+        property_id: selectedProperty.id,
+        tenant_id: applicantId,
+        tenant_name: applicantName,
+        tenant_email: applicantEmail,
+        tenant_phone: applicantPhone,
+        property_title: selectedProperty.title,
+        property_address: (selectedProperty as any).address || `${selectedProperty.commune || ''}, ${selectedProperty.city || 'Abidjan'}`.trim(),
+        rent_amount: Number(selectedProperty.rent || (selectedProperty as any).rent_amount || 0),
+        caution_amount: Number(selectedProperty.caution || (selectedProperty as any).caution_amount || 0),
+        status: 'en_attente',
+        dossier_status: 'complet',
+        monthly_income: Number(selectedProperty.rent || 0) * 3,
+        profession: 'Candidat certifié LocaTrust',
+        message: applyMessage,
+        documents: newApp.documents as any
+      });
 
       setActionFeedback(`Votre dossier de candidature pour « ${selectedProperty.title} » a été transmis avec succès au bailleur !`);
       setShowApplyModal(false);

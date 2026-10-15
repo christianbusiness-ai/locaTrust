@@ -124,7 +124,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const totalTenants = isDemo ? 7 : realContracts.filter(c => c.status === 'actif' || c.status === 'contrat_actif').length;
 
   // Calculs financiers réels
-  const realExpectedRent = realProps.reduce((sum, p) => sum + (Number(p.rent) || 0), 0);
+  const realExpectedRent = realProps.reduce((sum, p) => sum + (Number(p.rent_amount || p.rent) || 0), 0);
   const realCollectedRent = realPayments.filter(p => p.status === 'confirme').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const realLateRent = realPayments.filter(p => p.status === 'declare').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
@@ -142,8 +142,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     expected: 5600000,
     held: 4900000
   } : {
-    expected: realProps.reduce((sum, p) => sum + (Number(p.caution) || 0), 0),
-    held: realContracts.reduce((sum, c) => sum + (Number(c.caution) || 0), 0)
+    expected: realProps.reduce((sum, p) => sum + (Number(p.deposit_amount || p.caution) || 0), 0),
+    held: realContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 0), 0)
   };
 
   const maintenanceMetrics = isDemo ? {

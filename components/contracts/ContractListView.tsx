@@ -97,8 +97,8 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
           periode: c.periode || `${new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
           statut: c.status === 'actif' || c.status === 'signe' ? 'Actif' : c.status === 'en_attente' ? 'En attente signature locataire' : c.status === 'termine' ? 'Terminé' : 'Actif',
           dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
-          bailleurSigne: Boolean(c.owner_signature || true),
-          locataireSigne: Boolean(c.tenant_signature),
+          bailleurSigne: Boolean(c.owner_signed ?? c.owner_signature ?? true),
+          locataireSigne: Boolean(c.tenant_signed ?? c.tenant_signature),
           telephone: c.tenant?.phone || c.tenant_phone || '+225 07 00 00 00 00',
           raw: c
         }));

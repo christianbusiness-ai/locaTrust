@@ -188,7 +188,7 @@ export async function syncMessageToSupabase(
       const { data: convData, error: convLookupError } = await supabase
         .from('conversations')
         .select('id')
-        .or(`and(tenant_id.eq.${senderId},owner_id.eq.${receiverId}),and(tenant_id.eq.${receiverId},owner_id.eq.${senderId})`)
+        .or(`and(participant_a.eq.${senderId},participant_b.eq.${receiverId}),and(participant_a.eq.${receiverId},participant_b.eq.${senderId})`)
         .maybeSingle();
 
       if (convLookupError) {
@@ -201,8 +201,8 @@ export async function syncMessageToSupabase(
         const { data: newConv, error: convInsertError } = await supabase
           .from('conversations')
           .insert({
-            tenant_id: senderId,
-            owner_id: receiverId,
+            participant_a: senderId,
+            participant_b: receiverId,
             property_id: isValidUuid(propertyId) ? propertyId : undefined
           })
           .select('id')
@@ -247,8 +247,7 @@ export async function syncMessageToSupabase(
         const { error: msgInsertError } = await supabase.from('messages').insert({
           conversation_id: convId,
           sender_id: senderId,
-          content: contentToStore,
-          status: 'delivered'
+          content: contentToStore
         });
 
         if (msgInsertError) {
@@ -375,11 +374,6 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
 
   if (changed) {
     saveStoredMessages(updated);
-    if (isValidUuid(contactId)) {
-      try {
-        supabase.from('messages').update({ status: 'read' }).eq('sender_id', contactId).then(() => {});
-      } catch {}
-    }
     return true;
   }
   return false;
@@ -618,8 +612,8 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
   try {
     const { data: convs, error: convErr } = await supabase
       .from('conversations')
-      .select('id, tenant_id, owner_id')
-      .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      .select('id, participant_a, participant_b')
+      .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
 
     if (convErr || !convs || convs.length === 0) return [];
 
@@ -632,7 +626,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
 
     if (msgErr || !msgs) return [];
 
-    const convMap = new Map<string, { tenant_id: string; owner_id: string }>();
+    const convMap = new Map<string, { participant_a: string; participant_b: string }>();
     convs.forEach((c) => convMap.set(c.id, c));
 
     const currentLocal = getStoredMessages();
@@ -642,7 +636,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
     msgs.forEach((m: any) => {
       const conv = convMap.get(m.conversation_id);
       const isSender = m.sender_id === userId;
-      const otherId = conv ? (conv.tenant_id === userId ? conv.owner_id : conv.tenant_id) : 'usr_contact';
+      const otherId = conv ? (conv.participant_a === userId ? conv.participant_b : conv.participant_a) : 'usr_contact';
       const receiverId = isSender ? otherId : userId;
 
       let parsedContract: any = undefined;
@@ -698,15 +692,15 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
   try {
     const { data: convs, error: convErr } = await supabase
       .from('conversations')
-      .select('id, tenant_id, owner_id, property_id, properties:properties(id, title, city, commune)')
-      .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
+      .select('id, participant_a, participant_b, property_id, properties:properties(id, title, city, commune)')
+      .or(`participant_a.eq.${userId},participant_b.eq.${userId}`)
       .order('created_at', { ascending: false });
 
     if (convErr || !convs || convs.length === 0) return [];
 
     const otherUserIds = Array.from(
       new Set(
-        convs.map((c) => (c.tenant_id === userId ? c.owner_id : c.tenant_id)).filter(isValidUuid)
+        convs.map((c) => (c.participant_a === userId ? c.participant_b : c.participant_a)).filter(isValidUuid)
       )
     );
 
@@ -725,7 +719,7 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
     const realContacts: ChatContact[] = [];
 
     convs.forEach((c) => {
-      const otherId = c.tenant_id === userId ? c.owner_id : c.tenant_id;
+      const otherId = c.participant_a === userId ? c.participant_b : c.participant_a;
       const prof = profMap.get(otherId);
       if (!prof) return;
 

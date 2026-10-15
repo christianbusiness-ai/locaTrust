@@ -187,6 +187,22 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         }
       }
 
+      if (typeof window !== 'undefined') {
+        try {
+          const rawLocalProps = localStorage.getItem('locatrust_properties');
+          if (rawLocalProps) {
+            const parsedProps = JSON.parse(rawLocalProps);
+            if (Array.isArray(parsedProps)) {
+              parsedProps.forEach((p: any) => {
+                if (p.id && (p.owner_id === user?.id || p.agency_id === user?.id || !user?.id)) {
+                  userPropertyIds.add(p.id);
+                }
+              });
+            }
+          }
+        } catch {}
+      }
+
       // 2. Charger les candidatures réelles depuis la base de données Supabase
       const { data, error } = await supabase
         .from('rental_applications')
@@ -521,22 +537,33 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       }).eq('id', app.property_id);
 
       // Inscription du contrat officiel dans Supabase
-      await supabase.from('contracts').insert({
-        contract_number: contractNumber,
-        property_id: app.property_id,
-        tenant_id: app.tenant_id || user?.id,
-        owner_id: user?.id,
-        rent: app.rent_amount,
-        rent_amount: app.rent_amount,
-        caution: app.caution_amount,
-        caution_amount: app.caution_amount,
-        charges: matchedProperty?.charges ?? 10000,
-        charges_amount: matchedProperty?.charges ?? 10000,
-        duration_months: 12,
-        status: 'actif',
-        start_date: new Date().toISOString(),
-        signed_date: new Date().toISOString()
-      });
+      const isValidUuid = (str?: string) =>
+        Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+      const targetTenantId = isValidUuid(app.tenant_id) ? app.tenant_id : (user?.id && isValidUuid(user.id) ? user.id : null);
+      const targetOwnerId = user?.id && isValidUuid(user.id) ? user.id : (isValidUuid(matchedProperty?.owner_id) ? matchedProperty.owner_id : null);
+
+      if (isValidUuid(app.property_id) && targetTenantId && targetOwnerId) {
+        const { error: insertErr } = await supabase.from('contracts').insert({
+          contract_number: contractNumber,
+          property_id: app.property_id,
+          tenant_id: targetTenantId,
+          owner_id: targetOwnerId,
+          monthly_rent: Number(app.rent_amount || 0),
+          caution_amount: Number(app.caution_amount || 0),
+          charges_amount: Number(matchedProperty?.charges ?? 10000),
+          duration_months: 12,
+          status: 'actif',
+          start_date: new Date().toISOString().split('T')[0],
+          owner_signed: true,
+          owner_signed_at: new Date().toISOString(),
+          tenant_signed: true,
+          tenant_signed_at: new Date().toISOString()
+        });
+        if (insertErr) {
+          console.error('Erreur insertion Supabase contracts (DemandesView):', insertErr.message);
+        }
+      }
 
       // Mettre à jour le statut du bien dans le localStorage pour disparition immédiate du Feed
       try {

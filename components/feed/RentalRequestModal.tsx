@@ -31,7 +31,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
 
   if (!property) return null;
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
 
     const applicantId = user?.id || profile?.id || 'usr_tenant';
@@ -85,9 +85,9 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       }
     };
 
+    let currentApps: any[] = [];
     try {
       const existingRaw = localStorage.getItem('locatrust_rental_applications');
-      let currentApps: any[] = [];
       if (existingRaw) {
         try { currentApps = JSON.parse(existingRaw); } catch {}
       }
@@ -163,20 +163,36 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     }
 
     try {
-      createRentalApplication({
+      const res = await createRentalApplication({
         property_id: property.id,
         tenant_id: applicantId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
+        tenant_avatar: applicantAvatar,
+        tenant_cni: 'CI-ABJ-2024-B-89412',
+        property_title: property.title,
+        property_address: (property as any).address || `${property.location?.commune || property.location?.quartier || ''}, ${property.location?.city || 'Abidjan'}`.trim(),
+        rent_amount: Number(property.rent || (property as any).rent_amount || 0),
+        caution_amount: Number(property.caution || (property as any).caution_amount || 0),
         status: 'en_attente',
         dossier_status: 'complet',
-        monthly_income: Number(property.rent || 0) * 3,
-        profession: 'Locataire vérifié',
         message: message,
+        monthly_income: Number(property.rent || (property as any).rent_amount || 0) * 3,
+        profession: 'Locataire certifié',
         documents: newApp.documents as any
-      }).catch(() => {});
-    } catch {}
+      });
+
+      if (res?.data) {
+        // Mettre à jour avec l'ID réel de la base de données
+        const syncedApp = { ...newApp, id: res.data.id };
+        const updatedList = [syncedApp, ...currentApps.filter((a: any) => a.id !== newApp.id && a.id !== res.data.id)];
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedList));
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: updatedList } }));
+      }
+    } catch (dbErr) {
+      console.warn('Erreur création rental application Supabase:', dbErr);
+    }
 
     triggerCelebration('send');
     setIsSubmitted(true);

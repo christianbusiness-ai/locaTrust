@@ -391,17 +391,22 @@ export async function fetchRentalApplications(propertyId?: string): Promise<Rent
       query = query.eq('property_id', propertyId);
     }
     const { data, error } = await query;
-    if (error || !data || data.length === 0) {
-      // Fallback local storage
-      const cached = localStorage.getItem('locatrust_rental_applications');
-      if (cached) {
-        try {
-          return JSON.parse(cached);
-        } catch {}
+    if (error) {
+      console.warn('Error fetching rental applications from Supabase:', error.message);
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('locatrust_rental_applications');
+        if (cached) {
+          try {
+            return JSON.parse(cached);
+          } catch {}
+        }
       }
       return [];
     }
-    return data as RentalApplication[];
+    if (typeof window !== 'undefined' && data) {
+      localStorage.setItem('locatrust_rental_applications', JSON.stringify(data));
+    }
+    return (data || []) as RentalApplication[];
   } catch (err) {
     console.warn('Error fetching rental applications:', err);
     return [];
@@ -487,6 +492,13 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
     } catch {}
   }
 
+  // Construction du payload avec les seules colonnes réelles de rental_applications
+  const docsObject: Record<string, any> = typeof app.documents === 'object' && app.documents !== null ? { ...app.documents } : {};
+  if (app.message) docsObject.message = app.message;
+  if (app.comment) docsObject.comment = app.comment;
+  if (app.monthly_income) docsObject.monthly_income = app.monthly_income;
+  if (app.profession) docsObject.profession = app.profession;
+
   const payload: Record<string, any> = {
     property_id: app.property_id,
     tenant_name: app.tenant_name || 'Candidat Locataire',
@@ -500,7 +512,7 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
     caution_amount: Number(app.caution_amount || 0),
     status: app.status || 'en_attente',
     dossier_status: app.dossier_status || 'complet',
-    documents: typeof app.documents === 'object' ? app.documents : {}
+    documents: docsObject
   };
 
   if (isValidUuid(app.tenant_id)) {
@@ -515,6 +527,10 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
     .insert([payload])
     .select()
     .maybeSingle();
+
+  if (error) {
+    console.error('Erreur insertion Supabase rental_applications:', error.message);
+  }
 
   return { data, error, alreadyExists: false };
 }

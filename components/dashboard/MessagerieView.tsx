@@ -1151,29 +1151,36 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
       // Persistance réelle dans la table Supabase 'contracts'
       try {
-        await supabase
+        const { error: cErr } = await supabase
           .from('contracts')
           .update({
             tenant_signed: true,
-            tenant_signature_url: signatureDataUrl,
+            tenant_signed_at: new Date().toISOString(),
+            tenant_signature: signatureDataUrl,
             status: 'actif'
           })
           .eq('contract_number', targetNum);
+        if (cErr) {
+          console.warn('Erreur mise à jour Supabase contract:', cErr.message);
+        }
       } catch (e) {
         console.warn('Erreur mise à jour Supabase contract:', e);
       }
 
       // Persistance réelle dans la table Supabase 'rental_applications'
       try {
-        await supabase
+        const { error: aErr } = await supabase
           .from('rental_applications')
           .update({
             tenant_signed: true,
-            tenant_signature_url: signatureDataUrl,
+            tenant_signed_at: new Date().toISOString(),
             contract_finalized: true,
             status: 'contrat_actif'
           })
           .eq('contract_number', targetNum);
+        if (aErr) {
+          console.warn('Erreur mise à jour Supabase rental_applications:', aErr.message);
+        }
       } catch (e) {
         console.warn('Erreur mise à jour Supabase rental_applications:', e);
       }

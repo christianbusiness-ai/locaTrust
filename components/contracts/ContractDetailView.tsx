@@ -42,6 +42,7 @@ import { sendContractReminderToTenant, sendContractToTenant } from '@/lib/messag
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 import { LegalContractAnalyzerModal } from './LegalContractAnalyzerModal';
 
 interface ContractDetailViewProps {
@@ -58,8 +59,10 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
   const { user, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'details' | 'document'>('details');
 
+  const [dbContract, setDbContract] = useState<any>(null);
+
   // Load real contract from localStorage or props
-  const realContract = React.useMemo(() => {
+  const localContract = React.useMemo(() => {
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_contracts');
@@ -77,6 +80,27 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     return null;
   }, [contractNumber]);
 
+  React.useEffect(() => {
+    async function loadFromDb() {
+      if (!contractNumber) return;
+      try {
+        const { data, error } = await supabase
+          .from('contracts')
+          .select('*, property:property_id(*), owner:owner_id(*), tenant:tenant_id(*)')
+          .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
+          .maybeSingle();
+
+        if (data && !error) {
+          setDbContract(data);
+        }
+      } catch (e) {
+        console.warn('Erreur chargement contrat Supabase:', e);
+      }
+    }
+    loadFromDb();
+  }, [contractNumber]);
+
+  const realContract = dbContract || localContract;
   const contract = realContract;
 
   const ownerDisplayName =
@@ -101,9 +125,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         address: realContract.property?.address || realContract.property_address || 'Abidjan, Côte d\'Ivoire',
         propertyTitle: realContract.property?.title || realContract.property_title || 'Logement loué',
         propertyAddress: realContract.property?.address || realContract.property_address || 'Côte d\'Ivoire',
-        rent: Number(realContract.rent || 0),
+        rent: Number(realContract.monthly_rent || realContract.rent || 0),
         caution: Number(realContract.caution_amount || 0),
-        charges: Number(realContract.charges || 0),
+        charges: Number(realContract.charges_amount || realContract.charges || 0),
         startDate: realContract.start_date || '01/10/2026',
         duration: Number(realContract.duration_months || 12),
         dateSignature: realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : 'Date non définie',
