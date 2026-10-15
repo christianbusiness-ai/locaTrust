@@ -37,8 +37,10 @@ const AdminDashboardPage = lazyDashboardWithRetry(() => import('@/app/(admin)/da
 
 import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+
 export const DashboardPage: React.FC = () => {
-  const { profile, signOut } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
 
   const handleExitToLanding = async () => {
     try {
@@ -55,17 +57,24 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
+  // Si le profil est encore en cours de chargement depuis Supabase, afficher le skeleton
+  if (loading || (!profile && user)) {
+    return <DashboardPageSkeleton />;
+  }
+
   return (
-    <Suspense fallback={<DashboardPageSkeleton />}>
-      {profile?.role === 'admin' ? (
-        <AdminDashboardPage currentRole="admin" onExitToLanding={handleExitToLanding} />
-      ) : profile?.account_type === 'proprietaire' ? (
-        <ProprietaireDashboardPage currentRole="proprietaire" isDemo={false} onExitToLanding={handleExitToLanding} />
-      ) : profile?.account_type === 'agence' ? (
-        <AgencyDashboardPage currentRole="agence" isDemo={false} onExitToLanding={handleExitToLanding} />
-      ) : (
-        <TenantDashboardPage currentRole="locataire" isDemo={false} onExitToLanding={handleExitToLanding} />
-      )}
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={<DashboardPageSkeleton />}>
+        {profile?.role === 'admin' ? (
+          <AdminDashboardPage currentRole="admin" onExitToLanding={handleExitToLanding} />
+        ) : profile?.account_type === 'proprietaire' ? (
+          <ProprietaireDashboardPage currentRole="proprietaire" isDemo={false} onExitToLanding={handleExitToLanding} />
+        ) : profile?.account_type === 'agence' ? (
+          <AgencyDashboardPage currentRole="agence" isDemo={false} onExitToLanding={handleExitToLanding} />
+        ) : (
+          <TenantDashboardPage currentRole="locataire" isDemo={false} onExitToLanding={handleExitToLanding} />
+        )}
+      </Suspense>
+    </ErrorBoundary>
   );
 };

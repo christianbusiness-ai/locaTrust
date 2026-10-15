@@ -74,7 +74,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       setRealProps(propsData || []);
 
       // 2. Contrats actifs
-      let cQuery = supabase.from('contracts').select('*, tenant:users!tenant_id(*)');
+      let cQuery = supabase.from('contracts').select('*');
       if (user?.id) cQuery = cQuery.eq('owner_id', user.id);
       const { data: contractsData } = await cQuery;
       setRealContracts(contractsData || []);

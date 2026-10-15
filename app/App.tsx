@@ -151,10 +151,10 @@ const LiveSyncManager: React.FC = () => {
 export default function App() {
   return (
     <BrowserRouter>
-      <TopProgressBar />
-      <AuthProvider>
-        <LiveSyncManager />
-        <ErrorBoundary>
+      <ErrorBoundary>
+        <TopProgressBar />
+        <AuthProvider>
+          <LiveSyncManager />
           <Suspense fallback={<DashboardPageSkeleton />}>
             <Routes>
               {/* Routes Publiques d'Authentification */}
@@ -196,11 +196,11 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
-        </ErrorBoundary>
 
-        {/* Bannière et Modal d'installation PWA (Accessible sur tout le site) */}
-        <PwaInstallPrompt />
-      </AuthProvider>
+          {/* Bannière et Modal d'installation PWA (Accessible sur tout le site) */}
+          <PwaInstallPrompt />
+        </AuthProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }
