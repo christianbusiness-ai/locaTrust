@@ -67,11 +67,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Erreur chargement profil:', error.message);
         return null;
       }
-      if (data && (data as any).accounting_year && typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('locatrust_current_accounting_year', (data as any).accounting_year);
-          localStorage.setItem('locatrust_reference_accounting_year', (data as any).accounting_year);
-        } catch {}
+      if (data) {
+        if ((data as any).accounting_year && typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('locatrust_current_accounting_year', (data as any).accounting_year);
+            localStorage.setItem('locatrust_reference_accounting_year', (data as any).accounting_year);
+          } catch {}
+        }
+        if (data.avatar_url && typeof window !== 'undefined' && !data.avatar_url.includes('images.unsplash.com')) {
+          try {
+            localStorage.setItem(`locatrust_user_avatar_${userId}`, data.avatar_url);
+            localStorage.setItem('locatrust_user_avatar', data.avatar_url);
+            window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: data.avatar_url } }));
+          } catch {}
+        }
       }
       return data as UserProfile;
     } catch (err) {

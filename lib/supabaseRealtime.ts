@@ -15,7 +15,8 @@ export type LiveEventType =
   | 'APPLICATION_SUBMITTED'
   | 'APPLICATION_UPDATED'
   | 'AVATAR_UPDATED'
-  | 'ACCOUNTING_YEAR_UPDATED';
+  | 'ACCOUNTING_YEAR_UPDATED'
+  | 'NEW_MESSAGE';
 
 interface BroadcastPayload {
   event: LiveEventType;
@@ -92,6 +93,13 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               detail: { year: yr, isTemporary: false, currentYear: yr }
             }));
           }
+        }
+        break;
+
+      case 'NEW_MESSAGE':
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
         }
         break;
     }

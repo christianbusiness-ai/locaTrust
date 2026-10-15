@@ -73,12 +73,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const [avatarUrl, setAvatarUrl] = React.useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('locatrust_user_avatar');
-      if (stored && !stored.includes('images.unsplash.com')) return stored;
-    }
     const profAvatar = profile?.avatar_url;
     if (profAvatar && !profAvatar.includes('images.unsplash.com')) return profAvatar;
+    if (typeof window !== 'undefined') {
+      const stored = (user?.id && localStorage.getItem(`locatrust_user_avatar_${user.id}`)) || localStorage.getItem('locatrust_user_avatar');
+      if (stored && !stored.includes('images.unsplash.com')) return stored;
+    }
     return '';
   });
 

@@ -117,12 +117,12 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const [avatarUrl, setAvatarUrl] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('locatrust_user_avatar');
-      if (stored && !stored.includes('images.unsplash.com')) return stored;
-    }
     const curr = currentUser.avatar_url;
     if (curr && !curr.includes('images.unsplash.com')) return curr;
+    if (typeof window !== 'undefined') {
+      const stored = (currentUser.id && localStorage.getItem(`locatrust_user_avatar_${currentUser.id}`)) || localStorage.getItem('locatrust_user_avatar');
+      if (stored && !stored.includes('images.unsplash.com')) return stored;
+    }
     return '';
   });
 

@@ -47,7 +47,7 @@ export default function TenantDashboardPage({
     id: user.id,
     email: user.email || '',
     full_name: profile?.full_name || user.user_metadata?.full_name || 'Locataire',
-    avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || '',
+    avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${user.id}`) || localStorage.getItem('locatrust_user_avatar') || '') : ''),
     role: 'locataire' as const,
     phone: profile?.phone || '',
     verification_status: profile?.verification_status || 'non_verifie',

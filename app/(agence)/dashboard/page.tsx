@@ -68,7 +68,7 @@ export default function AgencyDashboardPage({
     id: user.id,
     email: user.email || '',
     full_name: profile?.full_name || user.user_metadata?.full_name || 'Agence Immobilière Agréée',
-    avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || '',
+    avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${user.id}`) || localStorage.getItem('locatrust_user_avatar') || '') : ''),
     role: 'agence' as const,
     phone: profile?.phone || '',
     verification_status: profile?.verification_status || 'non_verifie',

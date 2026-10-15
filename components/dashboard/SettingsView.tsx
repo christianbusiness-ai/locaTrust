@@ -128,18 +128,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Avatar Management State (Points 19 & 20 du prompt)
   const [userAvatar, setUserAvatar] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('locatrust_user_avatar');
-      if (stored && !stored.includes('images.unsplash.com')) return stored;
-    }
     const profAvatar = profile?.avatar_url;
     if (profAvatar && !profAvatar.includes('images.unsplash.com')) return profAvatar;
+    if (typeof window !== 'undefined') {
+      const stored = (user?.id && localStorage.getItem(`locatrust_user_avatar_${user.id}`)) || localStorage.getItem('locatrust_user_avatar');
+      if (stored && !stored.includes('images.unsplash.com')) return stored;
+    }
     return '';
   });
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    if (profile?.avatar_url && !profile.avatar_url.includes('images.unsplash.com')) {
+      setUserAvatar(profile.avatar_url);
+    }
+  }, [profile?.avatar_url]);
 
   // Accounting Year State (Points 11 à 18 du prompt)
   const [activeAccountingYear, setActiveAccountingYear] = useState<string>(() => getActiveReferenceYear());
@@ -387,6 +393,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('locatrust_user_avatar', avatarPreview);
+        if (user?.id) {
+          localStorage.setItem(`locatrust_user_avatar_${user.id}`, avatarPreview);
+        }
         window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: avatarPreview } }));
       } catch (err) {
         console.error('Failed to save avatar to localStorage', err);

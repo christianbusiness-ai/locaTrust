@@ -362,11 +362,46 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const recordingTimerRef = useRef<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatScrollContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef<boolean>(true);
+  const [showScrollDownBtn, setShowScrollDownBtn] = useState<boolean>(false);
+  const prevContactIdRef = useRef<string>(selectedContactId);
+  const prevMessagesCountRef = useRef<number>(0);
 
-  // Load stored messages
+  // Load stored messages without forcing re-renders if messages haven't changed
   const refreshMessages = () => {
     const list = getStoredMessages();
-    setMessages(Array.isArray(list) ? list : []);
+    const cleanList = Array.isArray(list) ? list : [];
+    setMessages((prev) => {
+      if (prev.length === cleanList.length) {
+        const lastPrev = prev[prev.length - 1]?.id;
+        const lastClean = cleanList[cleanList.length - 1]?.id;
+        if (lastPrev === lastClean) return prev;
+      }
+      return cleanList;
+    });
+  };
+
+  const handleChatScroll = () => {
+    if (!chatScrollContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatScrollContainerRef.current;
+    // L'utilisateur est en bas s'il est à moins de 80px du bas
+    const isBottom = scrollHeight - scrollTop - clientHeight < 80;
+    isAtBottomRef.current = isBottom;
+    setShowScrollDownBtn(!isBottom);
+  };
+
+  const scrollToBottom = (smooth = true) => {
+    if (chatScrollContainerRef.current) {
+      chatScrollContainerRef.current.scrollTo({
+        top: chatScrollContainerRef.current.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto'
+      });
+      isAtBottomRef.current = true;
+      setShowScrollDownBtn(false);
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    }
   };
 
   useEffect(() => {
@@ -389,6 +424,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     const handleMessagesUpdated = () => {
       refreshMessages();
+      if (currentUserId) {
+        fetchSupabaseMessages(currentUserId).then(() => refreshMessages()).catch(() => {});
+      }
     };
 
     const handleStorage = (e: StorageEvent) => {
@@ -402,31 +440,40 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     };
 
     window.addEventListener('locatrust:messages_updated', handleMessagesUpdated);
+    window.addEventListener('locatrust:messages-updated', handleMessagesUpdated);
     window.addEventListener('storage', handleStorage);
 
-    // Écoute Supabase Realtime pour actualisation instantanée de la messagerie
-    const channel = supabase
-      .channel('locatrust_chat_realtime_view')
-      .on('broadcast', { event: 'new_message' }, () => {
-        refreshMessages();
-      })
-      .subscribe();
-
-    // Heartbeat toutes les 2 secondes pour synchroniser automatiquement les échanges
-    const heartbeat = setInterval(refreshMessages, 2000);
+    // Polling doux de synchronisation automatique sans perturber le scroll
+    const heartbeat = setInterval(() => {
+      refreshMessages();
+      if (currentUserId) {
+        fetchSupabaseMessages(currentUserId).then(() => refreshMessages()).catch(() => {});
+      }
+    }, 4000);
 
     return () => {
       window.removeEventListener('locatrust:messages_updated', handleMessagesUpdated);
+      window.removeEventListener('locatrust:messages-updated', handleMessagesUpdated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(heartbeat);
-      supabase.removeChannel(channel);
     };
   }, [currentUserId]);
 
-  // Scroll to bottom on message update
+  // Défilement intelligent vers le bas : ne force JAMAIS le scroll si l'utilisateur est remonté pour lire
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, selectedContactId, isTyping]);
+    const contactChanged = prevContactIdRef.current !== selectedContactId;
+    prevContactIdRef.current = selectedContactId;
+
+    const newMsgArrived = messages.length > prevMessagesCountRef.current;
+    prevMessagesCountRef.current = messages.length;
+
+    if (contactChanged) {
+      isAtBottomRef.current = true;
+      setTimeout(() => scrollToBottom(false), 50);
+    } else if (isAtBottomRef.current || isTyping) {
+      scrollToBottom(true);
+    }
+  }, [messages.length, selectedContactId, isTyping]);
 
   const activeContact = roleContacts.find((c) => c.id === selectedContactId) || roleContacts[0];
 
@@ -437,28 +484,55 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
   }, [activeContact?.id, currentUserId, messages.length]);
 
-  // Filter messages between current user and active contact
-  const currentConversationMessages = (Array.isArray(messages) ? messages : []).filter(
-    (m) => {
-      if (!activeContact?.id) return false;
-      const contactAliases = new Set([
-        activeContact.id,
-        activeContact.name,
-        `tenant_${activeContact.id}`,
-        `owner_${activeContact.id}`
-      ]);
+  // Filter messages between current user and active contact with intelligent deduplication
+  const currentConversationMessages = React.useMemo(() => {
+    const raw = (Array.isArray(messages) ? messages : []).filter(
+      (m) => {
+        if (!activeContact?.id) return false;
+        const contactAliases = new Set([
+          activeContact.id,
+          activeContact.name,
+          `tenant_${activeContact.id}`,
+          `owner_${activeContact.id}`
+        ]);
 
-      const sentByMeToContact =
-        myAliases.has(m.sender_id) &&
-        (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle));
+        const sentByMeToContact =
+          myAliases.has(m.sender_id) &&
+          (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle));
 
-      const sentByContactToMe =
-        (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle)) &&
-        myAliases.has(m.receiver_id);
+        const sentByContactToMe =
+          (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle)) &&
+          myAliases.has(m.receiver_id);
 
-      return sentByMeToContact || sentByContactToMe;
+        return sentByMeToContact || sentByContactToMe;
+      }
+    );
+
+    // Déduplication absolue par ID et empreinte (expéditeur + texte + minute)
+    const seenIds = new Set<string>();
+    const seenFPs = new Set<string>();
+    const clean: ChatMessage[] = [];
+
+    for (const m of raw) {
+      if (!m) continue;
+      if (seenIds.has(m.id)) continue;
+      seenIds.add(m.id);
+
+      const minKey = m.created_at ? m.created_at.slice(0, 16) : '';
+      const textTrim = (m.text || '').trim();
+      const fp = `${m.sender_id}::${textTrim}::${minKey}`;
+
+      if (textTrim && seenFPs.has(fp)) {
+        continue;
+      }
+      if (textTrim) {
+        seenFPs.add(fp);
+      }
+      clean.push(m);
     }
-  );
+
+    return clean;
+  }, [messages, activeContact?.id, activeContact?.name, activeContact?.propertyTitle, myAliases]);
 
   // Filter contacts by search
   const filteredContacts = roleContacts.filter(
@@ -606,15 +680,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       const mins = Math.floor(activeAudioCall.seconds / 60);
       const secs = activeAudioCall.seconds % 60;
       const durationStr = `${mins > 0 ? `${mins}m ` : ''}${secs}s`;
-      const allMsgs = getStoredMessages();
-      const callMsg: ChatMessage = {
-        id: `call_${Date.now()}`,
-        sender_id: currentUserId,
-        receiver_id: activeContact.id,
-        text: `📞 Appel vocal terminé (${durationStr})`,
-        created_at: new Date().toISOString()
-      };
-      saveStoredMessages([...allMsgs, callMsg]);
+      const text = `📞 Appel vocal terminé (${durationStr})`;
+      sendRealChatMessage(currentUserId, activeContact.id, text).catch(() => {});
       refreshMessages();
     }
     setActiveAudioCall(null);
@@ -866,15 +933,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       const mins = Math.floor(activeVideoCall.seconds / 60);
       const secs = activeVideoCall.seconds % 60;
       const durationStr = `${mins > 0 ? `${mins}m ` : ''}${secs}s`;
-      const allMsgs = getStoredMessages();
-      const callMsg: ChatMessage = {
-        id: `call_${Date.now()}`,
-        sender_id: currentUserId,
-        receiver_id: activeContact.id,
-        text: `📹 Appel vidéo terminé (${durationStr})`,
-        created_at: new Date().toISOString()
-      };
-      saveStoredMessages([...allMsgs, callMsg]);
+      const text = `📹 Appel vidéo terminé (${durationStr})`;
+      sendRealChatMessage(currentUserId, activeContact.id, text).catch(() => {});
       refreshMessages();
     }
     setActiveVideoCall(null);
@@ -1474,7 +1534,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         <div
           className={`${
             showMobileChat ? 'flex' : 'hidden md:flex'
-          } flex-1 flex flex-col bg-slate-100/70 dark:bg-slate-900 h-full min-w-0`}
+          } flex-1 flex flex-col bg-slate-100/70 dark:bg-slate-900 h-full min-w-0 relative`}
         >
           {/* Chat Header - Always visible at top */}
           <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 shrink-0">
@@ -1546,7 +1606,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           </div>
 
           {/* Messages Feed (Independent Scroll Container) */}
-          <div className="flex-1 p-4 sm:p-6 flex flex-col gap-3.5 overflow-y-auto bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]">
+          <div
+            ref={chatScrollContainerRef}
+            onScroll={handleChatScroll}
+            className="flex-1 p-4 sm:p-6 flex flex-col gap-3.5 overflow-y-auto bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]"
+          >
             {currentConversationMessages.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center my-auto">
                 <div className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 flex items-center justify-center mb-2 shadow-sm">
@@ -1990,6 +2054,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
             <div ref={messagesEndRef} />
           </div>
+
+          {/* Bouton flottant pour redescendre vers les derniers messages */}
+          {showScrollDownBtn && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom(true)}
+              className="absolute bottom-24 right-6 px-3.5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-2xl flex items-center gap-1.5 transition-all transform hover:scale-105 active:scale-95 z-30 cursor-pointer border border-blue-400 animate-bounce"
+            >
+              <span>↓ Derniers messages</span>
+            </button>
+          )}
 
           {/* Hidden File Inputs for Image & Document (Point 6) */}
           <input

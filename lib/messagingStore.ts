@@ -3,6 +3,7 @@
 import { generateOfficialReceiptPDF, OfficialReceiptData } from '@/lib/payments/officialReceiptPdfGenerator';
 import { triggerCelebration } from '@/lib/celebration';
 import { supabase } from '@/src/lib/supabase';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 export interface ChatQuittanceAttachment {
   receiptNumber: string;
@@ -120,6 +121,33 @@ export const DEFAULT_MESSAGES: ChatMessage[] = [];
 const STORAGE_KEY = 'locatrust_chat_messages_v4';
 const RECEIPTS_STORAGE_KEY = 'locatrust_tenant_receipts_v2';
 
+export function deduplicateMessageList(list: ChatMessage[]): ChatMessage[] {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  const clean: ChatMessage[] = [];
+
+  for (const m of list) {
+    if (!m) continue;
+    if (seenIds.has(m.id)) continue;
+    seenIds.add(m.id);
+
+    const timeMinute = m.created_at ? m.created_at.slice(0, 16) : '';
+    const textTrimmed = (m.text || '').trim();
+    const fp = `${m.sender_id}::${textTrimmed}::${timeMinute}`;
+
+    if (textTrimmed && seenFingerprints.has(fp)) {
+      // Doublon détecté (même expéditeur, même texte et même minute)
+      continue;
+    }
+    if (textTrimmed) {
+      seenFingerprints.add(fp);
+    }
+    clean.push(m);
+  }
+  return clean;
+}
+
 export function getStoredMessages(): ChatMessage[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -140,10 +168,11 @@ export function getStoredMessages(): ChatMessage[] {
       return true;
     });
 
-    if (cleaned.length !== parsed.length) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(cleaned));
+    const deduplicated = deduplicateMessageList(cleaned);
+    if (deduplicated.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(deduplicated));
     }
-    return cleaned;
+    return deduplicated;
   } catch (e) {
     return [];
   }
@@ -152,7 +181,8 @@ export function getStoredMessages(): ChatMessage[] {
 export function saveStoredMessages(messages: ChatMessage[]) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    const deduplicated = deduplicateMessageList(messages);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(deduplicated));
     window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
   } catch (e) {
     console.error('Failed to save stored messages:', e);
@@ -171,13 +201,12 @@ export async function syncMessageToSupabase(
   propertyId?: string
 ): Promise<{ success: boolean; error?: any }> {
   try {
-    // 1. Diffusion Realtime immédiate via channel Supabase
+    // 1. Diffusion Realtime immédiate via le canal Supabase actif
     try {
-      const channel = supabase.channel('locatrust_chat_realtime');
-      channel.send({
-        type: 'broadcast',
-        event: 'new_message',
-        payload: { ...newMsg, senderId, receiverId }
+      broadcastLiveEvent('NEW_MESSAGE', {
+        actorId: senderId,
+        targetUserId: receiverId,
+        data: { ...newMsg, senderId, receiverId }
       });
     } catch {}
 
@@ -244,15 +273,26 @@ export async function syncMessageToSupabase(
           });
         }
 
-        const { error: msgInsertError } = await supabase.from('messages').insert({
-          conversation_id: convId,
-          sender_id: senderId,
-          content: contentToStore
-        });
+        const { data: insertedMsg, error: msgInsertError } = await supabase
+          .from('messages')
+          .insert({
+            conversation_id: convId,
+            sender_id: senderId,
+            content: contentToStore
+          })
+          .select('id, created_at')
+          .maybeSingle();
 
         if (msgInsertError) {
           console.error('Erreur insertion message Supabase:', msgInsertError.message);
           return { success: false, error: msgInsertError.message };
+        }
+
+        // Mettre à jour l'ID local avec le vrai UUID Supabase pour éliminer tout doublon futur
+        if (insertedMsg?.id) {
+          const current = getStoredMessages();
+          const reconciled = current.map((m) => (m.id === newMsg.id ? { ...m, id: insertedMsg.id } : m));
+          saveStoredMessages(reconciled);
         }
 
         // Persistance de la notification en BDD
@@ -630,7 +670,24 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
     convs.forEach((c) => convMap.set(c.id, c));
 
     const currentLocal = getStoredMessages();
-    const existingIds = new Set(currentLocal.map((m) => m.id));
+    let localReconciled = false;
+    const reconciledLocal = currentLocal.map((local) => {
+      if (local.id.startsWith('msg_') || local.id.startsWith('call_')) {
+        const matchingDbMsg = msgs.find(
+          (m: any) =>
+            m.sender_id === local.sender_id &&
+            m.content === local.text &&
+            Math.abs(new Date(local.created_at).getTime() - new Date(m.created_at).getTime()) < 60000
+        );
+        if (matchingDbMsg) {
+          localReconciled = true;
+          return { ...local, id: matchingDbMsg.id };
+        }
+      }
+      return local;
+    });
+
+    const activeIds = new Set(reconciledLocal.map((m) => m.id));
     const newFromDb: ChatMessage[] = [];
 
     msgs.forEach((m: any) => {
@@ -667,13 +724,21 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         attachment: parsedAttachment || (m.attachment_url ? { type: 'document', url: m.attachment_url } : undefined)
       };
 
-      if (!existingIds.has(m.id)) {
+      const isAlreadyInLocal = reconciledLocal.some(
+        (local) =>
+          local.id === m.id ||
+          (local.sender_id === m.sender_id &&
+            local.text === (m.content || '') &&
+            Math.abs(new Date(local.created_at).getTime() - new Date(m.created_at).getTime()) < 60000)
+      );
+
+      if (!isAlreadyInLocal && !activeIds.has(m.id)) {
         newFromDb.push(formatted);
       }
     });
 
-    if (newFromDb.length > 0) {
-      const merged = [...currentLocal, ...newFromDb];
+    if (newFromDb.length > 0 || localReconciled) {
+      const merged = deduplicateMessageList([...reconciledLocal, ...newFromDb]);
       saveStoredMessages(merged);
       return merged;
     }
