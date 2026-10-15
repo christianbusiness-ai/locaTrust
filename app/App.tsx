@@ -140,8 +140,31 @@ const LiveSyncManager: React.FC = () => {
 
   useEffect(() => {
     const unsubscribe = subscribeToLiveSync(user?.id);
+
+    const triggerGlobalSync = () => {
+      subscribeToLiveSync(user?.id);
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        triggerGlobalSync();
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', triggerGlobalSync);
+
     return () => {
       unsubscribe();
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', triggerGlobalSync);
     };
   }, [user?.id]);
 

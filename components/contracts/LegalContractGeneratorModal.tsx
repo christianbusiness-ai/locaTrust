@@ -157,10 +157,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.ownerPhone || profile?.phone || user?.user_metadata?.phone || ''
   );
   const [ownerEmail, setOwnerEmail] = useState<string>(
-    initialData?.ownerEmail || user?.email || profile?.email || ''
+    initialData?.ownerEmail || user?.email || (profile as any)?.email || ''
   );
   const [ownerAddress, setOwnerAddress] = useState<string>(
-    initialData?.ownerAddress || profile?.address || 'Abidjan - Côte d\'Ivoire'
+    initialData?.ownerAddress || (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : 'Abidjan - Côte d\'Ivoire')
   );
   const [ownerCni, setOwnerCni] = useState<string>(
     initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || ''

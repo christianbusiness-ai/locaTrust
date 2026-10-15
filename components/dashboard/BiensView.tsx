@@ -100,7 +100,7 @@ export const BiensView: React.FC<BiensViewProps> = ({
     setLoadError(null);
     try {
       const { data, error } = await fetchDbProperties(user?.id);
-      if (!error && data && data.length > 0) {
+      if (!error && Array.isArray(data)) {
         setProperties(data);
         if (typeof window !== 'undefined') {
           try { localStorage.setItem('locatrust_properties', JSON.stringify(data)); } catch {}

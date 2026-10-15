@@ -109,6 +109,45 @@ export const LocatairePaiementsView: React.FC = () => {
       const { data: cntData } = await getContracts(user.id, 'locataire');
       const allContracts: any[] = cntData || [];
 
+      // Chargement direct des candidatures au statut contrat_actif depuis Supabase
+      try {
+        let appQuery = supabase
+          .from('rental_applications')
+          .select('*')
+          .in('status', ['contrat_actif', 'validee']);
+
+        if (user.id) {
+          appQuery = appQuery.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
+        }
+
+        const { data: dbApps } = await appQuery;
+        if (dbApps && dbApps.length > 0) {
+          dbApps.forEach((a: any) => {
+            if ((a.contract_number || a.status === 'contrat_actif') && !allContracts.some(ac => (ac.contract_number && ac.contract_number === a.contract_number) || ac.id === a.id)) {
+              allContracts.push({
+                id: `cnt_app_${a.id}`,
+                contract_number: a.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
+                property_id: a.property_id,
+                tenant_id: a.tenant_id || user.id,
+                owner_id: a.owner_id,
+                rent: Number(a.rent_amount || 0),
+                caution: Number(a.caution_amount || 0),
+                caution_amount: Number(a.caution_amount || 0),
+                charges: 10000,
+                status: 'actif',
+                property: {
+                  title: a.property_title || 'Logement loué',
+                  city: 'Abidjan',
+                  address: a.property_address || 'Abidjan'
+                }
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Erreur chargement Supabase rental_applications pour paiements:', e);
+      }
+
       try {
         const raw = localStorage.getItem('locatrust_contracts');
         if (raw) {

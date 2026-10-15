@@ -154,14 +154,6 @@ function initSharedChannel() {
     channel
       .on('broadcast', { event: 'locatrust_event' }, ({ payload }: { payload: BroadcastPayload }) => {
         try {
-          if (
-            payload.targetUserId &&
-            currentActiveUserId &&
-            payload.targetUserId !== currentActiveUserId &&
-            payload.actorId !== currentActiveUserId
-          ) {
-            return;
-          }
           console.log('⚡ Événement temps réel reçu :', payload.event, payload);
           dispatchDomEventForType(payload.event, payload);
         } catch (e) {

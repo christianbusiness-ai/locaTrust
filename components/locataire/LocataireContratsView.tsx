@@ -88,7 +88,53 @@ export const LocataireContratsView: React.FC = () => {
         }
       } catch {}
 
-      // Fusion avec les candidatures finalisées (contrat_actif) pour le locataire
+      // Récupération des candidatures finalisées (contrat_actif) directement depuis Supabase
+      try {
+        let appQuery = supabase
+          .from('rental_applications')
+          .select('*')
+          .in('status', ['contrat_actif', 'validee']);
+
+        if (user.id) {
+          appQuery = appQuery.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
+        }
+
+        const { data: dbApps } = await appQuery;
+        if (dbApps && dbApps.length > 0) {
+          dbApps.forEach((a: any) => {
+            if (a.contract_number || a.status === 'contrat_actif') {
+              localContracts.push({
+                id: `cnt_app_${a.id}`,
+                contract_number: a.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
+                property_id: a.property_id,
+                tenant_id: a.tenant_id || user.id,
+                owner_id: a.owner_id,
+                rent: Number(a.rent_amount || 0),
+                caution: Number(a.caution_amount || 0),
+                caution_amount: Number(a.caution_amount || 0),
+                charges: 10000,
+                status: 'actif',
+                start_date: a.date_received || new Date().toISOString(),
+                owner_signed: a.owner_signed ?? true,
+                tenant_signed: a.tenant_signed ?? true,
+                owner_signature_url: a.owner_signature_url,
+                tenant_signature_url: a.tenant_signature_url,
+                owner: { full_name: a.owner_name || 'Bailleur certifié', phone: a.owner_phone || '+225 00 00 00 00' },
+                tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
+                property: {
+                  title: a.property_title || 'Logement loué',
+                  city: 'Abidjan',
+                  address: a.property_address || 'Abidjan - Côte d\'Ivoire'
+                }
+              });
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Erreur lecture Supabase rental_applications pour locataire:', e);
+      }
+
+      // Fusion additionnelle avec les candidatures locales
       try {
         const appsRaw = localStorage.getItem('locatrust_rental_applications');
         if (appsRaw) {

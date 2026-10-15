@@ -241,22 +241,20 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const relevantLocalApps = localApps.filter(isRelevantForUser).map(enrichAppItem);
       
-      // Fusion intelligente : si le local a un état contractuel avancé (validee, contrat_actif, etc.), IL PRIME sur la base
+      // La base de données Supabase est la source de vérité absolue
       const localMap = new Map(relevantLocalApps.map((a) => [a.id, a]));
       const dbIds = new Set(dbApps.map((a) => a.id));
 
       const mergedDbApps = dbApps.map((dbItem) => {
         const localItem = localMap.get(dbItem.id);
         if (localItem) {
-          if (
-            localItem.status === 'contrat_actif' ||
-            localItem.status === 'validee' ||
-            localItem.status === 'refusee' ||
-            localItem.contract_number ||
-            localItem.tenant_signed
-          ) {
-            return { ...dbItem, ...localItem };
-          }
+          return {
+            ...localItem,
+            ...dbItem,
+            // Conserver les signatures locales en mémoire si la base n'a pas encore de lien direct
+            tenant_signature_url: (dbItem as any).tenant_signature_url || (localItem as any).tenant_signature_url,
+            owner_signature_url: (dbItem as any).owner_signature_url || (localItem as any).owner_signature_url,
+          };
         }
         return dbItem;
       });
