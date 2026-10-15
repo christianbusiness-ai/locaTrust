@@ -92,6 +92,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('locatrust:avatar_updated', handleAvatarUpdated);
   }, []);
 
+  React.useEffect(() => {
+    if (profile?.avatar_url && !profile.avatar_url.includes('images.unsplash.com')) {
+      setAvatarUrl(profile.avatar_url);
+    }
+  }, [profile?.avatar_url]);
+
   // Calcul dynamique des badges réels (données réelles de la base uniquement)
   const [appCount, setAppCount] = React.useState<number>(0);
   const [msgCount, setMsgCount] = React.useState<number>(0);

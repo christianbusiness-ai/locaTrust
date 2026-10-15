@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { Logo } from '@/components/common/Logo';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import {
   User,
   Mail,
@@ -96,6 +97,11 @@ export const ProfilePage: React.FC = () => {
 
         await supabase.from('profiles').update({ avatar_url: base64, updated_at: new Date().toISOString() }).eq('id', user.id);
         await refreshProfile();
+        await broadcastLiveEvent('AVATAR_UPDATED', {
+          actorId: user.id,
+          targetUserId: user.id,
+          data: { avatarUrl: base64 }
+        });
         setSuccessMsg('Votre photo de profil réelle a été enregistrée avec succès !');
         setTimeout(() => setSuccessMsg(null), 3000);
       };

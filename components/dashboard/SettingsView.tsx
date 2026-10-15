@@ -40,6 +40,7 @@ import {
 import { ACCENT_THEMES, applyAccentTheme } from '@/lib/themeHelper';
 import { AccountingYearCompactControl } from './AccountingYearCompactControl';
 import { sendChatMessage } from '@/lib/messagingStore';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 interface AdminTicket {
   id: string;
@@ -365,7 +366,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleConfirmAvatarChange = () => {
+  const handleConfirmAvatarChange = async () => {
     if (!avatarPreview) return;
     setUserAvatar(avatarPreview);
     if (typeof window !== 'undefined') {
@@ -376,6 +377,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         console.error('Failed to save avatar to localStorage', err);
       }
     }
+
+    // Sauvegarde en base Supabase et diffusion temps réel multi-appareils
+    if (user?.id) {
+      try {
+        await supabase
+          .from('profiles')
+          .update({
+            avatar_url: avatarPreview,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', user.id);
+
+        await refreshProfile();
+
+        await broadcastLiveEvent('AVATAR_UPDATED', {
+          actorId: user.id,
+          targetUserId: user.id,
+          data: { avatarUrl: avatarPreview }
+        });
+      } catch (err) {
+        console.error('Erreur sauvegarde avatar en base:', err);
+      }
+    }
+
     setIsAvatarModalOpen(false);
     setAvatarPreview(null);
     setSavedMessage('Photo de profil mise à jour avec succès.');

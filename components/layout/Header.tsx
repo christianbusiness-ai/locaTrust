@@ -126,6 +126,22 @@ export const Header: React.FC<HeaderProps> = ({
     return '';
   });
 
+  useEffect(() => {
+    if (currentUser?.avatar_url && !currentUser.avatar_url.includes('images.unsplash.com')) {
+      setAvatarUrl(currentUser.avatar_url);
+    }
+  }, [currentUser?.avatar_url]);
+
+  useEffect(() => {
+    const handleAvatarUpdated = (e: any) => {
+      if (e.detail?.avatarUrl && !e.detail.avatarUrl.includes('images.unsplash.com')) {
+        setAvatarUrl(e.detail.avatarUrl);
+      }
+    };
+    window.addEventListener('locatrust:avatar_updated', handleAvatarUpdated);
+    return () => window.removeEventListener('locatrust:avatar_updated', handleAvatarUpdated);
+  }, []);
+
   const getInitials = (name?: string, email?: string): string => {
     if (name && name.trim()) {
       const parts = name.trim().split(/\s+/).filter(Boolean);

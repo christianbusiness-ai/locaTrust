@@ -13,7 +13,8 @@ export type LiveEventType =
   | 'CONTRACT_SIGNED_BY_TENANT'
   | 'PROPERTY_RENTED'
   | 'APPLICATION_SUBMITTED'
-  | 'APPLICATION_UPDATED';
+  | 'APPLICATION_UPDATED'
+  | 'AVATAR_UPDATED';
 
 interface BroadcastPayload {
   event: LiveEventType;
@@ -66,6 +67,17 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'APPLICATION_UPDATED':
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: payload }));
         break;
+
+      case 'AVATAR_UPDATED':
+        if (typeof window !== 'undefined') {
+          const newAvatar = payload?.data?.avatarUrl;
+          if (newAvatar) {
+            try { localStorage.setItem('locatrust_user_avatar', newAvatar); } catch {}
+          }
+          window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: newAvatar } }));
+          window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
+        }
+        break;
     }
   } catch (e) {
     console.warn('Erreur dispatch événement local:', e);
@@ -101,6 +113,13 @@ function initSharedChannel() {
           dispatchDomEventForType(payload.event, payload);
         } catch (e) {
           console.warn('Erreur gestion broadcast temps réel:', e);
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (payload: any) => {
+        if (payload?.new?.avatar_url) {
+          try { localStorage.setItem('locatrust_user_avatar', payload.new.avatar_url); } catch {}
+          window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: payload.new.avatar_url } }));
+          window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: payload.new }));
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rent_payments' }, () => {

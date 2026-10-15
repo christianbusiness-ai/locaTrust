@@ -27,6 +27,7 @@ import {
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import confetti from 'canvas-confetti';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 export const LocataireProfileView: React.FC = () => {
   const { user, profile, refreshProfile } = useAuth();
@@ -96,6 +97,11 @@ export const LocataireProfileView: React.FC = () => {
           await supabase.from('profiles').update({ avatar_url: base64 }).eq('id', user.id);
           refreshProfile();
           window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: base64 } }));
+          await broadcastLiveEvent('AVATAR_UPDATED', {
+            actorId: user.id,
+            targetUserId: user.id,
+            data: { avatarUrl: base64 }
+          });
         };
         reader.readAsDataURL(file);
       } else {
@@ -107,6 +113,11 @@ export const LocataireProfileView: React.FC = () => {
         await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', user.id);
         refreshProfile();
         window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: publicUrl } }));
+        await broadcastLiveEvent('AVATAR_UPDATED', {
+          actorId: user.id,
+          targetUserId: user.id,
+          data: { avatarUrl: publicUrl }
+        });
       }
     } catch (err: any) {
       console.warn('Notice avatar upload:', err?.message);
