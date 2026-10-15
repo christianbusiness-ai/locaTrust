@@ -69,7 +69,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const isActuallyAgency = isAgency || userRole === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_current_role') === 'agence');
   const isTenant = userRole === 'locataire';
   const actorName = isActuallyAgency 
-    ? "Immobilière du Golf (Agence Agréée)" 
+    ? (profile?.full_name || user?.user_metadata?.full_name ? `${profile?.full_name || user?.user_metadata?.full_name} (Agence Agréée)` : "Mon Agence (Agence Agréée)")
     : profile?.full_name || user?.user_metadata?.full_name 
     ? `${profile?.full_name || user?.user_metadata?.full_name} (Bailleur)` 
     : "Bailleur Propriétaire";

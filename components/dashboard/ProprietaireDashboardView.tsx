@@ -202,6 +202,14 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
   const isVerified = profile?.verification_status === 'verifie';
 
+  const displayName =
+    userName ||
+    profile?.full_name ||
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split('@')[0] ||
+    (userRole === 'agence' ? "Mon Agence" : "Bailleur");
+
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
       
@@ -210,7 +218,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              Bonjour, {userName || (userRole === 'agence' ? "Immobilière du Golf" : "Bailleur")}
+              Bonjour, {displayName}
             </h1>
             <span className="text-xl">👋</span>
             {isVerified && (

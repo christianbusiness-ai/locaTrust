@@ -7,13 +7,23 @@ import { initAccentTheme } from '../lib/themeHelper';
 // Initialisation immédiate du thème de couleur d'ambiance sauvegardé
 initAccentTheme();
 
-// Enregistrement du Service Worker PWA pour installation mobile et bureau (sans navigateur)
+// Enregistrement et mise à jour dynamique du Service Worker PWA
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')
       .then((reg) => {
-        console.log('[LocaTrust PWA] Service Worker actif :', reg.scope);
+        // Détection et activation instantanée des nouvelles versions déployées
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          if (installingWorker) {
+            installingWorker.onstatechange = () => {
+              if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                installingWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            };
+          }
+        };
       })
       .catch((err) => {
         console.warn('[LocaTrust PWA] Erreur enregistrement Service Worker :', err);

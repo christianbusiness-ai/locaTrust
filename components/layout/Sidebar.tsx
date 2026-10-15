@@ -238,8 +238,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (profile?.full_name) return profile.full_name;
     if (user?.user_metadata?.full_name) return user.user_metadata.full_name;
     if (activeUser?.full_name) return activeUser.full_name;
-    if (isAgence) return 'Immobilière du Golf';
-    if (isLocataire) return 'Espace Locataire';
+    if (user?.email) return user.email.split('@')[0];
+    if (isAgence) return 'Mon Agence';
+    if (isLocataire) return 'Locataire';
     if (isAdmin) return 'Super Administrateur';
     return "Bailleur";
   };

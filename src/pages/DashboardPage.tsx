@@ -1,11 +1,39 @@
 import React, { Suspense, lazy } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
 
+function lazyDashboardWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>,
+  roleKey: string
+): React.LazyExoticComponent<T> {
+  return lazy(async () => {
+    const key = `locatrust_dash_retry_${roleKey}`;
+    try {
+      const res = await factory();
+      sessionStorage.removeItem(key);
+      return res;
+    } catch (err) {
+      console.warn(`[LocaTrust] Erreur chargement dashboard ${roleKey}:`, err);
+      const hasRetried = sessionStorage.getItem(key);
+      if (!hasRetried && typeof window !== 'undefined') {
+        sessionStorage.setItem(key, '1');
+        if ('caches' in window) {
+          try {
+            const names = await caches.keys();
+            await Promise.all(names.map(n => caches.delete(n)));
+          } catch {}
+        }
+        window.location.reload();
+      }
+      throw err;
+    }
+  });
+}
+
 // Lazy loading ciblé par rôle pour diviser par 4 le poids du dashboard
-const TenantDashboardPage = lazy(() => import('@/app/(locataire)/dashboard/page'));
-const ProprietaireDashboardPage = lazy(() => import('@/app/(proprietaire)/dashboard/page'));
-const AgencyDashboardPage = lazy(() => import('@/app/(agence)/dashboard/page'));
-const AdminDashboardPage = lazy(() => import('@/app/(admin)/dashboard/page'));
+const TenantDashboardPage = lazyDashboardWithRetry(() => import('@/app/(locataire)/dashboard/page'), 'tenant');
+const ProprietaireDashboardPage = lazyDashboardWithRetry(() => import('@/app/(proprietaire)/dashboard/page'), 'proprietaire');
+const AgencyDashboardPage = lazyDashboardWithRetry(() => import('@/app/(agence)/dashboard/page'), 'agence');
+const AdminDashboardPage = lazyDashboardWithRetry(() => import('@/app/(admin)/dashboard/page'), 'admin');
 
 import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 

@@ -1186,7 +1186,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     value={ownerName}
                     onChange={(e) => setOwnerName(e.target.value)}
                     className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
-                    placeholder={isAgency ? "Ex: Immobilière du Golf Abidjan" : "Ex: Kouassi Amadou"}
+                    placeholder={isAgency ? "Ex: Nom officiel de l'Agence" : "Ex: Kouassi Amadou"}
                   />
                 </div>
                 <div>

@@ -179,7 +179,7 @@ export default function AgencyDashboardPage({
           {activeTab === 'overview' && !selectedContractId && (
             <ProprietaireDashboardView
               userRole="agence"
-              userName="Immobilière du Golf"
+              userName={currentUser?.full_name || profile?.full_name || 'Mon Agence'}
               onNavigateTab={setActiveTab}
               onOpenAddProperty={() => setIsAddPropertyOpen(true)}
               onOpenCreateContract={() => setIsCreateContractOpen(true)}

@@ -12,17 +12,48 @@ import { ProtectedRoute } from '@/src/components/auth/ProtectedRoute';
 import { LandingPageView } from '@/components/landing/LandingPageView';
 import { UserRole } from '@/types/database.types';
 
-// Code Splitting / Lazy Loading pour vitesse de chargement mobile maximale
-const LoginPage = lazy(() => import('@/src/pages/LoginPage').then(m => ({ default: m.LoginPage })));
-const RegisterPage = lazy(() => import('@/src/pages/RegisterPage').then(m => ({ default: m.RegisterPage })));
-const VerifyEmailPage = lazy(() => import('@/src/pages/VerifyEmailPage').then(m => ({ default: m.VerifyEmailPage })));
-const ForgotPasswordPage = lazy(() => import('@/src/pages/ForgotPasswordPage').then(m => ({ default: m.ForgotPasswordPage })));
-const ResetPasswordPage = lazy(() => import('@/src/pages/ResetPasswordPage').then(m => ({ default: m.ResetPasswordPage })));
-const ProfilePage = lazy(() => import('@/src/pages/ProfilePage').then(m => ({ default: m.ProfilePage })));
-const DashboardPage = lazy(() => import('@/src/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
-const DocumentVerificationView = lazy(() => import('@/components/verification/DocumentVerificationView').then(m => ({ default: m.DocumentVerificationView })));
-const RegisterModal = lazy(() => import('@/components/auth/RegisterModal').then(m => ({ default: m.RegisterModal })));
-const LoginModal = lazy(() => import('@/components/auth/LoginModal').then(m => ({ default: m.LoginModal })));
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+
+// Helper de chargement dynamique avec purge de cache automatique lors des déploiements
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>,
+  chunkName: string
+): React.LazyExoticComponent<T> {
+  return lazy(async () => {
+    const sessionKey = `locatrust_retry_${chunkName}`;
+    try {
+      const res = await factory();
+      sessionStorage.removeItem(sessionKey);
+      return res;
+    } catch (err: any) {
+      console.warn(`[LocaTrust] Erreur chargement bundle ${chunkName}:`, err);
+      const hasRetried = sessionStorage.getItem(sessionKey);
+      if (!hasRetried && typeof window !== 'undefined') {
+        sessionStorage.setItem(sessionKey, '1');
+        if ('caches' in window) {
+          try {
+            const names = await caches.keys();
+            await Promise.all(names.map(n => caches.delete(n)));
+          } catch {}
+        }
+        window.location.reload();
+      }
+      throw err;
+    }
+  });
+}
+
+// Code Splitting / Lazy Loading résistant aux rechargements sur mobile
+const LoginPage = lazyWithRetry(() => import('@/src/pages/LoginPage').then(m => ({ default: m.LoginPage })), 'login');
+const RegisterPage = lazyWithRetry(() => import('@/src/pages/RegisterPage').then(m => ({ default: m.RegisterPage })), 'register');
+const VerifyEmailPage = lazyWithRetry(() => import('@/src/pages/VerifyEmailPage').then(m => ({ default: m.VerifyEmailPage })), 'verifyEmail');
+const ForgotPasswordPage = lazyWithRetry(() => import('@/src/pages/ForgotPasswordPage').then(m => ({ default: m.ForgotPasswordPage })), 'forgotPw');
+const ResetPasswordPage = lazyWithRetry(() => import('@/src/pages/ResetPasswordPage').then(m => ({ default: m.ResetPasswordPage })), 'resetPw');
+const ProfilePage = lazyWithRetry(() => import('@/src/pages/ProfilePage').then(m => ({ default: m.ProfilePage })), 'profile');
+const DashboardPage = lazyWithRetry(() => import('@/src/pages/DashboardPage').then(m => ({ default: m.DashboardPage })), 'dashboard');
+const DocumentVerificationView = lazyWithRetry(() => import('@/components/verification/DocumentVerificationView').then(m => ({ default: m.DocumentVerificationView })), 'docVerify');
+const RegisterModal = lazyWithRetry(() => import('@/components/auth/RegisterModal').then(m => ({ default: m.RegisterModal })), 'regModal');
+const LoginModal = lazyWithRetry(() => import('@/components/auth/LoginModal').then(m => ({ default: m.LoginModal })), 'loginModal');
 
 import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
@@ -123,47 +154,49 @@ export default function App() {
       <TopProgressBar />
       <AuthProvider>
         <LiveSyncManager />
-        <Suspense fallback={<DashboardPageSkeleton />}>
-          <Routes>
-            {/* Routes Publiques d'Authentification */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/verify-email" element={<VerifyEmailPage />} />
-            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <ErrorBoundary>
+          <Suspense fallback={<DashboardPageSkeleton />}>
+            <Routes>
+              {/* Routes Publiques d'Authentification */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-            {/* Routes Privées Sécurisées */}
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <ProfilePage />
-                </ProtectedRoute>
-              }
-            />
+              {/* Routes Privées Sécurisées */}
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <ProfilePage />
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <DashboardPage />
-                </ProtectedRoute>
-              }
-            />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <DashboardPage />
+                  </ProtectedRoute>
+                }
+              />
 
-            {/* Routes Publiques de Scan QR Code */}
-            <Route path="/verify/:token" element={<QrVerificationWrapper />} />
-            <Route path="/verify/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
-            <Route path="/verify/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
-            <Route path="/verification/:type/:token" element={<QrVerificationWrapper />} />
+              {/* Routes Publiques de Scan QR Code */}
+              <Route path="/verify/:token" element={<QrVerificationWrapper />} />
+              <Route path="/verify/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
+              <Route path="/verify/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
+              <Route path="/verification/:type/:token" element={<QrVerificationWrapper />} />
 
-            {/* Page d'accueil / Vitrine */}
-            <Route path="/" element={<HomePage />} />
+              {/* Page d'accueil / Vitrine */}
+              <Route path="/" element={<HomePage />} />
 
-            {/* Redirection par défaut */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
+              {/* Redirection par défaut */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
 
         {/* Bannière et Modal d'installation PWA (Accessible sur tout le site) */}
         <PwaInstallPrompt />
