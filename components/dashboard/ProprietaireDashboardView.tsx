@@ -28,6 +28,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { Link } from 'react-router-dom';
+import { getActiveReferenceYear, getAvailableYears } from '@/lib/reports/accountingHistoryStore';
 
 interface ProprietaireDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -55,7 +56,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   isDemo = false
 }) => {
   const { user, profile } = useAuth();
-  const [selectedYear, setSelectedYear] = useState('2026');
+  const [selectedYear, setSelectedYear] = useState(() => getActiveReferenceYear());
 
   const [isLoading, setIsLoading] = useState<boolean>(!isDemo);
   const [realProps, setRealProps] = useState<any[]>([]);
@@ -103,11 +104,16 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       fetchDashboardData();
     };
 
+    const handleYearChanged = (e: any) => {
+      setSelectedYear(e.detail?.year || getActiveReferenceYear());
+    };
+
     window.addEventListener('locatrust:properties-updated', handleLiveUpdate);
     window.addEventListener('locatrust:applications-updated', handleLiveUpdate);
     window.addEventListener('locatrust:contracts-updated', handleLiveUpdate);
     window.addEventListener('locatrust:payments-updated', handleLiveUpdate);
     window.addEventListener('locatrust:cautions_updated', handleLiveUpdate);
+    window.addEventListener('locatrust:year_changed', handleYearChanged);
 
     return () => {
       window.removeEventListener('locatrust:properties-updated', handleLiveUpdate);
@@ -115,8 +121,16 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       window.removeEventListener('locatrust:contracts-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:payments-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleLiveUpdate);
+      window.removeEventListener('locatrust:year_changed', handleYearChanged);
     };
   }, [user, isDemo]);
+
+  // Synchronisation avec l'année du profil Supabase
+  useEffect(() => {
+    if (profile?.accounting_year) {
+      setSelectedYear(profile.accounting_year);
+    }
+  }, [profile?.accounting_year]);
 
   // Calculs dynamiques basés sur les données réelles
   const totalProps = isDemo ? 12 : realProps.length;
@@ -527,7 +541,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-black text-slate-900">Statistiques Annuelles — Vue Mois par Mois</h3>
                 <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-extrabold text-[10px]">
-                  Année 2026
+                  Année {selectedYear}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
@@ -543,8 +557,10 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               onChange={(e) => setSelectedYear(e.target.value)}
               className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
             >
-              <option value="2026">2026 (En cours)</option>
-              <option value="2025">2025 (Clôturé)</option>
+              <option value={selectedYear}>{selectedYear} (En cours)</option>
+              {getAvailableYears().filter(y => y !== selectedYear).map(y => (
+                <option key={y} value={y}>{y} (Archivé)</option>
+              ))}
             </select>
           </div>
         </div>

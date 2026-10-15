@@ -16,6 +16,7 @@ export interface UserProfile {
   id_document_url?: string;
   rejection_reason?: string;
   verification_status: 'non_verifie' | 'en_attente' | 'verifie' | 'rejete';
+  accounting_year?: string;
   created_at: string;
 }
 
@@ -65,6 +66,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) {
         console.warn('Erreur chargement profil:', error.message);
         return null;
+      }
+      if (data && (data as any).accounting_year && typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('locatrust_current_accounting_year', (data as any).accounting_year);
+          localStorage.setItem('locatrust_reference_accounting_year', (data as any).accounting_year);
+        } catch {}
       }
       return data as UserProfile;
     } catch (err) {

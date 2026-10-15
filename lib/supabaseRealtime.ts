@@ -14,7 +14,8 @@ export type LiveEventType =
   | 'PROPERTY_RENTED'
   | 'APPLICATION_SUBMITTED'
   | 'APPLICATION_UPDATED'
-  | 'AVATAR_UPDATED';
+  | 'AVATAR_UPDATED'
+  | 'ACCOUNTING_YEAR_UPDATED';
 
 interface BroadcastPayload {
   event: LiveEventType;
@@ -78,6 +79,21 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
         }
         break;
+
+      case 'ACCOUNTING_YEAR_UPDATED':
+        if (typeof window !== 'undefined') {
+          const yr = payload?.data?.year;
+          if (yr) {
+            try {
+              localStorage.setItem('locatrust_current_accounting_year', yr);
+              localStorage.setItem('locatrust_reference_accounting_year', yr);
+            } catch {}
+            window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
+              detail: { year: yr, isTemporary: false, currentYear: yr }
+            }));
+          }
+        }
+        break;
     }
   } catch (e) {
     console.warn('Erreur dispatch événement local:', e);
@@ -120,6 +136,16 @@ function initSharedChannel() {
           try { localStorage.setItem('locatrust_user_avatar', payload.new.avatar_url); } catch {}
           window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: payload.new.avatar_url } }));
           window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: payload.new }));
+        }
+        if (payload?.new?.accounting_year) {
+          const yr = payload.new.accounting_year;
+          try {
+            localStorage.setItem('locatrust_current_accounting_year', yr);
+            localStorage.setItem('locatrust_reference_accounting_year', yr);
+          } catch {}
+          window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
+            detail: { year: yr, isTemporary: false, currentYear: yr }
+          }));
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rent_payments' }, () => {

@@ -43,6 +43,7 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
       setCurrentAccountingYear(cy);
       setViewingYear(vy);
       setArchivedYears(getArchivedYears());
+      setInputYear(cy);
     };
 
     window.addEventListener('locatrust:year_changed', handleYearChanged);

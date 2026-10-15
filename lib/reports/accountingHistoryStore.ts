@@ -1,7 +1,5 @@
-'use client';
-
-// Store d'historisation comptable et statistique LocaTrust
-// Préserve l'intégrité des années passées (2025, 2026) et permet le calcul dynamique réel par période
+import { supabase } from '@/src/lib/supabase';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 export interface MonthAccountingRecord {
   monthKey: string; // '2026-01', '2026-02', etc.
@@ -299,6 +297,26 @@ export function saveCurrentAccountingYear(year: string): { success: boolean; cur
     window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
       detail: { year: cleanYear, isTemporary: false, currentYear: cleanYear }
     }));
+
+    // Sauvegarde en base de données Supabase et diffusion Realtime
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (user?.id) {
+        try {
+          await supabase.auth.updateUser({ data: { accounting_year: cleanYear } });
+          await supabase.from('profiles').update({
+            accounting_year: cleanYear,
+            updated_at: new Date().toISOString()
+          }).eq('id', user.id);
+          await broadcastLiveEvent('ACCOUNTING_YEAR_UPDATED', {
+            actorId: user.id,
+            targetUserId: user.id,
+            data: { year: cleanYear }
+          });
+        } catch (dbErr) {
+          console.warn('Erreur sauvegarde exercice en base:', dbErr);
+        }
+      }
+    }).catch(() => {});
 
     return { success: true, currentYear: cleanYear, archivedYears: archived };
   } catch (e) {

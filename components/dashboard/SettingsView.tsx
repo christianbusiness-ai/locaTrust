@@ -160,10 +160,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (profile.full_name) setFullName(profile.full_name);
       if ((profile as any).email) setEmail((profile as any).email);
       if (profile.phone) setPhone(profile.phone);
+      if (profile.accounting_year) {
+        setActiveAccountingYear(profile.accounting_year);
+        setInputAccountingYear(profile.accounting_year);
+      }
     } else if (user) {
       if (user.email) setEmail(user.email);
     }
   }, [profile, user]);
+
+  // Synchroniser dynamiquement l'année comptable active avec la base de données et les événements temps réel
+  React.useEffect(() => {
+    const handleYearChanged = (e: any) => {
+      const yr = e.detail?.year || getActiveReferenceYear();
+      setActiveAccountingYear(yr);
+      setInputAccountingYear(yr);
+    };
+    window.addEventListener('locatrust:year_changed', handleYearChanged);
+    return () => window.removeEventListener('locatrust:year_changed', handleYearChanged);
+  }, []);
 
   // Agency / Corporate specific fields
   const [rccmNumber, setRccmNumber] = useState<string>('CI-ABJ-2021-B-12849');
