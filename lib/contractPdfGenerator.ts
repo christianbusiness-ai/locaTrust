@@ -12,8 +12,13 @@ export interface ContractPdfData {
   ownerName: string;
   mandantName?: string;
   ownerPhone?: string;
+  ownerEmail?: string;
+  ownerAddress?: string;
+  ownerCni?: string;
   tenantName: string;
   tenantPhone?: string;
+  tenantEmail?: string;
+  tenantAddress?: string;
   tenantCni?: string;
   tenantEntityKind?: 'personne_physique' | 'personne_morale';
   tenantRccm?: string;
@@ -204,9 +209,9 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(7);
       doc.setTextColor(51, 65, 85);
       doc.text(`Nom / Raison : ${ownerName}`, 18, 46.5);
-      doc.text(`Téléphone : ${ownerPhone}`, 18, 50.5);
-      doc.text(`Adresse : Cocody, Abidjan - Côte d'Ivoire`, 18, 54.5);
-      doc.text(`Identifiant : CNI / RCCM vérifié`, 18, 58.5);
+      doc.text(`Téléphone : ${ownerPhone || 'Non renseigné'}`, 18, 50.5);
+      doc.text(`Adresse : ${data.ownerAddress || 'Abidjan - Côte d\'Ivoire'}`, 18, 54.5);
+      doc.text(`Identifiant : ${data.ownerCni ? `CNI/RCCM N° ${data.ownerCni}` : 'Identité certifiée'}`, 18, 58.5);
     }
 
     // Preneur (Personne physique ou morale)
@@ -224,13 +229,13 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.setFontSize(7);
     doc.setTextColor(51, 65, 85);
     doc.text(`Nom / Raison sociale : ${tenantName}`, 108, 46.5);
-    doc.text(`Téléphone : ${tenantPhone}`, 108, 50.5);
+    doc.text(`Téléphone : ${tenantPhone || 'Non renseigné'}`, 108, 50.5);
     if (isProfessional && tenantRccm) {
       doc.text(`Immatriculation RCCM : ${tenantRccm}`, 108, 54.5);
-      doc.text(`Représenté par titulaire CNI N° ${tenantCni}`, 108, 58.5);
+      doc.text(`Représenté par titulaire CNI N° ${tenantCni || 'Vérifiée'}`, 108, 58.5);
     } else {
-      doc.text(`Adresse : Abidjan - Côte d'Ivoire`, 108, 54.5);
-      doc.text(`Pièce d'identité : CNI N° ${tenantCni}`, 108, 58.5);
+      doc.text(`Adresse : ${data.tenantAddress || 'Abidjan - Côte d\'Ivoire'}`, 108, 54.5);
+      doc.text(`Pièce d'identité : CNI N° ${tenantCni || 'Vérifiée'}`, 108, 58.5);
     }
 
     doc.setFont('helvetica', 'italic');

@@ -46,3 +46,15 @@ export function sanitizeNumericInput(value: string | number): number {
   const parsed = Number(cleaned);
   return isNaN(parsed) ? 0 : parsed;
 }
+
+/**
+ * Génère un numéro de contrat de bail strictement unique
+ * Format officiel : LT-YYYY-CI-XXXXXX (ex: LT-2026-CI-849201)
+ */
+export function generateUniqueContractNumber(prefix = 'LT'): string {
+  const year = new Date().getFullYear();
+  const timeSlice = (Date.now() % 1000000).toString().padStart(6, '0');
+  const rand = Math.floor(10 + Math.random() * 90).toString();
+  return `${prefix}-${year}-CI-${timeSlice}${rand}`;
+}
+

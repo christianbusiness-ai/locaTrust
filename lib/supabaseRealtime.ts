@@ -16,7 +16,9 @@ export type LiveEventType =
   | 'APPLICATION_UPDATED'
   | 'AVATAR_UPDATED'
   | 'ACCOUNTING_YEAR_UPDATED'
-  | 'NEW_MESSAGE';
+  | 'NEW_MESSAGE'
+  | 'THEME_UPDATED'
+  | 'NOTIFICATION_CREATED';
 
 interface BroadcastPayload {
   event: LiveEventType;
@@ -100,6 +102,33 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
+        }
+        break;
+
+      case 'THEME_UPDATED':
+        if (typeof window !== 'undefined') {
+          const themeId = payload?.data?.themeId;
+          if (themeId) {
+            import('@/lib/themeHelper').then((m) => {
+              m.applyAccentTheme(themeId, false);
+            });
+          }
+          if (payload?.data?.theme) {
+            const th = payload.data.theme;
+            if (th === 'dark') {
+              document.documentElement.classList.add('dark');
+            } else {
+              document.documentElement.classList.remove('dark');
+            }
+            try { localStorage.setItem('locatrust_theme', th); } catch {}
+          }
+          window.dispatchEvent(new CustomEvent('locatrust:accent-color-changed', { detail: payload?.data }));
+        }
+        break;
+
+      case 'NOTIFICATION_CREATED':
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: payload }));
         }
         break;
     }

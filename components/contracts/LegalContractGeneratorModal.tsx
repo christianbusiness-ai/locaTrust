@@ -26,7 +26,7 @@ import {
   Bell,
   ExternalLink
 } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, generateUniqueContractNumber } from '@/lib/utils';
 import { getLocaTrustVerificationQR } from '@/lib/qrCode';
 import { LOCATRUST_QR_CODE_DATA_URL, LOCATRUST_QR_CODE_URL } from '@/lib/qrCodeData';
 import { Logo } from '@/components/common/Logo';
@@ -64,12 +64,17 @@ interface LegalContractGeneratorModalProps {
   startAtStep?: 'form' | 'verification' | 'preview' | 'transmission';
   initialData?: {
     id?: string;
+    contractNumber?: string;
     startAtStep?: 'form' | 'verification' | 'preview' | 'transmission';
     tenantId?: string;
     tenantEmail?: string;
+    tenantAddress?: string;
     ownerId?: string;
     ownerName?: string;
     ownerPhone?: string;
+    ownerEmail?: string;
+    ownerAddress?: string;
+    ownerCni?: string;
     tenantName?: string;
     tenantPhone?: string;
     tenantCni?: string;
@@ -138,13 +143,27 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
   // Parties & Property
   const [tenantName, setTenantName] = useState<string>(initialData?.tenantName || "");
-  const [tenantPhone, setTenantPhone] = useState<string>(initialData?.tenantPhone || '+225 07 08 09 10 11');
-  const [tenantCni, setTenantCni] = useState<string>(initialData?.tenantCni || 'CI-0029481920');
+  const [tenantPhone, setTenantPhone] = useState<string>(initialData?.tenantPhone || '');
+  const [tenantCni, setTenantCni] = useState<string>(initialData?.tenantCni || '');
+  const [tenantEmail, setTenantEmail] = useState<string>(initialData?.tenantEmail || '');
+  const [tenantAddress, setTenantAddress] = useState<string>(
+    initialData?.tenantAddress || 'Abidjan - Côte d\'Ivoire'
+  );
+
   const [ownerName, setOwnerName] = useState<string>(
     initialData?.ownerName || profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur')
   );
   const [ownerPhone, setOwnerPhone] = useState<string>(
-    initialData?.ownerPhone || profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00'
+    initialData?.ownerPhone || profile?.phone || user?.user_metadata?.phone || ''
+  );
+  const [ownerEmail, setOwnerEmail] = useState<string>(
+    initialData?.ownerEmail || user?.email || profile?.email || ''
+  );
+  const [ownerAddress, setOwnerAddress] = useState<string>(
+    initialData?.ownerAddress || profile?.address || 'Abidjan - Côte d\'Ivoire'
+  );
+  const [ownerCni, setOwnerCni] = useState<string>(
+    initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || ''
   );
   const [mandantName, setMandantName] = useState<string>(initialData?.mandantName || '');
 
@@ -189,7 +208,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [dueDay, setDueDay] = useState<number>(5);
   const [cautionPaidAmount, setCautionPaidAmount] = useState<number>(initialData?.cautionAmount || 300000);
   const [cautionReceiptNumber, setCautionReceiptNumber] = useState<string>('DEP-2026-CI-00984');
-  const [contractNumber] = useState<string>('LT-2026-CI-000492');
+  const [contractNumber] = useState<string>(() => initialData?.contractNumber || generateUniqueContractNumber());
   const [leaseType, setLeaseType] = useState<LeaseType>(
     initialData?.leaseType || initialData?.usageDestination || 'habitation'
   );
@@ -235,8 +254,32 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (initialData.tenantName) setTenantName(initialData.tenantName);
         if (initialData.tenantPhone) setTenantPhone(initialData.tenantPhone);
         if (initialData.tenantCni) setTenantCni(initialData.tenantCni);
+        if (initialData.tenantEmail) setTenantEmail(initialData.tenantEmail);
+        if (initialData.tenantAddress) setTenantAddress(initialData.tenantAddress);
         if (initialData.ownerName) setOwnerName(initialData.ownerName);
         if (initialData.ownerPhone) setOwnerPhone(initialData.ownerPhone);
+        if (initialData.ownerEmail) setOwnerEmail(initialData.ownerEmail);
+        if (initialData.ownerAddress) setOwnerAddress(initialData.ownerAddress);
+        if (initialData.ownerCni) setOwnerCni(initialData.ownerCni);
+
+        // Récupérer les informations complètes du locataire depuis la table profiles si disponible
+        if (initialData.tenantId) {
+          supabase
+            .from('profiles')
+            .select('full_name, phone, email, cni_number, address')
+            .eq('id', initialData.tenantId)
+            .maybeSingle()
+            .then(({ data: tProf }) => {
+              if (tProf) {
+                if (tProf.full_name) setTenantName(tProf.full_name);
+                if (tProf.phone) setTenantPhone(tProf.phone);
+                if (tProf.email) setTenantEmail(tProf.email);
+                if (tProf.cni_number) setTenantCni(tProf.cni_number);
+                if (tProf.address) setTenantAddress(tProf.address);
+              }
+            });
+        }
+
         if (initialData.propertyTitle) setPropertyTitle(initialData.propertyTitle);
         if (initialData.propertyCity) setPropertyCity(initialData.propertyCity);
         if (initialData.propertyCommune) setPropertyCommune(initialData.propertyCommune);
@@ -997,28 +1040,31 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     }
 
     // 5. Notification automatique aux demandeurs en liste d'attente pour ce logement
-    try {
-      const notified = notifyWaitingListCandidatesOnLeaseFinalized({
-        propertyTitle,
-        propertyAddress,
-        chosenTenantName: tenantName,
-        contractNumber
-      });
-      setNotifiedCandidates(notified);
-    } catch (notifErr) {
-      console.warn('Waiting list notification error:', notifErr);
-    }
-
-    // Callback parent optionnel (ex: DemandesView)
-    if (onContractFinalized) {
+    // (Uniquement si le bail est scellé/finalisé avec les 2 signatures)
+    if (tenantSignatureUrl) {
       try {
-        onContractFinalized({
-          contractNumber,
-          tenantName,
-          propertyTitle
+        const notified = notifyWaitingListCandidatesOnLeaseFinalized({
+          propertyTitle,
+          propertyAddress,
+          chosenTenantName: tenantName,
+          contractNumber
         });
-      } catch (e) {
-        console.warn('onContractFinalized error:', e);
+        setNotifiedCandidates(notified);
+      } catch (notifErr) {
+        console.warn('Waiting list notification error:', notifErr);
+      }
+
+      // Callback parent optionnel (ex: DemandesView)
+      if (onContractFinalized) {
+        try {
+          onContractFinalized({
+            contractNumber,
+            tenantName,
+            propertyTitle
+          });
+        } catch (e) {
+          console.warn('onContractFinalized error:', e);
+        }
       }
     }
 
@@ -1048,8 +1094,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       ownerName,
       mandantName: isAgency ? (mandantName || initialData?.mandantName) : undefined,
       ownerPhone,
+      ownerEmail,
+      ownerAddress,
+      ownerCni,
       tenantName,
       tenantPhone,
+      tenantEmail,
+      tenantAddress,
       tenantCni,
       propertyTitle,
       propertyAddress,
@@ -2294,10 +2345,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       {isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (MANDATAIRE) :' : 'LE PROPRIÉTAIRE (BAILLEUR) :'}
                     </span>
                     <span className="text-slate-700"><strong>Nom :</strong> {ownerName}</span>
-                    <span className="text-slate-700"><strong>Téléphone :</strong> {ownerPhone}</span>
-                    <span className="text-slate-700"><strong>Email :</strong> contact@{ownerName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'bailleur'}.ci</span>
-                    <span className="text-slate-700"><strong>Adresse :</strong> Cocody, Abidjan - Côte d'Ivoire</span>
-                    <span className="text-slate-700"><strong>Pièce d'identité :</strong> CNI N° CI123456789</span>
+                    <span className="text-slate-700"><strong>Téléphone :</strong> {ownerPhone || 'Non renseigné'}</span>
+                    <span className="text-slate-700"><strong>Email :</strong> {ownerEmail || user?.email || 'contact@locatrust.ci'}</span>
+                    <span className="text-slate-700"><strong>Adresse :</strong> {ownerAddress || 'Abidjan - Côte d\'Ivoire'}</span>
+                    <span className="text-slate-700"><strong>Pièce d'identité :</strong> {ownerCni ? `CNI / RCCM N° ${ownerCni}` : 'Identité certifiée'}</span>
                   </div>
 
                   {/* Locataire */}
@@ -2306,10 +2357,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       LE LOCATAIRE (PRENEUR) :
                     </span>
                     <span className="text-slate-700"><strong>Nom :</strong> {tenantName}</span>
-                    <span className="text-slate-700"><strong>Téléphone :</strong> {tenantPhone}</span>
-                    <span className="text-slate-700"><strong>Email :</strong> {tenantName.toLowerCase().replace(/[^a-z0-9]/g, '')}@email.com</span>
-                    <span className="text-slate-700"><strong>Adresse :</strong> Riviera 3, Cocody - Abidjan</span>
-                    <span className="text-slate-700"><strong>Pièce d'identité :</strong> CNI N° {tenantCni}</span>
+                    <span className="text-slate-700"><strong>Téléphone :</strong> {tenantPhone || 'Non renseigné'}</span>
+                    <span className="text-slate-700"><strong>Email :</strong> {tenantEmail || 'Non renseigné'}</span>
+                    <span className="text-slate-700"><strong>Adresse :</strong> {tenantAddress || 'Abidjan - Côte d\'Ivoire'}</span>
+                    <span className="text-slate-700"><strong>Pièce d'identité :</strong> {tenantCni ? `CNI N° ${tenantCni}` : 'En cours de vérification'}</span>
                   </div>
                 </div>
 

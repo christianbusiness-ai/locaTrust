@@ -55,7 +55,7 @@ export const ACCENT_THEMES: AccentTheme[] = [
   }
 ];
 
-export function applyAccentTheme(themeId: string): void {
+export function applyAccentTheme(themeId: string, broadcast = true): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
   const theme = ACCENT_THEMES.find((t) => t.id === themeId) || ACCENT_THEMES[0];
@@ -125,6 +125,15 @@ export function applyAccentTheme(themeId: string): void {
       detail: { themeId: theme.id, theme }
     })
   );
+
+  // 5. Diffusion temps réel WebSocket sur tous les appareils de l'utilisateur
+  if (broadcast) {
+    import('./supabaseRealtime').then((rt) => {
+      rt.broadcastLiveEvent('THEME_UPDATED', {
+        data: { themeId: theme.id, accentColor: theme.id }
+      });
+    }).catch(() => {});
+  }
 }
 
 export function initAccentTheme(): void {
