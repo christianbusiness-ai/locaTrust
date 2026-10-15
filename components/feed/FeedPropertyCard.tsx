@@ -52,8 +52,8 @@ export const FeedPropertyCard: React.FC<FeedPropertyCardProps> = ({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <img
-            src={property.owner?.avatar_url || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80'}
-            alt={property.owner?.full_name}
+            src={property.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(property.owner?.full_name || 'Bailleur')}&background=1E40AF&color=fff`}
+            alt={property.owner?.full_name || 'Bailleur'}
             className="w-11 h-11 rounded-full object-cover ring-2 ring-slate-100"
           />
           <div className="flex flex-col">

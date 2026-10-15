@@ -26,9 +26,10 @@ import {
   Building2,
   PenTool
 } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import confetti from 'canvas-confetti';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { RentPayment } from '@/types/database.types';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
@@ -272,23 +273,27 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     );
 
     // 3. Dispatch official receipt to Tenant Messaging Inbox
-    sendQuittanceToTenant({
-      receiptNumber: extractedOcrData.reference,
-      contractNumber: validatingPayment.contract_id || 'LT-CI-2026-000123',
-      propertyTitle: validatingPayment.contract?.property?.title || 'Appartement 3 pièces Cocody Riviera 3',
-      propertyAddress: 'Cocody Riviera 3, Abidjan - Côte d\'Ivoire',
-      amount: extractedOcrData.amount,
-      periodCovered: result.generatedReceipt.periods_covered_text,
-      paymentDate: new Date().toLocaleDateString('fr-FR'),
-      paymentMethod: extractedOcrData.payment_method,
-      transactionReference: extractedOcrData.reference,
-      ownerName: user?.user_metadata?.full_name || 'Bailleur',
-      tenantName: validatingPayment.tenant?.full_name || 'Locataire',
-      ownerSignatureUrl: ownerSignatureUrl,
-      tenantSignatureUrl: tenantSignatureUrl,
-    });
+    sendQuittanceToTenant(
+      {
+        receiptNumber: extractedOcrData.reference,
+        contractNumber: validatingPayment.contract_id || 'LT-CI-2026-000123',
+        propertyTitle: validatingPayment.contract?.property?.title || 'Logement LocaTrust',
+        propertyAddress: (validatingPayment.contract?.property as any)?.address || [validatingPayment.contract?.property?.quartier, validatingPayment.contract?.property?.commune, validatingPayment.contract?.property?.city].filter(Boolean).join(', ') || 'Abidjan - Côte d\'Ivoire',
+        amount: extractedOcrData.amount,
+        periodCovered: result.generatedReceipt.periods_covered_text,
+        paymentDate: new Date().toLocaleDateString('fr-FR'),
+        paymentMethod: extractedOcrData.payment_method,
+        transactionReference: extractedOcrData.reference,
+        ownerName: user?.user_metadata?.full_name || 'Bailleur',
+        tenantName: validatingPayment.tenant?.full_name || 'Locataire',
+        ownerSignatureUrl: ownerSignatureUrl,
+        tenantSignatureUrl: tenantSignatureUrl,
+      },
+      validatingPayment.tenant_id,
+      user?.id
+    );
 
-    // Synchroniser avec Supabase
+    // Synchroniser avec Supabase & notifier le locataire
     try {
       await supabase.from('rent_payments').update({
         status: 'confirme',
@@ -305,6 +310,34 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         amount: extractedOcrData.amount,
         token: `tok_rec_${Date.now()}`
       });
+
+      // Notifier le locataire en base
+      if (validatingPayment.tenant_id) {
+        await supabase.from('notifications').insert({
+          user_id: validatingPayment.tenant_id,
+          title: 'Paiement de loyer validé !',
+          message: `Votre règlement de ${formatFCFA(extractedOcrData.amount)} pour ${result.generatedReceipt.periods_covered_text} a été validé. Votre quittance officielle est disponible.`,
+          type: 'paiement_valide',
+          data: {
+            payment_id: validatingPayment.id,
+            receipt_number: extractedOcrData.reference,
+            amount: extractedOcrData.amount
+          }
+        });
+      }
+
+      // Diffuser l'événement en temps réel sur tous les appareils
+      await broadcastLiveEvent('PAYMENT_CONFIRMED', {
+        paymentId: validatingPayment.id,
+        targetUserId: validatingPayment.tenant_id,
+        contractId: validatingPayment.contract_id,
+        data: {
+          amount: extractedOcrData.amount,
+          receipt_number: extractedOcrData.reference
+        }
+      });
+
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
     } catch (e) {
       console.warn('Sync payment confirmation error:', e);
     }
@@ -768,8 +801,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   <label className="text-[11px] font-bold text-slate-700 block mb-1">Montant Détecté (FCFA)</label>
                   <input
                     type="number"
-                    value={extractedOcrData.amount}
-                    onChange={(e) => setExtractedOcrData({ ...extractedOcrData, amount: Number(e.target.value) })}
+                    min="1"
+                    placeholder="0"
+                    value={extractedOcrData.amount === 0 ? '' : extractedOcrData.amount}
+                    onChange={(e) => setExtractedOcrData({ ...extractedOcrData, amount: sanitizeNumericInput(e.target.value) })}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-extrabold text-emerald-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -1160,21 +1195,25 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    sendQuittanceToTenant({
-                      receiptNumber: previewingReceipt.reference,
-                      contractNumber: previewingReceipt.contract_id || 'LT-CI-2026-000123',
-                      propertyTitle: previewingReceipt.contract?.property?.title || 'Appartement 3 pièces Cocody Riviera 3',
-                      propertyAddress: 'Cocody Riviera 3, Abidjan - Côte d\'Ivoire',
-                      amount: previewingReceipt.amount,
-                      periodCovered: previewingReceipt.target_month,
-                      paymentDate: new Date(previewingReceipt.confirmed_at || previewingReceipt.created_at).toLocaleDateString('fr-FR'),
-                      paymentMethod: previewingReceipt.reference.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
-                      transactionReference: previewingReceipt.reference,
-                      ownerName: user?.user_metadata?.full_name || 'Bailleur',
-                      tenantName: previewingReceipt.tenant?.full_name || 'Locataire',
-                      ownerSignatureUrl: ownerSignatureUrl,
-                      tenantSignatureUrl: tenantSignatureUrl,
-                    });
+                    sendQuittanceToTenant(
+                      {
+                        receiptNumber: previewingReceipt.reference,
+                        contractNumber: previewingReceipt.contract_id || 'LT-CI-2026-000123',
+                        propertyTitle: previewingReceipt.contract?.property?.title || 'Logement LocaTrust',
+                        propertyAddress: (previewingReceipt.contract?.property as any)?.address || [previewingReceipt.contract?.property?.quartier, previewingReceipt.contract?.property?.commune, previewingReceipt.contract?.property?.city].filter(Boolean).join(', ') || 'Abidjan - Côte d\'Ivoire',
+                        amount: previewingReceipt.amount,
+                        periodCovered: previewingReceipt.target_month,
+                        paymentDate: new Date(previewingReceipt.confirmed_at || previewingReceipt.created_at).toLocaleDateString('fr-FR'),
+                        paymentMethod: previewingReceipt.reference.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
+                        transactionReference: previewingReceipt.reference,
+                        ownerName: user?.user_metadata?.full_name || 'Bailleur',
+                        tenantName: previewingReceipt.tenant?.full_name || 'Locataire',
+                        ownerSignatureUrl: ownerSignatureUrl,
+                        tenantSignatureUrl: tenantSignatureUrl,
+                      },
+                      previewingReceipt.tenant_id,
+                      user?.id
+                    );
                     setConfirmationModal({
                       isOpen: true,
                       type: 'sent',

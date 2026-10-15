@@ -36,6 +36,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { updateRentalApplication } from '@/lib/supabase/services';
 import { ApplicationCardSkeleton } from '@/components/common/SkeletonLoader';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 export interface RentalApplication {
   id: string;
@@ -86,6 +87,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedApplicationForContract, setSelectedApplicationForContract] = useState<RentalApplication | null>(null);
+  const [contractModalStartStep, setContractModalStartStep] = useState<'form' | 'transmission'>('form');
   const [selectedDossierApp, setSelectedDossierApp] = useState<RentalApplication | null>(null);
   const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
@@ -511,41 +513,72 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       console.warn('Waiting list notification error:', e);
     }
 
-    // 4. Enregistrer dans le registre des contrats
+    // 4. Enregistrer dans le registre des contrats et passer le bien au statut 'loue'
     try {
+      // Mettre à jour le logement en 'loue' dans Supabase
+      await supabase.from('properties').update({
+        status: 'loue'
+      }).eq('id', app.property_id);
+
+      // Inscription du contrat officiel dans Supabase
       await supabase.from('contracts').insert({
         contract_number: contractNumber,
         property_id: app.property_id,
         tenant_id: app.tenant_id || user?.id,
         owner_id: user?.id,
+        rent: app.rent_amount,
         rent_amount: app.rent_amount,
-        charges_amount: matchedProperty?.charges ?? 10000,
+        caution: app.caution_amount,
         caution_amount: app.caution_amount,
+        charges: matchedProperty?.charges ?? 10000,
+        charges_amount: matchedProperty?.charges ?? 10000,
         duration_months: 12,
         status: 'actif',
         start_date: new Date().toISOString(),
         signed_date: new Date().toISOString()
       });
 
+      // Mettre à jour le statut du bien dans le localStorage pour disparition immédiate du Feed
+      try {
+        const rawProps = localStorage.getItem('locatrust_properties');
+        if (rawProps) {
+          const propsList = JSON.parse(rawProps);
+          if (Array.isArray(propsList)) {
+            const updatedProps = propsList.map((p: any) =>
+              (p.id === app.property_id || p._id === app.property_id) ? { ...p, status: 'loue' } : p
+            );
+            localStorage.setItem('locatrust_properties', JSON.stringify(updatedProps));
+          }
+        }
+      } catch {}
+
       const rawContracts = localStorage.getItem('locatrust_contracts');
       const currentContracts = rawContracts ? JSON.parse(rawContracts) : [];
       const newContractRecord = {
         id: `cnt_${app.id}_${Date.now()}`,
         contract_number: contractNumber,
+        property_id: app.property_id,
+        tenant_id: app.tenant_id,
+        owner_id: user?.id,
         rent: app.rent_amount,
+        rent_amount: app.rent_amount,
+        caution: app.caution_amount,
+        caution_amount: app.caution_amount,
         charges: matchedProperty?.charges ?? 10000,
         payment_due_day: 5,
         duration_months: 12,
-        owner: { full_name: ownerName, phone: ownerPhone },
-        tenant: { full_name: app.tenant_name, phone: app.tenant_phone },
+        owner: { id: user?.id, full_name: ownerName, phone: ownerPhone },
+        tenant: { id: app.tenant_id, full_name: app.tenant_name, phone: app.tenant_phone, email: app.tenant_email },
         property: {
+          id: app.property_id,
           title: app.property_title,
           location: { city: matchedProperty?.city || 'Abidjan', quartier: matchedProperty?.quartier || 'Riviera', commune: matchedProperty?.commune || 'Cocody' },
           surface: matchedProperty?.surface,
           rooms: matchedProperty?.rooms,
           bedrooms: matchedProperty?.bedrooms,
           bathrooms: matchedProperty?.bathrooms,
-          equipments: matchedProperty?.equipments
+          equipments: matchedProperty?.equipments,
+          status: 'loue'
         },
         surface: matchedProperty?.surface,
         rooms: matchedProperty?.rooms,
@@ -558,6 +591,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         signed_date: new Date().toLocaleDateString('fr-FR')
       };
       localStorage.setItem('locatrust_contracts', JSON.stringify([newContractRecord, ...currentContracts]));
+
+      // Diffusion temps réel multi-appareils (Desktop ↔ Mobile)
+      broadcastLiveEvent('CONTRACT_FINALIZED', {
+        propertyId: app.property_id,
+        contractId: contractNumber,
+        targetUserId: app.tenant_id,
+        data: { contract: newContractRecord }
+      });
+      broadcastLiveEvent('PROPERTY_RENTED', {
+        propertyId: app.property_id,
+        data: { status: 'loue' }
+      });
     } catch (e) {
       console.warn('Contract storage error:', e);
     }
@@ -954,6 +999,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        setContractModalStartStep('form');
                         setSelectedApplicationForContract(app);
                       }}
                       className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
@@ -961,6 +1007,22 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                     >
                       <FileText className="w-3.5 h-3.5" />
                       <span>Créer le contrat</span>
+                    </button>
+
+                    {/* Bouton dédié Transmettre le contrat */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setContractModalStartStep('transmission');
+                        setSelectedApplicationForContract(app);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                      title="Ouvrir directement le formulaire officiel de transmission du contrat au locataire"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Transmettre le contrat</span>
                     </button>
 
                     {/* Tant que le locataire n'a pas signé : statut d'attente (Le bailleur ne peut pas signer à la place du locataire) */}
@@ -1185,6 +1247,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           <LegalContractGeneratorModal
             isOpen={true}
             onClose={() => setSelectedApplicationForContract(null)}
+            startAtStep={contractModalStartStep}
             isAgency={(profile?.role as any) === 'agence' || (profile?.role as any) === 'agent'}
             onContractFinalized={({ contractNumber, tenantName, propertyTitle }) => {
               const chosenApp = selectedApplicationForContract;

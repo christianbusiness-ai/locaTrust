@@ -28,10 +28,11 @@ import {
   UploadCloud,
   Image as ImageIcon
 } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import { Deposit } from '@/types/database.types';
 import confetti from 'canvas-confetti';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import {
   getStoredDeposits,
   saveStoredDeposits,
@@ -116,6 +117,137 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const [proofToVerifyDeposit, setProofToVerifyDeposit] = useState<Deposit | null>(null);
   const [refusalReasonInput, setRefusalReasonInput] = useState<string>('');
   const [isRefusing, setIsRefusing] = useState(false);
+
+  // Handle Approval of Caution by Owner / Agency (Points 8, 9, 11)
+  const handleApproveDepositProof = async (deposit: Deposit) => {
+    try {
+      const confirmedAmount = deposit.amount_paid || deposit.amount_requested;
+
+      // 1. Update Supabase cautions table
+      const { error: updateError } = await supabase
+        .from('cautions')
+        .update({
+          status: 'paye_complet',
+          amount_paid: confirmedAmount,
+          confirmed_at: new Date().toISOString(),
+          confirmed_by: actorName
+        })
+        .eq('id', deposit.id);
+
+      if (updateError) {
+        console.warn('Supabase caution update error:', updateError);
+      }
+
+      // 2. Also update local store for instant reactive responsiveness
+      confirmCautionReceipt(deposit.id, actorName);
+
+      // 3. Insert notification for tenant in Supabase
+      if (deposit.tenant_id) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: deposit.tenant_id,
+            title: 'Caution validée avec succès !',
+            message: `Votre règlement de garantie de ${formatFCFA(confirmedAmount)} a été vérifié et approuvé par ${actorName}.`,
+            type: 'caution_confirmee',
+            data: {
+              caution_id: deposit.id,
+              contract_id: deposit.contract_id,
+              amount: confirmedAmount
+            }
+          });
+        } catch (err) {
+          console.warn('Notification insert error:', err);
+        }
+      }
+
+      // 4. Broadcast live event across all connected devices
+      await broadcastLiveEvent('CAUTION_CONFIRMED', {
+        depositId: deposit.id,
+        targetUserId: deposit.tenant_id,
+        contractId: deposit.contract_id,
+        data: {
+          amount: confirmedAmount
+        }
+      });
+
+      // 5. Update local state
+      setDeposits((prev) =>
+        prev.map((d) =>
+          d.id === deposit.id
+            ? {
+                ...d,
+                status: 'paye_complet',
+                amount_paid: confirmedAmount,
+                confirmed_at: new Date().toISOString(),
+                confirmed_by: actorName
+              }
+            : d
+        )
+      );
+
+      setProofToVerifyDeposit(null);
+      setSuccessFeedback(`Le versement de caution de ${formatFCFA(confirmedAmount)} a été validé avec succès.`);
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+    } catch (err) {
+      console.error('Error approving caution proof:', err);
+    }
+  };
+
+  // Handle Rejection of Caution Proof by Owner / Agency
+  const handleRejectDepositProof = async (deposit: Deposit) => {
+    try {
+      const reason = refusalReasonInput.trim() || 'Référence de transaction ou reçu non identifiable.';
+
+      // 1. Update Supabase cautions table
+      await supabase
+        .from('cautions')
+        .update({
+          status: 'refuse',
+          notes: reason
+        })
+        .eq('id', deposit.id);
+
+      // 2. Update local store
+      rejectCautionPayment(deposit.id, reason);
+
+      // 3. Insert notification for tenant
+      if (deposit.tenant_id) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: deposit.tenant_id,
+            title: 'Déclaration de caution non validée',
+            message: `Votre déclaration de caution a été refusée par ${actorName}. Motif : ${reason}`,
+            type: 'caution_refusee',
+            data: {
+              caution_id: deposit.id,
+              contract_id: deposit.contract_id,
+              reason
+            }
+          });
+        } catch (err) {
+          console.warn('Notification insert error:', err);
+        }
+      }
+
+      // 4. Update local state
+      setDeposits((prev) =>
+        prev.map((d) =>
+          d.id === deposit.id
+            ? { ...d, status: 'refuse' as any, notes: reason }
+            : d
+        )
+      );
+
+      setProofToVerifyDeposit(null);
+      setIsRefusing(false);
+      setRefusalReasonInput('');
+      setSuccessFeedback('La déclaration a été rejetée et le locataire a été notifié.');
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+    } catch (err) {
+      console.error('Error rejecting caution proof:', err);
+    }
+  };
 
   // Étape 4 & 5 : Modale avertissement signature obligatoire pour téléchargement
   const [signatureAlertDoc, setSignatureAlertDoc] = useState<{
@@ -1008,8 +1140,10 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                   </label>
                   <input
                     type="number"
-                    value={declareAmount}
-                    onChange={(e) => setDeclareAmount(Number(e.target.value))}
+                    min="1"
+                    placeholder="0"
+                    value={declareAmount === 0 ? '' : declareAmount}
+                    onChange={(e) => setDeclareAmount(sanitizeNumericInput(e.target.value))}
                     className="w-full p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-black text-sm"
                     required
                   />
@@ -1180,6 +1314,160 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ÉTAPE 2 : MODAL VÉRIFICATION ET APPROBATION DE CAUTION (Points 8, 9, 11) */}
+      {proofToVerifyDeposit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl max-w-lg w-full p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col gap-4 animate-scaleUp text-xs my-auto max-h-[92vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    Vérification du règlement de caution
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Preuve déclarée par le locataire
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setProofToVerifyDeposit(null);
+                  setIsRefusing(false);
+                  setRefusalReasonInput('');
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Détails complets de la déclaration */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs">
+              <div>
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Locataire</span>
+                <span className="font-extrabold text-slate-900 dark:text-white text-sm">
+                  {proofToVerifyDeposit.tenant?.full_name || 'Locataire'}
+                </span>
+                <span className="text-[11px] text-slate-500 block">
+                  {proofToVerifyDeposit.tenant?.phone || 'Téléphone non renseigné'}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Logement & Contrat</span>
+                <span className="font-bold text-slate-900 dark:text-white line-clamp-1">
+                  {proofToVerifyDeposit.property?.title || 'Logement loué'}
+                </span>
+                <span className="text-[11px] text-blue-600 dark:text-blue-400 font-mono font-bold block">
+                  Contrat N° {proofToVerifyDeposit.contract_id || 'LT-CONTRAT'}
+                </span>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Montant déclaré</span>
+                <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                  {formatFCFA(proofToVerifyDeposit.amount_paid || proofToVerifyDeposit.amount_requested)}
+                </span>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Canal & Référence</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {proofToVerifyDeposit.payment_method || 'Mobile Money'}
+                </span>
+                <span className="text-[11px] text-slate-500 font-mono block truncate">
+                  {proofToVerifyDeposit.declared_reference || 'REF-CAUTION'}
+                </span>
+              </div>
+            </div>
+
+            {/* Aperçu de la preuve attachée */}
+            <div>
+              <span className="font-bold text-slate-800 dark:text-slate-200 block mb-1.5">
+                Preuve ou bordereau joint :
+              </span>
+              {proofToVerifyDeposit.proof_url ? (
+                <div
+                  onClick={() => setPreviewProofModalUrl(proofToVerifyDeposit.proof_url!)}
+                  className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 p-2 cursor-pointer group flex items-center justify-center max-h-56"
+                >
+                  <img
+                    src={proofToVerifyDeposit.proof_url}
+                    alt="Preuve de caution"
+                    className="max-h-52 w-auto object-contain rounded-xl group-hover:scale-102 transition-transform shadow-xs"
+                  />
+                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold text-xs gap-1.5">
+                    <ZoomIn className="w-5 h-5" />
+                    <span>Agrandir l'image</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
+                  Aucun fichier justificatif n'a été téléversé (déclaration directe ou paiement en espèces).
+                </div>
+              )}
+            </div>
+
+            {/* Zone de refus avec motif */}
+            {isRefusing ? (
+              <div className="flex flex-col gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 rounded-2xl border border-rose-200 dark:border-rose-800">
+                <label className="font-bold text-rose-800 dark:text-rose-300 block text-xs">
+                  Motif du refus de la caution (notifié au locataire) *
+                </label>
+                <textarea
+                  value={refusalReasonInput}
+                  onChange={(e) => setRefusalReasonInput(e.target.value)}
+                  placeholder="Ex : Référence introuvable sur le compte Wave, montant incomplet..."
+                  rows={2}
+                  className="w-full p-2.5 rounded-xl border border-rose-300 dark:border-rose-700 bg-white dark:bg-slate-900 text-xs font-medium"
+                  required
+                />
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsRefusing(false)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs"
+                  >
+                    Retour
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRejectDepositProof(proofToVerifyDeposit)}
+                    className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs"
+                  >
+                    Confirmer le rejet
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Boutons d'action : Approuver ou Refuser */
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsRefusing(true)}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 font-bold transition-colors"
+                >
+                  Refuser / Preuve non reconnue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApproveDepositProof(proofToVerifyDeposit)}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Approuver & Valider la caution</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

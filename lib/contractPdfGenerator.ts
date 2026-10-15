@@ -43,6 +43,15 @@ export interface ContractPdfData {
 }
 
 export const generateOfficialContractPdf = async (data: ContractPdfData) => {
+  // Contrôle strict de sécurité et conformité juridique (Point 10) :
+  // Le document officiel final scellé ne peut JAMAIS être généré ou téléchargé
+  // tant que les DEUX signatures (bailleur et locataire) ne sont pas présentes.
+  if (!data.ownerSignatureUrl || !data.tenantSignatureUrl) {
+    const errorMsg = "Téléchargement bloqué : Le contrat officiel final ne peut pas être téléchargé tant que le locataire et le propriétaire n'ont pas tous les deux apposé leurs signatures manuscrites certifiées.";
+    console.warn(errorMsg);
+    throw new Error(errorMsg);
+  }
+
   try {
     const jspdfModule = await import('jspdf');
     const jsPDFClass = (jspdfModule as any)?.jsPDF || (jspdfModule as any)?.default || jspdfModule;
@@ -55,13 +64,13 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       isAgency = false,
       ownerName = 'Bailleur',
       mandantName,
-      ownerPhone = '+225 07 89 45 12 34',
+      ownerPhone = data.ownerPhone || '',
       tenantName = 'Locataire',
-      tenantPhone = '+225 05 67 89 45 12',
-      tenantCni = 'CI002894129',
+      tenantPhone = data.tenantPhone || '',
+      tenantCni = data.tenantCni || '',
       tenantRccm,
-      propertyTitle = isProfessional ? 'Local Professionnel / Bureaux' : 'Appartement 3 pièces',
-      propertyAddress = 'Cocody Riviera 3, Abidjan - Côte d\'Ivoire',
+      propertyTitle = isProfessional ? 'Local Professionnel / Bureaux' : 'Bien immobilier',
+      propertyAddress = data.propertyAddress || 'Abidjan - Côte d\'Ivoire',
       surface,
       rooms,
       bedrooms,
@@ -70,12 +79,12 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       amenities,
       propertyDescription,
       durationMonths = isProfessional ? 24 : 12,
-      startDate = '01/07/2026',
-      rent = isProfessional ? 350000 : 75000,
-      cautionMonths = isProfessional ? 3 : 2,
+      startDate = data.startDate || new Date().toLocaleDateString('fr-FR'),
+      rent = data.rent || 0,
+      cautionMonths = data.cautionMonths ?? (isProfessional ? 3 : 2),
       chargesAmount = Number(data.chargesAmount ?? (data as any)?.charges ?? 0),
-      dueDay = 5,
-      authorizedActivity = isProfessional ? 'Bureaux administratifs et commerciaux' : undefined
+      dueDay = data.dueDay || 5,
+      authorizedActivity = isProfessional ? (data.authorizedActivity || 'Activités commerciales et professionnelles') : undefined
     } = data;
 
     const rawEquipments = equipments || amenities || [];

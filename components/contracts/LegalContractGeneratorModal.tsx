@@ -55,13 +55,16 @@ import {
 } from '@/lib/messagingStore';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 interface LegalContractGeneratorModalProps {
   isOpen: boolean;
   onClose: () => void;
   isAgency?: boolean;
+  startAtStep?: 'form' | 'verification' | 'preview' | 'transmission';
   initialData?: {
     id?: string;
+    startAtStep?: 'form' | 'verification' | 'preview' | 'transmission';
     tenantId?: string;
     tenantEmail?: string;
     ownerId?: string;
@@ -116,6 +119,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   isOpen,
   onClose,
   isAgency = false,
+  startAtStep,
   initialData,
   onContractFinalized
 }) => {
@@ -216,7 +220,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
   React.useEffect(() => {
     if (isOpen && !prevIsOpenRef.current) {
-      setCurrentStep('form');
+      const stepToStart = startAtStep || initialData?.startAtStep || 'form';
+      setCurrentStep(stepToStart);
       if (initialData?.tenantName) {
         setAccompanyingMessage(
           `Bonjour ${initialData.tenantName}, voici le contrat de bail d'habitation certifié conforme Loi n° 2019-576 pour « ${initialData.propertyTitle || 'le logement'} ».\nJ'y ai apposé ma signature électronique certifiée. Merci de bien vouloir le relire et y apposer votre signature manuscrite pour finaliser la location.`
@@ -343,7 +348,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   );
 
   // Workflow steps: 'form' -> 'verification' -> 'preview' -> 'transmission' -> 'success'
-  const [currentStep, setCurrentStep] = useState<'form' | 'verification' | 'preview' | 'transmission' | 'success'>('form');
+  const [currentStep, setCurrentStep] = useState<'form' | 'verification' | 'preview' | 'transmission' | 'success'>(
+    startAtStep || initialData?.startAtStep || 'form'
+  );
   const [isTransmitting, setIsTransmitting] = useState<boolean>(false);
   const [accompanyingMessage, setAccompanyingMessage] = useState<string>(
     `Bonjour, voici votre contrat de bail d'habitation certifié conforme Loi n° 2019-576. J'y ai apposé ma signature manuscrite électronique certifiée. Merci de bien vouloir le relire et y apposer votre signature pour finaliser la location.`
@@ -893,8 +900,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       const newContractRecord = {
         id: `cnt_${Date.now()}`,
         contract_number: contractNumber,
+        property_id: (initialData as any)?.propertyId || (initialData as any)?.property_id,
+        tenant_id: targetTenantId,
+        owner_id: targetOwnerId,
         property: {
-          id: (initialData as any)?.property_id || `prop_${Date.now()}`,
+          id: (initialData as any)?.propertyId || (initialData as any)?.property_id || `prop_${Date.now()}`,
           title: propertyTitle,
           city: propertyCity,
           commune: propertyCommune,
@@ -905,7 +915,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           rooms: propertyRooms,
           bedrooms: propertyBedrooms,
           bathrooms: propertyBathrooms,
-          equipments: propertyEquipments
+          equipments: propertyEquipments,
+          status: tenantSignatureUrl ? 'loue' : 'disponible'
         },
         owner: {
           id: targetOwnerId,
@@ -918,6 +929,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           phone: tenantPhone
         },
         rent,
+        caution: rent * cautionMonths,
         caution_amount: rent * cautionMonths,
         charges: chargesAmount,
         duration_months: durationMonths,
@@ -941,6 +953,30 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       window.dispatchEvent(
         new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updatedContracts } })
       );
+
+      // Si le locataire a déjà signé, marquer immédiatement le logement comme 'loue'
+      const activePropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
+      if (tenantSignatureUrl && activePropId) {
+        try {
+          await supabase.from('properties').update({ status: 'loue' }).eq('id', activePropId);
+          const rawProps = localStorage.getItem('locatrust_properties');
+          if (rawProps) {
+            const pList = JSON.parse(rawProps);
+            if (Array.isArray(pList)) {
+              const uList = pList.map((p: any) => (p.id === activePropId || p._id === activePropId) ? { ...p, status: 'loue' } : p);
+              localStorage.setItem('locatrust_properties', JSON.stringify(uList));
+            }
+          }
+        } catch {}
+        broadcastLiveEvent('PROPERTY_RENTED', { propertyId: activePropId, data: { status: 'loue' } });
+      }
+
+      broadcastLiveEvent('CONTRACT_TRANSMITTED', {
+        propertyId: activePropId,
+        contractId: contractNumber,
+        targetUserId: targetTenantId,
+        data: { contract: newContractRecord }
+      });
     } catch (e) {
       console.warn('Erreur registre contrats:', e);
     }
@@ -2860,9 +2896,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
-              if (currentStep === 'preview') {
-                setCurrentStep('transmission');
-              }
+              setCurrentStep('transmission');
             } else {
               setTenantSignatureUrl(signatureUrl);
             }

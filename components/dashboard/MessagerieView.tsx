@@ -65,9 +65,12 @@ import {
   getUnreadMessagesCountForUser,
   downloadQuittancePdfFromAttachment,
   sendRealChatMessage,
-  fetchSupabaseMessages
+  fetchSupabaseMessages,
+  fetchSupabaseConversationsWithProfiles,
+  isValidUuid
 } from '@/lib/messagingStore';
 import { supabase } from '@/src/lib/supabase';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
 import { useAuth } from '@/src/context/AuthContext';
@@ -92,6 +95,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return s;
   }, [user?.id, user?.email, profile?.id, currentUserId, userRole]);
 
+  const [dbContacts, setDbContacts] = useState<ChatContact[]>([]);
+
   const roleContacts = React.useMemo(() => {
     const list: ChatContact[] = [
       {
@@ -104,6 +109,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         online: true
       }
     ];
+
+    // Intégrer les contacts réels chargés directement depuis Supabase
+    if (dbContacts && dbContacts.length > 0) {
+      dbContacts.forEach((dc) => {
+        if (!list.some((existing) => existing.id === dc.id)) {
+          list.push(dc);
+        }
+      });
+    }
 
     if (typeof window !== 'undefined') {
       try {
@@ -258,7 +272,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
 
     return list;
-  }, [userRole, currentUserId, user?.id, user?.email]);
+  }, [userRole, currentUserId, user?.id, user?.email, dbContacts]);
 
   const [selectedContactId, setSelectedContactId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -358,11 +372,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   useEffect(() => {
     refreshMessages();
 
-    // Charger les messages réels depuis Supabase dès l'ouverture
+    // Charger les messages et conversations réels depuis Supabase dès l'ouverture
     if (currentUserId) {
       fetchSupabaseMessages(currentUserId).then((newMsgs) => {
         if (newMsgs && newMsgs.length > 0) {
           refreshMessages();
+        }
+      }).catch(() => {});
+
+      fetchSupabaseConversationsWithProfiles(currentUserId).then((realContacts) => {
+        if (realContacts && realContacts.length > 0) {
+          setDbContacts(realContacts);
         }
       }).catch(() => {});
     }
@@ -1096,7 +1116,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   };
 
   // Confirm Signature for either contract or receipt
-  const handleConfirmSignature = (signatureDataUrl: string) => {
+  const handleConfirmSignature = async (signatureDataUrl: string) => {
     if (!signingTarget) return;
 
     const currentAll = getStoredMessages();
@@ -1122,14 +1142,68 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
       saveStoredMessages(updatedMessages);
 
-      // Post confirmation notification message in conversation
-      sendChatMessage(
+      // Envoi du message réel de confirmation dans la conversation
+      sendRealChatMessage(
         currentUserId,
         activeContact.id,
         `✍️ Le locataire a signé et validé le bail N° ${targetNum} avec succès. Le document est désormais scellé et certifié conforme Loi n° 2019-576.`
-      );
+      ).catch(() => {});
 
-      // Mettre à jour locatrust_rental_applications
+      // Persistance réelle dans la table Supabase 'contracts'
+      try {
+        await supabase
+          .from('contracts')
+          .update({
+            tenant_signed: true,
+            tenant_signature_url: signatureDataUrl,
+            status: 'actif'
+          })
+          .eq('contract_number', targetNum);
+      } catch (e) {
+        console.warn('Erreur mise à jour Supabase contract:', e);
+      }
+
+      // Persistance réelle dans la table Supabase 'rental_applications'
+      try {
+        await supabase
+          .from('rental_applications')
+          .update({
+            tenant_signed: true,
+            tenant_signature_url: signatureDataUrl,
+            contract_finalized: true,
+            status: 'contrat_actif'
+          })
+          .eq('contract_number', targetNum);
+      } catch (e) {
+        console.warn('Erreur mise à jour Supabase rental_applications:', e);
+      }
+
+      // Insertion d'une vraie notification Supabase pour le bailleur/agence
+      try {
+        if (activeContact.id && isValidUuid(activeContact.id)) {
+          await supabase.from('notifications').insert({
+            user_id: activeContact.id,
+            title: 'Bail signé par le locataire !',
+            message: `${signingTarget.contract.tenantName} a signé et validé le bail N° ${targetNum}. Le document est officiellement scellé.`,
+            type: 'contract_signed',
+            is_read: false
+          });
+        }
+      } catch (e) {
+        console.warn('Erreur insertion notification Supabase:', e);
+      }
+
+      // Diffusion Supabase Realtime multi-écrans (Desktop ↔ Mobile ↔ Tablette)
+      broadcastLiveEvent('CONTRACT_SIGNED_BY_TENANT', {
+        actorId: currentUserId,
+        targetUserId: activeContact.id,
+        data: {
+          contractNumber: targetNum,
+          tenantSignatureUrl: signatureDataUrl
+        }
+      }).catch(() => {});
+
+      // Mettre à jour locatrust_rental_applications en local
       try {
         const appsRaw = localStorage.getItem('locatrust_rental_applications');
         if (appsRaw) {
@@ -1161,7 +1235,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         console.warn('Erreur mise à jour candidatures post signature:', e);
       }
 
-      // Mettre à jour locatrust_contracts
+      // Mettre à jour locatrust_contracts en local
       try {
         const contractsRaw = localStorage.getItem('locatrust_contracts');
         if (contractsRaw) {
@@ -1220,11 +1294,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
       saveStoredMessages(updatedMessages);
 
-      sendChatMessage(
+      sendRealChatMessage(
         activeContact.id,
         currentUserId,
         `✓ Reçu N° ${targetRef} validé et contresigné par le locataire.`
-      );
+      ).catch(() => {});
 
       if (previewingQuittance && previewingQuittance.receiptNumber === targetRef) {
         setPreviewingQuittance({

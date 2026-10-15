@@ -101,11 +101,28 @@ const HomePage: React.FC = () => {
   );
 };
 
+import { subscribeToLiveSync } from '@/lib/supabaseRealtime';
+
+// Gestionnaire global de synchronisation Realtime multi-appareils (Desktop ↔ Mobile)
+const LiveSyncManager: React.FC = () => {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    const unsubscribe = subscribeToLiveSync(user?.id);
+    return () => {
+      unsubscribe();
+    };
+  }, [user?.id]);
+
+  return null;
+};
+
 export default function App() {
   return (
     <BrowserRouter>
       <TopProgressBar />
       <AuthProvider>
+        <LiveSyncManager />
         <Suspense fallback={<DashboardPageSkeleton />}>
           <Routes>
             {/* Routes Publiques d'Authentification */}

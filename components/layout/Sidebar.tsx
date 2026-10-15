@@ -107,10 +107,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           if (Array.isArray(apps)) {
             const validApps = apps.filter((a: any) => a.id !== 'app_kwame' && a.id !== 'app_moussa' && a.id !== 'app_awa' && a.id !== 'app_bamba');
             if (isLocataire) {
-              countApps = validApps.filter((a: any) => 
-                (user?.email && a.tenant_email?.toLowerCase() === user.email.toLowerCase()) ||
-                (user?.id && a.tenant_id === user.id)
-              ).length;
+              const myApps = validApps.filter((a: any) => 
+                ((user?.email && a.tenant_email?.toLowerCase() === user.email.toLowerCase()) ||
+                 (user?.id && a.tenant_id === user.id)) &&
+                a.status !== 'refusee'
+              );
+              // Deduplicate by property_id to guarantee one count per real property demanded (Points 14, 15, 16)
+              const uniqueProperties = new Set(myApps.map((a: any) => a.property_id || a.id));
+              countApps = uniqueProperties.size;
             } else if (isProprietaire || isAgence) {
               countApps = validApps.filter((a: any) =>
                 a.status === 'en_attente' &&

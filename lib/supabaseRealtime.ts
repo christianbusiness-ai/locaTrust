@@ -1,0 +1,159 @@
+import { supabase } from '@/src/lib/supabase';
+
+export type LiveEventType =
+  | 'PAYMENT_DECLARED'
+  | 'PAYMENT_CONFIRMED'
+  | 'PAYMENT_REJECTED'
+  | 'CAUTION_DECLARED'
+  | 'CAUTION_CONFIRMED'
+  | 'CAUTION_REJECTED'
+  | 'CAUTION_RESTITUTED'
+  | 'CONTRACT_FINALIZED'
+  | 'CONTRACT_TRANSMITTED'
+  | 'CONTRACT_SIGNED_BY_TENANT'
+  | 'PROPERTY_RENTED'
+  | 'APPLICATION_SUBMITTED'
+  | 'APPLICATION_UPDATED';
+
+interface BroadcastPayload {
+  event: LiveEventType;
+  actorId?: string;
+  targetUserId?: string;
+  propertyId?: string;
+  contractId?: string;
+  paymentId?: string;
+  depositId?: string;
+  data?: any;
+  timestamp: string;
+}
+
+const GLOBAL_REALTIME_CHANNEL = 'locatrust_live_sync';
+
+/**
+ * Diffuse un événement temps réel sur tous les appareils connectés (PC ↔ Mobile ↔ Tablette)
+ * via le canal Supabase Realtime Broadcast.
+ */
+export async function broadcastLiveEvent(
+  event: LiveEventType,
+  payload: Omit<BroadcastPayload, 'event' | 'timestamp'>
+) {
+  const fullPayload: BroadcastPayload = {
+    event,
+    ...payload,
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    const channel = supabase.channel(GLOBAL_REALTIME_CHANNEL);
+    await channel.send({
+      type: 'broadcast',
+      event: 'locatrust_event',
+      payload: fullPayload
+    });
+  } catch (err) {
+    console.warn('Realtime broadcast error:', err);
+  }
+
+  // Déclencher également l'événement local immédiatement sur la fenêtre active
+  dispatchDomEventForType(event, fullPayload);
+}
+
+function dispatchDomEventForType(event: LiveEventType, payload: BroadcastPayload) {
+  if (typeof window === 'undefined') return;
+
+  switch (event) {
+    case 'PAYMENT_DECLARED':
+    case 'PAYMENT_CONFIRMED':
+    case 'PAYMENT_REJECTED':
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+      break;
+
+    case 'CAUTION_DECLARED':
+    case 'CAUTION_CONFIRMED':
+    case 'CAUTION_REJECTED':
+    case 'CAUTION_RESTITUTED':
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));
+      break;
+
+    case 'CONTRACT_FINALIZED':
+    case 'CONTRACT_TRANSMITTED':
+    case 'CONTRACT_SIGNED_BY_TENANT':
+      window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: payload }));
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: payload }));
+      window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: payload }));
+      break;
+
+    case 'PROPERTY_RENTED':
+      window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: payload }));
+      break;
+
+    case 'APPLICATION_SUBMITTED':
+    case 'APPLICATION_UPDATED':
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: payload }));
+      break;
+  }
+}
+
+/**
+ * Initialise l'écouteur Supabase Realtime multi-appareils (Desktop ↔ Mobile)
+ * Écoute à la fois les Broadcasts instantanés et les modifications directes Postgres.
+ */
+export function subscribeToLiveSync(currentUserId?: string) {
+  if (typeof window === 'undefined') return () => {};
+
+  const channel = supabase.channel(GLOBAL_REALTIME_CHANNEL);
+
+  channel
+    .on('broadcast', { event: 'locatrust_event' }, ({ payload }: { payload: BroadcastPayload }) => {
+      // Ignorer si ce n'est pas pour nous (si un targetUserId spécifique est défini et ne correspond pas)
+      if (payload.targetUserId && currentUserId && payload.targetUserId !== currentUserId && payload.actorId === currentUserId) {
+        return;
+      }
+      dispatchDomEventForType(payload.event, payload);
+    })
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'rent_payments' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'cautions' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'contracts' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'properties' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'rental_applications' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
+      }
+    )
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        // Enregistrement actif
+      }
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}

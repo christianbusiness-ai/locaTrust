@@ -36,3 +36,13 @@ export function calculateSubscriptionTier(activePropertiesCount: number): {
     return { tier: '20plus_biens', price: 10000, label: 'Entreprise (20+ biens)' };
   }
 }
+
+export function sanitizeNumericInput(value: string | number): number {
+  if (value === undefined || value === null) return 0;
+  const str = String(value).trim();
+  if (str === '') return 0;
+  // Remove leading zeros before digits (e.g. "01" -> "1", "0025000" -> "25000", but keep "0" if alone)
+  const cleaned = str.replace(/^0+(?=\d)/, '');
+  const parsed = Number(cleaned);
+  return isNaN(parsed) ? 0 : parsed;
+}

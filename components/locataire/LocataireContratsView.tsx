@@ -67,11 +67,87 @@ export const LocataireContratsView: React.FC = () => {
     setLoadError(null);
     try {
       const { data: cntData, error: cntError } = await getContracts(user.id, 'locataire');
-      if (cntError) {
-        setLoadError("Impossible de récupérer vos contrats de bail.");
-      } else {
-        setContracts(cntData || []);
-      }
+      const loadedDbContracts: any[] = cntData || [];
+
+      // Fusion avec les contrats du stockage local pour le locataire connecté
+      const localContracts: any[] = [];
+      try {
+        const raw = localStorage.getItem('locatrust_contracts');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((c: any) => {
+              const isMatch =
+                c.tenant_id === user.id ||
+                c.tenant?.id === user.id ||
+                (user.email && (c.tenant?.email?.toLowerCase() === user.email.toLowerCase() || c.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
+                (user.user_metadata?.full_name && c.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
+              if (isMatch) localContracts.push(c);
+            });
+          }
+        }
+      } catch {}
+
+      // Fusion avec les candidatures finalisées (contrat_actif) pour le locataire
+      try {
+        const appsRaw = localStorage.getItem('locatrust_rental_applications');
+        if (appsRaw) {
+          const appsList = JSON.parse(appsRaw);
+          if (Array.isArray(appsList)) {
+            appsList.forEach((a: any) => {
+              const isMatch =
+                (a.tenant_id === user.id ||
+                  (user.email && a.tenant_email?.toLowerCase() === user.email.toLowerCase()) ||
+                  (user.user_metadata?.full_name && a.tenant_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase())) &&
+                (a.status === 'contrat_actif' || a.contract_finalized || a.contract_transmitted);
+
+              if (isMatch && a.contract_number) {
+                localContracts.push({
+                  id: `cnt_app_${a.id}`,
+                  contract_number: a.contract_number,
+                  property_id: a.property_id,
+                  tenant_id: a.tenant_id || user.id,
+                  owner_id: a.owner_id,
+                  rent: a.rent_amount,
+                  caution: a.caution_amount,
+                  caution_amount: a.caution_amount,
+                  charges: 10000,
+                  status: 'actif',
+                  start_date: a.date_received || new Date().toISOString(),
+                  owner_signed: a.owner_signed ?? true,
+                  tenant_signed: a.tenant_signed ?? true,
+                  owner_signature_url: a.owner_signature_url,
+                  tenant_signature_url: a.tenant_signature_url,
+                  owner: { full_name: a.owner_name || 'Bailleur certifié', phone: a.owner_phone || '+225 00 00 00 00' },
+                  tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
+                  property: {
+                    title: a.property_title || 'Logement loué',
+                    city: 'Abidjan',
+                    address: a.property_address || 'Abidjan - Côte d\'Ivoire'
+                  }
+                });
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // Déduplication par contract_number
+      const map = new Map<string, any>();
+      loadedDbContracts.forEach((c) => {
+        const key = c.contract_number || c.id;
+        map.set(key, c);
+      });
+      localContracts.forEach((c) => {
+        const key = c.contract_number || c.id;
+        if (!map.has(key)) {
+          map.set(key, c);
+        } else {
+          map.set(key, { ...c, ...map.get(key) });
+        }
+      });
+
+      setContracts(Array.from(map.values()));
 
       // Reçus / quittances réelles
       const { data: rcpData } = await supabase

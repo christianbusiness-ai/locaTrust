@@ -239,6 +239,7 @@ export interface Deposit {
   amount_paid: number;
   status: DepositPaymentStatus;
   restitution_status: DepositRestitutionStatus;
+  payment_method?: string;
   declared_at?: string;
   declared_reference?: string;
   proof_url?: string;

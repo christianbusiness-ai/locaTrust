@@ -412,6 +412,34 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
   const isValidUuid = (str?: string) =>
     Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
+  // Contrôle serveur : rejet immédiat si le logement est déjà loué ou possède un bail scellé
+  try {
+    if (app.property_id) {
+      const { data: propData } = await supabase
+        .from('properties')
+        .select('status')
+        .eq('id', app.property_id)
+        .maybeSingle();
+
+      if (propData && propData.status === 'loue') {
+        return { data: null, error: "Ce logement est déjà loué et n'accepte plus de candidatures.", alreadyRented: true };
+      }
+
+      const { data: activeContracts } = await supabase
+        .from('contracts')
+        .select('id')
+        .eq('property_id', app.property_id)
+        .eq('status', 'actif')
+        .limit(1);
+
+      if (activeContracts && activeContracts.length > 0) {
+        return { data: null, error: "Ce logement est déjà loué et n'accepte plus de candidatures.", alreadyRented: true };
+      }
+    }
+  } catch (propCheckErr) {
+    console.warn('Vérification disponibilité logement:', propCheckErr);
+  }
+
   // Contrôle strict anti-doublon (Point 3 : Locataire A + Logement B = 1 seule demande active)
   try {
     if (app.property_id) {

@@ -23,7 +23,7 @@ import {
   ZoomIn,
   FileText
 } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
 import { getRentPayments, createRentPayment, getContracts } from '@/src/lib/db';
@@ -31,6 +31,8 @@ import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { declareCautionPayment } from '@/lib/cautionsStore';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -103,14 +105,40 @@ export const LocatairePaiementsView: React.FC = () => {
         .eq('tenant_id', user.id);
       setDeposits(ctnData || []);
 
-      // 3. Contrats actifs pour le formulaire
+      // 3. Contrats réels pour les formulaires de paiement
       const { data: cntData } = await getContracts(user.id, 'locataire');
-      if (cntData && cntData.length > 0) {
-        setUserContracts(cntData);
-        setSelectedContractId(cntData[0].id);
-        setCautionContractId(cntData[0].id);
-        if (cntData[0].rent) setAmount(Number(cntData[0].rent));
-        if (cntData[0].caution_amount) setCautionAmount(Number(cntData[0].caution_amount));
+      const allContracts: any[] = cntData || [];
+
+      try {
+        const raw = localStorage.getItem('locatrust_contracts');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((c: any) => {
+              const isMatch =
+                c.tenant_id === user.id ||
+                c.tenant?.id === user.id ||
+                (user.email && (c.tenant?.email?.toLowerCase() === user.email.toLowerCase() || c.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
+                (user.user_metadata?.full_name && c.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
+              if (isMatch && !allContracts.some(ac => (ac.contract_number && ac.contract_number === c.contract_number) || ac.id === c.id)) {
+                allContracts.push(c);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      if (allContracts.length > 0) {
+        setUserContracts(allContracts);
+        if (!selectedContractId || !allContracts.some(c => c.id === selectedContractId)) {
+          setSelectedContractId(allContracts[0].id);
+          if (allContracts[0].rent) setAmount(Number(allContracts[0].rent));
+        }
+        if (!cautionContractId || !allContracts.some(c => c.id === cautionContractId)) {
+          setCautionContractId(allContracts[0].id);
+          const cAmount = Number(allContracts[0].caution_amount || allContracts[0].caution || (Number(allContracts[0].rent || 0) * 2));
+          if (cAmount > 0) setCautionAmount(cAmount);
+        }
       }
     } catch (err: any) {
       setLoadError("Erreur réseau lors de la récupération des données financières.");
@@ -128,9 +156,11 @@ export const LocatairePaiementsView: React.FC = () => {
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
     window.addEventListener('locatrust:cautions_updated', handleUpdate);
+    window.addEventListener('locatrust:contracts-updated', handleUpdate);
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleUpdate);
+      window.removeEventListener('locatrust:contracts-updated', handleUpdate);
     };
   }, [user]);
 
@@ -140,11 +170,12 @@ export const LocatairePaiementsView: React.FC = () => {
     if (method !== 'Espèces' && !reference.trim()) return;
 
     const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
+    const targetOwnerId = chosenContract?.owner_id || null;
 
     const newPaymentData = {
       contract_id: chosenContract?.id || null,
       tenant_id: user?.id,
-      owner_id: chosenContract?.owner_id || null,
+      owner_id: targetOwnerId,
       target_month: targetMonth,
       amount: amount,
       payment_date: new Date().toISOString().split('T')[0],
@@ -155,11 +186,48 @@ export const LocatairePaiementsView: React.FC = () => {
     };
 
     const { data, error } = await createRentPayment(newPaymentData);
-    if (!error && data) {
-      setPayments((prev) => [data, ...prev]);
-    } else {
-      setPayments((prev) => [{ ...newPaymentData, id: `pmt_${Date.now()}` }, ...prev]);
+    const savedPayment = (!error && data) ? data : { ...newPaymentData, id: `pmt_${Date.now()}` };
+
+    // Save locally for responsive offline/instant UX
+    try {
+      const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
+      localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
+    } catch {}
+
+    // Send real notification to owner/agency in Supabase
+    if (targetOwnerId) {
+      try {
+        await supabase.from('notifications').insert({
+          user_id: targetOwnerId,
+          title: 'Nouveau règlement de loyer déclaré',
+          message: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} pour le mois de ${targetMonth}.`,
+          type: 'paiement_declare',
+          data: {
+            payment_id: savedPayment.id,
+            contract_id: chosenContract?.id,
+            amount: amount,
+            month: targetMonth
+          }
+        });
+      } catch (err) {
+        console.warn('Notification insert error:', err);
+      }
     }
+
+    // Broadcast live event across devices
+    await broadcastLiveEvent('PAYMENT_DECLARED', {
+      paymentId: savedPayment.id,
+      targetUserId: targetOwnerId || undefined,
+      contractId: chosenContract?.id,
+      data: {
+        payment: savedPayment,
+        amount,
+        month: targetMonth
+      }
+    });
+
+    setPayments((prev) => [savedPayment, ...prev]);
+    window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: savedPayment }));
 
     setShowDeclareModal(false);
     setReference('');
@@ -176,11 +244,12 @@ export const LocatairePaiementsView: React.FC = () => {
     if (cautionMethod !== 'Espèces' && !cautionReference.trim()) return;
 
     const chosenContract = userContracts.find(c => c.id === cautionContractId) || userContracts[0];
+    const targetOwnerId = chosenContract?.owner_id || null;
 
     const cautionData = {
       contract_id: chosenContract?.id || null,
       tenant_id: user?.id,
-      owner_id: chosenContract?.owner_id || null,
+      owner_id: targetOwnerId,
       amount_requested: cautionAmount,
       amount_paid: cautionAmount,
       status: 'declare',
@@ -189,10 +258,58 @@ export const LocatairePaiementsView: React.FC = () => {
       proof_url: cautionProofUrl || null
     };
 
+    let savedCaution: any = null;
     const { data } = await supabase.from('cautions').insert(cautionData).select().single();
     if (data) {
-      setDeposits((prev) => [data, ...prev]);
+      savedCaution = data;
+    } else {
+      savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
     }
+
+    // Persist in local store for seamless demo & multi-tab responsiveness
+    declareCautionPayment({
+      contractId: chosenContract?.id || 'LT-CONTRAT',
+      tenantId: user?.id || 'usr_locataire',
+      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+      amount: cautionAmount,
+      reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
+      method: cautionMethod,
+      proofUrl: cautionProofUrl || undefined,
+      comment: undefined
+    });
+
+    // Send real notification to owner/agency in Supabase
+    if (targetOwnerId) {
+      try {
+        await supabase.from('notifications').insert({
+          user_id: targetOwnerId,
+          title: 'Paiement de caution déclaré',
+          message: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)}.`,
+          type: 'caution_declaree',
+          data: {
+            caution_id: savedCaution.id,
+            contract_id: chosenContract?.id,
+            amount: cautionAmount
+          }
+        });
+      } catch (err) {
+        console.warn('Notification caution insert error:', err);
+      }
+    }
+
+    // Broadcast live event across devices
+    await broadcastLiveEvent('CAUTION_DECLARED', {
+      depositId: savedCaution.id,
+      targetUserId: targetOwnerId || undefined,
+      contractId: chosenContract?.id,
+      data: {
+        caution: savedCaution,
+        amount: cautionAmount
+      }
+    });
+
+    setDeposits((prev) => [savedCaution, ...prev]);
+    window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: savedCaution }));
 
     setShowCautionModal(false);
     setCautionReference('');
@@ -448,12 +565,12 @@ export const LocatairePaiementsView: React.FC = () => {
       </div>
 
 
-      {/* MODAL 1: SIGNALER LE PAIEMENT DE LA CAUTION (Point 8) */}
+      {/* MODAL 1: SIGNALER LE PAIEMENT DE LA CAUTION (Points 5, 7, 8) */}
       {showCautionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn overflow-y-auto">
           <form
             onSubmit={handleDeclareCaution}
-            className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 animate-scaleUp text-xs"
+            className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full p-4 sm:p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 animate-scaleUp text-xs my-auto max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
@@ -493,21 +610,23 @@ export const LocatairePaiementsView: React.FC = () => {
                   >
                     {userContracts.map(c => (
                       <option key={c.id} value={c.id}>
-                        {c.contract_number || c.id.slice(0, 8)} — {c.property?.title || 'Logement loué'}
+                        {c.property?.title || 'Logement'} — Contrat N° {c.contract_number || c.id.slice(0, 8)}
                       </option>
                     ))}
                   </select>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-extrabold text-slate-800 block mb-1">Montant de la caution (FCFA)</label>
                   <input
                     type="number"
+                    min="1"
                     required
-                    value={cautionAmount}
-                    onChange={(e) => setCautionAmount(Number(e.target.value))}
+                    placeholder="0"
+                    value={cautionAmount === 0 ? '' : cautionAmount}
+                    onChange={(e) => setCautionAmount(sanitizeNumericInput(e.target.value))}
                     className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-black text-blue-700"
                   />
                 </div>
@@ -641,12 +760,12 @@ export const LocatairePaiementsView: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL 2: DÉCLARATION DE PAIEMENT DE LOYER */}
+      {/* MODAL 2: DÉCLARATION DE PAIEMENT DE LOYER (Points 6, 7, 10) */}
       {showDeclareModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn overflow-y-auto">
           <form
             onSubmit={handleDeclarePayment}
-            className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 animate-scaleUp text-xs"
+            className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full p-4 sm:p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 animate-scaleUp text-xs my-auto max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-base font-black text-slate-900">Déclarer un Règlement de Loyer</h3>
@@ -710,7 +829,7 @@ export const LocatairePaiementsView: React.FC = () => {
                   >
                     {userContracts.map(c => (
                       <option key={c.id} value={c.id}>
-                        {c.contract_number || c.id.slice(0, 8)} — {c.property?.title || 'Logement loué'}
+                        {c.property?.title || 'Logement'} — Contrat N° {c.contract_number || c.id.slice(0, 8)}
                       </option>
                     ))}
                   </select>
@@ -730,14 +849,16 @@ export const LocatairePaiementsView: React.FC = () => {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-extrabold text-slate-800 block mb-1">Montant Payé (FCFA)</label>
                   <input
                     type="number"
+                    min="1"
                     required
-                    value={amount}
-                    onChange={(e) => setAmount(Number(e.target.value))}
+                    placeholder="0"
+                    value={amount === 0 ? '' : amount}
+                    onChange={(e) => setAmount(sanitizeNumericInput(e.target.value))}
                     className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
                   />
                 </div>

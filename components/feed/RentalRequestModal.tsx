@@ -92,6 +92,11 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         try { currentApps = JSON.parse(existingRaw); } catch {}
       }
 
+      if (property.status === 'loue') {
+        setDuplicateWarning("Ce logement a déjà été loué et n'accepte plus de nouvelles candidatures.");
+        return;
+      }
+
       // Règle métier : 1 seule demande active autorisée pour le même tenant + property
       const alreadyExists = currentApps.some(
         (a: any) =>

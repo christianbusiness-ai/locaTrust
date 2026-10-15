@@ -345,18 +345,38 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const { data, error } = await getAvailableProperties();
       const dbProps = data || [];
 
-      // 3. Fusion unifiée sans doublons (exclusion stricte des biens supprimés ou en corbeille)
+      // Identifiants des biens déjà loués / avec contrat actif
+      const rentedPropertyIds = new Set<string>();
+      try {
+        const contractsRaw = localStorage.getItem('locatrust_contracts');
+        if (contractsRaw) {
+          const contractsList = JSON.parse(contractsRaw);
+          if (Array.isArray(contractsList)) {
+            contractsList.forEach((c: any) => {
+              if (c.status === 'actif' || c.status === 'contrat_actif' || (c.owner_signed && c.tenant_signed)) {
+                if (c.property_id) rentedPropertyIds.add(c.property_id);
+                if (c.property?.id) rentedPropertyIds.add(c.property.id);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // 3. Fusion unifiée sans doublons : SEULS les logements disponibles (non loués, non archivés)
       const map = new Map<string, any>();
       localProps.forEach((p) => {
-        if (p && p.id && !p.deleted_at && p.status !== 'desactive' && p.status !== 'archive' && p.status !== 'corbeille') {
+        const isRented = p.status === 'loue' || rentedPropertyIds.has(p.id);
+        const isUnavailable = p.deleted_at || p.status === 'desactive' || p.status === 'archive' || p.status === 'corbeille';
+        if (p && p.id && !isRented && !isUnavailable) {
           map.set(p.id, p);
         }
       });
       dbProps.forEach((p) => {
-        if (p && p.id && !p.deleted_at && p.status !== 'desactive' && p.status !== 'archive' && p.status !== 'corbeille') {
-          // Si un bien a été marqué comme supprimé localement, on ne l'affiche pas
+        const isRented = p.status === 'loue' || rentedPropertyIds.has(p.id);
+        const isUnavailable = p.deleted_at || p.status === 'desactive' || p.status === 'archive' || p.status === 'corbeille';
+        if (p && p.id && !isRented && !isUnavailable) {
           const localItem = localProps.find((lp) => lp.id === p.id);
-          if (localItem && localItem.deleted_at) return;
+          if (localItem && (localItem.deleted_at || localItem.status === 'loue' || rentedPropertyIds.has(localItem.id))) return;
           map.set(p.id, { ...(map.get(p.id) || {}), ...p });
         }
       });

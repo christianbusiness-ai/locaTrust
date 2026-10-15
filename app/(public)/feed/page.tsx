@@ -32,7 +32,7 @@ export default function FeedPage() {
     id: user?.id || 'guest',
     email: user?.email || 'visiteur@locatrust.ci',
     full_name: profile?.full_name || 'Utilisateur LocaTrust',
-    avatar_url: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+    avatar_url: profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.full_name || 'LocaTrust')}&background=1E40AF&color=fff`,
     role: currentRole,
     phone: profile?.phone || '+225 07 00 00 00 00',
     is_verified: profile?.is_verified ?? false,
@@ -43,12 +43,10 @@ export default function FeedPage() {
     try {
       setLoading(true);
       setError(null);
-      const { data, error: qErr } = await supabase
-        .from('properties')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { getAvailableProperties } = await import('@/src/lib/db');
+      const { data, error: qErr } = await getAvailableProperties();
 
-      if (qErr) throw qErr;
+      if (qErr) throw new Error(qErr);
       const formatted = (data || []).map((p: any) => ({
         ...p,
         location: p.location || {

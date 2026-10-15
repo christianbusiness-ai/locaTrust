@@ -159,7 +159,7 @@ export function saveStoredMessages(messages: ChatMessage[]) {
   }
 }
 
-const isValidUuid = (str?: string) =>
+export const isValidUuid = (str?: string) =>
   Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
 // Synchronisation asynchrone sécurisée avec Supabase Realtime & DB
@@ -169,7 +169,7 @@ export async function syncMessageToSupabase(
   receiverId: string,
   text: string,
   propertyId?: string
-) {
+): Promise<{ success: boolean; error?: any }> {
   try {
     // 1. Diffusion Realtime immédiate via channel Supabase
     try {
@@ -185,16 +185,20 @@ export async function syncMessageToSupabase(
     if (isValidUuid(senderId) && isValidUuid(receiverId)) {
       // Trouver ou créer la conversation
       let convId: string | null = null;
-      const { data: convData } = await supabase
+      const { data: convData, error: convLookupError } = await supabase
         .from('conversations')
         .select('id')
         .or(`and(tenant_id.eq.${senderId},owner_id.eq.${receiverId}),and(tenant_id.eq.${receiverId},owner_id.eq.${senderId})`)
         .maybeSingle();
 
+      if (convLookupError) {
+        console.warn('Erreur recherche conversation Supabase:', convLookupError.message);
+      }
+
       if (convData?.id) {
         convId = convData.id;
       } else {
-        const { data: newConv } = await supabase
+        const { data: newConv, error: convInsertError } = await supabase
           .from('conversations')
           .insert({
             tenant_id: senderId,
@@ -203,29 +207,77 @@ export async function syncMessageToSupabase(
           })
           .select('id')
           .maybeSingle();
+
+        if (convInsertError) {
+          console.error('Erreur création conversation Supabase:', convInsertError.message);
+          return { success: false, error: convInsertError.message };
+        }
         if (newConv?.id) convId = newConv.id;
       }
 
       if (convId) {
-        await supabase.from('messages').insert({
+        // Encodage structuré pour conserver les pièces jointes / contrats / quittances
+        let contentToStore = text;
+        if (newMsg.contract) {
+          contentToStore = JSON.stringify({
+            type: 'contract',
+            text: text,
+            contract: newMsg.contract
+          });
+        } else if (newMsg.quittance) {
+          contentToStore = JSON.stringify({
+            type: 'quittance',
+            text: text,
+            quittance: newMsg.quittance
+          });
+        } else if (newMsg.restitution) {
+          contentToStore = JSON.stringify({
+            type: 'restitution',
+            text: text,
+            restitution: newMsg.restitution
+          });
+        } else if (newMsg.attachment) {
+          contentToStore = JSON.stringify({
+            type: 'attachment',
+            text: text,
+            attachment: newMsg.attachment
+          });
+        }
+
+        const { error: msgInsertError } = await supabase.from('messages').insert({
           conversation_id: convId,
           sender_id: senderId,
-          content: text,
+          content: contentToStore,
           status: 'delivered'
         });
 
+        if (msgInsertError) {
+          console.error('Erreur insertion message Supabase:', msgInsertError.message);
+          return { success: false, error: msgInsertError.message };
+        }
+
         // Persistance de la notification en BDD
+        const notifTitle = newMsg.contract
+          ? `Bail officiel reçu (N° ${newMsg.contract.contractNumber})`
+          : newMsg.quittance
+          ? `Quittance émise (N° ${newMsg.quittance.receiptNumber})`
+          : 'Nouveau message reçu';
+
         await supabase.from('notifications').insert({
           user_id: receiverId,
-          title: 'Nouveau message reçu',
+          title: notifTitle,
           message: text.length > 100 ? `${text.slice(0, 97)}...` : text,
-          type: 'info',
+          type: newMsg.contract ? 'contrat' : newMsg.quittance ? 'quittance' : 'info',
           is_read: false
         });
+
+        return { success: true };
       }
     }
-  } catch (err) {
-    console.warn('Notice sync Supabase chat:', err);
+    return { success: true };
+  } catch (err: any) {
+    console.error('Exception sync Supabase chat:', err);
+    return { success: false, error: err?.message || 'Erreur réseau' };
   }
 }
 
@@ -297,8 +349,11 @@ export async function sendRealChatMessage(
   options?: { propertyId?: string; propertyTitle?: string; attachment?: any; contract?: any; quittance?: any; restitution?: any }
 ): Promise<ChatMessage> {
   const msg = sendChatMessage(senderId, receiverId, text, options);
-  // Attendre la tentative de synchronisation réseau
-  await syncMessageToSupabase(msg, senderId, receiverId, text, options?.propertyId);
+  // Synchronisation réelle avec Supabase
+  const result = await syncMessageToSupabase(msg, senderId, receiverId, text, options?.propertyId);
+  if (!result.success) {
+    throw new Error(result.error || "Impossible d'enregistrer le message sur les serveurs.");
+  }
   return msg;
 }
 
@@ -633,3 +688,91 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
   }
   return [];
 }
+
+/**
+ * Récupère les vraies conversations et profils associés depuis Supabase
+ * et les retourne sous forme de ChatContact avec noms et photos réels
+ */
+export async function fetchSupabaseConversationsWithProfiles(userId: string): Promise<ChatContact[]> {
+  if (!isValidUuid(userId) || typeof window === 'undefined') return [];
+  try {
+    const { data: convs, error: convErr } = await supabase
+      .from('conversations')
+      .select('id, tenant_id, owner_id, property_id, properties:properties(id, title, city, commune)')
+      .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+
+    if (convErr || !convs || convs.length === 0) return [];
+
+    const otherUserIds = Array.from(
+      new Set(
+        convs.map((c) => (c.tenant_id === userId ? c.owner_id : c.tenant_id)).filter(isValidUuid)
+      )
+    );
+
+    if (otherUserIds.length === 0) return [];
+
+    const { data: profiles, error: profErr } = await supabase
+      .from('profiles')
+      .select('id, full_name, phone, account_type, avatar_url, city, commune')
+      .in('id', otherUserIds);
+
+    if (profErr || !profiles) return [];
+
+    const profMap = new Map<string, any>();
+    profiles.forEach((p) => profMap.set(p.id, p));
+
+    const realContacts: ChatContact[] = [];
+
+    convs.forEach((c) => {
+      const otherId = c.tenant_id === userId ? c.owner_id : c.tenant_id;
+      const prof = profMap.get(otherId);
+      if (!prof) return;
+
+      const isAgency = prof.account_type === 'agence';
+      const roleLabel = isAgency
+        ? 'Agence Immobilière Agréée'
+        : prof.account_type === 'proprietaire'
+        ? 'Propriétaire Bailleur'
+        : 'Locataire Preneur';
+
+      const propTitle = (c.properties as any)?.title || 'Bien immobilier';
+      const avatarUrl =
+        prof.avatar_url && prof.avatar_url.trim()
+          ? prof.avatar_url
+          : `https://ui-avatars.com/api/?name=${encodeURIComponent(prof.full_name || 'Contact')}&background=1E40AF&color=fff`;
+
+      if (!realContacts.some((rc) => rc.id === prof.id)) {
+        realContacts.push({
+          id: prof.id,
+          name: prof.full_name || 'Utilisateur Certifié',
+          phone: prof.phone || '+225 07 00 00 00 00',
+          role: roleLabel,
+          propertyTitle: propTitle,
+          avatar: avatarUrl,
+          online: true
+        });
+
+        // Mémorisation dans le stockage local pour affichage instantané
+        localStorage.setItem(
+          `locatrust_contact_${prof.id}`,
+          JSON.stringify({
+            id: prof.id,
+            name: prof.full_name || 'Utilisateur Certifié',
+            phone: prof.phone || '+225 07 00 00 00 00',
+            role: roleLabel,
+            propertyTitle: propTitle,
+            avatar: avatarUrl,
+            online: true
+          })
+        );
+      }
+    });
+
+    return realContacts;
+  } catch (e) {
+    console.warn('Erreur chargement contacts réels Supabase:', e);
+    return [];
+  }
+}
+

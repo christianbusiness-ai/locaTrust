@@ -167,10 +167,14 @@ export const Header: React.FC<HeaderProps> = ({
           if (Array.isArray(apps)) {
             const validApps = apps.filter((a: any) => a.id !== 'app_kwame' && a.id !== 'app_moussa' && a.id !== 'app_awa' && a.id !== 'app_bamba');
             if (currentUser.role === 'locataire') {
-              countApps = validApps.filter((a: any) =>
-                (currentUser.email && a.tenant_email?.toLowerCase() === currentUser.email.toLowerCase()) ||
-                (currentUser.id && a.tenant_id === currentUser.id)
-              ).length;
+              const myApps = validApps.filter((a: any) =>
+                ((currentUser.email && a.tenant_email?.toLowerCase() === currentUser.email.toLowerCase()) ||
+                 (currentUser.id && a.tenant_id === currentUser.id)) &&
+                a.status !== 'refusee'
+              );
+              // Deduplicate by property_id to guarantee one count per real property demanded (Points 14, 15, 16)
+              const uniqueProperties = new Set(myApps.map((a: any) => a.property_id || a.id));
+              countApps = uniqueProperties.size;
             } else {
               countApps = validApps.filter((a: any) =>
                 a.status === 'en_attente' &&

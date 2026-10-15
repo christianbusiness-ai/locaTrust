@@ -118,7 +118,24 @@ export const LocataireSearchView: React.FC = () => {
   };
 
   const filteredProperties = properties.filter((p) => {
-    if (p.status !== 'disponible') return false; // Only AVAILABLE properties in marketplace feed
+    if (p.deleted_at || (p.status as any) === 'loue' || p.status !== 'disponible') return false;
+
+    // Vérification stricte des baux déjà signés et actifs
+    try {
+      const contractsRaw = localStorage.getItem('locatrust_contracts');
+      if (contractsRaw) {
+        const contractsList = JSON.parse(contractsRaw);
+        if (Array.isArray(contractsList)) {
+          const isTaken = contractsList.some(
+            (c: any) =>
+              (c.property_id === p.id || c.property?.id === p.id) &&
+              (c.status === 'actif' || c.status === 'contrat_actif' || (c.owner_signed && c.tenant_signed))
+          );
+          if (isTaken) return false;
+        }
+      }
+    } catch {}
+
     if (typeFilter !== 'tous' && p.type !== typeFilter) return false;
     
     // Filtre Ville
