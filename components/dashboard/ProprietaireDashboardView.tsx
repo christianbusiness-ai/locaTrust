@@ -105,12 +105,14 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
     window.addEventListener('locatrust:properties-updated', handleLiveUpdate);
     window.addEventListener('locatrust:applications-updated', handleLiveUpdate);
+    window.addEventListener('locatrust:contracts-updated', handleLiveUpdate);
     window.addEventListener('locatrust:payments-updated', handleLiveUpdate);
     window.addEventListener('locatrust:cautions_updated', handleLiveUpdate);
 
     return () => {
       window.removeEventListener('locatrust:properties-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:applications-updated', handleLiveUpdate);
+      window.removeEventListener('locatrust:contracts-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:payments-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleLiveUpdate);
     };

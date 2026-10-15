@@ -29,6 +29,19 @@ interface BroadcastPayload {
 
 const GLOBAL_REALTIME_CHANNEL = 'locatrust_live_sync';
 
+let sharedLiveChannel: ReturnType<typeof supabase.channel> | null = null;
+
+function getSharedChannel() {
+  if (!sharedLiveChannel) {
+    sharedLiveChannel = supabase.channel(GLOBAL_REALTIME_CHANNEL, {
+      config: {
+        broadcast: { self: false }
+      }
+    });
+  }
+  return sharedLiveChannel;
+}
+
 /**
  * Diffuse un événement temps réel sur tous les appareils connectés (PC ↔ Mobile ↔ Tablette)
  * via le canal Supabase Realtime Broadcast.
@@ -44,7 +57,16 @@ export async function broadcastLiveEvent(
   };
 
   try {
-    const channel = supabase.channel(GLOBAL_REALTIME_CHANNEL);
+    const channel = getSharedChannel();
+    if (channel.state !== 'joined') {
+      await new Promise<void>((resolve) => {
+        channel.subscribe((status) => {
+          if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR') resolve();
+        });
+        setTimeout(resolve, 400);
+      });
+    }
+
     await channel.send({
       type: 'broadcast',
       event: 'locatrust_event',
@@ -58,7 +80,7 @@ export async function broadcastLiveEvent(
   dispatchDomEventForType(event, fullPayload);
 }
 
-function dispatchDomEventForType(event: LiveEventType, payload: BroadcastPayload) {
+function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayload) {
   if (typeof window === 'undefined') return;
 
   switch (event) {
@@ -101,14 +123,15 @@ function dispatchDomEventForType(event: LiveEventType, payload: BroadcastPayload
 export function subscribeToLiveSync(currentUserId?: string) {
   if (typeof window === 'undefined') return () => {};
 
-  const channel = supabase.channel(GLOBAL_REALTIME_CHANNEL);
+  const channel = getSharedChannel();
 
   channel
     .on('broadcast', { event: 'locatrust_event' }, ({ payload }: { payload: BroadcastPayload }) => {
-      // Ignorer si ce n'est pas pour nous (si un targetUserId spécifique est défini et ne correspond pas)
-      if (payload.targetUserId && currentUserId && payload.targetUserId !== currentUserId && payload.actorId === currentUserId) {
+      // Ignorer uniquement si l'événement vise explicitement un autre compte différent
+      if (payload.targetUserId && currentUserId && payload.targetUserId !== currentUserId && payload.actorId !== currentUserId) {
         return;
       }
+      console.log('⚡ Événement temps réel reçu depuis un autre appareil:', payload.event, payload);
       dispatchDomEventForType(payload.event, payload);
     })
     .on(
@@ -147,13 +170,26 @@ export function subscribeToLiveSync(currentUserId?: string) {
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
       }
     )
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        // Enregistrement actif
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'messages' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
       }
-    });
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'notifications' },
+      () => {
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+      }
+    );
+
+  if (channel.state !== 'joined') {
+    channel.subscribe();
+  }
 
   return () => {
-    supabase.removeChannel(channel);
+    // Keep shared channel alive across view changes
   };
 }

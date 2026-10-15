@@ -294,9 +294,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       }
     };
     window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
+    window.addEventListener('locatrust:contracts-updated', loadFromDatabase);
     window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
+      window.removeEventListener('locatrust:contracts-updated', loadFromDatabase);
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
@@ -339,7 +341,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   };
 
   // Choix d'un candidat : Rejette automatiquement les concurrents et les notifie en temps réel
-  const handleSelectAndSignWithCandidate = (chosenApp: RentalApplication) => {
+  const handleSelectAndSignWithCandidate = async (chosenApp: RentalApplication) => {
     // Contrôle d'état : si le logement est déjà pris
     if (propertyHasActiveContract(chosenApp.property_id)) {
       alert("Ce logement est déjà loué sous contrat actif. Impossible de sélectionner un nouveau candidat.");
@@ -365,6 +367,28 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     });
 
     saveApplications(updated);
+
+    // Mettre à jour la base Supabase pour le candidat retenu et les concurrents
+    try {
+      await supabase.from('rental_applications').update({
+        status: 'validee'
+      }).eq('id', chosenApp.id);
+
+      for (const comp of competingCandidates) {
+        await supabase.from('rental_applications').update({
+          status: 'refusee'
+        }).eq('id', comp.id);
+      }
+    } catch (e) {
+      console.warn('Erreur mise à jour Supabase sélection candidat:', e);
+    }
+
+    broadcastLiveEvent('APPLICATION_UPDATED', {
+      actorId: user?.id,
+      targetUserId: chosenApp.tenant_id,
+      propertyId: chosenApp.property_id,
+      data: { appId: chosenApp.id, status: 'validee' }
+    });
 
     // Envoi immédiat des notifications et messages aux candidats non retenus
     competingCandidates.forEach((comp) => {
@@ -420,12 +444,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     try {
       await supabase.from('rental_applications').update({
         tenant_signed: true,
-        tenant_signed_at: signedAt,
-        tenant_signature_url: sigUrl
+        tenant_signed_at: signedAt
       }).eq('id', app.id);
     } catch (e) {
       console.warn('Sync signature error:', e);
     }
+
+    broadcastLiveEvent('CONTRACT_SIGNED_BY_TENANT', {
+      actorId: user?.id,
+      targetUserId: app.tenant_id,
+      propertyId: app.property_id,
+      data: { appId: app.id }
+    });
   };
 
   // Finalisation définitive du contrat par le propriétaire/agence
@@ -496,26 +526,30 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     saveApplications(updated);
 
-    // Synchronisation Supabase
+    // Synchronisation Supabase avec les colonnes exactes
     try {
       await supabase.from('rental_applications').update({
         status: 'contrat_actif',
         contract_finalized: true,
-        contract_number: contractNumber,
-        owner_signed: true,
-        owner_signature_url: ownerSigUrl,
-        tenant_signature_url: tenantSigUrl
+        contract_number: contractNumber
       }).eq('id', app.id);
 
       for (const comp of competing) {
         await supabase.from('rental_applications').update({
-          status: 'refusee',
-          unavailable_reason: "Le logement demandé est déjà pris et n'est plus disponible."
+          status: 'refusee'
         }).eq('id', comp.id);
       }
     } catch (err) {
       console.warn('Supabase sync contract error:', err);
     }
+
+    broadcastLiveEvent('CONTRACT_FINALIZED', {
+      actorId: user?.id,
+      targetUserId: app.tenant_id,
+      propertyId: app.property_id,
+      contractId: contractNumber,
+      data: { appId: app.id, contractNumber }
+    });
 
     // 3. Notifier automatiquement tous les candidats refusés
     try {
@@ -1276,20 +1310,51 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             onClose={() => setSelectedApplicationForContract(null)}
             startAtStep={contractModalStartStep}
             isAgency={(profile?.role as any) === 'agence' || (profile?.role as any) === 'agent'}
-            onContractFinalized={({ contractNumber, tenantName, propertyTitle }) => {
+            onContractFinalized={async ({ contractNumber, tenantName, propertyTitle }) => {
               const chosenApp = selectedApplicationForContract;
               const competing = applications.filter(
                 (a) => a.property_id === chosenApp.property_id && a.id !== chosenApp.id
               );
               const competingNames = competing.map((c) => c.tenant_name).join(', ');
               const updated = applications.map((a) => {
-                if (a.id === chosenApp.id) return { ...a, status: 'contrat_actif' as const };
+                if (a.id === chosenApp.id) return { ...a, status: 'contrat_actif' as const, contract_number: contractNumber, contract_finalized: true };
                 if (a.property_id === chosenApp.property_id) {
                   return { ...a, status: 'refusee' as const };
                 }
                 return a;
               });
               saveApplications(updated);
+
+              try {
+                await supabase.from('rental_applications').update({
+                  status: 'contrat_actif',
+                  contract_finalized: true,
+                  contract_number: contractNumber
+                }).eq('id', chosenApp.id);
+
+                for (const comp of competing) {
+                  await supabase.from('rental_applications').update({
+                    status: 'refusee'
+                  }).eq('id', comp.id);
+                }
+
+                if (chosenApp.property_id) {
+                  await supabase.from('properties').update({
+                    status: 'loue'
+                  }).eq('id', chosenApp.property_id);
+                }
+              } catch (err) {
+                console.warn('Erreur mise à jour Supabase après finalisation contrat:', err);
+              }
+
+              broadcastLiveEvent('CONTRACT_FINALIZED', {
+                actorId: user?.id,
+                targetUserId: chosenApp.tenant_id,
+                propertyId: chosenApp.property_id,
+                contractId: contractNumber,
+                data: { appId: chosenApp.id, contractNumber }
+              });
+
               setCandidateAlert(
                 `🎉 Bail N° ${contractNumber} finalisé avec ${tenantName} pour « ${propertyTitle} » ! Les candidats en liste d'attente (${competingNames || 'demandeurs'}) ont été automatiquement notifiés que le logement n'est plus disponible.`
               );
