@@ -100,15 +100,32 @@ export function getDefaultRealisticAvatar(name?: string, role?: string): string 
  * Sauvegarde la photo de profil, la met en cache local sans dépasser le quota
  * et la synchronise en temps réel vers Supabase et tous les appareils connectés.
  */
-export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl: string): Promise<void> {
+export async function saveUserAvatarLocallyAndSync(
+  userId: string,
+  avatarDataUrl: string,
+  role?: string
+): Promise<void> {
+  const activeRole = role || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_role') : '') || 'proprietaire';
+  const isAgency = activeRole === 'agence' || userId === 'usr_agency' || userId.includes('agency');
+  const isOwner = activeRole === 'proprietaire' || userId === 'usr_owner' || userId.includes('owner');
+  const isTenant = activeRole === 'locataire' || userId === 'usr_tenant' || userId.includes('tenant');
+
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem('locatrust_user_avatar', avatarDataUrl);
       if (userId) {
         localStorage.setItem(`locatrust_user_avatar_${userId}`, avatarDataUrl);
       }
-      localStorage.setItem('locatrust_user_avatar_usr_owner', avatarDataUrl);
-      localStorage.setItem('locatrust_user_avatar_usr_agency', avatarDataUrl);
+      if (isAgency) {
+        localStorage.setItem('locatrust_user_avatar_usr_agency', avatarDataUrl);
+        localStorage.setItem('locatrust_agency_avatar', avatarDataUrl);
+      } else if (isOwner) {
+        localStorage.setItem('locatrust_user_avatar_usr_owner', avatarDataUrl);
+        localStorage.setItem('locatrust_owner_avatar', avatarDataUrl);
+      } else if (isTenant) {
+        localStorage.setItem('locatrust_user_avatar_usr_tenant', avatarDataUrl);
+        localStorage.setItem('locatrust_tenant_avatar', avatarDataUrl);
+      }
 
       // Mettre à jour l'utilisateur actif si présent
       try {
@@ -122,14 +139,17 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
         }
       } catch {}
 
-      // Propager également dans les biens en cache local (owner_avatar)
+      // Propager également dans les biens en cache local (owner_avatar et agency_avatar)
       try {
         const propsRaw = localStorage.getItem('locatrust_properties');
         if (propsRaw) {
           const props = JSON.parse(propsRaw);
           if (Array.isArray(props)) {
             const updatedProps = props.map((p: any) => {
-              if (p.owner_id === userId || p.agency_id === userId || p.owner_id === 'usr_owner' || p.agency_id === 'usr_agency') {
+              if (isAgency && (p.agency_id === userId || p.agency_id === 'usr_agency' || p.is_agency || (p.owner_id === userId && activeRole === 'agence'))) {
+                return { ...p, owner_avatar: avatarDataUrl, agency_avatar: avatarDataUrl };
+              }
+              if (isOwner && (p.owner_id === userId || p.owner_id === 'usr_owner')) {
                 return { ...p, owner_avatar: avatarDataUrl };
               }
               return p;
@@ -146,10 +166,13 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
         const apps = JSON.parse(appsRaw);
         if (Array.isArray(apps)) {
           const updatedApps = apps.map((a: any) => {
-            if (a.owner_id === userId || a.agency_id === userId || a.owner_id === 'usr_owner' || a.agency_id === 'usr_agency') {
+            if (isAgency && (a.agency_id === userId || a.agency_id === 'usr_agency' || a.is_agency)) {
+              return { ...a, owner_avatar: avatarDataUrl, agency_avatar: avatarDataUrl };
+            }
+            if (isOwner && (a.owner_id === userId || a.owner_id === 'usr_owner')) {
               return { ...a, owner_avatar: avatarDataUrl };
             }
-            if (a.tenant_id === userId || a.tenant_id === 'usr_tenant') {
+            if (isTenant && (a.tenant_id === userId || a.tenant_id === 'usr_tenant')) {
               return { ...a, tenant_avatar: avatarDataUrl };
             }
             return a;
@@ -171,26 +194,33 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
         }
       }
       try {
-        const cOwner = localStorage.getItem('locatrust_contact_usr_owner');
-        if (cOwner) {
-          const p = JSON.parse(cOwner);
-          localStorage.setItem('locatrust_contact_usr_owner', JSON.stringify({ ...p, avatar: avatarDataUrl }));
-        }
-        const cAgency = localStorage.getItem('locatrust_contact_usr_agency');
-        if (cAgency) {
-          const p = JSON.parse(cAgency);
+        if (isAgency) {
+          const cAgency = localStorage.getItem('locatrust_contact_usr_agency');
+          const p = cAgency ? JSON.parse(cAgency) : { id: 'usr_agency', name: 'Agence Immobilière' };
           localStorage.setItem('locatrust_contact_usr_agency', JSON.stringify({ ...p, avatar: avatarDataUrl }));
+        } else if (isOwner) {
+          const cOwner = localStorage.getItem('locatrust_contact_usr_owner');
+          const p = cOwner ? JSON.parse(cOwner) : { id: 'usr_owner', name: 'Propriétaire Bailleur' };
+          localStorage.setItem('locatrust_contact_usr_owner', JSON.stringify({ ...p, avatar: avatarDataUrl }));
+        } else if (isTenant) {
+          const cTenant = localStorage.getItem('locatrust_contact_usr_tenant');
+          const p = cTenant ? JSON.parse(cTenant) : { id: 'usr_tenant', name: 'Locataire' };
+          localStorage.setItem('locatrust_contact_usr_tenant', JSON.stringify({ ...p, avatar: avatarDataUrl }));
         }
       } catch {}
 
-      window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: avatarDataUrl } }));
+      window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: avatarDataUrl, role: activeRole, userId } }));
       window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
     } catch (e) {
       console.warn('LocalStorage avatar caching notice:', e);
     }
   }
 
-  if (userId) {
+  // Supabase Sync si userId est un UUID valide
+  const isValidUuid = (str?: string) =>
+    Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+  if (userId && isValidUuid(userId)) {
     try {
       await supabase
         .from('profiles')
@@ -203,7 +233,7 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
       await broadcastLiveEvent('AVATAR_UPDATED', {
         actorId: userId,
         targetUserId: userId,
-        data: { avatarUrl: avatarDataUrl }
+        data: { avatarUrl: avatarDataUrl, role: activeRole, userId }
       });
     } catch (dbErr) {
       console.warn('Supabase profile avatar update error:', dbErr);

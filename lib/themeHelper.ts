@@ -55,13 +55,34 @@ export const ACCENT_THEMES: AccentTheme[] = [
   }
 ];
 
-export function applyAccentTheme(themeId: string, broadcast = true): void {
+export function getActiveThemeStorageKey(roleOrId?: string): string {
+  if (typeof window === 'undefined') return 'locatrust_accent_color';
+  if (roleOrId) {
+    return `locatrust_accent_color_${roleOrId}`;
+  }
+  const activeRole = localStorage.getItem('locatrust_user_role') || 'proprietaire';
+  const activeUserRaw = localStorage.getItem('locatrust_active_user');
+  if (activeUserRaw) {
+    try {
+      const u = JSON.parse(activeUserRaw);
+      if (u.id) return `locatrust_accent_color_${u.id}`;
+      if (u.role) return `locatrust_accent_color_${u.role}`;
+    } catch {}
+  }
+  return `locatrust_accent_color_${activeRole}`;
+}
+
+export function applyAccentTheme(themeId: string, broadcast = false, roleOrId?: string): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
   const theme = ACCENT_THEMES.find((t) => t.id === themeId) || ACCENT_THEMES[0];
 
-  // 1. Sauvegarder dans localStorage
+  // 1. Sauvegarder dans localStorage de façon STRICTEMENT isolée au compte ou rôle actif
   try {
+    const key = getActiveThemeStorageKey(roleOrId);
+    localStorage.setItem(key, theme.id);
+    localStorage.setItem(`${key}_hex`, theme.hex);
+    // Sauvegarder aussi le rôle pour synchronisation contextuelle
     localStorage.setItem('locatrust_accent_color', theme.id);
     localStorage.setItem('locatrust_accent_color_hex', theme.hex);
   } catch (err) {
@@ -126,22 +147,26 @@ export function applyAccentTheme(themeId: string, broadcast = true): void {
     })
   );
 
-  // 5. Diffusion temps réel WebSocket sur tous les appareils de l'utilisateur
+  // 5. Diffusion temps réel WebSocket UNIQUEMENT vers les autres onglets du MÊME compte
   if (broadcast) {
     import('./supabaseRealtime').then((rt) => {
+      const myId = rt.getCurrentUserId();
       rt.broadcastLiveEvent('THEME_UPDATED', {
+        actorId: myId,
+        targetUserId: myId,
         data: { themeId: theme.id, accentColor: theme.id }
       });
     }).catch(() => {});
   }
 }
 
-export function initAccentTheme(): void {
+export function initAccentTheme(roleOrId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    const saved = localStorage.getItem('locatrust_accent_color') || 'blue';
-    applyAccentTheme(saved);
+    const key = getActiveThemeStorageKey(roleOrId);
+    const saved = localStorage.getItem(key) || localStorage.getItem('locatrust_accent_color') || 'blue';
+    applyAccentTheme(saved, false, roleOrId);
   } catch (err) {
-    applyAccentTheme('blue');
+    applyAccentTheme('blue', false, roleOrId);
   }
 }

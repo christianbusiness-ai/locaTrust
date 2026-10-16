@@ -166,16 +166,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const ownerName = app.agency_name || app.owner_name || (app.owner as any)?.full_name || 'Bailleur Propriétaire';
               const ownerId = app.agency_id || app.owner_id || `owner_${app.property_id || app.id}`;
               const ownerRole = app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur';
-              const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
+              const isAgencyRole = Boolean(app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' || ownerId.includes('agency'));
               let ownerAvatar =
-                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') && app.owner_avatar !== myStoredAvatar ? app.owner_avatar : null) ||
-                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') && (app.owner as any).avatar_url !== myStoredAvatar ? (app.owner as any).avatar_url : null) ||
+                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') ? app.owner_avatar : null) ||
+                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') ? (app.owner as any).avatar_url : null) ||
                 (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${ownerId}`) : null) ||
+                (typeof window !== 'undefined' && isAgencyRole ? localStorage.getItem('locatrust_agency_avatar') || localStorage.getItem('locatrust_user_avatar_usr_agency') : null) ||
+                (typeof window !== 'undefined' && !isAgencyRole ? localStorage.getItem('locatrust_owner_avatar') || localStorage.getItem('locatrust_user_avatar_usr_owner') : null) ||
                 getDefaultRealisticAvatar(ownerName, ownerRole);
-
-              if (ownerAvatar === myStoredAvatar) {
-                ownerAvatar = getDefaultRealisticAvatar(ownerName, ownerRole);
-              }
 
               if (!list.some((c) => c.id === ownerId || c.name.toLowerCase() === ownerName.toLowerCase())) {
                 list.push({
@@ -288,16 +286,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
             const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
             const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire Candidat';
-            const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
             let contactAvatar =
-              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') && matchingApp.tenant_avatar !== myStoredAvatar ? matchingApp.tenant_avatar : null) ||
-              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') && matchingApp.owner_avatar !== myStoredAvatar ? matchingApp.owner_avatar : null) ||
+              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') ? matchingApp.tenant_avatar : null) ||
+              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') ? matchingApp.owner_avatar : null) ||
               (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${otherId}`) : null) ||
+              (typeof window !== 'undefined' && isAgencyRole ? localStorage.getItem('locatrust_agency_avatar') || localStorage.getItem('locatrust_user_avatar_usr_agency') : null) ||
+              (typeof window !== 'undefined' && !isAgencyRole && otherId.includes('owner') ? localStorage.getItem('locatrust_owner_avatar') || localStorage.getItem('locatrust_user_avatar_usr_owner') : null) ||
+              (typeof window !== 'undefined' && otherId.includes('tenant') ? localStorage.getItem('locatrust_tenant_avatar') || localStorage.getItem('locatrust_user_avatar_usr_tenant') : null) ||
               getDefaultRealisticAvatar(contactName, contactRole);
-
-            if (contactAvatar === myStoredAvatar) {
-              contactAvatar = getDefaultRealisticAvatar(contactName, contactRole);
-            }
 
             if (!list.some((c) => c.id === otherId || c.name.toLowerCase() === contactName!.toLowerCase())) {
               list.push({

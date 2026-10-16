@@ -28,6 +28,7 @@ export interface GlobalNotificationItem {
   targetUserId?: string;
   targetRole?: 'proprietaire' | 'locataire' | 'agence';
   senderUserId?: string;
+  senderAvatar?: string;
 }
 
 // Candidats par défaut (vide pour garantir des données réelles uniquement)
@@ -203,6 +204,7 @@ export function pushGlobalNotification(notif: {
   targetUserId?: string;
   targetRole?: 'proprietaire' | 'locataire' | 'agence';
   senderUserId?: string;
+  senderAvatar?: string;
 }) {
   if (typeof window === 'undefined') return;
   try {
@@ -218,7 +220,8 @@ export function pushGlobalNotification(notif: {
       targetTab: notif.targetTab || (notif.category === 'demande' ? 'applications' : 'contracts'),
       targetUserId: notif.targetUserId,
       targetRole: notif.targetRole,
-      senderUserId: notif.senderUserId
+      senderUserId: notif.senderUserId,
+      senderAvatar: notif.senderAvatar
     };
     const combined = [newNotif, ...currentNotifs.slice(0, 49)];
     localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(combined));

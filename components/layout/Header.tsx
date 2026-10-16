@@ -589,15 +589,23 @@ export const Header: React.FC<HeaderProps> = ({
                           : 'bg-blue-50/50 dark:bg-blue-950/20 hover:bg-blue-50 dark:hover:bg-blue-950/40'
                       }`}
                     >
-                      <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
-                        {item.category === 'demande' && <FileText className="w-4 h-4" />}
-                        {item.category === 'visite' && <Calendar className="w-4 h-4" />}
-                        {item.category === 'paiement' && <CreditCard className="w-4 h-4" />}
-                        {item.category === 'contrat' && <CheckCircle2 className="w-4 h-4" />}
-                        {item.category === 'caution' && <ShieldCheck className="w-4 h-4" />}
-                        {item.category === 'maintenance' && <Wrench className="w-4 h-4" />}
-                        {item.category === 'abonnement' && <AlertTriangle className="w-4 h-4" />}
-                      </div>
+                      {item.senderAvatar ? (
+                        <img
+                          src={item.senderAvatar}
+                          alt=""
+                          className="w-8 h-8 rounded-full object-cover shrink-0 mt-0.5 ring-2 ring-blue-500/30"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                          {item.category === 'demande' && <FileText className="w-4 h-4" />}
+                          {item.category === 'visite' && <Calendar className="w-4 h-4" />}
+                          {item.category === 'paiement' && <CreditCard className="w-4 h-4" />}
+                          {item.category === 'contrat' && <CheckCircle2 className="w-4 h-4" />}
+                          {item.category === 'caution' && <ShieldCheck className="w-4 h-4" />}
+                          {item.category === 'maintenance' && <Wrench className="w-4 h-4" />}
+                          {item.category === 'abonnement' && <AlertTriangle className="w-4 h-4" />}
+                        </div>
+                      )}
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">

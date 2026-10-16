@@ -136,7 +136,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
             }
           }
 
-          // Recherche Reçus / Quittances dans localStorage
+          // Recherche Reçus / Quittances dans localStorage (quittances locataire)
           const rawReceipts = localStorage.getItem('locatrust_tenant_receipts_v2') || localStorage.getItem('locatrust_tenant_receipts');
           if (rawReceipts) {
             const rList = JSON.parse(rawReceipts);
@@ -146,7 +146,8 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                   r.receiptNumber === token ||
                   (r.receiptNumber && r.receiptNumber.toLowerCase() === token.toLowerCase()) ||
                   r.id === token ||
-                  r.token === token
+                  r.token === token ||
+                  (r.transactionReference && r.transactionReference.toLowerCase() === token.toLowerCase())
                 )
               );
               if (rMatch) {
@@ -178,12 +179,102 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
               }
             }
           }
+
+          // Recherche dans les Reçus de Caution (locatrust_deposits_v1 / locatrust_cautions)
+          const rawDeposits = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_cautions');
+          if (rawDeposits) {
+            const dList = JSON.parse(rawDeposits);
+            if (Array.isArray(dList)) {
+              const dMatch = dList.find((d: any) =>
+                d && (
+                  d.id === token ||
+                  d.token === token ||
+                  d.receipt_number === token ||
+                  (d.receipt_number && d.receipt_number.toLowerCase() === token.toLowerCase()) ||
+                  d.deposit_number === token ||
+                  d.transaction_reference === token ||
+                  (d.contract_number && d.contract_number.toLowerCase() === token.toLowerCase())
+                )
+              );
+              if (dMatch) {
+                setReceiptData({
+                  type: 'recu',
+                  token: token,
+                  receiptNumber: dMatch.receipt_number || dMatch.deposit_number || `REC-CAUTION-${dMatch.id.slice(0, 8).toUpperCase()}`,
+                  contractNumber: dMatch.contract_number || 'Bail LocaTrust Certifié',
+                  contractToken: dMatch.contract_number || '',
+                  status: 'valide',
+                  periodCovered: 'Dépôt de Garantie & Caution (Art. 414 Loi 2019-576)',
+                  amountPaid: Number(dMatch.amount_paid || dMatch.amount || 0),
+                  paymentDate: dMatch.confirmed_at ? new Date(dMatch.confirmed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+                  paymentMethod: dMatch.payment_method || 'Paiement Déclaré & Validé',
+                  transactionReference: dMatch.transaction_reference || token,
+                  parties: {
+                    ownerName: maskPersonName(dMatch.owner_name || 'Bailleur Propriétaire'),
+                    tenantName: maskPersonName(dMatch.tenant_name || 'Locataire Preneur')
+                  },
+                  property: {
+                    type: dMatch.property_title || 'Bien immobilier certifié',
+                    location: dMatch.property_address || 'Abidjan, Côte d\'Ivoire'
+                  },
+                  isValidatedByOwner: true,
+                  validatedAt: dMatch.confirmed_at ? new Date(dMatch.confirmed_at).toLocaleString('fr-FR') : new Date().toLocaleString('fr-FR')
+                });
+                setIsLoading(false);
+                return;
+              }
+            }
+          }
+
+          // Recherche dans les Paiements de loyers déclarés (locatrust_rent_payments)
+          const rawRentPayments = localStorage.getItem('locatrust_rent_payments');
+          if (rawRentPayments) {
+            const rpList = JSON.parse(rawRentPayments);
+            if (Array.isArray(rpList)) {
+              const rpMatch = rpList.find((p: any) =>
+                p && (
+                  p.id === token ||
+                  p.token === token ||
+                  p.reference === token ||
+                  (p.reference && p.reference.toLowerCase() === token.toLowerCase())
+                )
+              );
+              if (rpMatch) {
+                setReceiptData({
+                  type: 'recu',
+                  token: token,
+                  receiptNumber: rpMatch.reference || token,
+                  contractNumber: rpMatch.contract_number || 'Bail LocaTrust',
+                  contractToken: rpMatch.contract_number || '',
+                  status: 'valide',
+                  periodCovered: rpMatch.target_month || 'Quittance de loyer certifiée',
+                  amountPaid: Number(rpMatch.amount || 0),
+                  paymentDate: rpMatch.confirmed_at ? new Date(rpMatch.confirmed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+                  paymentMethod: rpMatch.payment_method || 'Mobile Money',
+                  transactionReference: rpMatch.reference || token,
+                  parties: {
+                    ownerName: maskPersonName(rpMatch.owner_name || 'Bailleur'),
+                    tenantName: maskPersonName(rpMatch.tenant_name || 'Locataire')
+                  },
+                  property: {
+                    type: rpMatch.property_title || 'Logement certifié',
+                    location: rpMatch.property_address || 'Abidjan, Côte d\'Ivoire'
+                  },
+                  isValidatedByOwner: true,
+                  validatedAt: rpMatch.confirmed_at ? new Date(rpMatch.confirmed_at).toLocaleString('fr-FR') : new Date().toLocaleString('fr-FR')
+                });
+                setIsLoading(false);
+                return;
+              }
+            }
+          }
         } catch (e) {}
       }
 
       // 3. Recherche dans Supabase
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
+
       if (type === 'contrat') {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
         let query = supabase
           .from('contracts')
           .select('*, property:properties(*), owner:profiles!owner_id(*), tenant:profiles!tenant_id(*)');
@@ -238,43 +329,78 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
           setIsLoading(false);
           return;
         }
-      } else {
-        // Recherche reçus dans Supabase (rent_payments ou receipts)
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
-        const { data: pData } = await supabase
-          .from('rent_payments')
-          .select('*, contract:contracts(*, property:properties(*)), tenant:profiles!tenant_id(*), owner:profiles!owner_id(*)')
-          .or(isUuid ? `id.eq.${token},reference.eq.${token}` : `reference.eq.${token},reference.ilike.%${token}%`)
-          .maybeSingle();
+      }
 
-        if (pData) {
-          const rec: ReceiptVerificationRecord = {
-            type: 'recu',
-            token: token,
-            receiptNumber: pData.reference || token,
-            contractNumber: pData.contract?.contract_number || 'Bail LocaTrust',
-            contractToken: pData.contract?.contract_number || '',
-            status: 'valide',
-            periodCovered: pData.target_month || 'Période courante',
-            amountPaid: Number(pData.amount || 0),
-            paymentDate: new Date(pData.confirmed_at || pData.created_at || Date.now()).toLocaleDateString('fr-FR'),
-            paymentMethod: pData.payment_method || 'Paiement Déclaré & Validé',
-            transactionReference: pData.reference || pData.id?.slice(0, 12).toUpperCase() || 'TX-OFFICIEL',
-            parties: {
-              ownerName: maskPersonName(pData.owner?.full_name || 'Bailleur'),
-              tenantName: maskPersonName(pData.tenant?.full_name || 'Locataire'),
-            },
-            property: {
-              type: pData.contract?.property?.title || 'Bien immobilier',
-              location: `${pData.contract?.property?.commune || ''} ${pData.contract?.property?.city || 'Abidjan'}`.trim() || 'Côte d\'Ivoire',
-            },
-            isValidatedByOwner: true,
-            validatedAt: new Date(pData.confirmed_at || pData.created_at || Date.now()).toLocaleString('fr-FR'),
-          };
-          setReceiptData(rec);
-          setIsLoading(false);
-          return;
-        }
+      // 4. Recherche reçus dans Supabase (rent_payments ET cautions)
+      const { data: pData } = await supabase
+        .from('rent_payments')
+        .select('*, contract:contracts(*, property:properties(*)), tenant:profiles!tenant_id(*), owner:profiles!owner_id(*)')
+        .or(isUuid ? `id.eq.${token},reference.eq.${token}` : `reference.eq.${token},reference.ilike.%${token}%`)
+        .maybeSingle();
+
+      if (pData) {
+        const rec: ReceiptVerificationRecord = {
+          type: 'recu',
+          token: token,
+          receiptNumber: pData.reference || token,
+          contractNumber: pData.contract?.contract_number || 'Bail LocaTrust',
+          contractToken: pData.contract?.contract_number || '',
+          status: 'valide',
+          periodCovered: pData.target_month || 'Période courante',
+          amountPaid: Number(pData.amount || 0),
+          paymentDate: new Date(pData.confirmed_at || pData.created_at || Date.now()).toLocaleDateString('fr-FR'),
+          paymentMethod: pData.payment_method || 'Paiement Déclaré & Validé',
+          transactionReference: pData.reference || pData.id?.slice(0, 12).toUpperCase() || 'TX-OFFICIEL',
+          parties: {
+            ownerName: maskPersonName(pData.owner?.full_name || 'Bailleur'),
+            tenantName: maskPersonName(pData.tenant?.full_name || 'Locataire'),
+          },
+          property: {
+            type: pData.contract?.property?.title || 'Bien immobilier',
+            location: `${pData.contract?.property?.commune || ''} ${pData.contract?.property?.city || 'Abidjan'}`.trim() || 'Côte d\'Ivoire',
+          },
+          isValidatedByOwner: true,
+          validatedAt: new Date(pData.confirmed_at || pData.created_at || Date.now()).toLocaleString('fr-FR'),
+        };
+        setReceiptData(rec);
+        setIsLoading(false);
+        return;
+      }
+
+      // Recherche dans la table cautions de Supabase
+      const { data: cData } = await supabase
+        .from('cautions')
+        .select('*, contract:contracts(*, property:properties(*)), tenant:profiles!tenant_id(*), owner:profiles!owner_id(*)')
+        .or(isUuid ? `id.eq.${token},transaction_reference.eq.${token}` : `transaction_reference.eq.${token},transaction_reference.ilike.%${token}%`)
+        .maybeSingle();
+
+      if (cData) {
+        const rec: ReceiptVerificationRecord = {
+          type: 'recu',
+          token: token,
+          receiptNumber: cData.transaction_reference || `REC-CAUTION-${cData.id.slice(0, 8).toUpperCase()}`,
+          contractNumber: cData.contract?.contract_number || 'Bail LocaTrust Certifié',
+          contractToken: cData.contract?.contract_number || '',
+          status: 'valide',
+          periodCovered: 'Dépôt de Garantie & Caution (Art. 414 Loi 2019-576)',
+          amountPaid: Number(cData.amount_paid || cData.amount || 0),
+          paymentDate: new Date(cData.confirmed_at || cData.created_at || Date.now()).toLocaleDateString('fr-FR'),
+          paymentMethod: cData.payment_method || 'Paiement Déclaré & Validé',
+          transactionReference: cData.transaction_reference || token,
+          parties: {
+            ownerName: maskPersonName(cData.owner?.full_name || 'Bailleur Propriétaire'),
+            tenantName: maskPersonName(cData.tenant?.full_name || 'Locataire Preneur'),
+          },
+          property: {
+            type: cData.contract?.property?.title || 'Bien immobilier certifié',
+            location: `${cData.contract?.property?.commune || ''} ${cData.contract?.property?.city || 'Abidjan'}`.trim() || 'Côte d\'Ivoire',
+          },
+          isValidatedByOwner: true,
+          validatedAt: new Date(cData.confirmed_at || cData.created_at || Date.now()).toLocaleString('fr-FR'),
+        };
+        setReceiptData(rec);
+        setIsLoading(false);
+        return;
       }
     } catch (err: any) {
       setLoadError(err?.message || 'Erreur réseau');

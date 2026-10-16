@@ -5,6 +5,8 @@ import { UserRole } from '@/types/database.types';
 import { ShieldAlert, User, Building2, Crown, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+import { initAccentTheme } from '@/lib/themeHelper';
+
 interface RoleSwitcherProps {
   currentRole: UserRole;
   onRoleChange: (role: UserRole) => void;
@@ -44,6 +46,14 @@ export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({
     { role: 'agence', label: 'Agence', icon: Building2 },
   ];
 
+  const handleSwitch = (newRole: UserRole) => {
+    try {
+      localStorage.setItem('locatrust_user_role', newRole);
+      initAccentTheme(newRole);
+    } catch {}
+    onRoleChange(newRole);
+  };
+
   return (
     <div className="bg-slate-900 text-white text-xs py-1.5 sm:py-2 px-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800">
       <div className="flex items-center gap-2 min-w-0">
@@ -73,7 +83,7 @@ export const RoleSwitcher: React.FC<RoleSwitcherProps> = ({
           {roles.map(({ role, label, icon: Icon }) => (
             <button
               key={role}
-              onClick={() => onRoleChange(role)}
+              onClick={() => handleSwitch(role)}
               className={cn(
                 "flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md transition-all font-medium text-[11px] sm:text-xs whitespace-nowrap",
                 currentRole === role

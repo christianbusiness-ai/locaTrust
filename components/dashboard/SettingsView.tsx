@@ -412,8 +412,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const compressed = await compressAvatarImage(file, 256, 0.85);
       setUserAvatar(compressed);
+      const effectiveUserId = user?.id || (userRole === 'agence' ? 'usr_agency' : userRole === 'proprietaire' ? 'usr_owner' : 'usr_tenant');
+      await saveUserAvatarLocallyAndSync(effectiveUserId, compressed, userRole);
       if (user?.id) {
-        await saveUserAvatarLocallyAndSync(user.id, compressed);
         await refreshProfile();
       }
       setSavedMessage('Photo de profil mise à jour et enregistrée avec succès.');
@@ -425,13 +426,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSelectSuggestedAvatar = async (avatarUrl: string) => {
     setUserAvatar(avatarUrl);
-    if (user?.id) {
-      try {
-        await saveUserAvatarLocallyAndSync(user.id, avatarUrl);
+    try {
+      const effectiveUserId = user?.id || (userRole === 'agence' ? 'usr_agency' : userRole === 'proprietaire' ? 'usr_owner' : 'usr_tenant');
+      await saveUserAvatarLocallyAndSync(effectiveUserId, avatarUrl, userRole);
+      if (user?.id) {
         await refreshProfile();
-      } catch (err) {
-        console.error('Erreur sauvegarde avatar suggéré:', err);
       }
+    } catch (err) {
+      console.error('Erreur sauvegarde avatar suggéré:', err);
     }
     setSavedMessage('Photo de profil mise à jour avec succès.');
     setTimeout(() => setSavedMessage(null), 3500);

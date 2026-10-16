@@ -38,6 +38,8 @@ import { supabase } from '@/src/lib/supabase';
 import { updateRentalApplication } from '@/lib/supabase/services';
 import { ApplicationCardSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
+import { UserAvatar } from '@/components/common/UserAvatar';
 
 export interface RentalApplication {
   id: string;
@@ -142,7 +144,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           tenant_name: dbA.tenant_name || 'Candidat Locataire',
           tenant_phone: dbA.tenant_phone || '+225 07 00 00 00 00',
           tenant_email: dbA.tenant_email || '',
-          tenant_avatar: dbA.tenant_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbA.tenant_name || 'Candidat')}&background=0284c7&color=fff`,
+          tenant_avatar:
+            (dbA.tenant_avatar && !dbA.tenant_avatar.includes('ui-avatars.com') ? dbA.tenant_avatar : null) ||
+            (typeof window !== 'undefined'
+              ? localStorage.getItem(`locatrust_user_avatar_${dbA.tenant_id}`) ||
+                localStorage.getItem('locatrust_tenant_avatar') ||
+                localStorage.getItem('locatrust_user_avatar_usr_tenant')
+              : null) ||
+            getDefaultRealisticAvatar(dbA.tenant_name, 'locataire'),
           tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
           documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
             ? dbA.documents
@@ -886,10 +895,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             >
               {/* 1. Candidat Profil */}
               <div className="flex items-center gap-3 min-w-0 sm:min-w-[180px]">
-                <img
+                <UserAvatar
                   src={app.tenant_avatar}
-                  alt={app.tenant_name}
-                  className="w-10 h-10 rounded-full object-cover ring-2 ring-slate-100 shrink-0"
+                  name={app.tenant_name}
+                  fallbackRole="locataire"
+                  sizeClassName="w-10 h-10"
+                  borderClassName="ring-2 ring-slate-100"
                 />
                 <div className="flex flex-col min-w-0">
                   <span className="font-extrabold text-sm text-slate-900 truncate">

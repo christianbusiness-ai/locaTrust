@@ -11,6 +11,7 @@ import { createRentalApplication } from '@/lib/supabase/services';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 
 interface RentalRequestModalProps {
   property: Property | null;
@@ -38,7 +39,15 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
     const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
     const applicantEmail = user?.email || (profile as any)?.email || 'locataire@locatrust.ci';
-    const applicantAvatar = profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+    const applicantAvatar =
+      profile?.avatar_url ||
+      (typeof window !== 'undefined'
+        ? localStorage.getItem('locatrust_tenant_avatar') ||
+          localStorage.getItem(`locatrust_user_avatar_${applicantId}`) ||
+          localStorage.getItem('locatrust_user_avatar_usr_tenant') ||
+          localStorage.getItem('locatrust_user_avatar')
+        : null) ||
+      getDefaultRealisticAvatar(applicantName, 'locataire');
 
     const targetOwnerId = property.owner_id || (property as any).agency_id || property.owner?.id || 'usr_owner';
     const targetOwnerName = (property as any).agency_name || property.owner?.full_name || (property as any).owner_name || (property as any).mandant_name || 'Propriétaire Bailleur';
@@ -122,7 +131,8 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         category: 'demande',
         targetTab: 'applications',
         targetUserId: targetOwnerId,
-        senderUserId: applicantId
+        senderUserId: applicantId,
+        senderAvatar: applicantAvatar
       });
 
       // Stocker les coordonnées des deux interlocuteurs pour la messagerie

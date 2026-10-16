@@ -82,10 +82,33 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'AVATAR_UPDATED':
         if (typeof window !== 'undefined') {
           const newAvatar = payload?.data?.avatarUrl;
+          const actorId = payload?.actorId || payload?.data?.userId;
+          const senderRole = payload?.data?.role;
+          const myId = getCurrentUserId();
+
           if (newAvatar) {
-            try { localStorage.setItem('locatrust_user_avatar', newAvatar); } catch {}
+            try {
+              if (actorId) {
+                localStorage.setItem(`locatrust_user_avatar_${actorId}`, newAvatar);
+              }
+              if (senderRole === 'agence' || actorId === 'usr_agency') {
+                localStorage.setItem('locatrust_agency_avatar', newAvatar);
+                localStorage.setItem('locatrust_user_avatar_usr_agency', newAvatar);
+              } else if (senderRole === 'proprietaire' || actorId === 'usr_owner') {
+                localStorage.setItem('locatrust_owner_avatar', newAvatar);
+                localStorage.setItem('locatrust_user_avatar_usr_owner', newAvatar);
+              } else if (senderRole === 'locataire' || actorId === 'usr_tenant') {
+                localStorage.setItem('locatrust_tenant_avatar', newAvatar);
+                localStorage.setItem('locatrust_user_avatar_usr_tenant', newAvatar);
+              }
+
+              // Seulement si c'est le compte de l'utilisateur actif lui-même
+              if (actorId && actorId === myId) {
+                localStorage.setItem('locatrust_user_avatar', newAvatar);
+              }
+            } catch {}
           }
-          window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: newAvatar } }));
+          window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: newAvatar, actorId, role: senderRole } }));
           window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
         }
         break;
@@ -114,6 +137,11 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
       case 'THEME_UPDATED':
         if (typeof window !== 'undefined') {
+          // Règle stricte : la couleur d'ambiance ne doit JAMAIS changer chez un autre utilisateur
+          const myId = getCurrentUserId();
+          if (payload.actorId && payload.actorId !== myId) {
+            break; // Ignorer le thème choisi par un autre compte
+          }
           const themeId = payload?.data?.themeId;
           if (themeId) {
             import('@/lib/themeHelper').then((m) => {
