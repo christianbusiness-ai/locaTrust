@@ -361,7 +361,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   // Handle Avatar Change (Points 19 & 20)
-  const handleAvatarFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setAvatarUploadError(null);
@@ -376,52 +376,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAvatarPreview(reader.result as string);
+    try {
+      const { compressAvatarImage } = await import('@/lib/avatarHelper');
+      const compressed = await compressAvatarImage(file, 256, 0.85);
+      setAvatarPreview(compressed);
       setIsAvatarModalOpen(true);
-    };
-    reader.onerror = () => {
-      setAvatarUploadError('Erreur lors du chargement du fichier.');
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setAvatarUploadError('Erreur lors du traitement de l\'image.');
+    }
   };
 
   const handleConfirmAvatarChange = async () => {
     if (!avatarPreview) return;
     setUserAvatar(avatarPreview);
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('locatrust_user_avatar', avatarPreview);
-        if (user?.id) {
-          localStorage.setItem(`locatrust_user_avatar_${user.id}`, avatarPreview);
-        }
-        window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: avatarPreview } }));
-      } catch (err) {
-        console.error('Failed to save avatar to localStorage', err);
-      }
-    }
 
-    // Sauvegarde en base Supabase et diffusion temps réel multi-appareils
     if (user?.id) {
       try {
-        await supabase
-          .from('profiles')
-          .update({
-            avatar_url: avatarPreview,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', user.id);
-
+        const { saveUserAvatarLocallyAndSync } = await import('@/lib/avatarHelper');
+        await saveUserAvatarLocallyAndSync(user.id, avatarPreview);
         await refreshProfile();
-
-        await broadcastLiveEvent('AVATAR_UPDATED', {
-          actorId: user.id,
-          targetUserId: user.id,
-          data: { avatarUrl: avatarPreview }
-        });
       } catch (err) {
-        console.error('Erreur sauvegarde avatar en base:', err);
+        console.error('Erreur sauvegarde avatar:', err);
       }
     }
 

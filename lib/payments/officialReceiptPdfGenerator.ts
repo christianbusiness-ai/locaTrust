@@ -479,7 +479,8 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(125, sigY, 70, 28, 2, 2, 'FD');
-    const qrUrl = `https://locatrust.ci/verification/recu/${verification.token}`;
+    const { getAbsoluteVerificationUrl } = await import('@/lib/qrCode');
+    const qrUrl = getAbsoluteVerificationUrl(`/verification/recu/${verification.token || data.receiptNumber}`, 'recu');
     try {
       const qrDataUrl = generateScannableQrCodeDataUrl(qrUrl, { size: 300, margin: 2 });
       doc.addImage(qrDataUrl, 'PNG', 127, sigY + 3.5, 21, 21);

@@ -545,13 +545,20 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
   // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
   if (typeof window !== 'undefined') {
     try {
+      // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
+      const storedUserAvatar = localStorage.getItem('locatrust_user_avatar');
+      const existingOwnerContact = localStorage.getItem(`locatrust_contact_${finalSenderId}`);
+      const parsedOwner = existingOwnerContact ? JSON.parse(existingOwnerContact) : null;
+      const existingTenantContact = localStorage.getItem(`locatrust_contact_${tenantId}`);
+      const parsedTenant = existingTenantContact ? JSON.parse(existingTenantContact) : null;
+
       localStorage.setItem(`locatrust_contact_${finalSenderId}`, JSON.stringify({
         id: finalSenderId,
         name: contract.ownerName,
         phone: '+225 07 00 00 00 00',
         role: contract.ownerName.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
         propertyTitle: contract.propertyTitle,
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.ownerName)}&background=1E40AF&color=fff`,
+        avatar: parsedOwner?.avatar || storedUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.ownerName)}&background=1E40AF&color=fff`,
         online: true
       }));
 
@@ -561,7 +568,7 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
         phone: '+225 05 00 00 00 00',
         role: 'Locataire Preneur',
         propertyTitle: contract.propertyTitle,
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.tenantName)}&background=059669&color=fff`,
+        avatar: parsedTenant?.avatar || (contract.tenantName.toLowerCase().includes('chris') ? (storedUserAvatar || undefined) : undefined) || `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.tenantName)}&background=059669&color=fff`,
         online: true
       }));
 
@@ -701,9 +708,11 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
       let parsedRestitution: any = undefined;
       let parsedAttachment: any = undefined;
 
+      let displayText = m.content || '';
       try {
         if (m.content && m.content.startsWith('{') && m.content.includes('"type":')) {
           const parsed = JSON.parse(m.content);
+          if (parsed.text) displayText = parsed.text;
           if (parsed.contract) parsedContract = parsed.contract;
           if (parsed.quittance) parsedQuittance = parsed.quittance;
           if (parsed.restitution) parsedRestitution = parsed.restitution;
@@ -715,7 +724,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         id: m.id,
         sender_id: m.sender_id,
         receiver_id: receiverId,
-        text: m.content || '',
+        text: displayText,
         created_at: m.created_at,
         status: m.status || 'delivered',
         contract: parsedContract,

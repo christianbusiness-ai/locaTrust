@@ -44,7 +44,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { formatFCFA } from '@/lib/utils';
-import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import {
@@ -645,20 +645,20 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     setAudioVolume(0);
   };
 
-  // Audio Call Handlers (Appel Vocal Réel avec Microphone)
+  // Audio Call Handlers (Appel Vocal Réel avec Microphone via GlobalCallModal)
   const handleStartAudioCall = async () => {
-    setActiveAudioCall({ seconds: 0, isMuted: false, isSpeaker: false });
-    playCallChime('connected');
-
-    try {
-      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioStreamRef.current = stream;
-        setupAudioVolumeAnalysis(stream);
-      }
-    } catch (err) {
-      console.warn('Microphone stream access notice:', err);
-    }
+    window.dispatchEvent(
+      new CustomEvent('locatrust:initiate_call', {
+        detail: {
+          type: 'audio',
+          peerId: activeContact.id,
+          peerName: activeContact.name,
+          peerAvatar: activeContact.avatar,
+          peerRole: activeContact.role,
+          propertyTitle: activeContact.propertyTitle
+        }
+      })
+    );
   };
 
   const handleEndAudioCall = (e?: React.SyntheticEvent) => {
@@ -801,50 +801,23 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return canvas.captureStream(30);
   };
 
-  // Video Call Handlers (Activer Réellement la Caméra Physique + Flux HD Deux Parties)
+  // Video Call Handlers (Activer Réellement la Caméra Physique via GlobalCallModal)
   const handleStartVideoCall = async () => {
-    setActiveVideoCall({ seconds: 0, isMuted: false, isCamOff: false, isFrontCam: true });
-    setIsVideoSwapped(false);
-    setCameraError(null);
-    playCallChime('connected');
-
-    let localStream: MediaStream | null = null;
-
-    try {
-      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        // Tentative 1 : Caméra avant mobile + micro
-        try {
-          localStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user' },
-            audio: true
-          });
-        } catch {
-          // Tentative 2 : Caméra générale + micro
-          try {
-            localStream = await navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: true
-            });
-          } catch {
-            // Tentative 3 : Caméra seule
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          }
+    window.dispatchEvent(
+      new CustomEvent('locatrust:initiate_call', {
+        detail: {
+          type: 'video',
+          peerId: activeContact.id,
+          peerName: activeContact.name,
+          peerAvatar: activeContact.avatar,
+          peerRole: activeContact.role,
+          propertyTitle: activeContact.propertyTitle
         }
-      }
-    } catch (err: any) {
-      console.warn('Physical camera access error:', err);
-      setCameraError('Autorisation caméra requise pour afficher votre flux en direct.');
-    }
-
-    localStreamRef.current = localStream;
-    if (localStream) {
-      setupAudioVolumeAnalysis(localStream);
-    }
-
-    // Flux vidéo distant HD représentant le bailleur ou locataire en temps réel
-    const remoteStream = createSimulatedRemoteVideoStream(activeContact.name, activeContact.avatar);
-    remoteStreamRef.current = remoteStream;
+      })
+    );
   };
+
+
 
   // Toggle Front/Rear Camera (Particulièrement utile sur smartphone)
   const handleFlipCamera = async () => {
@@ -1488,16 +1461,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                       : 'hover:bg-slate-100 dark:hover:bg-slate-800/50'
                   }`}
                 >
-                  <div className="relative shrink-0">
-                    <img
-                      src={contact.avatar}
-                      alt={contact.name}
-                      className="w-12 h-12 rounded-full object-cover border-2 border-slate-200 dark:border-slate-700"
-                    />
-                    {contact.online && (
-                      <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full" />
-                    )}
-                  </div>
+                  <UserAvatar
+                    src={contact.avatar}
+                    name={contact.name}
+                    sizeClassName="w-12 h-12"
+                    isOnline={contact.online}
+                    borderClassName="border-2 border-slate-200 dark:border-slate-700"
+                  />
 
                   <div className="flex flex-col flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
@@ -1548,16 +1518,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              <div className="relative shrink-0">
-                <img
-                  src={activeContact.avatar}
-                  alt={activeContact.name}
-                  className="w-10 h-10 rounded-full object-cover border-2 border-blue-600/40"
-                />
-                {activeContact.online && (
-                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full" />
-                )}
-              </div>
+              <UserAvatar
+                src={activeContact.avatar}
+                name={activeContact.name}
+                sizeClassName="w-10 h-10"
+                isOnline={activeContact.online}
+                borderClassName="border-2 border-blue-600/40"
+              />
 
               <div className="flex flex-col min-w-0">
                 <div className="flex items-center gap-2">
@@ -1653,7 +1620,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                         : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-tl-none'
                     }`}
                   >
-                    <div className="whitespace-pre-line text-xs">{m.text}</div>
+                    <div className="whitespace-pre-line text-xs break-words [overflow-wrap:anywhere]">{m.text}</div>
 
                     {/* Media / File Attachment (Point 6) */}
                     {m.attachment && (
@@ -1754,8 +1721,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                           </div>
                         </div>
 
-                        {/* 3 Actions for Quittance: Consulter / Valider / Télécharger */}
-                        <div className="grid grid-cols-3 gap-1.5 pt-1">
+                        {/* 3 Actions for Quittance: Consulter / Valider / Télécharger (100% responsive smartphone) */}
+                        <div className="flex flex-col sm:grid sm:grid-cols-3 gap-2 pt-1 w-full">
                           <button
                             type="button"
                             onClick={() => setPreviewingQuittance(m.quittance!)}
@@ -1835,8 +1802,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                           </div>
                         </div>
 
-                        {/* 3 Actions for Contract: Consulter / Signer / Télécharger */}
-                        <div className="grid grid-cols-3 gap-1.5 pt-1">
+                        {/* 3 Actions for Contract: Consulter / Signer / Télécharger (100% responsive smartphone) */}
+                        <div className="flex flex-col sm:grid sm:grid-cols-3 gap-2 pt-1 w-full">
                           <button
                             type="button"
                             onClick={() => setPreviewingContract(m.contract!)}

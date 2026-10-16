@@ -143,6 +143,7 @@ export const MultiProprietairesView: React.FC = () => {
     setOwners(next);
     if (typeof window !== 'undefined') {
       localStorage.setItem('locatrust_agency_mandates', JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent('locatrust:agency_mandates-updated', { detail: next }));
     }
     setShowAddModal(false);
     setNewName('');

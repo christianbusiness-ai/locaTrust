@@ -20,6 +20,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { triggerCelebration } from '@/lib/celebration';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
+import { UserAvatar } from '@/components/common/UserAvatar';
 
 interface TenantDocumentRow {
   id: string;
@@ -59,47 +60,78 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     setIsLoading(true);
     setLoadError(null);
     try {
+      // 1. Profils utilisateurs pour récupérer les avatars à jour
+      const { data: profilesData } = await supabase.from('profiles').select('id, full_name, email, phone, avatar_url');
+      const profilesMap = new Map((profilesData || []).map((p: any) => [p.id, p]));
+
+      let combinedContracts: any[] = [];
       const { data, error } = await supabase
         .from('contracts')
-        .select('*, property:properties(*), tenant:users!tenant_id(*)')
-        .order('created_at', { ascending: false });
+        .select('*, property:properties(*)');
 
-      if (error) {
-        setLoadError(error.message);
-      } else {
-        const rows: TenantDocumentRow[] = (data || []).map((c: any) => ({
+      if (!error && Array.isArray(data)) {
+        combinedContracts = [...data];
+      }
+
+      // 2. Contrats du registre local (offline/demo)
+      try {
+        const rawLocal = localStorage.getItem('locatrust_contracts');
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((lc: any) => {
+              if (!combinedContracts.some((c) => c.contract_number === lc.contract_number || c.id === lc.id)) {
+                combinedContracts.push(lc);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      const rows: TenantDocumentRow[] = combinedContracts.map((c: any) => {
+        const matchedProfile = profilesMap.get(c.tenant_id);
+        const tName = matchedProfile?.full_name || c.tenant?.full_name || c.tenant_name || 'Locataire';
+        const tAvatar = matchedProfile?.avatar_url || c.tenant?.avatar_url || c.tenant_avatar || '';
+        const tPhone = matchedProfile?.phone || c.tenant?.phone || c.tenant_phone || '';
+        const pTitle = c.property?.title || c.property_title || 'Logement';
+        const pAddress = c.property?.address || c.property_address || `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`.trim() || 'Abidjan';
+        const cntNum = c.contract_number || 'LT-2026';
+        const cntDate = new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR');
+
+        return {
           id: c.id,
-          tenant_name: c.tenant?.full_name || 'Locataire',
-          tenant_avatar: c.tenant?.avatar_url || '',
-          tenant_phone: c.tenant?.phone || '',
-          property_title: c.property?.title || 'Logement',
-          property_address: c.property?.address || 'Abidjan',
-          contract_number: c.contract_number || 'LT-2026',
-          contract_date: new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
+          tenant_name: tName,
+          tenant_avatar: tAvatar,
+          tenant_phone: tPhone,
+          property_title: pTitle,
+          property_address: pAddress,
+          contract_number: cntNum,
+          contract_date: cntDate,
           documents_count: 3,
           documents: [
             {
               title: 'Contrat de bail certifié conforme',
               type: 'contrat',
-              date: new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
-              file_name: `Contrat_Bail_${c.contract_number}.pdf`
+              date: cntDate,
+              file_name: `Contrat_Bail_${cntNum}.pdf`
             },
             {
               title: 'Pièce d\'identité locataire (CNI)',
               type: 'cni',
-              date: new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR'),
-              file_name: `CNI_${(c.tenant?.full_name || 'Locataire').replace(/\s+/g, '_')}.pdf`
+              date: cntDate,
+              file_name: `CNI_${tName.replace(/\s+/g, '_')}.pdf`
             },
             {
               title: 'État des lieux d\'entrée contradictoire',
               type: 'etat_des_lieux',
-              date: new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
-              file_name: `Etat_Des_Lieux_${c.contract_number}.pdf`
+              date: cntDate,
+              file_name: `Etat_Des_Lieux_${cntNum}.pdf`
             }
           ]
-        }));
-        setTenantDocs(rows);
-      }
+        };
+      });
+
+      setTenantDocs(rows);
     } catch (err: any) {
       setLoadError(err?.message || 'Erreur lors du chargement des documents.');
     } finally {
@@ -217,10 +249,11 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                   {/* Locataire */}
                   <td className="p-4">
                     <div className="flex items-center gap-3">
-                      <img
+                      <UserAvatar
                         src={row.tenant_avatar}
-                        alt={row.tenant_name}
-                        className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0"
+                        name={row.tenant_name}
+                        sizeClassName="w-9 h-9"
+                        borderClassName="border border-slate-200"
                       />
                       <div className="flex flex-col">
                         <span className="font-extrabold text-slate-900">{row.tenant_name}</span>

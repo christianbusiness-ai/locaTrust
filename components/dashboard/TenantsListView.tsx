@@ -29,6 +29,8 @@ import { formatFCFA } from '@/lib/utils';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { TenantCardSkeleton } from '@/components/common/SkeletonLoader';
 
+import { UserAvatar } from '@/components/common/UserAvatar';
+
 export interface TenantReceiptItem {
   id: string;
   receiptNumber: string;
@@ -78,26 +80,29 @@ export const TenantsListView: React.FC = () => {
         if (contractsRaw) {
           const contracts = JSON.parse(contractsRaw);
           if (Array.isArray(contracts)) {
-            return contracts.map((c: any, idx: number) => ({
-              id: c.id || `t_${idx}`,
-              fullName: c.tenant_name || 'Locataire',
-              email: c.tenant_email || '',
-              phone: c.tenant_phone || '',
-              avatarUrl: c.tenant_avatar || '',
-              verificationStatus: 'verifie' as const,
-              propertyTitle: c.property_title || 'Bien immobilier',
-              propertyAddress: c.property_address || 'Abidjan',
-              contractNumber: c.contract_number || `LT-2026-${idx}`,
-              contractStartDate: c.start_date || '01/01/2026',
-              contractEndDate: c.end_date || '31/12/2026',
-              rentAmount: Number(c.rent_amount) || 0,
-              cautionRequested: Number(c.caution_amount) || 0,
-              cautionPaid: Number(c.caution_amount) || 0,
-              cautionReceiptNumber: `CAU-2026-${idx}`,
-              cautionStatus: 'totalement_payee' as const,
-              isActive: c.status === 'contrat_actif' || c.status === 'actif',
-              receipts: []
-            }));
+            // Un locataire n'est actif QUE si le contrat a été effectivement signé par le locataire
+            return contracts
+              .filter((c: any) => c && (c.tenant_signed || c.status === 'resilie' || c.status === 'termine'))
+              .map((c: any, idx: number) => ({
+                id: c.tenant_id || c.id || `t_${idx}`,
+                fullName: c.tenant?.full_name || c.tenant_name || 'Locataire',
+                email: c.tenant?.email || c.tenant_email || '',
+                phone: c.tenant?.phone || c.tenant_phone || '',
+                avatarUrl: c.tenant?.avatar_url || c.tenant_avatar || '',
+                verificationStatus: 'verifie' as const,
+                propertyTitle: c.property?.title || c.property_title || 'Bien immobilier',
+                propertyAddress: c.property?.address || c.property_address || 'Abidjan',
+                contractNumber: c.contract_number || `LT-2026-${idx}`,
+                contractStartDate: c.start_date || '01/01/2026',
+                contractEndDate: c.end_date || '31/12/2026',
+                rentAmount: Number(c.monthly_rent) || Number(c.rent_amount) || Number(c.rent) || Number(c.property?.rent) || 0,
+                cautionRequested: Number(c.caution_amount) || Number(c.caution) || Number(c.property?.caution) || 0,
+                cautionPaid: Number(c.caution_paid) || Number(c.caution_amount) || Number(c.caution) || 0,
+                cautionReceiptNumber: `CAU-2026-${idx}`,
+                cautionStatus: 'totalement_payee' as const,
+                isActive: (c.status === 'contrat_actif' || c.status === 'actif') && Boolean(c.tenant_signed),
+                receipts: []
+              }));
           }
         }
       } catch (e) {}
@@ -112,31 +117,45 @@ export const TenantsListView: React.FC = () => {
     async function loadTenantsFromDb() {
       setIsLoading(true);
       try {
+        // Récupération des profils pour disposer des vrais avatars à jour
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, phone, avatar_url');
+        const profilesMap = new Map((profilesData || []).map((p: any) => [p.id, p]));
+
         const { data: contractsData, error } = await supabase
           .from('contracts')
-          .select('*, property:properties(*), tenant:users!tenant_id(*)');
+          .select('*, property:properties(*)');
         
         if (!error && contractsData && contractsData.length > 0) {
-          const dbTenants: TenantProfile[] = contractsData.map((c: any, idx: number) => ({
-            id: c.tenant_id || c.id || `t_${idx}`,
-            fullName: c.tenant?.full_name || 'Locataire',
-            email: c.tenant?.email || '',
-            phone: c.tenant?.phone || '',
-            avatarUrl: c.tenant?.avatar_url || '',
-            verificationStatus: (c.tenant?.verification_status || 'verifie') as any,
-            propertyTitle: c.property?.title || 'Bien immobilier',
-            propertyAddress: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`,
-            contractNumber: c.contract_number || `LT-2026-${idx}`,
-            contractStartDate: c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : '01/01/2026',
-            contractEndDate: '31/12/2026',
-            rentAmount: Number(c.rent) || 0,
-            cautionRequested: Number(c.caution) || 0,
-            cautionPaid: Number(c.caution) || 0,
-            cautionReceiptNumber: `CAU-2026-${idx}`,
-            cautionStatus: 'totalement_payee',
-            isActive: c.status === 'actif' || c.status === 'contrat_actif',
-            receipts: []
-          }));
+          // Ne conserver que les contrats signés par le locataire ou arrivés à terme
+          const eligibleContracts = contractsData.filter(
+            (c: any) => c && (Boolean(c.tenant_signed) || c.status === 'resilie' || c.status === 'termine')
+          );
+
+          const dbTenants: TenantProfile[] = eligibleContracts.map((c: any, idx: number) => {
+            const matchedProfile = profilesMap.get(c.tenant_id);
+            return {
+              id: c.tenant_id || c.id || `t_${idx}`,
+              fullName: matchedProfile?.full_name || c.tenant?.full_name || 'Locataire',
+              email: matchedProfile?.email || c.tenant?.email || '',
+              phone: matchedProfile?.phone || c.tenant?.phone || '',
+              avatarUrl: matchedProfile?.avatar_url || c.tenant?.avatar_url || '',
+              verificationStatus: 'verifie' as const,
+              propertyTitle: c.property?.title || 'Bien immobilier',
+              propertyAddress: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`.trim() || 'Côte d\'Ivoire',
+              contractNumber: c.contract_number || `LT-2026-${idx}`,
+              contractStartDate: c.start_date || (c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : '01/01/2026'),
+              contractEndDate: '31/12/2026',
+              rentAmount: Number(c.monthly_rent) || Number(c.rent_amount) || Number(c.rent) || Number(c.property?.rent) || 0,
+              cautionRequested: Number(c.caution_amount) || Number(c.caution) || Number(c.property?.caution) || 0,
+              cautionPaid: Number(c.caution_paid) || Number(c.caution_amount) || Number(c.caution) || 0,
+              cautionReceiptNumber: `CAU-2026-${idx}`,
+              cautionStatus: 'totalement_payee',
+              isActive: (c.status === 'actif' || c.status === 'contrat_actif') && Boolean(c.tenant_signed),
+              receipts: []
+            };
+          });
           setTenants(dbTenants);
           localStorage.setItem('locatrust_tenants', JSON.stringify(dbTenants));
         }
@@ -155,9 +174,13 @@ export const TenantsListView: React.FC = () => {
 
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
     window.addEventListener('locatrust:applications-updated', handleUpdate);
+    window.addEventListener('locatrust:avatar_updated', handleUpdate);
+    window.addEventListener('locatrust:profile_updated', handleUpdate);
     return () => {
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
       window.removeEventListener('locatrust:applications-updated', handleUpdate);
+      window.removeEventListener('locatrust:avatar_updated', handleUpdate);
+      window.removeEventListener('locatrust:profile_updated', handleUpdate);
     };
   }, []);
 
@@ -308,18 +331,13 @@ export const TenantsListView: React.FC = () => {
             >
               {/* Left: Tenant identity, Avatar, Phone */}
               <div className="flex items-center gap-3.5 min-w-[260px] max-w-xs shrink-0">
-                <div className="relative shrink-0">
-                  <img
-                    src={t.avatarUrl}
-                    alt={t.fullName}
-                    className="w-11 h-11 rounded-full object-cover border-2 border-amber-500 shadow-sm"
-                  />
-                  {t.isActive ? (
-                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full" />
-                  ) : (
-                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-slate-400 border-2 border-white dark:border-slate-900 rounded-full" />
-                  )}
-                </div>
+                <UserAvatar
+                  src={t.avatarUrl}
+                  name={t.fullName}
+                  isOnline={t.isActive}
+                  sizeClassName="w-11 h-11"
+                  borderClassName={t.isActive ? "border-2 border-emerald-500" : "border-2 border-slate-400"}
+                />
 
                 <div className="flex flex-col min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">

@@ -37,6 +37,7 @@ import { ActionConfirmationModal, ConfirmationType } from '@/components/common/A
 import { getActiveReferenceYear } from '@/lib/reports/accountingHistoryStore';
 import { useAuth } from '@/src/context/AuthContext';
 import { fetchRealAccountingData, RealAccountingDataset, RealAccountingSynthesis } from '@/lib/reports/accountingRealDataStore';
+import { supabase } from '@/src/lib/supabase';
 
 export const AccountingExportView: React.FC = () => {
   const { user, profile } = useAuth();
@@ -46,7 +47,7 @@ export const AccountingExportView: React.FC = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('annee_en_cours');
   const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats'>('resultats');
 
-  // Mandants pour les agences (Multi-Bailleurs)
+  // Mandants pour les agences (Multi-Bailleurs réels)
   const isAgency = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
     if (typeof window !== 'undefined') {
@@ -54,17 +55,71 @@ export const AccountingExportView: React.FC = () => {
         const stored = localStorage.getItem('locatrust_agency_mandates');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed)) {
+            // Uniquement les vrais mandants créés par l'agence (exclure tout faux mandant de démo)
+            return parsed.filter(
+              (m: any) =>
+                m &&
+                m.id !== 'mnd_1' &&
+                m.id !== 'mnd_2' &&
+                m.id !== 'mnd_3' &&
+                m.id !== 'owner_101' &&
+                m.id !== 'owner_102' &&
+                m.id !== 'owner_103' &&
+                m.id !== 'owner_104'
+            );
+          }
         }
       } catch {}
     }
-    return [
-      { id: 'mnd_1', full_name: 'M. Badjou Kouamé', phone: '+225 07 08 09 10 11' },
-      { id: 'mnd_2', full_name: 'Mme Touré Aïcha', phone: '+225 05 06 07 08 09' },
-      { id: 'mnd_3', full_name: 'M. Koffi Jean-Baptiste', phone: '+225 01 02 03 04 05' },
-    ];
+    return [];
   });
   const [selectedMandant, setSelectedMandant] = useState<string>('all');
+
+  // Synchronisation en temps réel de la liste des mandants réels depuis Supabase et localStorage
+  React.useEffect(() => {
+    const fetchMandants = async () => {
+      try {
+        const { data: dbProfiles } = await supabase
+          .from('profiles')
+          .select('id, full_name, phone')
+          .in('account_type', ['proprietaire', 'bailleur', 'agence']);
+
+        const stored = typeof window !== 'undefined' ? localStorage.getItem('locatrust_agency_mandates') : null;
+        const localList = stored ? JSON.parse(stored) : [];
+
+        const map = new Map<string, { id: string; full_name: string; phone?: string }>();
+        if (Array.isArray(dbProfiles)) {
+          dbProfiles.forEach((p: any) => {
+            if (p?.id && p?.full_name && p.full_name !== 'Bailleur Démo') {
+              map.set(p.id, { id: p.id, full_name: p.full_name, phone: p.phone });
+            }
+          });
+        }
+        if (Array.isArray(localList)) {
+          localList.forEach((m: any) => {
+            if (m?.id && m?.full_name && !m.id.startsWith('owner_10') && !m.id.startsWith('mnd_')) {
+              map.set(m.id, { id: m.id, full_name: m.full_name, phone: m.phone });
+            }
+          });
+        }
+        setMandantsList(Array.from(map.values()));
+      } catch (err) {
+        console.warn('Erreur chargement mandants:', err);
+      }
+    };
+
+    fetchMandants();
+
+    window.addEventListener('locatrust:agency_mandates-updated', fetchMandants);
+    window.addEventListener('locatrust:mandates-updated', fetchMandants);
+    window.addEventListener('locatrust:profile_updated', fetchMandants);
+    return () => {
+      window.removeEventListener('locatrust:agency_mandates-updated', fetchMandants);
+      window.removeEventListener('locatrust:mandates-updated', fetchMandants);
+      window.removeEventListener('locatrust:profile_updated', fetchMandants);
+    };
+  }, []);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -296,12 +351,12 @@ export const AccountingExportView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0">
-            <label className="text-xs font-bold text-slate-600 shrink-0">Mandant :</label>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0 max-w-full">
+            <label className="text-xs font-bold text-slate-600 dark:text-slate-400 shrink-0">Mandant :</label>
             <select
               value={selectedMandant}
               onChange={(e) => setSelectedMandant(e.target.value)}
-              className="w-full sm:w-auto max-w-full truncate px-3 py-2 rounded-xl border border-indigo-200 bg-indigo-50/50 text-xs font-black text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer"
+              className="w-full sm:w-72 md:w-80 max-w-full truncate px-3 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-slate-900 text-xs font-black text-indigo-950 dark:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer shadow-sm"
             >
               <option value="all">🏢 Tous les mandants (Global Agence Consolidé)</option>
               {mandantsList.map((m) => (

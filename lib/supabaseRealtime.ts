@@ -18,7 +18,11 @@ export type LiveEventType =
   | 'ACCOUNTING_YEAR_UPDATED'
   | 'NEW_MESSAGE'
   | 'THEME_UPDATED'
-  | 'NOTIFICATION_CREATED';
+  | 'NOTIFICATION_CREATED'
+  | 'CALL_INCOMING'
+  | 'CALL_ACCEPTED'
+  | 'CALL_REJECTED'
+  | 'CALL_ENDED';
 
 interface BroadcastPayload {
   event: LiveEventType;
@@ -129,6 +133,15 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'NOTIFICATION_CREATED':
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: payload }));
+        }
+        break;
+
+      case 'CALL_INCOMING':
+      case 'CALL_ACCEPTED':
+      case 'CALL_REJECTED':
+      case 'CALL_ENDED':
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('locatrust:call_event', { detail: payload }));
         }
         break;
     }

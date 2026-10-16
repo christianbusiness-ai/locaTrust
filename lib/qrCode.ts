@@ -243,36 +243,53 @@ export class QRCodeEncoder {
 import { generateScannableQrCodeDataUrl, QRECLevel } from './qr/qrGenerator';
 
 /**
- * Normalizes any contract identifier, full URL or path into the official verification link.
+ * Normalizes any contract identifier, full URL or path into the official absolute verification link.
+ * Smartphones require an absolute URL (with domain) to open the page when scanned.
  * Examples:
- * - "CT-2026-00059" -> "/verify/contrat/CT-2026-00059"
- * - "/verify/contrat/CT-2026-00060" -> "/verify/contrat/CT-2026-00060"
- * - "https://locatrust.com/verify/contrat/CT-2026-00061" -> "/verify/contrat/CT-2026-00061"
+ * - "LT-2026-CI-000492" -> "https://locatrust.site/verify/contrat/LT-2026-CI-000492"
+ * - "/verify/contrat/LT-2026" -> "https://locatrust.site/verify/contrat/LT-2026"
+ * - "https://locatrust.com/verify/..." -> "https://locatrust.site/verify/..."
  */
-export function normalizeVerificationLink(contractOrUrl?: string): string {
-  if (!contractOrUrl) return '/verify/contrat/CT-2026-00059';
+export function getAbsoluteVerificationUrl(contractOrUrl?: string, defaultType: 'contrat' | 'recu' = 'contrat'): string {
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://locatrust.site';
+
+  if (!contractOrUrl) return `${origin}/verify/${defaultType}/LT-2026-CI-000492`;
   const trimmed = contractOrUrl.trim();
+
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
       const u = new URL(trimmed);
-      return u.pathname;
+      // Remplace tout vieux domaine fictif (ex: locatrust.com) par le domaine actif
+      if (u.hostname.includes('locatrust.com') && origin) {
+        return `${origin}${u.pathname}`;
+      }
+      return trimmed;
     } catch {
       return trimmed;
     }
   }
+
   if (trimmed.startsWith('/')) {
-    return trimmed;
+    return `${origin}${trimmed}`;
   }
-  return `/verify/contrat/${trimmed}`;
+
+  return `${origin}/verify/${defaultType}/${trimmed}`;
+}
+
+export function normalizeVerificationLink(contractOrUrl?: string): string {
+  return getAbsoluteVerificationUrl(contractOrUrl, 'contrat');
 }
 
 /**
  * Returns a high-contrast, scannable QR Code Data URL for any LocaTrust verification URL.
- * Dynamically generated for each unique contract (CT-2026-00059, CT-2026-00060, CT-2026-00061, etc.)
+ * Encodes the FULL absolute HTTPS URL so mobile phone cameras directly recognize it.
  * Strictly matches the official ISO/IEC 18004 standard model.
  */
 export function getLocaTrustVerificationQR(contractOrUrl?: string, size: number = 320): string {
-  const targetLink = normalizeVerificationLink(contractOrUrl);
+  const targetLink = getAbsoluteVerificationUrl(contractOrUrl, 'contrat');
   try {
     return generateScannableQrCodeDataUrl(targetLink, { size, margin: 4, ecLevel: QRECLevel.M });
   } catch (err) {
@@ -280,4 +297,5 @@ export function getLocaTrustVerificationQR(contractOrUrl?: string, size: number 
     return QRCodeEncoder.generateDataURL(targetLink, size, 4);
   }
 }
+
 

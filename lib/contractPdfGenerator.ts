@@ -154,8 +154,8 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
     // QR Code officiel scannable calibré en haut à droite avec quiet zone et AUCUN chevauchement
     try {
-      const { getLocaTrustVerificationQR } = await import('@/lib/qrCode');
-      const publicVerifyUrl = `https://locatrust.com/verify/contrat/${token}`;
+      const { getLocaTrustVerificationQR, getAbsoluteVerificationUrl } = await import('@/lib/qrCode');
+      const publicVerifyUrl = getAbsoluteVerificationUrl(`/verify/contrat/${token || contractNumber}`, 'contrat');
       const qrDataUrl = getLocaTrustVerificationQR(publicVerifyUrl, 360);
 
       // Fond blanc propre pour quiet zone (parfaitement cantonné entre Y=8.5 et Y=33)

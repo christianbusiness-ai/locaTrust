@@ -935,7 +935,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           charges_amount: Number(chargesAmount || 0),
           duration_months: Number(durationMonths || 12),
           start_date: startDate || new Date().toISOString().split('T')[0],
-          status: 'actif',
+          status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
           owner_signed: true,
           owner_signed_at: new Date().toISOString(),
           tenant_signed: Boolean(tenantSignatureUrl),

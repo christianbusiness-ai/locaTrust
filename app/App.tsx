@@ -171,6 +171,8 @@ const LiveSyncManager: React.FC = () => {
   return null;
 };
 
+import { GlobalCallModal } from '@/components/common/GlobalCallModal';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -178,6 +180,7 @@ export default function App() {
         <TopProgressBar />
         <AuthProvider>
           <LiveSyncManager />
+          <GlobalCallModal />
           <Suspense fallback={<DashboardPageSkeleton />}>
             <Routes>
               {/* Routes Publiques d'Authentification */}
