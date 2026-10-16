@@ -398,12 +398,14 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     };
   }, [user]);
 
-  // Metrics
-  const totalRequested = deposits.reduce((sum, d) => sum + d.amount_requested, 0);
+  // Metrics (Caution exigée, Caution versée, Caution en attente de remboursement)
+  const totalRequested = deposits.reduce((sum, d) => sum + (d.amount_requested || d.amount_paid || 0), 0);
   const totalCollected = deposits
-    .filter((d) => d.status === 'paye_complet' || d.amount_paid > 0)
-    .reduce((sum, d) => sum + d.amount_paid, 0);
-  const totalPending = Math.max(0, totalRequested - totalCollected);
+    .filter((d) => d.status === 'paye_complet' || d.status === 'caution_confirmee' || d.amount_paid > 0)
+    .reduce((sum, d) => sum + (d.amount_paid || 0), 0);
+  const cautionEnAttenteRemboursement = deposits
+    .filter((d) => d.restitution_status === 'en_attente' || d.status === 'caution_a_confirmer' || (!d.restituted_at && (d.status === 'paye_complet' || d.status === 'caution_confirmee' || d.restitution_status === 'conserve')))
+    .reduce((sum, d) => sum + (d.amount_paid || d.amount_requested || 0), 0);
 
   // Pending verification notices
   const pendingConfirmationDeposits = deposits.filter(
@@ -844,7 +846,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           {/* Total Exigé */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Montant total exigé</span>
+              <span className="text-xs font-bold text-slate-500">Caution exigée</span>
               <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                 <ShieldCheck className="w-4 h-4" />
               </div>
@@ -856,7 +858,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           {/* Cautions Encaissées */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Cautions encaissées</span>
+              <span className="text-xs font-bold text-slate-500">Caution versée</span>
               <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                 <CheckCircle2 className="w-4 h-4" />
               </div>
@@ -868,13 +870,13 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           {/* Solde en attente */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Solde de caution en attente</span>
+              <span className="text-xs font-bold text-slate-500">Caution en attente de remboursement</span>
               <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
                 <AlertTriangle className="w-4 h-4" />
               </div>
             </div>
-            <span className="text-2xl font-black text-amber-600 mt-2">{formatFCFA(totalPending)}</span>
-            <span className="text-[11px] text-slate-400 mt-1">Versements à confirmer / restants</span>
+            <span className="text-2xl font-black text-amber-600 mt-2">{formatFCFA(cautionEnAttenteRemboursement)}</span>
+            <span className="text-[11px] text-slate-400 mt-1">Garanties en cours & à restituer</span>
           </div>
         </div>
       )}

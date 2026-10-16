@@ -609,6 +609,7 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
   const current = getStoredMessages();
 
   let targetOwnerId = declaration.ownerId;
+  let targetAgencyId: string | undefined = undefined;
   if (!targetOwnerId || targetOwnerId === 'usr_owner' || targetOwnerId === 'usr_agency') {
     try {
       const appsRaw = localStorage.getItem('locatrust_rental_applications');
@@ -616,11 +617,12 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
         const apps = JSON.parse(appsRaw);
         if (Array.isArray(apps)) {
           const matched = apps.find((a: any) =>
-            (declaration.contractNumber && a.contract_number === declaration.contractNumber) ||
+            (declaration.contractNumber && (a.contract_number === declaration.contractNumber || a.id === declaration.contractNumber || a.contract_id === declaration.contractNumber)) ||
             (declaration.propertyTitle && a.property_title === declaration.propertyTitle)
           );
           if (matched && (matched.agency_id || matched.owner_id)) {
             targetOwnerId = matched.agency_id || matched.owner_id;
+            targetAgencyId = matched.agency_id;
           }
         }
       }
@@ -630,11 +632,12 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
           const cnts = JSON.parse(cntRaw);
           if (Array.isArray(cnts)) {
             const matched = cnts.find((c: any) =>
-              (declaration.contractNumber && c.contract_number === declaration.contractNumber) ||
+              (declaration.contractNumber && (c.contract_number === declaration.contractNumber || c.id === declaration.contractNumber || c.contract_id === declaration.contractNumber)) ||
               (declaration.propertyTitle && (c.property?.title === declaration.propertyTitle || c.property_title === declaration.propertyTitle))
             );
             if (matched && (matched.owner_id || matched.owner?.id || matched.agency_id)) {
               targetOwnerId = matched.owner_id || matched.owner?.id || matched.agency_id;
+              targetAgencyId = matched.agency_id || matched.property?.agency_id;
             }
           }
         }
@@ -708,7 +711,13 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
       targetUserId: targetOwnerId,
       senderUserId: declaration.tenantId
     };
-    localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(existing) ? existing : [])]));
+    const agencyNotifItem = {
+      ...notifItem,
+      id: `notif_decl_agency_${Date.now()}`,
+      targetRole: 'agence',
+      targetUserId: targetAgencyId || 'usr_agency'
+    };
+    localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, agencyNotifItem, ...(Array.isArray(existing) ? existing : [])]));
     window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
   } catch {}
 

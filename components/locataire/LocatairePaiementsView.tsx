@@ -21,7 +21,8 @@ import {
   Trash2,
   UploadCloud,
   ZoomIn,
-  FileText
+  FileText,
+  Download
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
@@ -34,6 +35,7 @@ import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { declareCautionPayment } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
+import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -458,7 +460,8 @@ export const LocatairePaiementsView: React.FC = () => {
           reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
           method: cautionMethod,
           proofUrl: cautionProofUrl || undefined,
-          comment: undefined
+          comment: undefined,
+          ownerId: targetOwnerId || undefined
         });
       } catch (e) {
         console.warn('declareCautionPayment error:', e);
@@ -546,6 +549,37 @@ export const LocatairePaiementsView: React.FC = () => {
     }
   };
 
+  const handleDownloadCautionReceipt = async (dep: any) => {
+    try {
+      await generateOfficialReceiptPDF({
+        receiptNumber: `REC-CAUT-${(dep.id || 'OFFICIEL').toUpperCase()}`,
+        receiptType: 'caution',
+        contractNumber: dep.contract_id || 'LT-CONTRAT-2026',
+        contractToken: `tok_caut_${dep.id || Date.now()}`,
+        propertyTitle: dep.property?.title || 'Logement LocaTrust',
+        propertyAddress: dep.property?.description || 'Abidjan, Côte d\'Ivoire',
+        propertyReference: 'BIEN-CAUT-001',
+        propertyType: dep.property?.type || 'appartement',
+        durationMonths: 12,
+        leaseStartDate: '01/01/2026',
+        leaseEndDate: '31/12/2026',
+        ownerName: dep.property?.owner_name || 'Bailleur / Agence Agréée',
+        tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+        tenantPhone: user?.phone || '+225 07 08 09 10 11',
+        amount: dep.amount_paid || dep.amount_requested || 60000,
+        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576)',
+        paymentDate: dep.declared_at ? new Date(dep.declared_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+        paymentMethod: dep.declared_reference ? 'Mobile Money / Espèces' : 'Paiement certifié',
+        transactionReference: dep.declared_reference || `TXN-${Date.now()}`,
+        ownerSignatureUrl: dep.owner_signature || 'SIG_CERTIFIED_OWNER',
+        tenantSignatureUrl: dep.tenant_signature || 'SIG_CERTIFIED_TENANT'
+      });
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
+    } catch (err) {
+      console.error('Erreur téléchargement reçu caution:', err);
+    }
+  };
+
   const myDeposit = deposits[0];
 
   const filteredPayments = payments.filter((pmt) => {
@@ -627,7 +661,19 @@ export const LocatairePaiementsView: React.FC = () => {
             {/* Unified Status Badge */}
             <PaymentStatusBadge status={myDeposit.status} />
 
-            {myDeposit.status !== 'paye_complet' && (
+            {(myDeposit.status === 'paye_complet' || myDeposit.status === 'caution_confirmee' || (myDeposit as any).status === 'valide') && (
+              <button
+                type="button"
+                onClick={() => handleDownloadCautionReceipt(myDeposit)}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition-all active:scale-95 cursor-pointer"
+                title="Télécharger le reçu officiel de caution certifié (PDF)"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Télécharger le reçu</span>
+              </button>
+            )}
+
+            {myDeposit.status !== 'paye_complet' && myDeposit.status !== 'caution_confirmee' && (
               <button
                 type="button"
                 onClick={() => setShowCautionModal(true)}

@@ -283,11 +283,15 @@ export const Header: React.FC<HeaderProps> = ({
                   n.targetUserId === userId ||
                   (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
                   (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
-                  (userRole === 'proprietaire' && n.targetUserId === 'usr_owner') ||
-                  (userRole === 'agence' && n.targetUserId === 'usr_agency');
+                  (userRole === 'proprietaire' && (n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId)) ||
+                  (userRole === 'agence' && (n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
                 if (!matchesMe) return false;
-              } else if (n.targetRole && n.targetRole !== userRole) {
-                return false;
+              } else if (n.targetRole) {
+                const matchesRole =
+                  n.targetRole === userRole ||
+                  (userRole === 'agence' && n.targetRole === 'proprietaire') ||
+                  (userRole === 'proprietaire' && n.targetRole === 'agence');
+                if (!matchesRole) return false;
               }
 
               return true;

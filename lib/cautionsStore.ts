@@ -43,12 +43,59 @@ export function declareCautionPayment(params: {
   method: string;
   proofUrl?: string;
   comment?: string;
+  ownerId?: string;
 }): Deposit {
   const all = getStoredDeposits();
   const existing = all.find((d) => d.contract_id === params.contractId || d.tenant_id === params.tenantId);
 
   const now = new Date().toISOString();
   let updatedDeposit: Deposit;
+
+  // Résoudre le propriétaire ou l'agence gestionnaire du bien / contrat
+  let targetOwnerId = params.ownerId;
+  let targetAgencyId: string | undefined = undefined;
+  let propertyTitle = 'Logement LocaTrust';
+
+  if (!targetOwnerId) {
+    try {
+      const contractsRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_contracts') : null;
+      if (contractsRaw) {
+        const cnts = JSON.parse(contractsRaw);
+        if (Array.isArray(cnts)) {
+          const matched = cnts.find((c: any) =>
+            c.id === params.contractId ||
+            c.contract_number === params.contractId ||
+            c.contract_id === params.contractId
+          );
+          if (matched) {
+            targetOwnerId = matched.owner_id || matched.owner?.id;
+            targetAgencyId = matched.agency_id || matched.property?.agency_id;
+            propertyTitle = matched.property?.title || matched.property_title || propertyTitle;
+          }
+        }
+      }
+      if (!targetOwnerId) {
+        const appsRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_rental_applications') : null;
+        if (appsRaw) {
+          const apps = JSON.parse(appsRaw);
+          if (Array.isArray(apps)) {
+            const matched = apps.find((a: any) =>
+              a.id === params.contractId ||
+              a.contract_number === params.contractId ||
+              a.contract_id === params.contractId ||
+              a.property_id === params.contractId
+            );
+            if (matched) {
+              targetOwnerId = matched.agency_id || matched.owner_id;
+              targetAgencyId = matched.agency_id;
+              propertyTitle = matched.property_title || propertyTitle;
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+  if (!targetOwnerId) targetOwnerId = 'usr_owner';
 
   if (existing) {
     updatedDeposit = {
@@ -57,6 +104,8 @@ export function declareCautionPayment(params: {
       status: 'caution_a_confirmer',
       declared_at: now,
       declared_reference: params.reference,
+      owner_id: existing.owner_id || targetOwnerId,
+      agency_id: (existing as any).agency_id || targetAgencyId,
       proof_url: params.proofUrl || existing.proof_url || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80',
       comment: params.comment || existing.comment,
       refusal_reason: undefined
@@ -68,7 +117,8 @@ export function declareCautionPayment(params: {
       id: `dep_${Date.now()}`,
       contract_id: params.contractId,
       tenant_id: params.tenantId,
-      owner_id: 'usr_owner_1',
+      owner_id: targetOwnerId,
+      agency_id: targetAgencyId,
       amount_requested: params.amount,
       amount_paid: params.amount,
       status: 'caution_a_confirmer',
@@ -89,10 +139,10 @@ export function declareCautionPayment(params: {
       },
       property: {
         id: 'prop_1',
-        owner_id: 'usr_owner_1',
+        owner_id: targetOwnerId,
         type: 'appartement',
-        title: 'Appartement 3 pièces Cocody Riviera 3',
-        description: 'Appartement de standing',
+        title: propertyTitle,
+        description: 'Logement certifié LocaTrust',
         surface: 120,
         rooms: 3,
         bedrooms: 2,
@@ -107,6 +157,33 @@ export function declareCautionPayment(params: {
       }
     };
     saveStoredDeposits([updatedDeposit, ...all]);
+  }
+
+  // Notifier immédiatement le bailleur et l'agence dans locatrust_notifications
+  if (typeof window !== 'undefined') {
+    try {
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const notifItem = {
+        id: `notif_caut_decl_${Date.now()}`,
+        title: '💰 Nouvelle déclaration de caution reçue',
+        description: `${params.tenantName} a déclaré le règlement de sa caution (${formatFCFA(params.amount)} • Réf: ${params.reference}). En attente de confirmation.`,
+        time: 'À l\'instant',
+        unread: true,
+        type: 'caution',
+        targetRole: 'proprietaire',
+        targetUserId: targetOwnerId,
+        senderUserId: params.tenantId
+      };
+      const agencyNotifItem = {
+        ...notifItem,
+        id: `notif_caut_decl_agency_${Date.now()}`,
+        targetRole: 'agence',
+        targetUserId: targetAgencyId || 'usr_agency'
+      };
+      localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, agencyNotifItem, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch {}
   }
 
   // Record audit entry
@@ -132,11 +209,34 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
     ...target,
     status: target.amount_paid >= target.amount_requested ? 'paye_complet' : 'paye_partiel',
     confirmed_by: confirmedBy,
-    confirmed_at: now
+    confirmed_at: now,
+    owner_signature: target.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED',
+    owner_signed_at: target.owner_signed_at || now
   };
 
   const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
   saveStoredDeposits(updatedList);
+
+  // Notifier immédiatement le locataire que sa caution est validée et que le reçu est disponible
+  if (typeof window !== 'undefined') {
+    try {
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const tenantNotif = {
+        id: `notif_caut_confirmed_${Date.now()}`,
+        title: '✅ Caution validée & Reçu officiel disponible',
+        description: `Votre caution de ${formatFCFA(target.amount_paid)} pour le contrat ${target.contract_id} a été validée par ${confirmedBy}. Le reçu certifié avec QR Code officiel est disponible au téléchargement.`,
+        time: 'À l\'instant',
+        unread: true,
+        type: 'caution',
+        targetRole: 'locataire',
+        targetUserId: target.tenant_id,
+        senderUserId: target.owner_id || 'usr_owner'
+      };
+      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch {}
+  }
 
   // Record audit entry
   recordCautionAudit({
