@@ -313,17 +313,22 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // Notifier le locataire en base
       if (validatingPayment.tenant_id) {
-        await supabase.from('notifications').insert({
-          user_id: validatingPayment.tenant_id,
-          title: 'Paiement de loyer validé !',
-          message: `Votre règlement de ${formatFCFA(extractedOcrData.amount)} pour ${result.generatedReceipt.periods_covered_text} a été validé. Votre quittance officielle est disponible.`,
-          type: 'paiement_valide',
-          data: {
-            payment_id: validatingPayment.id,
-            receipt_number: extractedOcrData.reference,
-            amount: extractedOcrData.amount
-          }
-        });
+        try {
+          await supabase.from('notifications').insert({
+            user_id: validatingPayment.tenant_id,
+            title: 'Paiement de loyer validé !',
+            content: `Votre règlement de ${formatFCFA(extractedOcrData.amount)} pour ${result.generatedReceipt.periods_covered_text} a été validé. Votre quittance officielle est disponible.`,
+            type: 'paiement_valide',
+            read: false,
+            payload: {
+              payment_id: validatingPayment.id,
+              receipt_number: extractedOcrData.reference,
+              amount: extractedOcrData.amount
+            }
+          });
+        } catch (nErr) {
+          console.warn('Erreur notification Supabase:', nErr);
+        }
       }
 
       // Diffuser l'événement en temps réel sur tous les appareils

@@ -148,9 +148,10 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           await supabase.from('notifications').insert({
             user_id: deposit.tenant_id,
             title: 'Caution validée avec succès !',
-            message: `Votre règlement de garantie de ${formatFCFA(confirmedAmount)} a été vérifié et approuvé par ${actorName}.`,
+            content: `Votre règlement de garantie de ${formatFCFA(confirmedAmount)} a été vérifié et approuvé par ${actorName}.`,
             type: 'caution_confirmee',
-            data: {
+            read: false,
+            payload: {
               caution_id: deposit.id,
               contract_id: deposit.contract_id,
               amount: confirmedAmount
@@ -218,9 +219,10 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           await supabase.from('notifications').insert({
             user_id: deposit.tenant_id,
             title: 'Déclaration de caution non validée',
-            message: `Votre déclaration de caution a été refusée par ${actorName}. Motif : ${reason}`,
+            content: `Votre déclaration de caution a été refusée par ${actorName}. Motif : ${reason}`,
             type: 'caution_refusee',
-            data: {
+            read: false,
+            payload: {
               caution_id: deposit.id,
               contract_id: deposit.contract_id,
               reason
@@ -275,26 +277,111 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const reloadDeposits = async () => {
     setIsLoading(true);
     try {
+      // 1. Requête principale avec jointure contracts et properties
       let query = supabase
         .from('cautions')
-        .select('*, property:properties(*), tenant:users!tenant_id(*)')
+        .select('*, contract:contracts(*, property:properties(*))')
         .order('created_at', { ascending: false });
 
       if (user?.id) {
-        query = query.eq('owner_id', user.id);
+        if (isTenant) {
+          query = query.eq('tenant_id', user.id);
+        } else {
+          // Pour propriétaire / agence : inclure les cautions où il est owner_id ou tenant_id
+          query = query.or(`owner_id.eq.${user.id},tenant_id.eq.${user.id}`);
+        }
       }
 
-      const { data, error } = await query;
-      if (!error && data && data.length > 0) {
-        setDeposits(data as any);
+      let { data, error } = await query;
+
+      // Fallback 1 : select direct sans jointure imbriquée si erreur
+      if (error || !data) {
+        console.warn('Jointure cautions échouée, fallback requête simple:', error?.message);
+        let basicQuery = supabase
+          .from('cautions')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (user?.id) {
+          if (isTenant) {
+            basicQuery = basicQuery.eq('tenant_id', user.id);
+          } else {
+            basicQuery = basicQuery.or(`owner_id.eq.${user.id},tenant_id.eq.${user.id}`);
+          }
+        }
+        const basicRes = await basicQuery;
+        if (!basicRes.error && basicRes.data) {
+          data = basicRes.data as any;
+          error = null;
+        }
+      }
+
+      // Fallback 2 : pour agence / propriétaire si 0 résultat avec owner_id strict (ex: caution déclarée avec alias)
+      if (!isTenant && (!data || data.length === 0)) {
+        const { data: allData } = await supabase
+          .from('cautions')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (allData && allData.length > 0) {
+          data = allData as any;
+        }
+      }
+
+      // Enrichissement des cautions avec les profils locataires réels
+      if (data && data.length > 0) {
+        const tenantIds = Array.from(new Set(data.map((d: any) => d.tenant_id).filter(Boolean)));
+        let profilesMap = new Map<string, any>();
+        if (tenantIds.length > 0) {
+          try {
+            const { data: profs } = await supabase
+              .from('profiles')
+              .select('*')
+              .in('id', tenantIds);
+            if (profs) {
+              profs.forEach((p: any) => profilesMap.set(p.id, p));
+            }
+          } catch {}
+        }
+
+        const enrichedDeposits = data.map((d: any) => {
+          const tenantProfile = d.tenant_id ? profilesMap.get(d.tenant_id) : undefined;
+          const tenantObj = d.tenant || (tenantProfile ? {
+            id: tenantProfile.id,
+            full_name: tenantProfile.full_name,
+            phone: tenantProfile.phone || '+225 07 00 00 00 00',
+            role: 'locataire',
+            avatar_url: tenantProfile.avatar_url
+          } : undefined);
+
+          const propertyObj = d.property || d.contract?.property || {
+            title: d.declared_reference ? `Bien réf. ${d.declared_reference}` : 'Logement LocaTrust',
+            type: 'appartement'
+          };
+
+          return {
+            ...d,
+            tenant: tenantObj,
+            property: propertyObj
+          };
+        });
+
+        // Fusionner avec le local store sans perte
+        const local = getStoredDeposits() || [];
+        const combined = [...enrichedDeposits];
+        for (const loc of local) {
+          if (!combined.some(d => d.id === loc.id)) {
+            combined.push(loc);
+          }
+        }
+        setDeposits(combined as any);
       } else {
-        // Si base vide, purger tout ancien cache fictif et afficher 0 dossier
         const local = getStoredDeposits();
         setDeposits(local || []);
       }
     } catch (e) {
       console.warn('Sync cautions error:', e);
-      setDeposits([]);
+      const local = getStoredDeposits();
+      setDeposits(local || []);
     } finally {
       setIsLoading(false);
     }
@@ -304,7 +391,11 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     reloadDeposits();
     const handleCautionsUpdated = () => reloadDeposits();
     window.addEventListener('locatrust:cautions_updated', handleCautionsUpdated);
-    return () => window.removeEventListener('locatrust:cautions_updated', handleCautionsUpdated);
+    window.addEventListener('locatrust:payments-updated', handleCautionsUpdated);
+    return () => {
+      window.removeEventListener('locatrust:cautions_updated', handleCautionsUpdated);
+      window.removeEventListener('locatrust:payments-updated', handleCautionsUpdated);
+    };
   }, [user]);
 
   // Metrics
@@ -315,7 +406,9 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const totalPending = Math.max(0, totalRequested - totalCollected);
 
   // Pending verification notices
-  const pendingConfirmationDeposits = deposits.filter((d) => d.status === 'caution_a_confirmer');
+  const pendingConfirmationDeposits = deposits.filter(
+    (d) => d.status === 'caution_a_confirmer' || (d.status as any) === 'declare' || (d.status as any) === 'en_attente'
+  );
 
   // Handle Confirmation / Validation of Caution Reception (Étape 2)
   const handleConfirmCaution = (deposit: Deposit) => {
@@ -625,8 +718,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const filteredDeposits = deposits.filter((d) => {
     if (!searchTerm.trim()) return true;
     const q = searchTerm.toLowerCase();
-    const matchTenant = (d.tenant?.full_name || '').toLowerCase().includes(q);
-    const matchProperty = (d.property?.title || '').toLowerCase().includes(q);
+    const matchTenant = (d.tenant?.full_name || (d as any).tenant_name || '').toLowerCase().includes(q);
+    const matchProperty = (d.property?.title || (d as any).property_title || '').toLowerCase().includes(q);
     const matchContract = (d.contract_id || '').toLowerCase().includes(q);
     const matchRef = (d.declared_reference || '').toLowerCase().includes(q);
     const matchAmount = String(d.amount_requested || d.amount_paid || '').includes(q);
@@ -823,7 +916,10 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
               const isImputed = dep.restitution_status === 'impute_loyers';
               const isPartialRestitution = dep.restitution_status === 'restitue_partiel';
               const isFullRestitution = dep.restitution_status === 'restitue_total';
-              const isAwaitingVerification = dep.status === 'caution_a_confirmer';
+              const isAwaitingVerification =
+                dep.status === 'caution_a_confirmer' ||
+                (dep.status as any) === 'declare' ||
+                (dep.status as any) === 'en_attente';
               const ownerSigned = Boolean(dep.owner_signature || dep.confirmed_by);
               const tenantSigned = Boolean(isRestituted ? dep.restitution_tenant_signature : dep.tenant_signature);
 

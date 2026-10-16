@@ -98,8 +98,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     if (profile?.id) s.add(profile.id);
     if (currentUserId) s.add(currentUserId);
     if (userRole === 'locataire') s.add('usr_tenant');
-    if (userRole === 'agence') s.add('usr_agency');
-    if (userRole === 'proprietaire') s.add('usr_owner');
+    if (userRole === 'agence') {
+      s.add('usr_agency');
+      s.add('usr_owner');
+    }
+    if (userRole === 'proprietaire') {
+      s.add('usr_owner');
+      s.add('usr_agency');
+    }
     return s;
   }, [user?.id, user?.email, profile?.id, currentUserId, userRole]);
 
@@ -1370,9 +1376,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           await supabase.from('notifications').insert({
             user_id: activeContact.id,
             title: 'Bail signé par le locataire !',
-            message: `${signingTarget.contract.tenantName} a signé et validé le bail N° ${targetNum}. Le document est officiellement scellé.`,
+            content: `${signingTarget.contract.tenantName} a signé et validé le bail N° ${targetNum}. Le document est officiellement scellé.`,
             type: 'contract_signed',
-            is_read: false
+            read: false
           });
         }
       } catch (e) {

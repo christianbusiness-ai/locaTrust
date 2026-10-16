@@ -33,7 +33,7 @@ import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { declareCautionPayment } from '@/lib/cautionsStore';
-import { sendDeclarationMessageToOwner } from '@/lib/messagingStore';
+import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -204,13 +204,95 @@ export const LocatairePaiementsView: React.FC = () => {
     };
   }, [user]);
 
+  // Résolution multi-sources de l'identifiant réel du propriétaire ou de l'agence
+  const resolveTargetOwnerId = async (chosenContract: any): Promise<string | null> => {
+    let ownerId =
+      chosenContract?.owner_id ||
+      chosenContract?.owner?.id ||
+      chosenContract?.property?.owner_id ||
+      chosenContract?.property?.agency_id ||
+      chosenContract?.agency_id ||
+      null;
+
+    if (ownerId && isValidUuid(ownerId)) return ownerId;
+
+    // 1. Chercher dans rental_applications de Supabase
+    try {
+      if (user?.id) {
+        const { data: appData } = await supabase
+          .from('rental_applications')
+          .select('owner_id, agency_id')
+          .eq('tenant_id', user.id)
+          .in('status', ['contrat_actif', 'validee'])
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (appData?.owner_id || appData?.agency_id) {
+          const resolved = appData.owner_id || appData.agency_id;
+          if (resolved && isValidUuid(resolved)) return resolved;
+        }
+      }
+    } catch {}
+
+    // 2. Chercher dans contracts de Supabase
+    try {
+      if (user?.id) {
+        const { data: cntData } = await supabase
+          .from('contracts')
+          .select('owner_id')
+          .eq('tenant_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (cntData?.owner_id && isValidUuid(cntData.owner_id)) {
+          return cntData.owner_id;
+        }
+      }
+    } catch {}
+
+    // 3. Chercher dans properties de Supabase
+    try {
+      if (chosenContract?.property_id && isValidUuid(chosenContract.property_id)) {
+        const { data: propData } = await supabase
+          .from('properties')
+          .select('owner_id, agency_id')
+          .eq('id', chosenContract.property_id)
+          .maybeSingle();
+
+        if (propData?.owner_id || propData?.agency_id) {
+          const resolved = propData.agency_id || propData.owner_id;
+          if (resolved && isValidUuid(resolved)) return resolved;
+        }
+      }
+    } catch {}
+
+    // 4. Chercher dans les profils agence ou propriétaire actifs de Supabase (ex: agence kk)
+    try {
+      const { data: agencyProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .in('account_type', ['agence', 'proprietaire'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (agencyProfile?.id && isValidUuid(agencyProfile.id)) {
+        return agencyProfile.id;
+      }
+    } catch {}
+
+    return ownerId;
+  };
+
   // Handle Rent Declaration
   const handleDeclarePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (method !== 'Espèces' && !reference.trim()) return;
 
     const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
-    const targetOwnerId = chosenContract?.owner_id || null;
+    const targetOwnerId = await resolveTargetOwnerId(chosenContract);
 
     const newPaymentData = {
       contract_id: chosenContract?.id || null,
@@ -235,18 +317,19 @@ export const LocatairePaiementsView: React.FC = () => {
     } catch {}
 
     // Send real notification to owner/agency in Supabase
-    if (targetOwnerId) {
+    if (targetOwnerId && isValidUuid(targetOwnerId)) {
       try {
         await supabase.from('notifications').insert({
           user_id: targetOwnerId,
-          title: 'Nouveau règlement de loyer déclaré',
-          message: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} pour le mois de ${targetMonth}.`,
-          type: 'paiement_declare',
-          data: {
+          title: '💳 Nouveau règlement de loyer déclaré',
+          content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} pour le mois de ${targetMonth}.`,
+          type: 'paiement',
+          read: false,
+          payload: {
             payment_id: savedPayment.id,
-            contract_id: chosenContract?.id,
             amount: amount,
-            month: targetMonth
+            month: targetMonth,
+            reference: reference
           }
         });
       } catch (err) {
@@ -302,25 +385,35 @@ export const LocatairePaiementsView: React.FC = () => {
     if (cautionMethod !== 'Espèces' && !cautionReference.trim()) return;
 
     const chosenContract = userContracts.find(c => c.id === cautionContractId) || userContracts[0];
-    const targetOwnerId = chosenContract?.owner_id || null;
+    const targetOwnerId = await resolveTargetOwnerId(chosenContract);
 
-    const cautionData = {
-      contract_id: chosenContract?.id || null,
-      tenant_id: user?.id,
-      owner_id: targetOwnerId,
+    const contractUuid = chosenContract?.id && isValidUuid(chosenContract.id) ? chosenContract.id : null;
+    const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
+    const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
+
+    const cautionData: any = {
+      contract_id: contractUuid,
+      tenant_id: tenantUuid,
+      owner_id: ownerUuid,
       amount_requested: cautionAmount,
       amount_paid: cautionAmount,
-      status: 'declare',
+      status: 'caution_a_confirmer',
       declared_reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
       declared_at: new Date().toISOString(),
       proof_url: cautionProofUrl || null
     };
 
     let savedCaution: any = null;
-    const { data } = await supabase.from('cautions').insert(cautionData).select().single();
-    if (data) {
-      savedCaution = data;
+    const { data: dbCaution, error: ctnErr } = await supabase
+      .from('cautions')
+      .insert(cautionData)
+      .select()
+      .maybeSingle();
+
+    if (dbCaution) {
+      savedCaution = dbCaution;
     } else {
+      if (ctnErr) console.warn('Supabase caution insert notice:', ctnErr.message);
       savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
     }
 
@@ -337,17 +430,19 @@ export const LocatairePaiementsView: React.FC = () => {
     });
 
     // Send real notification to owner/agency in Supabase
-    if (targetOwnerId) {
+    if (ownerUuid) {
       try {
         await supabase.from('notifications').insert({
-          user_id: targetOwnerId,
-          title: 'Paiement de caution déclaré',
-          message: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)}.`,
-          type: 'caution_declaree',
-          data: {
-            caution_id: savedCaution.id,
-            contract_id: chosenContract?.id,
-            amount: cautionAmount
+          user_id: ownerUuid,
+          title: '💰 Paiement de caution déclaré',
+          content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)}.`,
+          type: 'caution',
+          read: false,
+          payload: {
+            deposit_id: savedCaution?.id,
+            amount: cautionAmount,
+            reference: cautionReference || 'ESP-CAUTION',
+            tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'
           }
         });
       } catch (err) {
@@ -355,14 +450,16 @@ export const LocatairePaiementsView: React.FC = () => {
       }
     }
 
-    // Broadcast live event across devices
+    // Broadcast live event across devices (Supabase Realtime)
     await broadcastLiveEvent('CAUTION_DECLARED', {
       depositId: savedCaution.id,
       targetUserId: targetOwnerId || undefined,
       contractId: chosenContract?.id,
       data: {
         caution: savedCaution,
-        amount: cautionAmount
+        amount: cautionAmount,
+        ownerId: targetOwnerId,
+        tenantId: user?.id
       }
     });
 
@@ -376,7 +473,7 @@ export const LocatairePaiementsView: React.FC = () => {
       paymentMethod: cautionMethod,
       reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
       date: new Date().toLocaleDateString('fr-FR'),
-      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian yao Koffi',
+      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
       tenantId: user?.id || 'usr_locataire',
       ownerId: targetOwnerId || 'usr_owner',
       proofUrl: cautionProofUrl || undefined,

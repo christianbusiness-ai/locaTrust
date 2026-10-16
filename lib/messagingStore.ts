@@ -199,6 +199,7 @@ export function getStoredMessages(): ChatMessage[] {
               contract: m.contract || item.contract,
               quittance: m.quittance || item.quittance,
               restitution: m.restitution || item.restitution,
+              declaration: m.declaration || item.declaration,
               attachment: m.attachment || item.attachment
             };
           }
@@ -249,14 +250,47 @@ export async function syncMessageToSupabase(
       });
     } catch {}
 
-    // 2. Persistance BDD si identifiants UUID valides
-    if (isValidUuid(senderId) && isValidUuid(receiverId)) {
+    // 2. Persistance BDD : résolution automatique des identifiants réels si alias génériques
+    let finalSenderId = senderId;
+    let finalReceiverId = receiverId;
+
+    if (!isValidUuid(finalSenderId)) {
+      try {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('account_type', 'locataire')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (prof?.id && isValidUuid(prof.id)) {
+          finalSenderId = prof.id;
+        }
+      } catch {}
+    }
+
+    if (!isValidUuid(finalReceiverId)) {
+      try {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('account_type', ['agence', 'proprietaire'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (prof?.id && isValidUuid(prof.id)) {
+          finalReceiverId = prof.id;
+        }
+      } catch {}
+    }
+
+    if (isValidUuid(finalSenderId) && isValidUuid(finalReceiverId)) {
       // Trouver ou créer la conversation
       let convId: string | null = null;
       const { data: convData, error: convLookupError } = await supabase
         .from('conversations')
         .select('id')
-        .or(`and(participant_a.eq.${senderId},participant_b.eq.${receiverId}),and(participant_a.eq.${receiverId},participant_b.eq.${senderId})`)
+        .or(`and(participant_a.eq.${finalSenderId},participant_b.eq.${finalReceiverId}),and(participant_a.eq.${finalReceiverId},participant_b.eq.${finalSenderId})`)
         .maybeSingle();
 
       if (convLookupError) {
@@ -269,8 +303,8 @@ export async function syncMessageToSupabase(
         const { data: newConv, error: convInsertError } = await supabase
           .from('conversations')
           .insert({
-            participant_a: senderId,
-            participant_b: receiverId,
+            participant_a: finalSenderId,
+            participant_b: finalReceiverId,
             property_id: isValidUuid(propertyId) ? propertyId : undefined
           })
           .select('id')
@@ -284,9 +318,15 @@ export async function syncMessageToSupabase(
       }
 
       if (convId) {
-        // Encodage structuré pour conserver les pièces jointes / contrats / quittances
+        // Encodage structuré pour conserver les pièces jointes / contrats / quittances / déclarations
         let contentToStore = text;
-        if (newMsg.contract) {
+        if (newMsg.declaration) {
+          contentToStore = JSON.stringify({
+            type: 'declaration',
+            text: text,
+            declaration: newMsg.declaration
+          });
+        } else if (newMsg.contract) {
           contentToStore = JSON.stringify({
             type: 'contract',
             text: text,
@@ -316,7 +356,7 @@ export async function syncMessageToSupabase(
           .from('messages')
           .insert({
             conversation_id: convId,
-            sender_id: senderId,
+            sender_id: finalSenderId,
             content: contentToStore
           })
           .select('id, created_at')
@@ -335,18 +375,21 @@ export async function syncMessageToSupabase(
         }
 
         // Persistance de la notification en BDD
-        const notifTitle = newMsg.contract
+        const notifTitle = newMsg.declaration
+          ? (newMsg.declaration.type === 'caution' ? '💰 Paiement de caution déclaré' : '💳 Paiement de loyer déclaré')
+          : newMsg.contract
           ? `Bail officiel reçu (N° ${newMsg.contract.contractNumber})`
           : newMsg.quittance
           ? `Quittance émise (N° ${newMsg.quittance.receiptNumber})`
           : 'Nouveau message reçu';
 
         await supabase.from('notifications').insert({
-          user_id: receiverId,
+          user_id: finalReceiverId,
           title: notifTitle,
-          message: text.length > 100 ? `${text.slice(0, 97)}...` : text,
-          type: newMsg.contract ? 'contrat' : newMsg.quittance ? 'quittance' : 'info',
-          is_read: false
+          content: text.length > 100 ? `${text.slice(0, 97)}...` : text,
+          type: newMsg.declaration ? 'caution' : newMsg.contract ? 'contrat' : newMsg.quittance ? 'quittance' : 'info',
+          read: false,
+          payload: newMsg.declaration ? { declaration: newMsg.declaration } : undefined
         });
 
         return { success: true };
@@ -581,6 +624,21 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
           }
         }
       }
+      if (!targetOwnerId || targetOwnerId === 'usr_owner' || targetOwnerId === 'usr_agency') {
+        const cntRaw = localStorage.getItem('locatrust_contracts');
+        if (cntRaw) {
+          const cnts = JSON.parse(cntRaw);
+          if (Array.isArray(cnts)) {
+            const matched = cnts.find((c: any) =>
+              (declaration.contractNumber && c.contract_number === declaration.contractNumber) ||
+              (declaration.propertyTitle && (c.property?.title === declaration.propertyTitle || c.property_title === declaration.propertyTitle))
+            );
+            if (matched && (matched.owner_id || matched.owner?.id || matched.agency_id)) {
+              targetOwnerId = matched.owner_id || matched.owner?.id || matched.agency_id;
+            }
+          }
+        }
+      }
     } catch {}
   }
   if (!targetOwnerId) targetOwnerId = 'usr_owner';
@@ -606,6 +664,34 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
   syncMessageToSupabase(newMsg, declaration.tenantId, targetOwnerId, newMsg.text);
+
+  // Enregistrer immédiatement les fiches contact pour que le fil apparaisse dans la liste des conversations
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`locatrust_contact_${declaration.tenantId}`, JSON.stringify({
+        id: declaration.tenantId,
+        name: declaration.tenantName,
+        phone: '+225 05 00 00 00 00',
+        role: 'Locataire Preneur',
+        propertyTitle: declaration.propertyTitle,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(declaration.tenantName)}&background=059669&color=fff`,
+        online: true
+      }));
+
+      const existingOwner = localStorage.getItem(`locatrust_contact_${targetOwnerId}`);
+      if (!existingOwner) {
+        localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify({
+          id: targetOwnerId,
+          name: 'Bailleur / Agence',
+          phone: '+225 07 00 00 00 00',
+          role: 'Bailleur Propriétaire',
+          propertyTitle: declaration.propertyTitle,
+          avatar: getDefaultRealisticAvatar('Bailleur Propriétaire', 'Propriétaire Bailleur'),
+          online: true
+        }));
+      }
+    } catch {}
+  }
 
   // Send real notification strictly to owner/agency in locatrust_notifications
   try {
@@ -859,6 +945,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
       let parsedContract: any = undefined;
       let parsedQuittance: any = undefined;
       let parsedRestitution: any = undefined;
+      let parsedDeclaration: any = undefined;
       let parsedAttachment: any = undefined;
 
       let displayText = m.content || '';
@@ -871,6 +958,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
             if (parsed.contract) parsedContract = parsed.contract;
             if (parsed.quittance) parsedQuittance = parsed.quittance;
             if (parsed.restitution) parsedRestitution = parsed.restitution;
+            if (parsed.declaration) parsedDeclaration = parsed.declaration;
             if (parsed.attachment) parsedAttachment = parsed.attachment;
           }
         }
@@ -886,6 +974,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         contract: parsedContract,
         quittance: parsedQuittance,
         restitution: parsedRestitution,
+        declaration: parsedDeclaration,
         attachment: parsedAttachment || (m.attachment_url ? { type: 'document', url: m.attachment_url } : undefined)
       };
 
