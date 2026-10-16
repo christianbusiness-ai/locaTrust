@@ -420,13 +420,18 @@ export const LocatairePaiementsView: React.FC = () => {
       const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
       const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
 
+      // Numéro de contrat réel certifié (ex: LT-2026-CI-000492)
+      const realContractNumber = chosenContract?.contract_number || chosenContract?.contractNumber || undefined;
+
       const cautionData: any = {
         contract_id: contractUuid,
+        contract_number: realContractNumber,
         tenant_id: tenantUuid,
         owner_id: ownerUuid,
         amount_requested: cautionAmount,
         amount_paid: cautionAmount,
         status: 'caution_a_confirmer',
+        payment_method: cautionMethod,
         declared_reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
         declared_at: new Date().toISOString(),
         proof_url: cautionProofUrl || null
@@ -454,6 +459,7 @@ export const LocatairePaiementsView: React.FC = () => {
       try {
         declareCautionPayment({
           contractId: chosenContract?.id || 'LT-CONTRAT',
+          contractNumber: realContractNumber,
           tenantId: user?.id || 'usr_locataire',
           tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
           amount: cautionAmount,
@@ -874,12 +880,20 @@ export const LocatairePaiementsView: React.FC = () => {
                 ) : (
                   <select
                     value={cautionContractId}
-                    onChange={(e) => setCautionContractId(e.target.value)}
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      setCautionContractId(selectedId);
+                      const targetContract = userContracts.find(c => c.id === selectedId);
+                      if (targetContract) {
+                        const cAmount = Number(targetContract.caution_amount || targetContract.caution || (Number(targetContract.rent || 0) * 2));
+                        if (cAmount > 0) setCautionAmount(cAmount);
+                      }
+                    }}
                     className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
                   >
                     {userContracts.map(c => (
                       <option key={c.id} value={c.id}>
-                        {c.property?.title || 'Logement'} — Contrat N° {c.contract_number || c.id.slice(0, 8)}
+                        {c.property?.title || 'Logement'} — Contrat N° {c.contract_number || (c.id && c.id.length > 8 ? c.id.slice(0, 8) : c.id)}
                       </option>
                     ))}
                   </select>

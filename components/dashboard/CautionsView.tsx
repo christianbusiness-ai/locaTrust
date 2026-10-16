@@ -60,6 +60,107 @@ interface CautionsViewProps {
   userRole?: 'locataire' | 'proprietaire' | 'agence' | 'admin';
 }
 
+/**
+ * Résout le numéro de contrat lisible officiel (ex: LT-2026-CI-000492)
+ * au lieu d'un UUID brut de base de données.
+ */
+export const getDisplayContractNumber = (dep?: Deposit | null): string => {
+  if (!dep) return 'LT-CONTRAT';
+
+  // 1. Priorité au numéro réel stocké sur le dépôt ou le contrat joint
+  if (dep.contract_number && dep.contract_number.trim()) {
+    return dep.contract_number;
+  }
+  if (dep.contract?.contract_number && dep.contract.contract_number.trim()) {
+    return dep.contract.contract_number;
+  }
+
+  const rawContractId = dep.contract_id || '';
+
+  // 2. Recherche multi-sources dans le registre local locatrust_contracts
+  if (typeof window !== 'undefined') {
+    try {
+      const rawContracts = localStorage.getItem('locatrust_contracts');
+      if (rawContracts) {
+        const contracts = JSON.parse(rawContracts);
+        if (Array.isArray(contracts)) {
+          const found = contracts.find((c: any) =>
+            (rawContractId && (c.id === rawContractId || c.contract_id === rawContractId)) ||
+            (dep.tenant_id && (c.tenant_id === dep.tenant_id || c.tenant?.id === dep.tenant_id)) ||
+            (dep.property?.id && (c.property_id === dep.property.id || c.property?.id === dep.property.id))
+          );
+          if (found?.contract_number) return found.contract_number;
+        }
+      }
+    } catch {}
+
+    // 3. Recherche dans les candidatures validées / actives (locatrust_rental_applications)
+    try {
+      const rawApps = localStorage.getItem('locatrust_rental_applications');
+      if (rawApps) {
+        const apps = JSON.parse(rawApps);
+        if (Array.isArray(apps)) {
+          const found = apps.find((a: any) =>
+            (rawContractId && (a.id === rawContractId || a.contract_id === rawContractId || a.property_id === rawContractId)) ||
+            (dep.tenant_id && (a.tenant_id === dep.tenant_id || a.tenant?.id === dep.tenant_id)) ||
+            (dep.property?.title && a.property_title && a.property_title === dep.property.title)
+          );
+          if (found?.contract_number) return found.contract_number;
+        }
+      }
+    } catch {}
+  }
+
+  // 4. Si c'est déjà un numéro lisible (ex: commence par LT-)
+  if (rawContractId && rawContractId.startsWith('LT-')) {
+    return rawContractId;
+  }
+
+  // 5. Si c'est un UUID brut (ex: e7c156bf-ad8b-436b-ac15-8148f71af496), formater proprement en numéro de contrat officiel
+  if (rawContractId && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawContractId)) {
+    return `LT-2026-CI-${rawContractId.slice(0, 8).toUpperCase()}`;
+  }
+
+  return rawContractId || 'LT-CONTRAT';
+};
+
+/**
+ * Conserve fidèlement le mode de règlement choisi par le locataire
+ * (ex: Espèces (cash), Wave CI, Orange Money, MTN MoMo, Moov Money, Virement Bancaire)
+ */
+export const getDisplayPaymentMethod = (dep?: Deposit | null): string => {
+  if (!dep) return 'Mobile Money';
+
+  if (dep.payment_method && dep.payment_method.trim()) {
+    const pm = dep.payment_method.trim();
+    if (pm === 'Espèces' || pm === 'Especes') return '💵 Espèces (cash)';
+    return pm;
+  }
+
+  // Rétrocompatibilité intelligente basée sur la référence déclarée
+  const ref = (dep.declared_reference || '').toUpperCase();
+  if (ref.startsWith('ESP') || ref.includes('ESPECE') || ref.includes('CASH')) {
+    return '💵 Espèces (cash)';
+  }
+  if (ref.startsWith('WAV') || ref.includes('WAVE')) {
+    return 'Wave CI';
+  }
+  if (ref.startsWith('OM') || ref.includes('ORANGE')) {
+    return 'Orange Money';
+  }
+  if (ref.startsWith('MTN') || ref.includes('MOMO')) {
+    return 'MTN MoMo';
+  }
+  if (ref.startsWith('MOOV')) {
+    return 'Moov Money';
+  }
+  if (ref.startsWith('VIR') || ref.includes('VIREMENT') || ref.includes('BANQ')) {
+    return 'Virement Bancaire';
+  }
+
+  return 'Mobile Money';
+};
+
 export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, userRole = 'proprietaire' }) => {
   const { user, profile } = useAuth();
   const [deposits, setDeposits] = useState<Deposit[]>(() => getStoredDeposits());
@@ -642,7 +743,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
     await generateOfficialReceiptPDF({
       receiptNumber: `CAUT-${dep.id.toUpperCase()}`,
-      contractNumber: dep.contract_id,
+      contractNumber: getDisplayContractNumber(dep),
       contractToken: `tok_cnt_${dep.id}`,
       propertyTitle: dep.property?.title || 'Bien immobilier',
       propertyAddress: 'Cocody Riviera, Abidjan - Côte d\'Ivoire',
@@ -660,7 +761,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       amount: dep.amount_paid,
       periodCovered: 'Dépôt de Garantie Contractuel (Loi 2019-576)',
       paymentDate: new Date(dep.created_at).toLocaleDateString('fr-FR'),
-      paymentMethod: 'Virement / Mobile Money',
+      paymentMethod: getDisplayPaymentMethod(dep),
       transactionReference: `TR-CAUT-${dep.id.toUpperCase()}`,
       ownerSignatureUrl: dep.owner_signature || 'SIG_OWNER',
       tenantSignatureUrl: dep.tenant_signature || 'SIG_TENANT'
@@ -681,7 +782,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     const receiptNum = isImp ? `IMP-2026-${Math.floor(100000 + Math.random() * 900000)}` : `RRC-2026-${Math.floor(100000 + Math.random() * 900000)}`;
     await generateRestitutionReceiptPDF({
       receiptNumber: receiptNum,
-      contractNumber: dep.contract_id,
+      contractNumber: getDisplayContractNumber(dep),
       propertyTitle: dep.property?.title || 'Logement LocaTrust',
       propertyAddress: dep.property?.description || 'Cocody Riviera, Abidjan',
       ownerName: actorName,
@@ -693,7 +794,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       deductionAmount: isImp ? dep.amount_paid : (dep.deduction_amount ?? 0),
       deductionReason: dep.deduction_reason || '',
       restitutionDate: dep.restituted_at ? new Date(dep.restituted_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-      paymentMethod: isImp ? 'Compensation sur loyers' : 'Wave CI',
+      paymentMethod: isImp ? 'Compensation sur loyers' : getDisplayPaymentMethod(dep),
       transactionReference: `TXN-${receiptNum}`,
       ownerSignatureUrl: dep.restitution_owner_signature || 'SIG_OWNER',
       tenantSignatureUrl: dep.restitution_tenant_signature || 'SIG_TENANT'
@@ -808,7 +909,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                     )}
                   </p>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Contrat N° {dep.contract_id} • Réf : {dep.declared_reference || 'Mobile Money'}
+                    Contrat N° {getDisplayContractNumber(dep)} • Réf : {dep.declared_reference || getDisplayPaymentMethod(dep)}
                   </span>
                 </div>
               </div>
@@ -946,7 +1047,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                           <Building2 className="w-3 h-3 shrink-0" />
                           {dep.property?.title || 'Bien immobilier'}
                         </span>
-                        <span className="text-[10px] text-blue-500 font-mono truncate">Contrat : {dep.contract_id}</span>
+                        <span className="text-[10px] text-blue-500 font-mono truncate">Contrat : {getDisplayContractNumber(dep)}</span>
                       </div>
                     </div>
 
@@ -1127,150 +1228,6 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           </div>
         )}
       </div>
-
-      {/* ÉTAPE 2 : MODAL VÉRIFICATION DE LA PREUVE DE CAUTION PAR LE PROPRIÉTAIRE */}
-      {proofToVerifyDeposit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full p-6 sm:p-7 border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col gap-5 animate-scaleUp max-h-[92vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-700 flex items-center justify-center font-bold">
-                  <ShieldCheck className="w-5 h-5 text-amber-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900 dark:text-white">
-                    Vérification du versement de caution
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Contrôle des informations et de la preuve avant validation
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setProofToVerifyDeposit(null);
-                  setIsRefusing(false);
-                }}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Détails du versement */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col gap-3 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-semibold">Locataire :</span>
-                <span className="font-extrabold text-slate-900 dark:text-white">{proofToVerifyDeposit.tenant?.full_name}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-semibold">Bien loué :</span>
-                <span className="font-bold text-slate-900 dark:text-white line-clamp-1">{proofToVerifyDeposit.property?.title}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-semibold">Montant déclaré :</span>
-                <span className="text-base font-black text-emerald-600">{formatFCFA(proofToVerifyDeposit.amount_paid)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-semibold">Référence transaction :</span>
-                <span className="font-mono font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded-lg border border-blue-200 dark:border-blue-800">
-                  {proofToVerifyDeposit.declared_reference || 'WAVE-CI-98213904'}
-                </span>
-              </div>
-              {proofToVerifyDeposit.comment && (
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-1">
-                  <span className="text-slate-500 font-semibold">Commentaire du locataire :</span>
-                  <p className="italic text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700">
-                    "{proofToVerifyDeposit.comment}"
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Aperçu de la preuve envoyée (photo / capture d'écran) */}
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-blue-600" />
-                <span>Preuve fournie par le locataire (Capture d'écran / Reçu Mobile Money) :</span>
-              </span>
-              <div
-                onClick={() => setPreviewProofModalUrl(proofToVerifyDeposit.proof_url || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80')}
-                className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 max-h-56 relative group cursor-pointer"
-                title="Cliquer pour agrandir la preuve"
-              >
-                <img
-                  src={proofToVerifyDeposit.proof_url || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=600&q=80'}
-                  alt="Preuve de caution"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                />
-                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                  <ZoomIn className="w-6 h-6 drop-shadow" />
-                </div>
-                <div className="absolute bottom-2 right-2 bg-slate-900/80 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-xs flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                  <span>Document joint (Cliquer pour zoom)</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Zone de refus avec motif si isRefusing est actif */}
-            {isRefusing ? (
-              <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 flex flex-col gap-2.5 animate-fadeIn">
-                <label className="text-xs font-extrabold text-rose-900 dark:text-rose-200 block">
-                  Précisez le motif du refus (obligatoire) :
-                </label>
-                <textarea
-                  value={refusalReasonInput}
-                  onChange={(e) => setRefusalReasonInput(e.target.value)}
-                  placeholder="Ex : Référence introuvable sur le relevé Wave, montant incomplet, capture illisible..."
-                  rows={2}
-                  className="w-full p-2.5 rounded-xl border border-rose-300 text-xs font-medium text-slate-900 focus:ring-2 focus:ring-rose-500 bg-white"
-                  autoFocus
-                />
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsRefusing(false)}
-                    className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-700 text-xs font-bold"
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRejectCaution(proofToVerifyDeposit)}
-                    className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black shadow-md flex items-center gap-1"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Confirmer le refus</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              /* Boutons Étape 2 : Valider la caution OU Refuser */
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsRefusing(true)}
-                  className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-colors flex items-center gap-1.5"
-                >
-                  <X className="w-4 h-4" />
-                  <span>❌ Refuser</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleConfirmCaution(proofToVerifyDeposit)}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-md transition-all active:scale-95 flex items-center gap-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>✅ Valider la caution</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ÉTAPE 1 : MODAL SIGNALEMENT LOCATAIRE "J'AI PAYÉ MA CAUTION" */}
       {isDeclareCautionOpen && (
@@ -1535,7 +1492,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                   {proofToVerifyDeposit.property?.title || 'Logement loué'}
                 </span>
                 <span className="text-[11px] text-blue-600 dark:text-blue-400 font-mono font-bold block">
-                  Contrat N° {proofToVerifyDeposit.contract_id || 'LT-CONTRAT'}
+                  Contrat N° {getDisplayContractNumber(proofToVerifyDeposit)}
                 </span>
               </div>
 
@@ -1549,7 +1506,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                 <span className="text-[10px] text-slate-400 font-bold uppercase block">Canal & Référence</span>
                 <span className="font-bold text-slate-800 dark:text-slate-200">
-                  {proofToVerifyDeposit.payment_method || 'Mobile Money'}
+                  {getDisplayPaymentMethod(proofToVerifyDeposit)}
                 </span>
                 <span className="text-[11px] text-slate-500 font-mono block truncate">
                   {proofToVerifyDeposit.declared_reference || 'REF-CAUTION'}

@@ -36,6 +36,7 @@ export function saveStoredDeposits(deposits: Deposit[]): void {
 
 export function declareCautionPayment(params: {
   contractId: string;
+  contractNumber?: string;
   tenantId: string;
   tenantName: string;
   amount: number;
@@ -55,8 +56,9 @@ export function declareCautionPayment(params: {
   let targetOwnerId = params.ownerId;
   let targetAgencyId: string | undefined = undefined;
   let propertyTitle = 'Logement LocaTrust';
+  let targetContractNumber = params.contractNumber;
 
-  if (!targetOwnerId) {
+  if (!targetOwnerId || !targetContractNumber) {
     try {
       const contractsRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_contracts') : null;
       if (contractsRaw) {
@@ -68,13 +70,16 @@ export function declareCautionPayment(params: {
             c.contract_id === params.contractId
           );
           if (matched) {
-            targetOwnerId = matched.owner_id || matched.owner?.id;
+            targetOwnerId = targetOwnerId || matched.owner_id || matched.owner?.id;
             targetAgencyId = matched.agency_id || matched.property?.agency_id;
             propertyTitle = matched.property?.title || matched.property_title || propertyTitle;
+            if (!targetContractNumber) {
+              targetContractNumber = matched.contract_number || matched.contractNumber;
+            }
           }
         }
       }
-      if (!targetOwnerId) {
+      if (!targetOwnerId || !targetContractNumber) {
         const appsRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_rental_applications') : null;
         if (appsRaw) {
           const apps = JSON.parse(appsRaw);
@@ -86,9 +91,12 @@ export function declareCautionPayment(params: {
               a.property_id === params.contractId
             );
             if (matched) {
-              targetOwnerId = matched.agency_id || matched.owner_id;
+              targetOwnerId = targetOwnerId || matched.agency_id || matched.owner_id;
               targetAgencyId = matched.agency_id;
               propertyTitle = matched.property_title || propertyTitle;
+              if (!targetContractNumber) {
+                targetContractNumber = matched.contract_number || matched.contractNumber;
+              }
             }
           }
         }
@@ -100,6 +108,8 @@ export function declareCautionPayment(params: {
   if (existing) {
     updatedDeposit = {
       ...existing,
+      contract_number: params.contractNumber || existing.contract_number || targetContractNumber,
+      payment_method: params.method,
       amount_paid: params.amount,
       status: 'caution_a_confirmer',
       declared_at: now,
@@ -116,6 +126,8 @@ export function declareCautionPayment(params: {
     updatedDeposit = {
       id: `dep_${Date.now()}`,
       contract_id: params.contractId,
+      contract_number: params.contractNumber || targetContractNumber,
+      payment_method: params.method,
       tenant_id: params.tenantId,
       owner_id: targetOwnerId,
       agency_id: targetAgencyId,
@@ -225,7 +237,7 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
       const tenantNotif = {
         id: `notif_caut_confirmed_${Date.now()}`,
         title: '✅ Caution validée & Reçu officiel disponible',
-        description: `Votre caution de ${formatFCFA(target.amount_paid)} pour le contrat ${target.contract_id} a été validée par ${confirmedBy}. Le reçu certifié avec QR Code officiel est disponible au téléchargement.`,
+        description: `Votre caution de ${formatFCFA(target.amount_paid)} pour le contrat ${target.contract_number || target.contract_id} a été validée par ${confirmedBy}. Le reçu certifié avec QR Code officiel est disponible au téléchargement.`,
         time: 'À l\'instant',
         unread: true,
         type: 'caution',
@@ -241,7 +253,7 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
   // Record audit entry
   recordCautionAudit({
     action: 'confirmation_caution',
-    contractId: target.contract_id,
+    contractId: target.contract_number || target.contract_id,
     tenantName: target.tenant?.full_name || 'Locataire',
     confirmedBy,
     amount: target.amount_paid,

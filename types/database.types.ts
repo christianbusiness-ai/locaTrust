@@ -236,6 +236,7 @@ export type DepositRestitutionStatus = 'conserve' | 'restitue_total' | 'restitue
 export interface Deposit {
   id: string;
   contract_id: string;
+  contract_number?: string;
   tenant_id: string;
   owner_id: string;
   amount_requested: number;
