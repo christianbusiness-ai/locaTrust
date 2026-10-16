@@ -96,13 +96,26 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
         if (simpleData && simpleData.length > 0) {
           loaded = simpleData;
-        } else if (typeof window !== 'undefined') {
-          const cached = localStorage.getItem('locatrust_rent_payments');
-          if (cached) {
-            try { loaded = JSON.parse(cached); } catch {}
-          }
         }
       }
+
+      // Toujours fusionner avec les déclarations locales pour disponibilité immédiate
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('locatrust_rent_payments');
+        if (cached) {
+          try {
+            const localList: RentPayment[] = JSON.parse(cached);
+            if (Array.isArray(localList)) {
+              for (const loc of localList) {
+                if (!loaded.some(p => p.id === loc.id || (loc.reference && p.reference === loc.reference))) {
+                  loaded.unshift(loc);
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+
       setPayments(loaded);
     } catch (err: any) {
       if (typeof window !== 'undefined') {
@@ -124,8 +137,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
+    window.addEventListener('locatrust:notifications-updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
+      window.removeEventListener('locatrust:notifications-updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
     };
   }, [user]);
 

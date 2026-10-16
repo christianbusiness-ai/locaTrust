@@ -36,6 +36,7 @@ import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { declareCautionPayment } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -300,15 +301,18 @@ export const LocatairePaiementsView: React.FC = () => {
       const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
       const targetOwnerId = await resolveTargetOwnerId(chosenContract);
 
-      const newPaymentData = {
-        contract_id: chosenContract?.id || null,
-        tenant_id: user?.id,
-        owner_id: targetOwnerId,
+      const contractUuid = chosenContract?.id && isValidUuid(chosenContract.id) ? chosenContract.id : null;
+      const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
+      const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
+
+      const newPaymentData: any = {
+        contract_id: contractUuid,
+        tenant_id: tenantUuid,
+        owner_id: ownerUuid,
         target_month: targetMonth,
         amount: amount,
         payment_date: new Date().toISOString().split('T')[0],
         reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
-        payment_method: method,
         proof_url: proofUrl || null,
         status: 'declare'
       };
@@ -316,9 +320,9 @@ export const LocatairePaiementsView: React.FC = () => {
       let savedPayment: any = null;
       try {
         const { data, error } = await createRentPayment(newPaymentData);
-        savedPayment = (!error && data) ? data : { ...newPaymentData, id: `pmt_${Date.now()}` };
+        savedPayment = (!error && data) ? data : { ...newPaymentData, id: `pmt_${Date.now()}`, payment_method: method };
       } catch {
-        savedPayment = { ...newPaymentData, id: `pmt_${Date.now()}` };
+        savedPayment = { ...newPaymentData, id: `pmt_${Date.now()}`, payment_method: method };
       }
 
       // Save locally for responsive offline/instant UX
@@ -328,24 +332,47 @@ export const LocatairePaiementsView: React.FC = () => {
       } catch {}
 
       // Send real notification to owner/agency in Supabase
-      if (targetOwnerId && isValidUuid(targetOwnerId)) {
+      if (ownerUuid) {
         try {
           await supabase.from('notifications').insert({
-            user_id: targetOwnerId,
+            user_id: ownerUuid,
             title: '💳 Nouveau règlement de loyer déclaré',
-            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} pour le mois de ${targetMonth}.`,
+            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) pour le mois de ${targetMonth}.`,
             type: 'paiement',
             read: false,
             payload: {
               payment_id: savedPayment.id,
               amount: amount,
               month: targetMonth,
-              reference: reference
+              reference: newPaymentData.reference,
+              payment_method: method
             }
           });
         } catch (err) {
           console.warn('Notification insert error:', err);
         }
+      }
+
+      // Notification globale dans locatrust_notifications pour bailleur et agence
+      try {
+        pushGlobalNotification({
+          title: '💳 Nouveau règlement de loyer déclaré',
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) pour le mois de ${targetMonth}.`,
+          category: 'paiement',
+          targetRole: 'proprietaire',
+          targetUserId: targetOwnerId || undefined,
+          targetTab: 'payments'
+        });
+        pushGlobalNotification({
+          title: '💳 Nouveau règlement de loyer déclaré',
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) pour le mois de ${targetMonth}.`,
+          category: 'paiement',
+          targetRole: 'agence',
+          targetUserId: targetOwnerId || undefined,
+          targetTab: 'payments'
+        });
+      } catch (notifErr) {
+        console.warn('pushGlobalNotification error:', notifErr);
       }
 
       // Broadcast live event across devices
@@ -479,19 +506,42 @@ export const LocatairePaiementsView: React.FC = () => {
           await supabase.from('notifications').insert({
             user_id: ownerUuid,
             title: '💰 Paiement de caution déclaré',
-            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)}.`,
+            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)} (${cautionMethod}).`,
             type: 'caution',
             read: false,
             payload: {
               deposit_id: savedCaution?.id,
               amount: cautionAmount,
-              reference: cautionReference || 'ESP-CAUTION',
+              reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
+              payment_method: cautionMethod,
               tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'
             }
           });
         } catch (err) {
           console.warn('Notification caution insert error:', err);
         }
+      }
+
+      // Notification globale dans locatrust_notifications pour bailleur et agence
+      try {
+        pushGlobalNotification({
+          title: '💰 Nouvelle déclaration de caution reçue',
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} • ${cautionMethod}). En attente de validation.`,
+          category: 'caution',
+          targetRole: 'proprietaire',
+          targetUserId: targetOwnerId || undefined,
+          targetTab: 'cautions'
+        });
+        pushGlobalNotification({
+          title: '💰 Nouvelle déclaration de caution reçue',
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} • ${cautionMethod}). En attente de validation.`,
+          category: 'caution',
+          targetRole: 'agence',
+          targetUserId: targetOwnerId || undefined,
+          targetTab: 'cautions'
+        });
+      } catch (cNotifErr) {
+        console.warn('pushGlobalNotification caution error:', cNotifErr);
       }
 
       // Broadcast live event across devices (Supabase Realtime)

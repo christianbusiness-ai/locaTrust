@@ -25,6 +25,8 @@ import {
   DollarSign
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
+import { supabase } from '@/src/lib/supabase';
+import { useAuth } from '@/src/context/AuthContext';
 
 export type MaintenanceStatus =
   | 'Nouveau'
@@ -78,6 +80,7 @@ export const MaintenanceView: React.FC = () => {
     }
     return [];
   });
+  const { user } = useAuth();
   const [selectedTicketId, setSelectedTicketId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [replyMessage, setReplyMessage] = useState<string>('');
@@ -87,21 +90,68 @@ export const MaintenanceView: React.FC = () => {
   const [interventionText, setInterventionText] = useState<string>('');
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
-  const selectedTicket = tickets.find((t) => t.id === selectedTicketId) || tickets[0];
+  const loadTickets = async () => {
+    let list: MaintenanceItem[] = [];
+    try {
+      const { data: dbTickets } = await supabase
+        .from('maintenance_tickets')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-  useEffect(() => {
-    const handleMaintenanceUpdate = (e: any) => {
+      if (dbTickets && dbTickets.length > 0) {
+        list = dbTickets.map((t: any) => ({
+          id: t.id,
+          ticketNumber: `TCK-2026-${(t.id || '999').slice(0, 4).toUpperCase()}`,
+          tenantName: t.tenant_name || 'Christian yao Koffi',
+          tenantPhone: t.tenant_phone || '+225 07 00 00 00 00',
+          propertyTitle: t.property_title || 'Logement LocaTrust',
+          propertyAddress: t.property_address || 'Abidjan',
+          category: t.category || 'Général',
+          priority: (t.priority || 'Normale') as MaintenancePriority,
+          status: (t.status === 'ouvert' ? 'Nouveau' : t.status === 'resolu' ? 'Résolu' : 'En cours') as MaintenanceStatus,
+          createdAt: new Date(t.created_at || Date.now()).toLocaleDateString('fr-FR'),
+          description: t.description || t.title || 'Signalement d\'incident',
+          photos: t.photos || (t.media_url ? [t.media_url] : []),
+          notes: []
+        }));
+      }
+    } catch {}
+
+    if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) setTickets(parsed);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((pt: any) => {
+              if (!list.some(l => l.id === pt.id || l.ticketNumber === pt.ticketNumber)) {
+                list.push(pt);
+              }
+            });
+          }
         }
       } catch {}
-    };
+    }
+
+    if (list.length > 0) {
+      setTickets(list);
+    }
+  };
+
+  useEffect(() => {
+    loadTickets();
+    const handleMaintenanceUpdate = () => loadTickets();
     window.addEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
-    return () => window.removeEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
-  }, []);
+    window.addEventListener('locatrust:notifications-updated', handleMaintenanceUpdate);
+    window.addEventListener('storage', handleMaintenanceUpdate);
+    return () => {
+      window.removeEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
+      window.removeEventListener('locatrust:notifications-updated', handleMaintenanceUpdate);
+      window.removeEventListener('storage', handleMaintenanceUpdate);
+    };
+  }, [user]);
+
+  const selectedTicket = tickets.find((t) => t.id === selectedTicketId) || tickets[0];
 
   // Filtering
   const filteredTickets = tickets.filter((ticket) => {
