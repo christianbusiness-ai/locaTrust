@@ -212,11 +212,130 @@ export const GlobalCallModal: React.FC = () => {
       localStreamRef.current = null;
     }
     if (remoteStreamRef.current) {
+      if ((remoteStreamRef.current as any)._interval) {
+        clearInterval((remoteStreamRef.current as any)._interval);
+      }
       try { remoteStreamRef.current.getTracks().forEach((t) => t.stop()); } catch {}
       remoteStreamRef.current = null;
     }
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+  };
+
+  // Injecter en toute sécurité les pistes média dans une PeerConnection sans doublon
+  const addTracksToPeerConnection = (pc: RTCPeerConnection, stream: MediaStream) => {
+    try {
+      const existingSenders = pc.getSenders();
+      stream.getTracks().forEach((track) => {
+        const alreadyAdded = existingSenders.some((sender) => sender.track?.id === track.id);
+        if (!alreadyAdded) {
+          pc.addTrack(track, stream);
+          console.log(`📡 Piste WebRTC locale ajoutée: ${track.kind} (${track.label || 'device'})`);
+        }
+      });
+    } catch (err) {
+      console.warn('Erreur addTracksToPeerConnection:', err);
+    }
+  };
+
+  // Récupération multi-niveaux du flux caméra et micro (Fonctionne sur smartphone et sur ordinateur/desktop)
+  const getMediaStreamWithFallback = async (
+    callType: 'audio' | 'video',
+    facingMode: 'user' | 'environment' = 'user'
+  ): Promise<MediaStream | null> => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      console.warn('navigator.mediaDevices.getUserMedia non supporté');
+      return null;
+    }
+
+    const audioConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    };
+
+    if (callType === 'video') {
+      // 1. Essai avec facingMode idéal (ne crashe jamais sur PC portable ou webcam USB) + HD
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: audioConstraints
+        });
+        console.log('✅ Caméra + Micro réels capturés avec succès (contraintes idéales HD)');
+        return stream;
+      } catch (err1) {
+        console.warn('Fallback 1: échec contraintes idéales HD, essai vidéo générique:', err1);
+      }
+
+      // 2. Essai vidéo générique sans contrainte stricte de résolution
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: audioConstraints
+        });
+        console.log('✅ Caméra + Micro réels capturés (mode vidéo générique)');
+        return stream;
+      } catch (err2) {
+        console.warn('Fallback 2: échec vidéo générique, essai vidéo basique:', err2);
+      }
+
+      // 3. Essai vidéo + audio le plus simple
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+        console.log('✅ Caméra + Micro capturés en mode basique');
+        return stream;
+      } catch (err3) {
+        console.warn('Fallback 3: échec caméra (pas de webcam branchée ou refusée), repli sur micro seul:', err3);
+      }
+    }
+
+    // 4. Capture audio robuste (pour appel vocal ou si caméra indisponible)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints
+      });
+      console.log('✅ Micro réel capturé avec annulation de bruit');
+      return stream;
+    } catch (err4) {
+      console.warn('Fallback 4: échec audio avec contraintes, essai audio pur:', err4);
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true
+      });
+      console.log('✅ Micro réel capturé en audio pur');
+      return stream;
+    } catch (errFinal) {
+      console.error('❌ Impossible d’accéder au micro ou à la caméra:', errFinal);
+      return null;
+    }
+  };
+
+  // Synchronisation systématique des flux vidéo avec les éléments <video> réels du DOM
+  const syncVideoElements = () => {
+    const mainVideo = isVideoSwapped ? localVideoRef.current : remoteVideoRef.current;
+    const pipVideo = isVideoSwapped ? remoteVideoRef.current : localVideoRef.current;
+
+    const mainStream = isVideoSwapped ? localStreamRef.current : remoteStreamRef.current;
+    const pipStream = isVideoSwapped ? remoteStreamRef.current : localStreamRef.current;
+
+    if (mainVideo && mainStream && mainVideo.srcObject !== mainStream) {
+      mainVideo.srcObject = mainStream;
+      mainVideo.play().catch(() => {});
+    }
+
+    if (pipVideo && pipStream && pipVideo.srcObject !== pipStream) {
+      pipVideo.srcObject = pipStream;
+      pipVideo.play().catch(() => {});
+    }
   };
 
   // Factory WebRTC PeerConnection : connecte la voix et la vidéo réelles
@@ -230,19 +349,13 @@ export const GlobalCallModal: React.FC = () => {
     peerConnectionRef.current = pc;
     pendingIceCandidatesRef.current = [];
 
-    // Injecter les pistes locales (Microphone et/ou Caméra)
+    // Injecter les pistes locales dès qu'elles sont disponibles
     const currentStream = localStreamRef.current || audioStreamRef.current;
     if (currentStream) {
-      currentStream.getTracks().forEach((track) => {
-        try {
-          pc.addTrack(track, currentStream);
-        } catch (e) {
-          console.warn('Erreur ajout piste locale WebRTC:', e);
-        }
-      });
+      addTracksToPeerConnection(pc, currentStream);
     }
 
-    // Gestion de la transmission des candidats ICE (STUN)
+    // Transmission des candidats ICE (STUN)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         const candidatePayload = {
@@ -268,27 +381,41 @@ export const GlobalCallModal: React.FC = () => {
     // Réception du flux distant réel (Voix du correspondant + Vidéo)
     pc.ontrack = (event) => {
       console.log('📡 Piste WebRTC distante reçue avec succès :', event.track.kind, event.streams);
-      const incomingStream = event.streams[0] || new MediaStream([event.track]);
+
+      let incomingStream = event.streams && event.streams[0];
+      if (!incomingStream) {
+        if (!remoteStreamRef.current || (remoteStreamRef.current as any)._simulated) {
+          incomingStream = new MediaStream();
+        } else {
+          incomingStream = remoteStreamRef.current;
+        }
+        incomingStream.addTrack(event.track);
+      }
+
+      // Si un flux simulé tournait, stopper son intervalle de rafraîchissement
+      if (remoteStreamRef.current && (remoteStreamRef.current as any)._interval) {
+        clearInterval((remoteStreamRef.current as any)._interval);
+      }
+
       remoteStreamRef.current = incomingStream;
 
       // Jouer immédiatement la voix du correspondant via l'élément audio dédié
       if (remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = incomingStream;
+        if (remoteAudioRef.current.srcObject !== incomingStream) {
+          remoteAudioRef.current.srcObject = incomingStream;
+        }
         remoteAudioRef.current.play().catch((err) => {
-          console.warn('Lecture automatique audio bloquée en attente de clic:', err);
+          console.warn('Lecture automatique audio en attente:', err);
         });
-      }
-
-      // Si c'est un flux vidéo, le diffuser sur la vue vidéo distante
-      if (event.track.kind === 'video' && remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = incomingStream;
-        remoteVideoRef.current.play().catch(() => {});
       }
 
       // Brancher l'analyseur audio sur la voix entrante pour animer les barres visuelles
       if (event.track.kind === 'audio') {
         setupAudioVolumeAnalysis(incomingStream);
       }
+
+      // Mettre à jour l'affichage vidéo
+      syncVideoElements();
     };
 
     return pc;
@@ -381,6 +508,21 @@ export const GlobalCallModal: React.FC = () => {
     return () => clearInterval(timer);
   }, [activeCall?.status]);
 
+  // Synchronisation continue des flux vidéo lors de l'apparition du modal ou permutation PiP
+  useEffect(() => {
+    if (activeCall && activeCall.callType === 'video') {
+      syncVideoElements();
+      const t1 = setTimeout(syncVideoElements, 60);
+      const t2 = setTimeout(syncVideoElements, 250);
+      const t3 = setTimeout(syncVideoElements, 600);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [activeCall?.callType, activeCall?.status, isVideoSwapped]);
+
   // Listen to locatrust:call_event from Supabase Realtime & locatrust:initiate_call locally
   useEffect(() => {
     const handleCallEvent = (e: CustomEvent) => {
@@ -428,6 +570,12 @@ export const GlobalCallModal: React.FC = () => {
 
             // L'appelant initialise la connexion WebRTC et émet l'Offre SDP
             const pc = createPeerConnection(current.callId, current.peerId, true);
+            const myStream = localStreamRef.current || audioStreamRef.current;
+            if (myStream) {
+              addTracksToPeerConnection(pc, myStream);
+            }
+            syncVideoElements();
+
             pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: current.callType === 'video' })
               .then((offer) => pc.setLocalDescription(offer).then(() => offer))
               .then((offer) => {
@@ -456,6 +604,11 @@ export const GlobalCallModal: React.FC = () => {
           if (payload.actorId !== currentUserId && data.offer) {
             const peerId = payload.actorId || current?.peerId || '';
             const pc = peerConnectionRef.current || createPeerConnection(data.callId, peerId, false);
+            const myStream = localStreamRef.current || audioStreamRef.current;
+            if (myStream) {
+              addTracksToPeerConnection(pc, myStream);
+            }
+            syncVideoElements();
             pc.setRemoteDescription(new RTCSessionDescription(data.offer))
               .then(() => {
                 // Vider les candidats ICE reçus avant la description distante
@@ -621,35 +774,30 @@ export const GlobalCallModal: React.FC = () => {
         });
       } catch {}
 
-      // Capture micro et caméra réels avec annulation d'écho et suppression de bruit natives
-      const constraints =
-        type === 'video'
-          ? {
-              video: { facingMode: 'user' },
-              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-            }
-          : {
-              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-            };
-
-      navigator.mediaDevices
-        ?.getUserMedia(constraints)
-        .then((stream) => {
-          if (type === 'video') {
-            localStreamRef.current = stream;
-            if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-          } else {
-            audioStreamRef.current = stream;
-          }
-          setupAudioVolumeAnalysis(stream);
-        })
-        .catch((err) => {
-          console.warn('Microphone ou caméra non accessibles:', err);
-        });
-
+      // Préparer un affichage fluide pour l'appel vidéo
       if (type === 'video') {
-        remoteStreamRef.current = createSimulatedRemoteVideoStream(peerName, peerAvatar);
+        const simStream = createSimulatedRemoteVideoStream(peerName, peerAvatar);
+        (simStream as any)._simulated = true;
+        remoteStreamRef.current = simStream;
+        syncVideoElements();
       }
+
+      // Capture micro et caméra réels avec fallback universel multi-plateformes
+      getMediaStreamWithFallback(type || 'audio', 'user').then((stream) => {
+        if (!stream) return;
+        if (type === 'video') {
+          localStreamRef.current = stream;
+        } else {
+          audioStreamRef.current = stream;
+        }
+        setupAudioVolumeAnalysis(stream);
+
+        // Si la peer connection est déjà établie, ajouter les pistes
+        if (peerConnectionRef.current) {
+          addTracksToPeerConnection(peerConnectionRef.current, stream);
+        }
+        syncVideoElements();
+      });
     };
 
     window.addEventListener('locatrust:call_event' as any, handleCallEvent);
@@ -699,38 +847,31 @@ export const GlobalCallModal: React.FC = () => {
 
     setActiveCall(newActiveCall);
 
-    // Capture media
+    // Initialiser le flux vidéo distant simulé temporaire
     if (callData.callType === 'video') {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
-        localStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        setupAudioVolumeAnalysis(stream);
-      } catch {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true }
-          });
-          audioStreamRef.current = stream;
-          setupAudioVolumeAnalysis(stream);
-        } catch {}
-      }
-      remoteStreamRef.current = createSimulatedRemoteVideoStream(callData.callerName, callData.callerAvatar);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-        });
-        audioStreamRef.current = stream;
-        setupAudioVolumeAnalysis(stream);
-      } catch {}
+      const simStream = createSimulatedRemoteVideoStream(callData.callerName, callData.callerAvatar);
+      (simStream as any)._simulated = true;
+      remoteStreamRef.current = simStream;
+      syncVideoElements();
     }
 
-    // Créer la PeerConnection prête à négocier la transmission vocale
-    createPeerConnection(callData.callId, callData.callerId, false);
+    // Capture media avec fallback multi-plateformes (Caméra + Micro réels)
+    const stream = await getMediaStreamWithFallback(callData.callType, 'user');
+    if (stream) {
+      if (callData.callType === 'video') {
+        localStreamRef.current = stream;
+      } else {
+        audioStreamRef.current = stream;
+      }
+      setupAudioVolumeAnalysis(stream);
+    }
+
+    // Créer la PeerConnection prête à négocier la transmission vocale et vidéo
+    const pc = createPeerConnection(callData.callId, callData.callerId, false);
+    if (stream) {
+      addTracksToPeerConnection(pc, stream);
+    }
+    syncVideoElements();
 
     // Diffuser CALL_ACCEPTED à l'appelant
     const acceptedData = {
@@ -833,28 +974,48 @@ export const GlobalCallModal: React.FC = () => {
     }
   };
 
-  // Flip smartphone camera
+  // Changement de caméra smartphone (avant/arrière) avec remplacement direct de la piste WebRTC
   const handleFlipCamera = async () => {
     if (!activeCall || activeCall.callType !== 'video') return;
     const nextFacingMode = !activeCall.isFrontCam;
+    const facingStr: 'user' | 'environment' = nextFacingMode ? 'user' : 'environment';
     setActiveCall((prev) => (prev ? { ...prev, isFrontCam: nextFacingMode } : null));
 
+    // Arrêter uniquement les anciennes pistes vidéo locales
     if (localStreamRef.current) {
       localStreamRef.current.getVideoTracks().forEach((t) => t.stop());
     }
 
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: nextFacingMode ? 'user' : 'environment' },
-        audio: !activeCall.isMuted
-      });
-      localStreamRef.current = newStream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = newStream;
-        localVideoRef.current.play().catch(() => {});
+      const newStream = await getMediaStreamWithFallback('video', facingStr);
+      if (!newStream) return;
+
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (!newVideoTrack) return;
+
+      // Mettre à jour le flux local
+      if (localStreamRef.current) {
+        const oldTracks = localStreamRef.current.getVideoTracks();
+        oldTracks.forEach((t) => localStreamRef.current?.removeTrack(t));
+        localStreamRef.current.addTrack(newVideoTrack);
+      } else {
+        localStreamRef.current = newStream;
       }
+
+      // Remplacer la piste vidéo dans le RTCPeerConnection en direct sans interruption
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          videoSender.replaceTrack(newVideoTrack).catch((err) => {
+            console.warn('Erreur replaceTrack WebRTC:', err);
+          });
+        }
+      }
+
+      syncVideoElements();
     } catch (err) {
-      console.warn('Camera flip notice:', err);
+      console.warn('Erreur bascule caméra:', err);
     }
   };
 
@@ -1004,8 +1165,9 @@ export const GlobalCallModal: React.FC = () => {
                 type="button"
                 onClick={() => {
                   const newMuted = !activeCall.isMuted;
-                  if (audioStreamRef.current) {
-                    audioStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = !newMuted));
+                  const stream = audioStreamRef.current || localStreamRef.current;
+                  if (stream) {
+                    stream.getAudioTracks().forEach((t) => (t.enabled = !newMuted));
                   }
                   setActiveCall({ ...activeCall, isMuted: newMuted });
                 }}
@@ -1028,7 +1190,13 @@ export const GlobalCallModal: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => setActiveCall({ ...activeCall, isSpeaker: !activeCall.isSpeaker })}
+                onClick={() => {
+                  const nextSpeaker = !activeCall.isSpeaker;
+                  if (remoteAudioRef.current) {
+                    remoteAudioRef.current.volume = nextSpeaker ? 1.0 : 0.6;
+                  }
+                  setActiveCall({ ...activeCall, isSpeaker: nextSpeaker });
+                }}
                 className={`p-4 rounded-full transition-all active:scale-95 shadow-md ${
                   activeCall.isSpeaker ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
@@ -1083,7 +1251,10 @@ export const GlobalCallModal: React.FC = () => {
                 ref={isVideoSwapped ? localVideoRef : remoteVideoRef}
                 autoPlay
                 playsInline
-                muted={isVideoSwapped}
+                muted={true}
+                onLoadedMetadata={(e) => {
+                  (e.target as HTMLVideoElement).play().catch(() => {});
+                }}
                 className="w-full h-full object-cover"
               />
 
@@ -1097,7 +1268,10 @@ export const GlobalCallModal: React.FC = () => {
                   ref={isVideoSwapped ? remoteVideoRef : localVideoRef}
                   autoPlay
                   playsInline
-                  muted={!isVideoSwapped}
+                  muted={true}
+                  onLoadedMetadata={(e) => {
+                    (e.target as HTMLVideoElement).play().catch(() => {});
+                  }}
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
@@ -1112,8 +1286,9 @@ export const GlobalCallModal: React.FC = () => {
                 type="button"
                 onClick={() => {
                   const newMuted = !activeCall.isMuted;
-                  if (localStreamRef.current) {
-                    localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = !newMuted));
+                  const stream = localStreamRef.current || audioStreamRef.current;
+                  if (stream) {
+                    stream.getAudioTracks().forEach((t) => (t.enabled = !newMuted));
                   }
                   setActiveCall({ ...activeCall, isMuted: newMuted });
                 }}
