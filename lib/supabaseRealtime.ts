@@ -21,6 +21,9 @@ export type LiveEventType =
   | 'NOTIFICATION_CREATED'
   | 'CALL_INCOMING'
   | 'CALL_ACCEPTED'
+  | 'CALL_OFFER'
+  | 'CALL_ANSWER'
+  | 'CALL_ICE_CANDIDATE'
   | 'CALL_REJECTED'
   | 'CALL_ENDED';
 
@@ -138,6 +141,9 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
       case 'CALL_INCOMING':
       case 'CALL_ACCEPTED':
+      case 'CALL_OFFER':
+      case 'CALL_ANSWER':
+      case 'CALL_ICE_CANDIDATE':
       case 'CALL_REJECTED':
       case 'CALL_ENDED':
         if (typeof window !== 'undefined') {

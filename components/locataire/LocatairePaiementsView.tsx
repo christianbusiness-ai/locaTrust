@@ -33,6 +33,7 @@ import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { declareCautionPayment } from '@/lib/cautionsStore';
+import { sendDeclarationMessageToOwner } from '@/lib/messagingStore';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -265,6 +266,24 @@ export const LocatairePaiementsView: React.FC = () => {
       }
     });
 
+    // Send declaration document directly to owner / agency messaging inbox
+    sendDeclarationMessageToOwner({
+      type: 'loyer',
+      declarationId: savedPayment.id,
+      contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
+      propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
+      amount: amount,
+      paymentMethod: method,
+      reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
+      date: new Date().toLocaleDateString('fr-FR'),
+      month: targetMonth,
+      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian yao Koffi',
+      tenantId: user?.id || 'usr_locataire',
+      ownerId: targetOwnerId || 'usr_owner',
+      proofUrl: proofUrl || undefined,
+      status: 'en_attente'
+    });
+
     setPayments((prev) => [savedPayment, ...prev]);
     window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: savedPayment }));
 
@@ -345,6 +364,23 @@ export const LocatairePaiementsView: React.FC = () => {
         caution: savedCaution,
         amount: cautionAmount
       }
+    });
+
+    // Send caution declaration document directly to owner / agency messaging inbox
+    sendDeclarationMessageToOwner({
+      type: 'caution',
+      declarationId: savedCaution.id,
+      contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
+      propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
+      amount: cautionAmount,
+      paymentMethod: cautionMethod,
+      reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
+      date: new Date().toLocaleDateString('fr-FR'),
+      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian yao Koffi',
+      tenantId: user?.id || 'usr_locataire',
+      ownerId: targetOwnerId || 'usr_owner',
+      proofUrl: cautionProofUrl || undefined,
+      status: 'en_attente'
     });
 
     setDeposits((prev) => [savedCaution, ...prev]);

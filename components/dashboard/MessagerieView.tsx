@@ -67,8 +67,10 @@ import {
   sendRealChatMessage,
   fetchSupabaseMessages,
   fetchSupabaseConversationsWithProfiles,
-  isValidUuid
+  isValidUuid,
+  updateDeclarationMessageStatus
 } from '@/lib/messagingStore';
+import { confirmCautionReceipt, sendCautionReceiptToTenant } from '@/lib/cautionsStore';
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
@@ -2150,6 +2152,112 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                             <span>Voir le reçu</span>
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Déclaration de Caution ou de Loyer Card (Point demandé dans l'audio) */}
+                    {m.declaration && (
+                      <div className="mt-3 bg-white text-slate-900 rounded-2xl p-4 border-2 border-blue-200 dark:border-blue-900 shadow-md flex flex-col gap-3">
+                        <div className="flex items-center justify-between border-b pb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                              {m.declaration.type === 'caution' ? (
+                                <ShieldCheck className="w-4 h-4 text-blue-600" />
+                              ) : (
+                                <CreditCard className="w-4 h-4 text-blue-600" />
+                              )}
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[11px] font-black text-slate-900 uppercase tracking-wide">
+                                {m.declaration.type === 'caution' ? 'Déclaration de Caution' : 'Déclaration de Loyer'}
+                              </span>
+                              <span className="text-[10px] text-blue-700 font-mono font-bold">
+                                Contrat N° {m.declaration.contractNumber}
+                              </span>
+                            </div>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 ${
+                              m.declaration.status === 'valide'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {m.declaration.status === 'valide' ? (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Validé & Encaissé
+                              </>
+                            ) : (
+                              <>
+                                <Clock className="w-3 h-3 text-amber-600 animate-pulse" /> À Confirmer
+                              </>
+                            )}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Logement :</span>
+                            <span className="font-bold text-slate-800 truncate max-w-[170px]">
+                              {m.declaration.propertyTitle}
+                            </span>
+                          </div>
+                          {m.declaration.month && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-500 font-medium">Mois / Période :</span>
+                              <span className="font-bold text-slate-800">{m.declaration.month}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-medium">Règlement :</span>
+                            <span className="font-semibold text-slate-700">
+                              {m.declaration.paymentMethod} (Réf: {m.declaration.reference})
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                            <span className="text-slate-500 font-medium">Montant déclaré :</span>
+                            <span className="font-black text-emerald-700 text-xs">
+                              {formatFCFA(m.declaration.amount)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Actions : Le Bailleur peut vérifier & valider immédiatement */}
+                        {m.declaration.status !== 'valide' ? (
+                          userRole !== 'locataire' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateDeclarationMessageStatus(m.declaration!.declarationId, 'valide');
+                                if (m.declaration!.type === 'caution') {
+                                  confirmCautionReceipt(
+                                    m.declaration!.declarationId,
+                                    user?.user_metadata?.full_name || 'Bailleur'
+                                  );
+                                  sendCautionReceiptToTenant(m.declaration!.declarationId);
+                                  window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+                                } else {
+                                  window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
+                                }
+                                refreshMessages();
+                                confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
+                              }}
+                              className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 cursor-pointer"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Vérifier & Valider l'encaissement</span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1.5 rounded-lg border border-amber-200 text-center font-bold">
+                              ⏳ En attente de validation par votre bailleur
+                            </span>
+                          )
+                        ) : (
+                          <div className="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-1.5 rounded-lg border border-emerald-200 flex items-center justify-center gap-1.5 font-bold">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Paiement validé & comptabilisé sur les registres</span>
+                          </div>
+                        )}
                       </div>
                     )}
 

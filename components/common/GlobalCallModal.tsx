@@ -61,9 +61,14 @@ export const GlobalCallModal: React.FC = () => {
   const [isVideoSwapped, setIsVideoSwapped] = useState<boolean>(false);
   const [audioVolume, setAudioVolume] = useState<number>(0);
 
-  // Media Refs
+  // Media & WebRTC Refs
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const pendingIceCandidatesRef = useRef<any[]>([]);
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -73,6 +78,15 @@ export const GlobalCallModal: React.FC = () => {
   const ringtoneIntervalRef = useRef<any>(null);
   const activeCallRef = useRef(activeCall);
   activeCallRef.current = activeCall;
+
+  // Configuration WebRTC avec serveurs STUN officiels de Google pour traversée NAT Mobile & Desktop
+  const RTC_CONFIG: RTCConfiguration = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ]
+  };
 
   // Web Audio Synthesizer for ringtones & chimes
   const playChime = (type: 'ring' | 'connected' | 'hangup') => {
@@ -163,6 +177,21 @@ export const GlobalCallModal: React.FC = () => {
   };
 
   const cleanupMediaStreams = () => {
+    if (peerConnectionRef.current) {
+      try {
+        peerConnectionRef.current.close();
+      } catch {}
+      peerConnectionRef.current = null;
+    }
+    pendingIceCandidatesRef.current = [];
+
+    if (remoteAudioRef.current) {
+      try {
+        remoteAudioRef.current.pause();
+        remoteAudioRef.current.srcObject = null;
+      } catch {}
+    }
+
     if (volumeAnimFrameRef.current) {
       cancelAnimationFrame(volumeAnimFrameRef.current);
       volumeAnimFrameRef.current = null;
@@ -190,7 +219,82 @@ export const GlobalCallModal: React.FC = () => {
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   };
 
-  // Helper to create live simulated remote video stream with contact avatar & realistic movement
+  // Factory WebRTC PeerConnection : connecte la voix et la vidéo réelles
+  const createPeerConnection = (callId: string, peerId: string, isCaller: boolean): RTCPeerConnection => {
+    if (peerConnectionRef.current) {
+      try { peerConnectionRef.current.close(); } catch {}
+      peerConnectionRef.current = null;
+    }
+
+    const pc = new RTCPeerConnection(RTC_CONFIG);
+    peerConnectionRef.current = pc;
+    pendingIceCandidatesRef.current = [];
+
+    // Injecter les pistes locales (Microphone et/ou Caméra)
+    const currentStream = localStreamRef.current || audioStreamRef.current;
+    if (currentStream) {
+      currentStream.getTracks().forEach((track) => {
+        try {
+          pc.addTrack(track, currentStream);
+        } catch (e) {
+          console.warn('Erreur ajout piste locale WebRTC:', e);
+        }
+      });
+    }
+
+    // Gestion de la transmission des candidats ICE (STUN)
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        const candidatePayload = {
+          callId,
+          candidate: event.candidate.toJSON()
+        };
+        broadcastLiveEvent('CALL_ICE_CANDIDATE', {
+          actorId: currentUserId,
+          targetUserId: peerId,
+          data: candidatePayload
+        });
+        try {
+          broadcastChannelRef.current?.postMessage({
+            event: 'CALL_ICE_CANDIDATE',
+            actorId: currentUserId,
+            targetUserId: peerId,
+            data: candidatePayload
+          });
+        } catch {}
+      }
+    };
+
+    // Réception du flux distant réel (Voix du correspondant + Vidéo)
+    pc.ontrack = (event) => {
+      console.log('📡 Piste WebRTC distante reçue avec succès :', event.track.kind, event.streams);
+      const incomingStream = event.streams[0] || new MediaStream([event.track]);
+      remoteStreamRef.current = incomingStream;
+
+      // Jouer immédiatement la voix du correspondant via l'élément audio dédié
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = incomingStream;
+        remoteAudioRef.current.play().catch((err) => {
+          console.warn('Lecture automatique audio bloquée en attente de clic:', err);
+        });
+      }
+
+      // Si c'est un flux vidéo, le diffuser sur la vue vidéo distante
+      if (event.track.kind === 'video' && remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = incomingStream;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+
+      // Brancher l'analyseur audio sur la voix entrante pour animer les barres visuelles
+      if (event.track.kind === 'audio') {
+        setupAudioVolumeAnalysis(incomingStream);
+      }
+    };
+
+    return pc;
+  };
+
+  // Helper to create live simulated remote video stream with contact avatar & realistic movement as fallback
   const createSimulatedRemoteVideoStream = (userName: string, avatarUrl?: string): MediaStream => {
     const canvas = document.createElement('canvas');
     canvas.width = 640;
@@ -282,7 +386,7 @@ export const GlobalCallModal: React.FC = () => {
     const handleCallEvent = (e: CustomEvent) => {
       const payload = e.detail;
       if (!payload || !payload.event) return;
-      const data: CallPayloadData = payload.data || {};
+      const data: any = payload.data || {};
 
       switch (payload.event) {
         case 'CALL_INCOMING': {
@@ -316,6 +420,100 @@ export const GlobalCallModal: React.FC = () => {
             stopRingtoneLoop();
             playChime('connected');
             setActiveCall((prev) => (prev ? { ...prev, status: 'connected', seconds: 0 } : null));
+
+            // Débloquer l'audio sur le mobile / navigateur de l'appelant
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.play().catch(() => {});
+            }
+
+            // L'appelant initialise la connexion WebRTC et émet l'Offre SDP
+            const pc = createPeerConnection(current.callId, current.peerId, true);
+            pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: current.callType === 'video' })
+              .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+              .then((offer) => {
+                const offerPayload = { callId: current.callId, offer };
+                broadcastLiveEvent('CALL_OFFER', {
+                  actorId: currentUserId,
+                  targetUserId: current.peerId,
+                  data: offerPayload
+                });
+                try {
+                  broadcastChannelRef.current?.postMessage({
+                    event: 'CALL_OFFER',
+                    actorId: currentUserId,
+                    targetUserId: current.peerId,
+                    data: offerPayload
+                  });
+                } catch {}
+              })
+              .catch((err) => console.warn('Erreur émission offre SDP WebRTC:', err));
+          }
+          break;
+        }
+
+        case 'CALL_OFFER': {
+          const current = activeCallRef.current;
+          if (payload.actorId !== currentUserId && data.offer) {
+            const peerId = payload.actorId || current?.peerId || '';
+            const pc = peerConnectionRef.current || createPeerConnection(data.callId, peerId, false);
+            pc.setRemoteDescription(new RTCSessionDescription(data.offer))
+              .then(() => {
+                // Vider les candidats ICE reçus avant la description distante
+                pendingIceCandidatesRef.current.forEach((cand) => {
+                  try { pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+                });
+                pendingIceCandidatesRef.current = [];
+                return pc.createAnswer();
+              })
+              .then((answer) => pc.setLocalDescription(answer).then(() => answer))
+              .then((answer) => {
+                const answerPayload = { callId: data.callId, answer };
+                broadcastLiveEvent('CALL_ANSWER', {
+                  actorId: currentUserId,
+                  targetUserId: peerId,
+                  data: answerPayload
+                });
+                try {
+                  broadcastChannelRef.current?.postMessage({
+                    event: 'CALL_ANSWER',
+                    actorId: currentUserId,
+                    targetUserId: peerId,
+                    data: answerPayload
+                  });
+                } catch {}
+              })
+              .catch((err) => console.warn('Erreur réponse SDP WebRTC:', err));
+          }
+          break;
+        }
+
+        case 'CALL_ANSWER': {
+          if (payload.actorId !== currentUserId && data.answer && peerConnectionRef.current) {
+            const pc = peerConnectionRef.current;
+            pc.setRemoteDescription(new RTCSessionDescription(data.answer))
+              .then(() => {
+                pendingIceCandidatesRef.current.forEach((cand) => {
+                  try { pc.addIceCandidate(new RTCIceCandidate(cand)); } catch {}
+                });
+                pendingIceCandidatesRef.current = [];
+              })
+              .catch((err) => console.warn('Erreur affectation réponse SDP:', err));
+          }
+          break;
+        }
+
+        case 'CALL_ICE_CANDIDATE': {
+          if (payload.actorId !== currentUserId && data.candidate) {
+            const pc = peerConnectionRef.current;
+            if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+              try {
+                pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+              } catch (err) {
+                console.warn('Erreur ajout candidat ICE:', err);
+              }
+            } else {
+              pendingIceCandidatesRef.current.push(data.candidate);
+            }
           }
           break;
         }
@@ -341,7 +539,6 @@ export const GlobalCallModal: React.FC = () => {
           const current = activeCallRef.current;
           if (incomingCall && incomingCall.callId === data.callId) {
             setIncomingCall(null);
-            // Record missed call in chat
             sendChatMessage(data.callerId, currentUserId, `📞 Appel en absence`);
           }
           if (current && current.callId === data.callId) {
@@ -353,6 +550,17 @@ export const GlobalCallModal: React.FC = () => {
         }
       }
     };
+
+    // Canal local inter-onglets ultra-rapide (0 ms de latence sur le même navigateur)
+    try {
+      const bc = new BroadcastChannel('locatrust_call_sync');
+      bc.onmessage = (ev) => {
+        if (ev.data && ev.data.event) {
+          handleCallEvent({ detail: ev.data } as CustomEvent);
+        }
+      };
+      broadcastChannelRef.current = bc;
+    } catch {}
 
     // Locally triggered call from MessagerieView quick buttons
     const handleInitiateCall = (e: CustomEvent) => {
@@ -380,36 +588,67 @@ export const GlobalCallModal: React.FC = () => {
       setActiveCall(newActiveCall);
       startRingtoneLoop();
 
+      // Débloquer l'audio
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.play().catch(() => {});
+      }
+
       // Broadcast CALL_INCOMING to all connected devices / users
+      const callIncomingData = {
+        callId,
+        callType: type || 'audio',
+        callerId: currentUserId,
+        callerName: currentUserName,
+        callerAvatar: currentUserAvatar,
+        callerRole: profile?.account_type || 'Bailleur',
+        propertyTitle: propertyTitle || 'Bien Immobilier',
+        targetUserId: peerId,
+        targetName: peerName
+      };
+
       broadcastLiveEvent('CALL_INCOMING', {
         actorId: currentUserId,
         targetUserId: peerId,
-        data: {
-          callId,
-          callType: type || 'audio',
-          callerId: currentUserId,
-          callerName: currentUserName,
-          callerAvatar: currentUserAvatar,
-          callerRole: profile?.account_type || 'Bailleur',
-          propertyTitle: propertyTitle || 'Bien Immobilier',
-          targetUserId: peerId,
-          targetName: peerName
-        }
+        data: callIncomingData
       });
 
-      // Prepare local streams
+      try {
+        broadcastChannelRef.current?.postMessage({
+          event: 'CALL_INCOMING',
+          actorId: currentUserId,
+          targetUserId: peerId,
+          data: callIncomingData
+        });
+      } catch {}
+
+      // Capture micro et caméra réels avec annulation d'écho et suppression de bruit natives
+      const constraints =
+        type === 'video'
+          ? {
+              video: { facingMode: 'user' },
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            }
+          : {
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            };
+
+      navigator.mediaDevices
+        ?.getUserMedia(constraints)
+        .then((stream) => {
+          if (type === 'video') {
+            localStreamRef.current = stream;
+            if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+          } else {
+            audioStreamRef.current = stream;
+          }
+          setupAudioVolumeAnalysis(stream);
+        })
+        .catch((err) => {
+          console.warn('Microphone ou caméra non accessibles:', err);
+        });
+
       if (type === 'video') {
-        navigator.mediaDevices?.getUserMedia({ video: true, audio: true }).then((stream) => {
-          localStreamRef.current = stream;
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-          setupAudioVolumeAnalysis(stream);
-        }).catch(() => {});
         remoteStreamRef.current = createSimulatedRemoteVideoStream(peerName, peerAvatar);
-      } else {
-        navigator.mediaDevices?.getUserMedia({ audio: true }).then((stream) => {
-          audioStreamRef.current = stream;
-          setupAudioVolumeAnalysis(stream);
-        }).catch(() => {});
       }
     };
 
@@ -419,12 +658,15 @@ export const GlobalCallModal: React.FC = () => {
     return () => {
       window.removeEventListener('locatrust:call_event' as any, handleCallEvent);
       window.removeEventListener('locatrust:initiate_call' as any, handleInitiateCall);
+      try {
+        broadcastChannelRef.current?.close();
+      } catch {}
       stopRingtoneLoop();
       cleanupMediaStreams();
     };
   }, [currentUserId, currentUserName, currentUserAvatar, incomingCall]);
 
-  // Handle Callee Accept
+  // Handle Callee Accept (Décrocher)
   const handleAcceptCall = async () => {
     if (!incomingCall) return;
     stopRingtoneLoop();
@@ -432,6 +674,11 @@ export const GlobalCallModal: React.FC = () => {
 
     const callData = incomingCall;
     setIncomingCall(null);
+
+    // Débloquer immédiatement la lecture audio sur smartphone dans le geste utilisateur
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
 
     const newActiveCall = {
       callId: callData.callId,
@@ -452,38 +699,59 @@ export const GlobalCallModal: React.FC = () => {
 
     setActiveCall(newActiveCall);
 
-    // Broadcast CALL_ACCEPTED to the caller
-    broadcastLiveEvent('CALL_ACCEPTED', {
-      actorId: currentUserId,
-      targetUserId: callData.callerId,
-      data: {
-        callId: callData.callId,
-        acceptedBy: currentUserId
-      }
-    });
-
     // Capture media
     if (callData.callType === 'video') {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
         localStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
         setupAudioVolumeAnalysis(stream);
       } catch {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          localStreamRef.current = stream;
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true }
+          });
+          audioStreamRef.current = stream;
+          setupAudioVolumeAnalysis(stream);
         } catch {}
       }
       remoteStreamRef.current = createSimulatedRemoteVideoStream(callData.callerName, callData.callerAvatar);
     } else {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
         audioStreamRef.current = stream;
         setupAudioVolumeAnalysis(stream);
       } catch {}
     }
+
+    // Créer la PeerConnection prête à négocier la transmission vocale
+    createPeerConnection(callData.callId, callData.callerId, false);
+
+    // Diffuser CALL_ACCEPTED à l'appelant
+    const acceptedData = {
+      callId: callData.callId,
+      acceptedBy: currentUserId
+    };
+
+    broadcastLiveEvent('CALL_ACCEPTED', {
+      actorId: currentUserId,
+      targetUserId: callData.callerId,
+      data: acceptedData
+    });
+
+    try {
+      broadcastChannelRef.current?.postMessage({
+        event: 'CALL_ACCEPTED',
+        actorId: currentUserId,
+        targetUserId: callData.callerId,
+        data: acceptedData
+      });
+    } catch {}
   };
 
   // Handle Callee Reject
@@ -495,14 +763,25 @@ export const GlobalCallModal: React.FC = () => {
     const callData = incomingCall;
     setIncomingCall(null);
 
+    const rejectData = {
+      callId: callData.callId,
+      rejectedBy: currentUserId
+    };
+
     broadcastLiveEvent('CALL_REJECTED', {
       actorId: currentUserId,
       targetUserId: callData.callerId,
-      data: {
-        callId: callData.callId,
-        rejectedBy: currentUserId
-      }
+      data: rejectData
     });
+
+    try {
+      broadcastChannelRef.current?.postMessage({
+        event: 'CALL_REJECTED',
+        actorId: currentUserId,
+        targetUserId: callData.callerId,
+        data: rejectData
+      });
+    } catch {}
 
     sendChatMessage(callData.callerId, currentUserId, `📞 Appel rejeté / Occupé`);
   };
@@ -517,25 +796,37 @@ export const GlobalCallModal: React.FC = () => {
     const current = activeCall;
     setActiveCall(null);
 
+    const endData = {
+      callId: current.callId,
+      durationSeconds: current.seconds,
+      callerId: current.role === 'caller' ? currentUserId : current.peerId
+    };
+
     broadcastLiveEvent('CALL_ENDED', {
       actorId: currentUserId,
       targetUserId: current.peerId,
-      data: {
-        callId: current.callId,
-        durationSeconds: current.seconds,
-        callerId: current.role === 'caller' ? currentUserId : current.peerId
-      }
+      data: endData
     });
 
-    // Record completed call or missed call in chat messages
+    try {
+      broadcastChannelRef.current?.postMessage({
+        event: 'CALL_ENDED',
+        actorId: currentUserId,
+        targetUserId: current.peerId,
+        data: endData
+      });
+    } catch {}
+
+    // Enregistrer le résumé de l'appel dans la messagerie
     const mins = Math.floor(current.seconds / 60);
     const secs = current.seconds % 60;
     const durationStr = `${mins > 0 ? `${mins}m ` : ''}${secs}s`;
 
     if (current.status === 'connected' && current.seconds > 0) {
-      const summaryText = current.callType === 'video'
-        ? `📹 Appel vidéo terminé (${durationStr})`
-        : `📞 Appel vocal terminé (${durationStr})`;
+      const summaryText =
+        current.callType === 'video'
+          ? `📹 Appel vidéo terminé (${durationStr})`
+          : `📞 Appel vocal terminé (${durationStr})`;
       sendChatMessage(currentUserId, current.peerId, summaryText);
     } else {
       sendChatMessage(currentUserId, current.peerId, `📞 Appel en absence`);
@@ -569,6 +860,8 @@ export const GlobalCallModal: React.FC = () => {
 
   return (
     <>
+      {/* Élément audio dédié pour la transmission réelle de la voix entrante sur mobile et ordinateur */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
       {/* 1. INCOMING CALL MODAL (Rings globally on any screen) */}
       {incomingCall && (
         <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">

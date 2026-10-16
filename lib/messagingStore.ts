@@ -72,6 +72,23 @@ export interface ChatRestitutionAttachment {
   operationType: 'RESTITUTION_CAUTION' | 'IMPUTATION_LOYERS';
 }
 
+export interface ChatDeclarationAttachment {
+  type: 'caution' | 'loyer';
+  declarationId: string;
+  contractNumber: string;
+  propertyTitle: string;
+  amount: number;
+  paymentMethod: string;
+  reference: string;
+  date: string;
+  tenantName: string;
+  tenantId: string;
+  ownerId: string;
+  proofUrl?: string;
+  status: 'en_attente' | 'valide' | 'rejete';
+  month?: string;
+}
+
 export interface ChatMessage {
   id: string;
   sender_id: string;
@@ -82,6 +99,7 @@ export interface ChatMessage {
   quittance?: ChatQuittanceAttachment;
   contract?: ChatContractAttachment;
   restitution?: ChatRestitutionAttachment;
+  declaration?: ChatDeclarationAttachment;
   reminderContractNumber?: string;
   attachment?: ChatAttachment;
   status?: 'sent' | 'delivered' | 'read';
@@ -541,6 +559,94 @@ export function getStoredTenantReceipts(): ChatQuittanceAttachment[] {
   } catch (e) {
     console.error('Failed to parse stored tenant receipts:', e);
     return [];
+  }
+}
+
+export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttachment): ChatMessage {
+  const current = getStoredMessages();
+
+  let targetOwnerId = declaration.ownerId;
+  if (!targetOwnerId || targetOwnerId === 'usr_owner' || targetOwnerId === 'usr_agency') {
+    try {
+      const appsRaw = localStorage.getItem('locatrust_rental_applications');
+      if (appsRaw) {
+        const apps = JSON.parse(appsRaw);
+        if (Array.isArray(apps)) {
+          const matched = apps.find((a: any) =>
+            (declaration.contractNumber && a.contract_number === declaration.contractNumber) ||
+            (declaration.propertyTitle && a.property_title === declaration.propertyTitle)
+          );
+          if (matched && (matched.agency_id || matched.owner_id)) {
+            targetOwnerId = matched.agency_id || matched.owner_id;
+          }
+        }
+      }
+    } catch {}
+  }
+  if (!targetOwnerId) targetOwnerId = 'usr_owner';
+
+  const isCaution = declaration.type === 'caution';
+  const text = isCaution
+    ? `💰 Déclaration de versement de Caution (${formatFCFA(declaration.amount)})\nLe locataire ${declaration.tenantName} a déclaré le règlement de sa caution (${declaration.paymentMethod} • Réf: ${declaration.reference}) pour le logement ${declaration.propertyTitle}.\nConsultez le document ci-dessous pour vérifier et valider l'encaissement.`
+    : `💳 Déclaration de paiement de Loyer (${formatFCFA(declaration.amount)})\nLe locataire ${declaration.tenantName} a déclaré le règlement de son loyer de ${declaration.month || 'la période'} (${declaration.paymentMethod} • Réf: ${declaration.reference}) pour le logement ${declaration.propertyTitle}.\nConsultez le document ci-dessous pour vérifier et valider le règlement.`;
+
+  const newMsg: ChatMessage = {
+    id: `msg_decl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    sender_id: declaration.tenantId,
+    receiver_id: targetOwnerId,
+    text,
+    created_at: new Date().toISOString(),
+    declaration: {
+      ...declaration,
+      ownerId: targetOwnerId
+    },
+    status: 'delivered'
+  };
+
+  const updated = [...current, newMsg];
+  saveStoredMessages(updated);
+  syncMessageToSupabase(newMsg, declaration.tenantId, targetOwnerId, newMsg.text);
+
+  // Send real notification strictly to owner/agency in locatrust_notifications
+  try {
+    const notifsRaw = localStorage.getItem('locatrust_notifications');
+    const existing = notifsRaw ? JSON.parse(notifsRaw) : [];
+    const notifItem = {
+      id: `notif_decl_${Date.now()}`,
+      title: isCaution ? '💰 Nouvelle déclaration de caution' : '💳 Nouveau paiement de loyer déclaré',
+      description: `${declaration.tenantName} a déclaré un versement de ${formatFCFA(declaration.amount)} pour ${declaration.propertyTitle}.`,
+      time: 'À l\'instant',
+      unread: true,
+      type: isCaution ? 'caution' : 'payment',
+      targetRole: 'proprietaire',
+      targetUserId: targetOwnerId,
+      senderUserId: declaration.tenantId
+    };
+    localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(existing) ? existing : [])]));
+    window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+  } catch {}
+
+  return newMsg;
+}
+
+export function updateDeclarationMessageStatus(declarationId: string, newStatus: 'valide' | 'rejete') {
+  const current = getStoredMessages();
+  let changed = false;
+  const updated = current.map((m) => {
+    if (m.declaration && (m.declaration.declarationId === declarationId || m.id === declarationId)) {
+      changed = true;
+      return {
+        ...m,
+        declaration: {
+          ...m.declaration,
+          status: newStatus
+        }
+      };
+    }
+    return m;
+  });
+  if (changed) {
+    saveStoredMessages(updated);
   }
 }
 

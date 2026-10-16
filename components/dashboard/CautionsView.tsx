@@ -48,6 +48,7 @@ import {
   getCautionAuditTrail
 } from '@/lib/cautionsStore';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
+import { updateDeclarationMessageStatus, sendChatMessage } from '@/lib/messagingStore';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { useAuth } from '@/src/context/AuthContext';
@@ -324,6 +325,33 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       if (!updated.owner_signature) {
         signCautionReceipt(deposit.id, 'owner', 'SIG_OFFICIAL_OWNER_CERTIFIED');
       }
+
+      // Mettre à jour le statut du document de déclaration dans la messagerie
+      updateDeclarationMessageStatus(deposit.id, 'valide');
+
+      // Envoyer un message de confirmation automatique dans la boîte de messagerie du locataire
+      const tenantId = deposit.tenant_id || deposit.tenant?.id || 'usr_tenant';
+      const ownerId = user?.id || 'usr_owner';
+      sendChatMessage(
+        ownerId,
+        tenantId,
+        `✅ Règlement de caution validé\nVotre bailleur / agence (${actorName}) a validé la réception de votre caution de ${formatFCFA(deposit.amount_paid)} pour le contrat ${deposit.contract_id}.\nLe Reçu Officiel N° REC-CAUT-${deposit.id.toUpperCase()} avec QR Code officiel certifié a été émis.`
+      );
+
+      // Transmettre le reçu officiel dans la messagerie
+      sendCautionReceiptToTenant(deposit.id);
+
+      // Diffuser l'événement de confirmation en temps réel
+      broadcastLiveEvent('CAUTION_CONFIRMED', {
+        depositId: deposit.id,
+        targetUserId: tenantId,
+        contractId: deposit.contract_id,
+        data: {
+          deposit: updated,
+          amount: deposit.amount_paid
+        }
+      });
+
       reloadDeposits();
       setProofToVerifyDeposit(null);
       setSuccessFeedback(
@@ -665,13 +693,24 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 <div className="flex flex-col">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wide">
-                      Le locataire a signalé le paiement de sa caution
+                      {!isTenant
+                        ? 'Le locataire a signalé le paiement de sa caution'
+                        : 'Déclaration de caution transmise au bailleur'}
                     </span>
                     <PaymentStatusBadge status="caution_a_confirmer" />
                   </div>
                   <p className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
-                    <strong>{dep.tenant?.full_name}</strong> a soumis une preuve pour le versement de{' '}
-                    <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(dep.amount_paid)}</strong>.
+                    {!isTenant ? (
+                      <>
+                        <strong>{dep.tenant?.full_name}</strong> a soumis une preuve pour le versement de{' '}
+                        <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(dep.amount_paid)}</strong>.
+                      </>
+                    ) : (
+                      <>
+                        Vous avez déclaré le versement de{' '}
+                        <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(dep.amount_paid)}</strong>. En attente de validation par votre bailleur.
+                      </>
+                    )}
                   </p>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
                     Contrat N° {dep.contract_id} • Réf : {dep.declared_reference || 'Mobile Money'}
@@ -679,15 +718,26 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 </div>
               </div>
 
-              {/* Bouton Étape 2 : Ouvrir la preuve envoyée et vérifier */}
-              <button
-                type="button"
-                onClick={() => setProofToVerifyDeposit(dep)}
-                className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95"
-              >
-                <Eye className="w-4 h-4" />
-                <span>Vérifier la preuve & Valider</span>
-              </button>
+              {/* Bouton Étape 2 : Pour Bailleur -> Ouvrir la preuve et vérifier ; Pour Locataire -> Consulter sa preuve */}
+              {!isTenant ? (
+                <button
+                  type="button"
+                  onClick={() => setProofToVerifyDeposit(dep)}
+                  className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>Vérifier la preuve & Valider</span>
+                </button>
+              ) : dep.proof_url ? (
+                <button
+                  type="button"
+                  onClick={() => setPreviewProofModalUrl(dep.proof_url!)}
+                  className="px-4 py-2 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>Consulter mon justificatif</span>
+                </button>
+              ) : null}
             </div>
           ))}
         </div>
@@ -876,16 +926,35 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
                     {/* COL 4 : ACTIONS (en ligne, même hauteur, alignées) */}
                     <div className="flex flex-row flex-wrap items-center gap-2 px-4 py-3 lg:w-auto lg:shrink-0">
-                      {/* Vérifier & Valider */}
+                      {/* Vérifier & Valider pour Bailleur / Agence, Statut d'attente pour Locataire */}
                       {isAwaitingVerification && (
-                        <button
-                          type="button"
-                          onClick={() => setProofToVerifyDeposit(dep)}
-                          className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-sm flex items-center gap-1.5 transition-all active:scale-95 whitespace-nowrap"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Vérifier & Valider</span>
-                        </button>
+                        !isTenant ? (
+                          <button
+                            type="button"
+                            onClick={() => setProofToVerifyDeposit(dep)}
+                            className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-sm flex items-center gap-1.5 transition-all active:scale-95 whitespace-nowrap"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Vérifier & Valider</span>
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="h-8 px-3 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-bold text-[11px] flex items-center gap-1.5 whitespace-nowrap">
+                              <Clock className="w-3.5 h-3.5 animate-pulse" />
+                              <span>En attente validation bailleur</span>
+                            </span>
+                            {dep.proof_url && (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewProofModalUrl(dep.proof_url!)}
+                                className="h-8 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] flex items-center gap-1 transition-colors whitespace-nowrap"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Ma preuve</span>
+                              </button>
+                            )}
+                          </div>
+                        )
                       )}
 
                       {/* Restituer la caution — désactivé si déjà restitué */}
