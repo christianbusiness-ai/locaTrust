@@ -74,17 +74,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const [avatarUrl, setAvatarUrl] = React.useState<string>(() => {
     const profAvatar = profile?.avatar_url;
-    if (profAvatar && !profAvatar.includes('images.unsplash.com')) return profAvatar;
+    if (profAvatar) return profAvatar;
     if (typeof window !== 'undefined') {
       const stored = (user?.id && localStorage.getItem(`locatrust_user_avatar_${user.id}`)) || localStorage.getItem('locatrust_user_avatar');
-      if (stored && !stored.includes('images.unsplash.com')) return stored;
+      if (stored) return stored;
     }
     return '';
   });
 
   React.useEffect(() => {
     const handleAvatarUpdated = (e: any) => {
-      if (e.detail?.avatarUrl && !e.detail.avatarUrl.includes('images.unsplash.com')) {
+      if (e.detail?.avatarUrl) {
         setAvatarUrl(e.detail.avatarUrl);
       }
     };
@@ -93,7 +93,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, []);
 
   React.useEffect(() => {
-    if (profile?.avatar_url && !profile.avatar_url.includes('images.unsplash.com')) {
+    if (profile?.avatar_url) {
       setAvatarUrl(profile.avatar_url);
     }
   }, [profile?.avatar_url]);
@@ -510,6 +510,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>Centre d'aide</span>
           </button>
         </div>
+      </div>
+
+      {/* Profil Utilisateur avec Avatar et Statut */}
+      <div
+        onClick={() => onSelectTab?.('settings')}
+        className="mt-3 p-2.5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 flex items-center gap-3 cursor-pointer transition-all hover:bg-slate-850 group select-none shadow-sm"
+        title="Accéder aux Paramètres de mon Profil"
+      >
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={profile?.full_name || 'Profil'}
+            className="w-9 h-9 rounded-full object-cover ring-2 ring-blue-500/40 group-hover:ring-blue-500 transition-all shrink-0"
+          />
+        ) : (
+          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-xs flex items-center justify-center ring-2 ring-blue-500/40 shrink-0">
+            {getInitials(profile?.full_name || user?.user_metadata?.full_name, user?.email)}
+          </div>
+        )}
+        <div className="flex flex-col min-w-0 flex-1 text-left">
+          <span className="text-xs font-black text-white truncate leading-tight group-hover:text-blue-400 transition-colors">
+            {profile?.full_name || user?.user_metadata?.full_name || (isProprietaire ? 'Propriétaire' : isAgence ? 'Agence Immobilière' : isLocataire ? 'Locataire' : 'Administrateur')}
+          </span>
+          <span className="text-[10px] text-slate-400 font-semibold truncate capitalize">
+            {isProprietaire ? 'Bailleur certifié' : isAgence ? 'Agence Agréée' : isLocataire ? 'Locataire vérifié' : 'Administrateur'}
+          </span>
+        </div>
+        <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors shrink-0" />
       </div>
 
     </aside>

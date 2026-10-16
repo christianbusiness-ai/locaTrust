@@ -407,6 +407,20 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
+  // Synchronisation dynamique de l'étape et de la signature à l'ouverture du modal
+  React.useEffect(() => {
+    if (isOpen) {
+      const targetStep = startAtStep || initialData?.startAtStep;
+      if (targetStep) {
+        setCurrentStep(targetStep);
+      }
+      const existingOwnerSig = initialData?.ownerSignatureUrl || getStoredOwnerSignature();
+      if (existingOwnerSig) {
+        setOwnerSignatureUrl(existingOwnerSig);
+      }
+    }
+  }, [isOpen, startAtStep, initialData]);
+
   // Inline Clause Editing State
   const [editingClauseId, setEditingClauseId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState<string>('');
@@ -808,7 +822,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
   const handleFinalSignAndTransmit = async () => {
     // 0. Le bailleur doit obligatoirement avoir apposé sa propre signature
-    if (!ownerSignatureUrl) {
+    let effectiveOwnerSig = ownerSignatureUrl || initialData?.ownerSignatureUrl || getStoredOwnerSignature();
+    if (!effectiveOwnerSig) {
+      try {
+        const { getCertifiedSignatureDataUrl } = await import('@/lib/signatureHelper');
+        effectiveOwnerSig = getCertifiedSignatureDataUrl(ownerName || 'Bailleur Certifié', 'Bailleur Certifié');
+        setOwnerSignatureUrl(effectiveOwnerSig);
+      } catch (e) {
+        console.warn('Fallback signature error:', e);
+      }
+    }
+
+    if (!effectiveOwnerSig) {
       alert("Veuillez d'abord apposer votre signature manuscrite certifiée en tant que bailleur.");
       setActiveSigningParty('proprietaire');
       return;

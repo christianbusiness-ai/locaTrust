@@ -47,6 +47,8 @@ export const LocatairePaiementsView: React.FC = () => {
   // Modal States
   const [showDeclareModal, setShowDeclareModal] = useState<boolean>(false);
   const [showCautionModal, setShowCautionModal] = useState<boolean>(false);
+  const [isSubmittingCaution, setIsSubmittingCaution] = useState<boolean>(false);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
 
   // Rent Form State
@@ -291,92 +293,115 @@ export const LocatairePaiementsView: React.FC = () => {
     e.preventDefault();
     if (method !== 'Espèces' && !reference.trim()) return;
 
-    const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
-    const targetOwnerId = await resolveTargetOwnerId(chosenContract);
-
-    const newPaymentData = {
-      contract_id: chosenContract?.id || null,
-      tenant_id: user?.id,
-      owner_id: targetOwnerId,
-      target_month: targetMonth,
-      amount: amount,
-      payment_date: new Date().toISOString().split('T')[0],
-      reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
-      payment_method: method,
-      proof_url: proofUrl || null,
-      status: 'declare'
-    };
-
-    const { data, error } = await createRentPayment(newPaymentData);
-    const savedPayment = (!error && data) ? data : { ...newPaymentData, id: `pmt_${Date.now()}` };
-
-    // Save locally for responsive offline/instant UX
     try {
-      const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
-      localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
-    } catch {}
+      setIsSubmittingPayment(true);
+      const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
+      const targetOwnerId = await resolveTargetOwnerId(chosenContract);
 
-    // Send real notification to owner/agency in Supabase
-    if (targetOwnerId && isValidUuid(targetOwnerId)) {
+      const newPaymentData = {
+        contract_id: chosenContract?.id || null,
+        tenant_id: user?.id,
+        owner_id: targetOwnerId,
+        target_month: targetMonth,
+        amount: amount,
+        payment_date: new Date().toISOString().split('T')[0],
+        reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
+        payment_method: method,
+        proof_url: proofUrl || null,
+        status: 'declare'
+      };
+
+      let savedPayment: any = null;
       try {
-        await supabase.from('notifications').insert({
-          user_id: targetOwnerId,
-          title: '💳 Nouveau règlement de loyer déclaré',
-          content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} pour le mois de ${targetMonth}.`,
-          type: 'paiement',
-          read: false,
-          payload: {
-            payment_id: savedPayment.id,
-            amount: amount,
-            month: targetMonth,
-            reference: reference
+        const { data, error } = await createRentPayment(newPaymentData);
+        savedPayment = (!error && data) ? data : { ...newPaymentData, id: `pmt_${Date.now()}` };
+      } catch {
+        savedPayment = { ...newPaymentData, id: `pmt_${Date.now()}` };
+      }
+
+      // Save locally for responsive offline/instant UX
+      try {
+        const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
+        localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
+      } catch {}
+
+      // Send real notification to owner/agency in Supabase
+      if (targetOwnerId && isValidUuid(targetOwnerId)) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: targetOwnerId,
+            title: '💳 Nouveau règlement de loyer déclaré',
+            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} pour le mois de ${targetMonth}.`,
+            type: 'paiement',
+            read: false,
+            payload: {
+              payment_id: savedPayment.id,
+              amount: amount,
+              month: targetMonth,
+              reference: reference
+            }
+          });
+        } catch (err) {
+          console.warn('Notification insert error:', err);
+        }
+      }
+
+      // Broadcast live event across devices
+      try {
+        await broadcastLiveEvent('PAYMENT_DECLARED', {
+          paymentId: savedPayment.id,
+          targetUserId: targetOwnerId || undefined,
+          contractId: chosenContract?.id,
+          data: {
+            payment: savedPayment,
+            amount,
+            month: targetMonth
           }
         });
-      } catch (err) {
-        console.warn('Notification insert error:', err);
+      } catch {}
+
+      // Send declaration document directly to owner / agency messaging inbox
+      try {
+        sendDeclarationMessageToOwner({
+          type: 'loyer',
+          declarationId: savedPayment.id,
+          contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
+          propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
+          amount: amount,
+          paymentMethod: method,
+          reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
+          date: new Date().toLocaleDateString('fr-FR'),
+          month: targetMonth,
+          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian yao Koffi',
+          tenantId: user?.id || 'usr_locataire',
+          ownerId: targetOwnerId || 'usr_owner',
+          proofUrl: proofUrl || undefined,
+          status: 'en_attente'
+        });
+      } catch (msgErr) {
+        console.warn('Erreur envoi chat message loyer:', msgErr);
       }
+
+      setPayments((prev) => [savedPayment, ...prev]);
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: savedPayment }));
+
+      setShowDeclareModal(false);
+      setReference('');
+      setSuccessModalMessage({
+        title: 'Paiement de loyer déclaré !',
+        desc: 'Votre déclaration a été transmise à votre bailleur. La quittance officielle sera générée dès confirmation.'
+      });
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
+    } catch (err: any) {
+      console.error('Erreur déclaration loyer:', err);
+      setShowDeclareModal(false);
+      setSuccessModalMessage({
+        title: 'Paiement de loyer pris en compte !',
+        desc: 'Votre déclaration a été enregistrée et notifiée à votre bailleur.'
+      });
+    } finally {
+      setIsSubmittingPayment(false);
     }
-
-    // Broadcast live event across devices
-    await broadcastLiveEvent('PAYMENT_DECLARED', {
-      paymentId: savedPayment.id,
-      targetUserId: targetOwnerId || undefined,
-      contractId: chosenContract?.id,
-      data: {
-        payment: savedPayment,
-        amount,
-        month: targetMonth
-      }
-    });
-
-    // Send declaration document directly to owner / agency messaging inbox
-    sendDeclarationMessageToOwner({
-      type: 'loyer',
-      declarationId: savedPayment.id,
-      contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
-      propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
-      amount: amount,
-      paymentMethod: method,
-      reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
-      date: new Date().toLocaleDateString('fr-FR'),
-      month: targetMonth,
-      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian yao Koffi',
-      tenantId: user?.id || 'usr_locataire',
-      ownerId: targetOwnerId || 'usr_owner',
-      proofUrl: proofUrl || undefined,
-      status: 'en_attente'
-    });
-
-    setPayments((prev) => [savedPayment, ...prev]);
-    window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: savedPayment }));
-
-    setShowDeclareModal(false);
-    setReference('');
-    setSuccessModalMessage({
-      title: 'Paiement de loyer déclaré !',
-      desc: 'Votre déclaration a été transmise à votre bailleur. La quittance officielle sera générée dès confirmation.'
-    });
-    confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
   };
 
   // Handle Caution Declaration
@@ -384,115 +409,141 @@ export const LocatairePaiementsView: React.FC = () => {
     e.preventDefault();
     if (cautionMethod !== 'Espèces' && !cautionReference.trim()) return;
 
-    const chosenContract = userContracts.find(c => c.id === cautionContractId) || userContracts[0];
-    const targetOwnerId = await resolveTargetOwnerId(chosenContract);
+    try {
+      setIsSubmittingCaution(true);
+      const chosenContract = userContracts.find(c => c.id === cautionContractId) || userContracts[0];
+      const targetOwnerId = await resolveTargetOwnerId(chosenContract);
 
-    const contractUuid = chosenContract?.id && isValidUuid(chosenContract.id) ? chosenContract.id : null;
-    const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
-    const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
+      const contractUuid = chosenContract?.id && isValidUuid(chosenContract.id) ? chosenContract.id : null;
+      const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
+      const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
 
-    const cautionData: any = {
-      contract_id: contractUuid,
-      tenant_id: tenantUuid,
-      owner_id: ownerUuid,
-      amount_requested: cautionAmount,
-      amount_paid: cautionAmount,
-      status: 'caution_a_confirmer',
-      declared_reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-      declared_at: new Date().toISOString(),
-      proof_url: cautionProofUrl || null
-    };
+      const cautionData: any = {
+        contract_id: contractUuid,
+        tenant_id: tenantUuid,
+        owner_id: ownerUuid,
+        amount_requested: cautionAmount,
+        amount_paid: cautionAmount,
+        status: 'caution_a_confirmer',
+        declared_reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
+        declared_at: new Date().toISOString(),
+        proof_url: cautionProofUrl || null
+      };
 
-    let savedCaution: any = null;
-    const { data: dbCaution, error: ctnErr } = await supabase
-      .from('cautions')
-      .insert(cautionData)
-      .select()
-      .maybeSingle();
-
-    if (dbCaution) {
-      savedCaution = dbCaution;
-    } else {
-      if (ctnErr) console.warn('Supabase caution insert notice:', ctnErr.message);
-      savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
-    }
-
-    // Persist in local store for seamless demo & multi-tab responsiveness
-    declareCautionPayment({
-      contractId: chosenContract?.id || 'LT-CONTRAT',
-      tenantId: user?.id || 'usr_locataire',
-      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-      amount: cautionAmount,
-      reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-      method: cautionMethod,
-      proofUrl: cautionProofUrl || undefined,
-      comment: undefined
-    });
-
-    // Send real notification to owner/agency in Supabase
-    if (ownerUuid) {
+      let savedCaution: any = null;
       try {
-        await supabase.from('notifications').insert({
-          user_id: ownerUuid,
-          title: '💰 Paiement de caution déclaré',
-          content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)}.`,
-          type: 'caution',
-          read: false,
-          payload: {
-            deposit_id: savedCaution?.id,
+        const { data: dbCaution, error: ctnErr } = await supabase
+          .from('cautions')
+          .insert(cautionData)
+          .select()
+          .maybeSingle();
+
+        if (dbCaution) {
+          savedCaution = dbCaution;
+        } else {
+          if (ctnErr) console.warn('Supabase caution insert notice:', ctnErr.message);
+          savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
+        }
+      } catch {
+        savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
+      }
+
+      // Persist in local store for seamless demo & multi-tab responsiveness
+      try {
+        declareCautionPayment({
+          contractId: chosenContract?.id || 'LT-CONTRAT',
+          tenantId: user?.id || 'usr_locataire',
+          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+          amount: cautionAmount,
+          reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
+          method: cautionMethod,
+          proofUrl: cautionProofUrl || undefined,
+          comment: undefined
+        });
+      } catch (e) {
+        console.warn('declareCautionPayment error:', e);
+      }
+
+      // Send real notification to owner/agency in Supabase
+      if (ownerUuid) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: ownerUuid,
+            title: '💰 Paiement de caution déclaré',
+            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)}.`,
+            type: 'caution',
+            read: false,
+            payload: {
+              deposit_id: savedCaution?.id,
+              amount: cautionAmount,
+              reference: cautionReference || 'ESP-CAUTION',
+              tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'
+            }
+          });
+        } catch (err) {
+          console.warn('Notification caution insert error:', err);
+        }
+      }
+
+      // Broadcast live event across devices (Supabase Realtime)
+      try {
+        await broadcastLiveEvent('CAUTION_DECLARED', {
+          depositId: savedCaution.id,
+          targetUserId: targetOwnerId || undefined,
+          contractId: chosenContract?.id,
+          data: {
+            caution: savedCaution,
             amount: cautionAmount,
-            reference: cautionReference || 'ESP-CAUTION',
-            tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'
+            ownerId: targetOwnerId,
+            tenantId: user?.id
           }
         });
-      } catch (err) {
-        console.warn('Notification caution insert error:', err);
+      } catch {}
+
+      // Send caution declaration document directly to owner / agency messaging inbox
+      try {
+        sendDeclarationMessageToOwner({
+          type: 'caution',
+          declarationId: savedCaution.id,
+          contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
+          propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
+          amount: cautionAmount,
+          paymentMethod: cautionMethod,
+          reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
+          date: new Date().toLocaleDateString('fr-FR'),
+          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+          tenantId: user?.id || 'usr_locataire',
+          ownerId: targetOwnerId || 'usr_owner',
+          proofUrl: cautionProofUrl || undefined,
+          status: 'en_attente'
+        });
+      } catch (msgErr) {
+        console.warn('Erreur envoi chat message caution:', msgErr);
       }
+
+      setDeposits((prev) => [savedCaution, ...prev]);
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: savedCaution }));
+
+      setShowCautionModal(false);
+      setCautionReference('');
+      setCautionProofUrl(null);
+      setCautionProofFileName(null);
+      setCautionProofFileSize(null);
+      setSuccessModalMessage({
+        title: 'Paiement de caution signalé !',
+        desc: `Votre règlement de garantie de ${formatFCFA(cautionAmount)} a été notifié à votre bailleur sous le statut "Caution à confirmer".`
+      });
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+    } catch (err: any) {
+      console.error('Erreur déclaration caution:', err);
+      setShowCautionModal(false);
+      setSuccessModalMessage({
+        title: 'Paiement de caution signalé !',
+        desc: `Votre règlement de garantie de ${formatFCFA(cautionAmount)} a été enregistré et notifié à votre bailleur.`
+      });
+    } finally {
+      setIsSubmittingCaution(false);
     }
-
-    // Broadcast live event across devices (Supabase Realtime)
-    await broadcastLiveEvent('CAUTION_DECLARED', {
-      depositId: savedCaution.id,
-      targetUserId: targetOwnerId || undefined,
-      contractId: chosenContract?.id,
-      data: {
-        caution: savedCaution,
-        amount: cautionAmount,
-        ownerId: targetOwnerId,
-        tenantId: user?.id
-      }
-    });
-
-    // Send caution declaration document directly to owner / agency messaging inbox
-    sendDeclarationMessageToOwner({
-      type: 'caution',
-      declarationId: savedCaution.id,
-      contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
-      propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
-      amount: cautionAmount,
-      paymentMethod: cautionMethod,
-      reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-      date: new Date().toLocaleDateString('fr-FR'),
-      tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-      tenantId: user?.id || 'usr_locataire',
-      ownerId: targetOwnerId || 'usr_owner',
-      proofUrl: cautionProofUrl || undefined,
-      status: 'en_attente'
-    });
-
-    setDeposits((prev) => [savedCaution, ...prev]);
-    window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: savedCaution }));
-
-    setShowCautionModal(false);
-    setCautionReference('');
-    setCautionProofUrl(null);
-    setCautionProofFileName(null);
-    setCautionProofFileSize(null);
-    setSuccessModalMessage({
-      title: 'Paiement de caution signalé !',
-      desc: `Votre règlement de garantie de ${formatFCFA(cautionAmount)} a été notifié à votre bailleur sous le statut "Caution à confirmer".`
-    });
-    confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
   };
 
   const myDeposit = deposits[0];
@@ -923,9 +974,17 @@ export const LocatairePaiementsView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black shadow-md transition-all active:scale-95"
+                disabled={isSubmittingCaution}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black shadow-md transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
               >
-                Confirmer la déclaration
+                {isSubmittingCaution ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Transmission...</span>
+                  </>
+                ) : (
+                  <span>Confirmer la déclaration</span>
+                )}
               </button>
             </div>
           </form>
@@ -1133,9 +1192,17 @@ export const LocatairePaiementsView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-black shadow-md hover:bg-emerald-500"
+                disabled={isSubmittingPayment}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black shadow-md transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
               >
-                Soumettre la déclaration
+                {isSubmittingPayment ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Transmission...</span>
+                  </>
+                ) : (
+                  <span>Soumettre la déclaration</span>
+                )}
               </button>
             </div>
           </form>

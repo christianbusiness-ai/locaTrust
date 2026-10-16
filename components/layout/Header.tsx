@@ -118,23 +118,23 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [avatarUrl, setAvatarUrl] = useState(() => {
     const curr = currentUser.avatar_url;
-    if (curr && !curr.includes('images.unsplash.com')) return curr;
+    if (curr) return curr;
     if (typeof window !== 'undefined') {
       const stored = (currentUser.id && localStorage.getItem(`locatrust_user_avatar_${currentUser.id}`)) || localStorage.getItem('locatrust_user_avatar');
-      if (stored && !stored.includes('images.unsplash.com')) return stored;
+      if (stored) return stored;
     }
     return '';
   });
 
   useEffect(() => {
-    if (currentUser?.avatar_url && !currentUser.avatar_url.includes('images.unsplash.com')) {
+    if (currentUser?.avatar_url) {
       setAvatarUrl(currentUser.avatar_url);
     }
   }, [currentUser?.avatar_url]);
 
   useEffect(() => {
     const handleAvatarUpdated = (e: any) => {
-      if (e.detail?.avatarUrl && !e.detail.avatarUrl.includes('images.unsplash.com')) {
+      if (e.detail?.avatarUrl) {
         setAvatarUrl(e.detail.avatarUrl);
       }
     };
@@ -632,7 +632,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setShowProfileMenu(!showProfileMenu)}
               className="flex items-center gap-1.5 sm:gap-2.5 pl-2 sm:pl-3 border-l border-slate-200 dark:border-slate-800 cursor-pointer group shrink-0"
             >
-              {avatarUrl && !avatarUrl.includes('images.unsplash.com') ? (
+              {avatarUrl ? (
                 <img
                   src={avatarUrl}
                   alt={currentUser.full_name}

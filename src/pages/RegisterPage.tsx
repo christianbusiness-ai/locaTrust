@@ -7,7 +7,13 @@ import { triggerCelebration } from '@/lib/celebration';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
-  const { signUp, resendVerificationEmail } = useAuth();
+  const { user, loading: authLoading, signUp, resendVerificationEmail } = useAuth();
+
+  React.useEffect(() => {
+    if (user && !authLoading) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [user, authLoading, navigate]);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');

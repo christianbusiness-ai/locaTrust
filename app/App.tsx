@@ -171,6 +171,51 @@ const LiveSyncManager: React.FC = () => {
   return null;
 };
 
+// Gestionnaire du bouton retour physique / tactile des smartphones (Android, Samsung Galaxy, etc.)
+// Empêche la déconnexion inopinée lors de l'appui sur le bouton 'Retour' du téléphone
+const MobileBackButtonManager: React.FC = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (user && typeof window !== 'undefined') {
+      try {
+        window.history.pushState({ locatrustApp: true }, '', window.location.href);
+      } catch {}
+
+      const handlePopState = () => {
+        // 1. Fermer les modales ouvertes en priorité
+        const openModal = document.querySelector('.animate-scaleUp, [role="dialog"], .fixed.inset-0');
+        if (openModal) {
+          window.dispatchEvent(new CustomEvent('locatrust:close_active_modals'));
+          try {
+            window.history.pushState({ locatrustApp: true }, '', window.location.href);
+          } catch {}
+          return;
+        }
+
+        // 2. Si l'historique a reculé vers /login ou /, maintenir sur le dashboard
+        const currentPath = window.location.pathname;
+        if (currentPath === '/login' || currentPath === '/register' || currentPath === '/') {
+          navigate('/dashboard', { replace: true });
+          return;
+        }
+
+        try {
+          window.history.pushState({ locatrustApp: true }, '', window.location.href);
+        } catch {}
+      };
+
+      window.addEventListener('popstate', handlePopState);
+      return () => {
+        window.removeEventListener('popstate', handlePopState);
+      };
+    }
+  }, [user, navigate]);
+
+  return null;
+};
+
 import { GlobalCallModal } from '@/components/common/GlobalCallModal';
 
 export default function App() {
@@ -180,6 +225,7 @@ export default function App() {
         <TopProgressBar />
         <AuthProvider>
           <LiveSyncManager />
+          <MobileBackButtonManager />
           <GlobalCallModal />
           <Suspense fallback={<DashboardPageSkeleton />}>
             <Routes>

@@ -16,6 +16,8 @@ import { MaintenanceTicket } from '@/types/database.types';
 import { getMaintenanceTickets, createMaintenanceTicket, getContracts } from '@/src/lib/db';
 import { useAuth } from '@/src/context/AuthContext';
 import { TicketsListSkeleton } from '@/components/common/SkeletonLoader';
+import { supabase } from '@/src/lib/supabase';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
 export const LocataireMaintenanceView: React.FC = () => {
   const { user } = useAuth();
@@ -24,6 +26,8 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
+  const [isSubmittingTicket, setIsSubmittingTicket] = useState<boolean>(false);
+  const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
 
   // Form states
   const [selectedContractId, setSelectedContractId] = useState('');
@@ -66,28 +70,89 @@ export const LocataireMaintenanceView: React.FC = () => {
     e.preventDefault();
     if (!description.trim()) return;
 
-    const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
+    try {
+      setIsSubmittingTicket(true);
+      const chosenContract = userContracts.find(c => c.id === selectedContractId) || userContracts[0];
 
-    const ticketData = {
-      property_id: chosenContract?.property_id || null,
-      tenant_id: user?.id,
-      owner_id: chosenContract?.owner_id || null,
-      description: `[${category.toUpperCase()}] ${description}`,
-      status: 'ouvert',
-      photos: mediaUrl ? [mediaUrl] : []
-    };
+      const isValidUuid = (str?: string) =>
+        Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
-    const { data, error } = await createMaintenanceTicket(ticketData);
-    if (!error && data) {
-      setTickets((prev) => [data, ...prev]);
-    } else {
-      setTickets((prev) => [{ ...ticketData, id: `tkt_${Date.now()}`, created_at: new Date().toISOString() }, ...prev]);
+      const propId = chosenContract?.property_id || chosenContract?.property?.id;
+      const ownerId = chosenContract?.owner_id || chosenContract?.owner?.id || 'usr_owner';
+      const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire';
+      const propTitle = chosenContract?.property?.title || chosenContract?.property_title || 'Logement LocaTrust';
+
+      const ticketItem = {
+        id: `tkt_${Date.now()}`,
+        ticketNumber: `TCK-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+        tenantName: tenantName,
+        tenantPhone: user?.phone || '+225 07 00 00 00 00',
+        propertyTitle: propTitle,
+        propertyAddress: chosenContract?.property?.address || 'Abidjan',
+        category: category,
+        priority: 'normale',
+        status: 'Nouveau',
+        createdAt: new Date().toLocaleDateString('fr-FR'),
+        description: `[${category.toUpperCase()}] ${description}`,
+        photos: mediaUrl ? [mediaUrl] : [],
+        notes: []
+      };
+
+      // 1. Sauvegarde locale immédiate pour le tableau de bord bailleur et locataire
+      try {
+        const storedRaw = localStorage.getItem('locatrust_maintenance_tickets');
+        const existing = storedRaw ? JSON.parse(storedRaw) : [];
+        const updatedTickets = [ticketItem, ...existing];
+        localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(updatedTickets));
+      } catch {}
+
+      // 2. Inscription dans Supabase si UUID valides
+      if (propId && isValidUuid(propId) && ownerId && isValidUuid(ownerId)) {
+        try {
+          await supabase.from('maintenance_tickets').insert({
+            property_id: propId,
+            owner_id: ownerId,
+            tenant_id: user?.id && isValidUuid(user.id) ? user.id : null,
+            title: `Panne ${category.toUpperCase()} - ${description.slice(0, 35)}`,
+            description: mediaUrl ? `${description}\n[Photo/Vidéo: ${mediaUrl}]` : description,
+            category: category,
+            priority: 'normale',
+            status: 'ouvert'
+          });
+        } catch (dbErr: any) {
+          console.warn('Notice insertion Supabase maintenance_tickets:', dbErr?.message);
+        }
+      }
+
+      // 3. Notification temps réel au propriétaire / bailleur
+      try {
+        await pushGlobalNotification({
+          title: '⚠️ Incident de maintenance signalé',
+          description: `${tenantName} a signalé une anomalie (${category}) pour « ${propTitle} » : ${description.slice(0, 50)}...`,
+          category: 'maintenance',
+          targetRole: 'proprietaire',
+          targetUserId: ownerId || undefined,
+          targetTab: 'maintenance'
+        });
+      } catch {}
+
+      // 4. Événement temps réel pour synchronisation immédiate multi-onglets
+      window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: ticketItem }));
+
+      setTickets((prev) => [ticketItem, ...prev]);
+      setShowNewTicketModal(false);
+      setDescription('');
+      setMediaUrl('');
+      setSuccessModalMessage({
+        title: 'Incident transmis avec succès !',
+        desc: 'Votre signalement de maintenance a été notifié à votre bailleur. Vous serez informé de l\'intervention programmée.'
+      });
+    } catch (err: any) {
+      console.error('Erreur déclaration ticket:', err);
+      setShowNewTicketModal(false);
+    } finally {
+      setIsSubmittingTicket(false);
     }
-
-    setShowNewTicketModal(false);
-    setDescription('');
-    setMediaUrl('');
-    alert('Signalement d\'incident de maintenance transmis à votre bailleur !');
   };
 
   return (
@@ -291,12 +356,40 @@ export const LocataireMaintenanceView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-amber-600 text-white text-xs font-extrabold shadow-md hover:bg-amber-500"
+                disabled={isSubmittingTicket}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-extrabold shadow-md flex items-center gap-2 cursor-pointer transition-all"
               >
-                Transmettre le signalement
+                {isSubmittingTicket ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Transmission...</span>
+                  </>
+                ) : (
+                  <span>Transmettre le signalement</span>
+                )}
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMATION DE SUCCÈS */}
+      {successModalMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 border border-slate-200 shadow-2xl flex flex-col items-center text-center gap-3 animate-scaleUp">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center border border-amber-200">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <h4 className="text-base font-black text-slate-900">{successModalMessage.title}</h4>
+            <p className="text-xs text-slate-600 leading-relaxed">{successModalMessage.desc}</p>
+            <button
+              type="button"
+              onClick={() => setSuccessModalMessage(null)}
+              className="mt-2 w-full py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors"
+            >
+              Compris
+            </button>
+          </div>
         </div>
       )}
 

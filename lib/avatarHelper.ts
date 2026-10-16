@@ -107,6 +107,38 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
       if (userId) {
         localStorage.setItem(`locatrust_user_avatar_${userId}`, avatarDataUrl);
       }
+      localStorage.setItem('locatrust_user_avatar_usr_owner', avatarDataUrl);
+      localStorage.setItem('locatrust_user_avatar_usr_agency', avatarDataUrl);
+
+      // Mettre à jour l'utilisateur actif si présent
+      try {
+        const activeUserRaw = localStorage.getItem('locatrust_active_user');
+        if (activeUserRaw) {
+          const activeUser = JSON.parse(activeUserRaw);
+          if (activeUser) {
+            activeUser.avatar_url = avatarDataUrl;
+            localStorage.setItem('locatrust_active_user', JSON.stringify(activeUser));
+          }
+        }
+      } catch {}
+
+      // Propager également dans les biens en cache local (owner_avatar)
+      try {
+        const propsRaw = localStorage.getItem('locatrust_properties');
+        if (propsRaw) {
+          const props = JSON.parse(propsRaw);
+          if (Array.isArray(props)) {
+            const updatedProps = props.map((p: any) => {
+              if (p.owner_id === userId || p.agency_id === userId || p.owner_id === 'usr_owner' || p.agency_id === 'usr_agency') {
+                return { ...p, owner_avatar: avatarDataUrl };
+              }
+              return p;
+            });
+            localStorage.setItem('locatrust_properties', JSON.stringify(updatedProps));
+            window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { properties: updatedProps } }));
+          }
+        }
+      } catch {}
 
       // Propager également dans les candidatures en cache local
       const appsRaw = localStorage.getItem('locatrust_rental_applications');
@@ -114,10 +146,10 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
         const apps = JSON.parse(appsRaw);
         if (Array.isArray(apps)) {
           const updatedApps = apps.map((a: any) => {
-            if (a.owner_id === userId || a.agency_id === userId) {
+            if (a.owner_id === userId || a.agency_id === userId || a.owner_id === 'usr_owner' || a.agency_id === 'usr_agency') {
               return { ...a, owner_avatar: avatarDataUrl };
             }
-            if (a.tenant_id === userId) {
+            if (a.tenant_id === userId || a.tenant_id === 'usr_tenant') {
               return { ...a, tenant_avatar: avatarDataUrl };
             }
             return a;
@@ -138,6 +170,18 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
           } catch {}
         }
       }
+      try {
+        const cOwner = localStorage.getItem('locatrust_contact_usr_owner');
+        if (cOwner) {
+          const p = JSON.parse(cOwner);
+          localStorage.setItem('locatrust_contact_usr_owner', JSON.stringify({ ...p, avatar: avatarDataUrl }));
+        }
+        const cAgency = localStorage.getItem('locatrust_contact_usr_agency');
+        if (cAgency) {
+          const p = JSON.parse(cAgency);
+          localStorage.setItem('locatrust_contact_usr_agency', JSON.stringify({ ...p, avatar: avatarDataUrl }));
+        }
+      } catch {}
 
       window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: avatarDataUrl } }));
       window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));

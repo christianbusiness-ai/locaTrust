@@ -89,6 +89,20 @@ export const MaintenanceView: React.FC = () => {
 
   const selectedTicket = tickets.find((t) => t.id === selectedTicketId) || tickets[0];
 
+  useEffect(() => {
+    const handleMaintenanceUpdate = (e: any) => {
+      try {
+        const stored = localStorage.getItem('locatrust_maintenance_tickets');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) setTickets(parsed);
+        }
+      } catch {}
+    };
+    window.addEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
+    return () => window.removeEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
+  }, []);
+
   // Filtering
   const filteredTickets = tickets.filter((ticket) => {
     if (statusFilter === 'all') return true;

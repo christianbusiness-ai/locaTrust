@@ -17,8 +17,15 @@ export const LoginPage: React.FC = () => {
   const [resending, setResending] = useState(false);
   const [resendMsg, setResendMsg] = useState<string | null>(null);
 
-  const { signIn, resendVerificationEmail } = useAuth();
+  const { user, loading: authLoading, signIn, resendVerificationEmail } = useAuth();
   const from = (location.state as any)?.from?.pathname || '/dashboard';
+
+  // Si l'utilisateur est déjà connecté, le renvoyer directement sur le dashboard
+  useEffect(() => {
+    if (user && !authLoading) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [user, authLoading, navigate]);
 
   // Si l'utilisateur clique sur le lien email de réinitialisation de mot de passe ou validation d'email
   useEffect(() => {
