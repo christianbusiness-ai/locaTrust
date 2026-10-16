@@ -41,6 +41,12 @@ import { ACCENT_THEMES, applyAccentTheme } from '@/lib/themeHelper';
 import { AccountingYearCompactControl } from './AccountingYearCompactControl';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import {
+  SUGGESTED_AVATARS,
+  getDefaultRealisticAvatar,
+  compressAvatarImage,
+  saveUserAvatarLocallyAndSync
+} from '@/lib/avatarHelper';
 
 interface AdminTicket {
   id: string;
@@ -129,12 +135,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Avatar Management State (Points 19 & 20 du prompt)
   const [userAvatar, setUserAvatar] = useState<string>(() => {
     const profAvatar = profile?.avatar_url;
-    if (profAvatar && !profAvatar.includes('images.unsplash.com')) return profAvatar;
+    if (profAvatar && profAvatar.trim().length > 5 && !profAvatar.includes('ui-avatars.com')) return profAvatar;
     if (typeof window !== 'undefined') {
       const stored = (user?.id && localStorage.getItem(`locatrust_user_avatar_${user.id}`)) || localStorage.getItem('locatrust_user_avatar');
-      if (stored && !stored.includes('images.unsplash.com')) return stored;
+      if (stored && stored.trim().length > 5 && !stored.includes('ui-avatars.com')) return stored;
     }
-    return '';
+    return getDefaultRealisticAvatar(profile?.full_name || currentUser?.full_name || 'Bailleur', isAgency ? 'agence' : 'proprietaire');
   });
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
@@ -142,7 +148,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
-    if (profile?.avatar_url && !profile.avatar_url.includes('images.unsplash.com')) {
+    if (profile?.avatar_url && profile.avatar_url.trim().length > 5 && !profile.avatar_url.includes('ui-avatars.com')) {
       setUserAvatar(profile.avatar_url);
     }
   }, [profile?.avatar_url]);
@@ -387,31 +393,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
 
     try {
-      const { compressAvatarImage } = await import('@/lib/avatarHelper');
       const compressed = await compressAvatarImage(file, 256, 0.85);
-      setAvatarPreview(compressed);
-      setIsAvatarModalOpen(true);
+      setUserAvatar(compressed);
+      if (user?.id) {
+        await saveUserAvatarLocallyAndSync(user.id, compressed);
+        await refreshProfile();
+      }
+      setSavedMessage('Photo de profil mise à jour et enregistrée avec succès.');
+      setTimeout(() => setSavedMessage(null), 3500);
     } catch {
       setAvatarUploadError('Erreur lors du traitement de l\'image.');
     }
   };
 
-  const handleConfirmAvatarChange = async () => {
-    if (!avatarPreview) return;
-    setUserAvatar(avatarPreview);
-
+  const handleSelectSuggestedAvatar = async (avatarUrl: string) => {
+    setUserAvatar(avatarUrl);
     if (user?.id) {
       try {
-        const { saveUserAvatarLocallyAndSync } = await import('@/lib/avatarHelper');
-        await saveUserAvatarLocallyAndSync(user.id, avatarPreview);
+        await saveUserAvatarLocallyAndSync(user.id, avatarUrl);
         await refreshProfile();
       } catch (err) {
-        console.error('Erreur sauvegarde avatar:', err);
+        console.error('Erreur sauvegarde avatar suggéré:', err);
       }
     }
-
-    setIsAvatarModalOpen(false);
-    setAvatarPreview(null);
     setSavedMessage('Photo de profil mise à jour avec succès.');
     setTimeout(() => setSavedMessage(null), 3500);
   };
@@ -652,31 +656,65 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </p>
                 </div>
                 
-                <div className="flex items-center gap-3">
-                  <div className="relative w-14 h-14 rounded-full overflow-hidden border-2 border-amber-500 shrink-0 shadow-sm bg-slate-100">
-                    <img
-                      src={userAvatar}
-                      alt="Avatar"
-                      className="w-full h-full object-cover"
-                    />
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-amber-500 shrink-0 shadow-sm bg-slate-100">
+                      <img
+                        src={userAvatar || getDefaultRealisticAvatar(fullName, isAgency ? 'agence' : 'proprietaire')}
+                        alt="Avatar"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="file"
+                        ref={avatarInputRef}
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleAvatarFileSelected}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => avatarInputRef.current?.click()}
+                        className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-blue-600" />
+                        <span>{isAgency ? "Téléverser mon logo / photo" : "Téléverser ma photo"}</span>
+                      </button>
+                      <span className="text-[10px] text-slate-400 block mt-0.5">JPG, PNG, WEBP • Max 5 Mo</span>
+                    </div>
                   </div>
-                  <div>
-                    <input
-                      type="file"
-                      ref={avatarInputRef}
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleAvatarFileSelected}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => avatarInputRef.current?.click()}
-                      className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
-                    >
-                      <Camera className="w-3.5 h-3.5 text-blue-600" />
-                      <span>{isAgency ? "Changer le logo / photo" : "Changer la photo de profil"}</span>
-                    </button>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">JPG, PNG, WEBP • Max 5 Mo</span>
+
+                  {/* Suggestion de portraits professionnels africains */}
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Ou choisir une photo de profil certifiée :
+                    </span>
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                      {SUGGESTED_AVATARS.map((sugUrl, sIdx) => {
+                        const isCurrent = userAvatar === sugUrl;
+                        return (
+                          <button
+                            key={sIdx}
+                            type="button"
+                            onClick={() => handleSelectSuggestedAvatar(sugUrl)}
+                            className={`relative w-10 h-10 rounded-full overflow-hidden shrink-0 transition-all border-2 ${
+                              isCurrent
+                                ? 'border-blue-600 scale-105 shadow-md ring-2 ring-blue-600/30'
+                                : 'border-slate-200 hover:border-blue-400 opacity-80 hover:opacity-100'
+                            }`}
+                            title="Choisir ce portrait professionnel"
+                          >
+                            <img src={sugUrl} alt={`Avatar suggestion ${sIdx + 1}`} className="w-full h-full object-cover" />
+                            {isCurrent && (
+                              <span className="absolute inset-0 bg-blue-600/20 flex items-center justify-center">
+                                <Check className="w-4 h-4 text-white drop-shadow" />
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>

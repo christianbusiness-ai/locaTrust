@@ -4,6 +4,7 @@ import { generateOfficialReceiptPDF, OfficialReceiptData } from '@/lib/payments/
 import { triggerCelebration } from '@/lib/celebration';
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 
 export interface ChatQuittanceAttachment {
   receiptNumber: string;
@@ -166,6 +167,26 @@ export function getStoredMessages(): ChatMessage[] {
       if (m.sender_id === 'usr_owner_1' || m.receiver_id === 'usr_owner_1') return false;
       if (m.text && (m.text.includes('Kouassi Jean-Philippe') || m.text.includes('Awa Touré'))) return false;
       return true;
+    }).map((m: any) => {
+      if (!m) return m;
+      let textStr = m.text;
+      if (typeof textStr === 'string' && (textStr.trim().startsWith('{') || textStr.trim().startsWith('[')) && textStr.includes('"type":')) {
+        try {
+          const rawParsed = JSON.parse(textStr.trim());
+          const item = Array.isArray(rawParsed) ? rawParsed[0] : rawParsed;
+          if (item && typeof item === 'object') {
+            return {
+              ...m,
+              text: item.text || m.text,
+              contract: m.contract || item.contract,
+              quittance: m.quittance || item.quittance,
+              restitution: m.restitution || item.restitution,
+              attachment: m.attachment || item.attachment
+            };
+          }
+        } catch {}
+      }
+      return m;
     });
 
     const deduplicated = deduplicateMessageList(cleaned);
@@ -525,7 +546,27 @@ export function getStoredTenantReceipts(): ChatQuittanceAttachment[] {
 
 export function sendContractToTenant(tenantId: string, contract: ChatContractAttachment, senderId?: string): ChatMessage {
   const current = getStoredMessages();
-  const finalSenderId = senderId || 'usr_owner';
+  let finalSenderId = senderId;
+  if (!finalSenderId || finalSenderId === 'usr_owner' || finalSenderId === 'usr_agency') {
+    try {
+      const appsRaw = localStorage.getItem('locatrust_rental_applications');
+      if (appsRaw) {
+        const apps = JSON.parse(appsRaw);
+        if (Array.isArray(apps)) {
+          const matched = apps.find((a: any) =>
+            (contract.contractNumber && a.contract_number === contract.contractNumber) ||
+            (contract.propertyTitle && a.property_title === contract.propertyTitle) ||
+            (contract.ownerName && (a.owner_name === contract.ownerName || a.agency_name === contract.ownerName))
+          );
+          if (matched && (matched.agency_id || matched.owner_id)) {
+            finalSenderId = matched.agency_id || matched.owner_id;
+          }
+        }
+      }
+    } catch {}
+  }
+  if (!finalSenderId) finalSenderId = 'usr_owner';
+
   const newMsg: ChatMessage = {
     id: `msg_contract_${Date.now()}`,
     sender_id: finalSenderId,
@@ -545,12 +586,18 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
   // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
   if (typeof window !== 'undefined') {
     try {
-      // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
       const storedUserAvatar = localStorage.getItem('locatrust_user_avatar');
       const existingOwnerContact = localStorage.getItem(`locatrust_contact_${finalSenderId}`);
       const parsedOwner = existingOwnerContact ? JSON.parse(existingOwnerContact) : null;
       const existingTenantContact = localStorage.getItem(`locatrust_contact_${tenantId}`);
       const parsedTenant = existingTenantContact ? JSON.parse(existingTenantContact) : null;
+
+      const ownerAvatar =
+        parsedOwner?.avatar && !parsedOwner.avatar.includes('ui-avatars.com')
+          ? parsedOwner.avatar
+          : storedUserAvatar && !storedUserAvatar.includes('ui-avatars.com')
+          ? storedUserAvatar
+          : getDefaultRealisticAvatar(contract.ownerName, contract.ownerName.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur');
 
       localStorage.setItem(`locatrust_contact_${finalSenderId}`, JSON.stringify({
         id: finalSenderId,
@@ -558,7 +605,7 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
         phone: '+225 07 00 00 00 00',
         role: contract.ownerName.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
         propertyTitle: contract.propertyTitle,
-        avatar: parsedOwner?.avatar || storedUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.ownerName)}&background=1E40AF&color=fff`,
+        avatar: ownerAvatar,
         online: true
       }));
 
@@ -710,13 +757,16 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
 
       let displayText = m.content || '';
       try {
-        if (m.content && m.content.startsWith('{') && m.content.includes('"type":')) {
-          const parsed = JSON.parse(m.content);
-          if (parsed.text) displayText = parsed.text;
-          if (parsed.contract) parsedContract = parsed.contract;
-          if (parsed.quittance) parsedQuittance = parsed.quittance;
-          if (parsed.restitution) parsedRestitution = parsed.restitution;
-          if (parsed.attachment) parsedAttachment = parsed.attachment;
+        if (m.content && (m.content.trim().startsWith('{') || m.content.trim().startsWith('[')) && m.content.includes('"type":')) {
+          const rawParsed = JSON.parse(m.content.trim());
+          const parsed = Array.isArray(rawParsed) ? rawParsed[0] : rawParsed;
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.text) displayText = parsed.text;
+            if (parsed.contract) parsedContract = parsed.contract;
+            if (parsed.quittance) parsedQuittance = parsed.quittance;
+            if (parsed.restitution) parsedRestitution = parsed.restitution;
+            if (parsed.attachment) parsedAttachment = parsed.attachment;
+          }
         }
       } catch {}
 
@@ -737,7 +787,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         (local) =>
           local.id === m.id ||
           (local.sender_id === m.sender_id &&
-            local.text === (m.content || '') &&
+            local.text === displayText &&
             Math.abs(new Date(local.created_at).getTime() - new Date(m.created_at).getTime()) < 60000)
       );
 
@@ -806,9 +856,10 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
 
       const propTitle = (c.properties as any)?.title || 'Bien immobilier';
       const avatarUrl =
-        prof.avatar_url && prof.avatar_url.trim()
+        prof.avatar_url && prof.avatar_url.trim().length > 5 && !prof.avatar_url.includes('ui-avatars.com')
           ? prof.avatar_url
-          : `https://ui-avatars.com/api/?name=${encodeURIComponent(prof.full_name || 'Contact')}&background=1E40AF&color=fff`;
+          : (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${prof.id}`) || localStorage.getItem('locatrust_user_avatar')) : null) ||
+            getDefaultRealisticAvatar(prof.full_name, roleLabel);
 
       if (!realContacts.some((rc) => rc.id === prof.id)) {
         realContacts.push({

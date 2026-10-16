@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 
 interface UserAvatarProps {
   src?: string | null;
@@ -9,6 +10,7 @@ interface UserAvatarProps {
   sizeClassName?: string;
   isOnline?: boolean;
   borderClassName?: string;
+  fallbackRole?: string;
 }
 
 export const UserAvatar: React.FC<UserAvatarProps> = ({
@@ -17,7 +19,8 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   className = '',
   sizeClassName = 'w-10 h-10',
   isOnline = false,
-  borderClassName = 'border-2 border-emerald-500'
+  borderClassName = 'border-2 border-emerald-500',
+  fallbackRole
 }) => {
   const [hasError, setHasError] = useState(false);
 
@@ -32,14 +35,16 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         .toUpperCase()
     : 'LT';
 
-  const shouldShowImg = Boolean(src && !hasError && src.trim().length > 5);
+  const defaultPhoto = getDefaultRealisticAvatar(cleanName, fallbackRole);
+  const isValidCustomSrc = Boolean(src && src.trim().length > 5 && !src.includes('ui-avatars.com'));
+  const currentImgSrc = hasError ? (src !== defaultPhoto ? defaultPhoto : null) : (isValidCustomSrc ? src! : defaultPhoto);
 
   return (
     <div className={`relative shrink-0 ${sizeClassName} ${className}`}>
-      {shouldShowImg ? (
+      {currentImgSrc ? (
         <img
-          src={src!}
-          alt=""
+          src={currentImgSrc}
+          alt={cleanName || 'Avatar'}
           className={`w-full h-full rounded-full object-cover ${borderClassName} shadow-sm`}
           onError={() => setHasError(true)}
         />

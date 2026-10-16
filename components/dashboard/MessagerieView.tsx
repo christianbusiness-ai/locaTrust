@@ -79,6 +79,7 @@ import {
   persistOwnerSignature,
   persistTenantSignature
 } from '@/lib/contractPartyResolver';
+import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 
 interface MessagerieViewProps {
   userRole?: 'proprietaire' | 'locataire' | 'agence';
@@ -157,9 +158,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const ownerName = app.agency_name || app.owner_name || (app.owner as any)?.full_name || 'Bailleur Propriétaire';
               const ownerId = app.agency_id || app.owner_id || `owner_${app.property_id || app.id}`;
               const ownerRole = app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur';
-              const ownerAvatar = app.owner_avatar || (app.owner as any)?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(ownerName)}&background=1E40AF&color=fff`;
+              const ownerAvatar =
+                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') ? app.owner_avatar : null) ||
+                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') ? (app.owner as any).avatar_url : null) ||
+                (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${ownerId}`) || localStorage.getItem('locatrust_user_avatar')) : null) ||
+                getDefaultRealisticAvatar(ownerName, ownerRole);
 
-              if (!list.some((c) => c.id === ownerId || c.name === ownerName)) {
+              if (!list.some((c) => c.id === ownerId || c.name.toLowerCase() === ownerName.toLowerCase())) {
                 list.push({
                   id: ownerId,
                   name: ownerName,
@@ -183,9 +188,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
               const tenantId = app.tenant_id || `tenant_${app.id}`;
               const tenantName = app.tenant_name || 'Candidat Locataire';
-              const tenantAvatar = app.tenant_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(tenantName)}&background=059669&color=fff`;
+              const tenantAvatar =
+                (app.tenant_avatar && !app.tenant_avatar.includes('ui-avatars.com') ? app.tenant_avatar : null) ||
+                (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${tenantId}`) : null) ||
+                getDefaultRealisticAvatar(tenantName, 'locataire');
 
-              if (app.tenant_name && !list.some((c) => c.id === tenantId || c.name === tenantName)) {
+              if (app.tenant_name && !list.some((c) => c.id === tenantId || c.name.toLowerCase() === tenantName.toLowerCase())) {
                 list.push({
                   id: tenantId,
                   name: tenantName,
@@ -213,8 +221,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             otherId &&
             !myAliases.has(otherId) &&
             otherId !== 'usr_owner_1' &&
-            otherId !== 'usr_tenant_1' &&
-            !list.some((c) => c.id === otherId)
+            otherId !== 'usr_tenant_1'
           ) {
             const matchingApp = apps.find(
               (a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId
@@ -224,8 +231,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               ? (userRole === 'locataire' ? matchingApp.owner_name : matchingApp.tenant_name)
               : undefined;
 
-            if (!contactName && m.contract) {
-              contactName = userRole === 'locataire' ? m.contract.ownerName : m.contract.tenantName;
+            let contractObj = m.contract;
+            if (!contractObj && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"ownerName"'))) {
+              try {
+                let p = JSON.parse(m.text.trim());
+                if (Array.isArray(p)) p = p[0];
+                if (p?.contract) contractObj = p.contract;
+              } catch {}
+            }
+
+            if (!contactName && contractObj) {
+              contactName = userRole === 'locataire' ? contractObj.ownerName : contractObj.tenantName;
             }
 
             if (!contactName) {
@@ -235,25 +251,57 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               }
             }
 
+            // Ne pas recréer de doublon si ce nom existe déjà dans la liste
+            if (contactName && list.some((c) => c.name.toLowerCase() === contactName!.toLowerCase())) {
+              return;
+            }
+
+            // S'il s'agit d'un identifiant générique (usr_owner / usr_agency) ou sans nom précis,
+            // et qu'on a déjà un contact bailleur/agence réel dans la liste, ne surtout pas créer de doublon
+            const hasExistingNamedParty = list.some(
+              (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire' && c.name.toLowerCase() !== 'locataire candidat'
+            );
+
+            if (
+              (otherId === 'usr_owner' || otherId === 'usr_agency' || !contactName || contactName.toLowerCase() === 'bailleur propriétaire') &&
+              hasExistingNamedParty
+            ) {
+              return;
+            }
+
             if (!contactName) {
               contactName = otherId.includes('owner') || otherId.includes('agency') ? 'Bailleur Propriétaire' : 'Locataire Candidat';
             }
 
             const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
             const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire Candidat';
-            const contactAvatar = matchingApp?.tenant_avatar || matchingApp?.owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(contactName)}&background=${userRole === 'locataire' ? '1E40AF' : '059669'}&color=fff`;
+            const contactAvatar =
+              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') ? matchingApp.tenant_avatar : null) ||
+              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') ? matchingApp.owner_avatar : null) ||
+              (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${otherId}`) : null) ||
+              getDefaultRealisticAvatar(contactName, contactRole);
 
-            list.push({
-              id: otherId,
-              name: contactName,
-              phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
-              role: contactRole,
-              propertyTitle: matchingApp?.property_title || m.contract?.propertyTitle || 'Échange direct',
-              avatar: contactAvatar,
-              online: true
-            });
+            if (!list.some((c) => c.id === otherId || c.name.toLowerCase() === contactName!.toLowerCase())) {
+              list.push({
+                id: otherId,
+                name: contactName,
+                phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
+                role: contactRole,
+                propertyTitle: matchingApp?.property_title || contractObj?.propertyTitle || 'Échange direct',
+                avatar: contactAvatar,
+                online: true
+              });
+            }
           }
         });
+
+        // Nettoyer automatiquement les contacts génériques en doublon stockés localement
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.removeItem('locatrust_contact_usr_owner');
+            localStorage.removeItem('locatrust_contact_usr_agency');
+          } catch {}
+        }
 
         // Charger tout contact directement sauvegardé suite à un message ou une candidature
         for (let i = 0; i < localStorage.length; i++) {
@@ -263,10 +311,18 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const rawContact = localStorage.getItem(key);
               if (rawContact) {
                 const c = JSON.parse(rawContact);
-                if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing.id === c.id || existing.name === c.name)) {
+                const isGenericOwner = c.name === 'Bailleur Propriétaire' || c.id === 'usr_owner' || c.id === 'usr_agency';
+                const hasRealOwner = list.some((existing) => existing.id !== 'usr_support' && existing.name.toLowerCase() !== 'bailleur propriétaire');
+                if (isGenericOwner && hasRealOwner) continue;
+
+                if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing.id === c.id || existing.name.toLowerCase() === (c.name || '').toLowerCase())) {
+                  const safeAvatar =
+                    c.avatar && !c.avatar.includes('ui-avatars.com')
+                      ? c.avatar
+                      : getDefaultRealisticAvatar(c.name, c.role);
                   list.push({
                     ...c,
-                    avatar: c.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=1E40AF&color=fff`
+                    avatar: safeAvatar
                   });
                 }
               }
@@ -276,7 +332,39 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       } catch (e) {}
     }
 
-    return list;
+    // Déduplication finale et garantie d'avatar réaliste
+    const uniqueContacts: ChatContact[] = [];
+    const seenNames = new Set<string>();
+    const hasNamedOwner = list.some(
+      (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire' && c.name.toLowerCase() !== 'locataire candidat'
+    );
+
+    for (const c of list) {
+      if (!c || !c.id) continue;
+      const lower = (c.name || '').trim().toLowerCase();
+
+      // Supprimer le doublon générique "Bailleur Propriétaire" s'il existe déjà un vrai contact propriétaire/agence
+      if (hasNamedOwner && (lower === 'bailleur propriétaire' || c.id === 'usr_owner' || c.id === 'usr_agency')) {
+        continue;
+      }
+
+      if (seenNames.has(lower)) continue;
+      seenNames.add(lower);
+
+      let finalAvatar = c.avatar;
+      if (!finalAvatar || finalAvatar.includes('ui-avatars.com') || finalAvatar.trim().length <= 5) {
+        finalAvatar =
+          (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${c.id}`) || localStorage.getItem('locatrust_user_avatar')) : null) ||
+          getDefaultRealisticAvatar(c.name, c.role);
+      }
+
+      uniqueContacts.push({
+        ...c,
+        avatar: finalAvatar
+      });
+    }
+
+    return uniqueContacts;
   }, [userRole, currentUserId, user?.id, user?.email, dbContacts]);
 
   const [selectedContactId, setSelectedContactId] = useState<string>(() => {
@@ -491,22 +579,44 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Filter messages between current user and active contact with intelligent deduplication
   const currentConversationMessages = React.useMemo(() => {
+    const isOwnerAgencyRole =
+      activeContact?.role?.toLowerCase().includes('propriétaire') ||
+      activeContact?.role?.toLowerCase().includes('bailleur') ||
+      activeContact?.role?.toLowerCase().includes('agence');
+
+    const contactAliases = new Set([
+      activeContact?.id,
+      activeContact?.name,
+      activeContact?.name?.toLowerCase(),
+      `tenant_${activeContact?.id}`,
+      `owner_${activeContact?.id}`,
+      ...(isOwnerAgencyRole ? ['usr_owner', 'usr_agency', 'owner_usr_owner'] : ['usr_tenant'])
+    ]);
+
     const raw = (Array.isArray(messages) ? messages : []).filter(
       (m) => {
         if (!activeContact?.id) return false;
-        const contactAliases = new Set([
-          activeContact.id,
-          activeContact.name,
-          `tenant_${activeContact.id}`,
-          `owner_${activeContact.id}`
-        ]);
+
+        let msgContract = m.contract;
+        if (!msgContract && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"ownerName"'))) {
+          try {
+            let p = JSON.parse(m.text.trim());
+            if (Array.isArray(p)) p = p[0];
+            if (p?.contract) msgContract = p.contract;
+          } catch {}
+        }
+
+        const matchesContractParty =
+          msgContract &&
+          ((msgContract.ownerName && msgContract.ownerName.toLowerCase() === activeContact.name.toLowerCase()) ||
+           (msgContract.propertyTitle && activeContact.propertyTitle && msgContract.propertyTitle === activeContact.propertyTitle));
 
         const sentByMeToContact =
           myAliases.has(m.sender_id) &&
-          (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle));
+          (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || matchesContractParty);
 
         const sentByContactToMe =
-          (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || (activeContact.propertyTitle && m.contract?.propertyTitle === activeContact.propertyTitle)) &&
+          (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || matchesContractParty) &&
           myAliases.has(m.receiver_id);
 
         return sentByMeToContact || sentByContactToMe;
@@ -1496,7 +1606,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
                     <div className="flex items-center justify-between mt-0.5">
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate pr-2">
-                        {lastMsg ? lastMsg.text : 'Démarrer la conversation...'}
+                        {lastMsg ? (() => {
+                          const txt = (lastMsg.text || '').trim();
+                          if (txt.startsWith('{') || txt.startsWith('[')) {
+                            try {
+                              let p = JSON.parse(txt);
+                              if (Array.isArray(p) && p.length > 0) p = p[0];
+                              if (p?.text) return p.text.split('\n')[0];
+                            } catch {}
+                          }
+                          return txt.split('\n')[0] || 'Démarrer la conversation...';
+                        })() : 'Démarrer la conversation...'}
                       </p>
                       {contactUnreadCount > 0 && (
                         <span className="w-5 h-5 rounded-full bg-emerald-500 text-white font-black text-[10px] flex items-center justify-center shrink-0 shadow-sm animate-pulse">
@@ -1617,6 +1737,27 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 minute: '2-digit'
               });
 
+              // Déballage intelligent du message si le texte est un JSON sérialisé
+              let textToDisplay = m.text || '';
+              let contractAttachment = m.contract;
+              let quittanceAttachment = m.quittance;
+              let restitutionAttachment = m.restitution;
+              let fileAttachment = m.attachment;
+
+              if (typeof textToDisplay === 'string' && (textToDisplay.trim().startsWith('{') || textToDisplay.trim().startsWith('['))) {
+                try {
+                  let parsed = JSON.parse(textToDisplay.trim());
+                  if (Array.isArray(parsed) && parsed.length > 0) parsed = parsed[0];
+                  if (parsed && typeof parsed === 'object') {
+                    if (parsed.text) textToDisplay = parsed.text;
+                    if (parsed.contract) contractAttachment = contractAttachment || parsed.contract;
+                    if (parsed.quittance) quittanceAttachment = quittanceAttachment || parsed.quittance;
+                    if (parsed.restitution) restitutionAttachment = restitutionAttachment || parsed.restitution;
+                    if (parsed.attachment) fileAttachment = fileAttachment || parsed.attachment;
+                  }
+                } catch (e) {}
+              }
+
               return (
                 <div
                   key={m.id}
@@ -1631,31 +1772,31 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                         : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-tl-none'
                     }`}
                   >
-                    <div className="whitespace-pre-line text-xs break-words [overflow-wrap:anywhere]">{m.text}</div>
+                    <div className="whitespace-pre-line text-xs break-words [overflow-wrap:anywhere]">{textToDisplay}</div>
 
                     {/* Media / File Attachment (Point 6) */}
-                    {m.attachment && (
+                    {fileAttachment && (
                       <div className="mt-2 rounded-xl overflow-hidden">
-                        {m.attachment.type === 'image' && (
+                        {fileAttachment.type === 'image' && (
                           <div className="flex flex-col gap-1">
                             <img
-                              src={m.attachment.url}
-                              alt={m.attachment.name || 'Photo'}
+                              src={fileAttachment.url}
+                              alt={fileAttachment.name || 'Photo'}
                               className="rounded-xl max-h-64 max-w-full object-cover border border-slate-200 dark:border-slate-700 shadow-sm cursor-pointer hover:opacity-95 transition-opacity"
-                              onClick={() => window.open(m.attachment!.url, '_blank')}
+                              onClick={() => window.open(fileAttachment!.url, '_blank')}
                             />
-                            {m.attachment.size && (
+                            {fileAttachment.size && (
                               <span className={`text-[10px] ${isMe ? 'text-blue-200' : 'text-slate-400'} font-mono`}>
-                                {m.attachment.name} • {m.attachment.size}
+                                {fileAttachment.name} • {fileAttachment.size}
                               </span>
                             )}
                           </div>
                         )}
 
-                        {m.attachment.type === 'document' && (
+                        {fileAttachment.type === 'document' && (
                           <a
-                            href={m.attachment.url}
-                            download={m.attachment.name || 'document'}
+                            href={fileAttachment.url}
+                            download={fileAttachment.name || 'document'}
                             className={`flex items-center gap-2.5 p-3 rounded-xl border transition-colors shadow-sm ${
                               isMe
                                 ? 'bg-blue-700/60 border-blue-500 text-white hover:bg-blue-700'
@@ -1668,16 +1809,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                               <FileText className="w-4 h-4" />
                             </div>
                             <div className="flex flex-col min-w-0 flex-1">
-                              <span className="text-xs font-bold truncate">{m.attachment.name || 'Document joint'}</span>
+                              <span className="text-xs font-bold truncate">{fileAttachment.name || 'Document joint'}</span>
                               <span className={`text-[10px] font-mono ${isMe ? 'text-blue-200' : 'text-slate-400'}`}>
-                                {m.attachment.size || 'Fichier PDF'}
+                                {fileAttachment.size || 'Fichier PDF'}
                               </span>
                             </div>
                             <Download className="w-4 h-4 shrink-0" />
                           </a>
                         )}
 
-                        {m.attachment.type === 'audio' && (
+                        {fileAttachment.type === 'audio' && (
                           <div className={`flex items-center gap-2 p-2.5 rounded-xl border ${
                             isMe
                               ? 'bg-blue-700/60 border-blue-500 text-white'
@@ -1688,10 +1829,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                             }`}>
                               <Volume2 className="w-4 h-4" />
                             </div>
-                            <audio controls src={m.attachment.url} className="h-8 max-w-[200px] sm:max-w-[240px]" />
-                            {m.attachment.duration && (
+                            <audio controls src={fileAttachment.url} className="h-8 max-w-[200px] sm:max-w-[240px]" />
+                            {fileAttachment.duration && (
                               <span className={`text-[10px] font-mono shrink-0 ${isMe ? 'text-blue-200' : 'text-slate-400'}`}>
-                                {m.attachment.duration}s
+                                {fileAttachment.duration}s
                               </span>
                             )}
                           </div>
@@ -1700,7 +1841,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     )}
 
                     {/* Quittance Attachment Card */}
-                    {m.quittance && (
+                    {quittanceAttachment && (
                       <div className="mt-3 bg-white text-slate-900 rounded-2xl p-4 border border-slate-200 shadow-md flex flex-col gap-3">
                         <div className="flex items-center justify-between border-b pb-2">
                           <div className="flex items-center gap-2">
@@ -1712,7 +1853,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                 Quittance de Loyer Certifiée
                               </span>
                               <span className="text-[10px] text-blue-600 font-mono font-bold">
-                                N° {m.quittance.receiptNumber}
+                                N° {quittanceAttachment.receiptNumber}
                               </span>
                             </div>
                           </div>
@@ -1724,11 +1865,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                         <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                           <div>
                             <span className="text-slate-400 block text-[10px]">Montant :</span>
-                            <span className="font-black text-blue-700">{formatFCFA(m.quittance.amount)}</span>
+                            <span className="font-black text-blue-700">{formatFCFA(quittanceAttachment.amount)}</span>
                           </div>
                           <div>
                             <span className="text-slate-400 block text-[10px]">Période :</span>
-                            <span className="font-bold text-slate-800">{m.quittance.periodCovered}</span>
+                            <span className="font-bold text-slate-800">{quittanceAttachment.periodCovered}</span>
                           </div>
                         </div>
 
@@ -1736,7 +1877,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                         <div className="flex flex-col sm:grid sm:grid-cols-3 gap-2 pt-1 w-full">
                           <button
                             type="button"
-                            onClick={() => setPreviewingQuittance(m.quittance!)}
+                            onClick={() => setPreviewingQuittance(quittanceAttachment!)}
                             className="py-2 px-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold flex items-center justify-center gap-1 transition-all active:scale-95"
                             title="Consulter le reçu"
                           >
@@ -1748,24 +1889,24 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                             onClick={() => {
                               setSigningTarget({
                                 type: 'quittance',
-                                quittance: m.quittance,
+                                quittance: quittanceAttachment,
                                 role: userRole === 'locataire' ? 'locataire' : 'proprietaire'
                               });
                               setIsSignatureModalOpen(true);
                             }}
                             className={`py-2 px-1.5 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95 ${
-                              m.quittance.tenantSignatureUrl
+                              quittanceAttachment.tenantSignatureUrl
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'
                                 : 'bg-amber-600 hover:bg-amber-700 text-white'
                             }`}
                             title="Valider / Contresigner"
                           >
                             <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                            <span className="truncate">{m.quittance.tenantSignatureUrl ? 'Validé ✓' : 'Valider'}</span>
+                            <span className="truncate">{quittanceAttachment.tenantSignatureUrl ? 'Validé ✓' : 'Valider'}</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => downloadQuittancePdfFromAttachment(m.quittance!)}
+                            onClick={() => downloadQuittancePdfFromAttachment(quittanceAttachment!)}
                             className="py-2 px-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95"
                             title="Télécharger la quittance PDF"
                           >
@@ -1777,7 +1918,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     )}
 
                     {/* Contract Attachment Card */}
-                    {m.contract && (
+                    {contractAttachment && (
                       <div className="mt-3 bg-white text-slate-900 rounded-2xl p-4 border border-slate-200 shadow-md flex flex-col gap-3">
                         <div className="flex items-center justify-between border-b pb-2">
                           <div className="flex items-center gap-2">
@@ -1789,27 +1930,27 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                 Contrat de Bail d'Habitation
                               </span>
                               <span className="text-[10px] text-purple-600 font-mono font-bold">
-                                N° {m.contract.contractNumber}
+                                N° {contractAttachment.contractNumber}
                               </span>
                             </div>
                           </div>
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 ${
-                              m.contract.ownerSigned && m.contract.tenantSigned
+                              contractAttachment.ownerSigned && contractAttachment.tenantSigned
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                                 : 'bg-amber-100 text-amber-800 border border-amber-200'
                             }`}
                           >
-                            {m.contract.ownerSigned && m.contract.tenantSigned ? 'Certifié & Signé' : 'En attente signature'}
+                            {contractAttachment.ownerSigned && contractAttachment.tenantSigned ? 'Certifié & Signé' : 'En attente signature'}
                           </span>
                         </div>
 
                         <div className="flex flex-col gap-1 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                          <span className="font-bold text-slate-900">{m.contract.propertyTitle}</span>
-                          <span className="text-slate-500 text-[10px]">{m.contract.propertyAddress}</span>
+                          <span className="font-bold text-slate-900">{contractAttachment.propertyTitle}</span>
+                          <span className="text-slate-500 text-[10px]">{contractAttachment.propertyAddress}</span>
                           <div className="flex justify-between border-t border-slate-200 pt-1 mt-1">
-                            <span>Loyer : <strong>{formatFCFA(m.contract.rentAmount)}</strong></span>
-                            <span>Caution : <strong>{formatFCFA(m.contract.cautionAmount)}</strong></span>
+                            <span>Loyer : <strong>{formatFCFA(contractAttachment.rentAmount)}</strong></span>
+                            <span>Caution : <strong>{formatFCFA(contractAttachment.cautionAmount)}</strong></span>
                           </div>
                         </div>
 
@@ -1817,7 +1958,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                         <div className="flex flex-col sm:grid sm:grid-cols-3 gap-2 pt-1 w-full">
                           <button
                             type="button"
-                            onClick={() => setPreviewingContract(m.contract!)}
+                            onClick={() => setPreviewingContract(contractAttachment!)}
                             className="py-2 px-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold flex items-center justify-center gap-1 transition-all active:scale-95"
                             title="Consulter les clauses du contrat"
                           >
@@ -1827,19 +1968,19 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                           <button
                             type="button"
                             onClick={() => {
-                              if (m.contract!.tenantSigned && m.contract!.ownerSigned) {
+                              if (contractAttachment!.tenantSigned && contractAttachment!.ownerSigned) {
                                 alert("Ce contrat de bail est déjà entièrement signé et certifié.");
                               } else {
                                 setSigningTarget({
                                   type: 'contract',
-                                  contract: m.contract,
+                                  contract: contractAttachment,
                                   role: userRole === 'locataire' ? 'locataire' : 'proprietaire'
                                 });
                                 setIsSignatureModalOpen(true);
                               }
                             }}
                             className={`py-2 px-1.5 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95 ${
-                              m.contract!.tenantSigned && m.contract!.ownerSigned
+                              contractAttachment!.tenantSigned && contractAttachment!.ownerSigned
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-emerald-200'
                                 : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                             }`}
@@ -1847,10 +1988,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                           >
                             <PenTool className="w-3.5 h-3.5 shrink-0" />
                             <span className="truncate">
-                              {m.contract!.tenantSigned && m.contract!.ownerSigned ? 'Signé ✓' : 'Signer'}
+                              {contractAttachment!.tenantSigned && contractAttachment!.ownerSigned ? 'Signé ✓' : 'Signer'}
                             </span>
                           </button>
-                          {m.contract!.tenantSigned && m.contract!.ownerSigned ? (
+                          {contractAttachment!.tenantSigned && contractAttachment!.ownerSigned ? (
                             <button
                               type="button"
                               onClick={async () => {
@@ -1858,25 +1999,25 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                   currentProfile: profile,
                                   currentUser: user,
                                   ownerFallback: {
-                                    name: m.contract!.ownerName,
-                                    phone: (m.contract as any)?.ownerPhone || (m.contract as any)?.owner_phone,
-                                    email: (m.contract as any)?.ownerEmail || (m.contract as any)?.owner_email,
-                                    address: (m.contract as any)?.ownerAddress || (m.contract as any)?.owner_address,
-                                    cni: (m.contract as any)?.ownerCni || (m.contract as any)?.owner_cni,
-                                    signatureUrl: m.contract!.ownerSignatureUrl || (m.contract as any)?.owner_signature_url,
+                                    name: contractAttachment!.ownerName,
+                                    phone: (contractAttachment as any)?.ownerPhone || (contractAttachment as any)?.owner_phone,
+                                    email: (contractAttachment as any)?.ownerEmail || (contractAttachment as any)?.owner_email,
+                                    address: (contractAttachment as any)?.ownerAddress || (contractAttachment as any)?.owner_address,
+                                    cni: (contractAttachment as any)?.ownerCni || (contractAttachment as any)?.owner_cni,
+                                    signatureUrl: contractAttachment!.ownerSignatureUrl || (contractAttachment as any)?.owner_signature_url,
                                   },
                                   tenantFallback: {
-                                    name: m.contract!.tenantName,
-                                    phone: (m.contract as any)?.tenantPhone || (m.contract as any)?.tenant_phone,
-                                    email: (m.contract as any)?.tenantEmail || (m.contract as any)?.tenant_email,
-                                    address: (m.contract as any)?.tenantAddress || (m.contract as any)?.tenant_address,
-                                    cni: (m.contract as any)?.tenantCni || (m.contract as any)?.tenant_cni,
-                                    signatureUrl: m.contract!.tenantSignatureUrl || (m.contract as any)?.tenant_signature_url,
+                                    name: contractAttachment!.tenantName,
+                                    phone: (contractAttachment as any)?.tenantPhone || (contractAttachment as any)?.tenant_phone,
+                                    email: (contractAttachment as any)?.tenantEmail || (contractAttachment as any)?.tenant_email,
+                                    address: (contractAttachment as any)?.tenantAddress || (contractAttachment as any)?.tenant_address,
+                                    cni: (contractAttachment as any)?.tenantCni || (contractAttachment as any)?.tenant_cni,
+                                    signatureUrl: contractAttachment!.tenantSignatureUrl || (contractAttachment as any)?.tenant_signature_url,
                                   }
                                 });
 
                                 await generateOfficialContractPdf({
-                                  contractNumber: m.contract!.contractNumber,
+                                  contractNumber: contractAttachment!.contractNumber,
                                   isAgency: userRole === 'agence',
                                   ownerName: resolved.owner.name,
                                   ownerPhone: resolved.owner.phone,
@@ -1888,26 +2029,26 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                   tenantEmail: resolved.tenant.email,
                                   tenantAddress: resolved.tenant.address,
                                   tenantCni: resolved.tenant.cni,
-                                  propertyTitle: m.contract!.propertyTitle,
-                                  propertyAddress: m.contract!.propertyAddress,
-                                  surface: m.contract!.surface,
-                                  rooms: m.contract!.rooms,
-                                  bedrooms: m.contract!.bedrooms,
-                                  bathrooms: m.contract!.bathrooms,
-                                  equipments: m.contract!.equipments,
-                                  amenities: m.contract!.equipments,
-                                  propertyDescription: m.contract!.propertyDescription,
-                                  durationMonths: m.contract!.durationMonths,
-                                  startDate: m.contract!.startDate,
-                                  rent: m.contract!.rentAmount,
+                                  propertyTitle: contractAttachment!.propertyTitle,
+                                  propertyAddress: contractAttachment!.propertyAddress,
+                                  surface: contractAttachment!.surface,
+                                  rooms: contractAttachment!.rooms,
+                                  bedrooms: contractAttachment!.bedrooms,
+                                  bathrooms: contractAttachment!.bathrooms,
+                                  equipments: contractAttachment!.equipments,
+                                  amenities: contractAttachment!.equipments,
+                                  propertyDescription: contractAttachment!.propertyDescription,
+                                  durationMonths: contractAttachment!.durationMonths,
+                                  startDate: contractAttachment!.startDate,
+                                  rent: contractAttachment!.rentAmount,
                                   cautionMonths: 2,
                                   chargesAmount: 5000,
                                   dueDay: 5,
-                                  ownerSignatureUrl: resolved.owner.signatureUrl || m.contract!.ownerSignatureUrl,
-                                  tenantSignatureUrl: resolved.tenant.signatureUrl || m.contract!.tenantSignatureUrl,
-                                  leaseType: (m.contract as any)?.usage_destination || 'habitation',
-                                  usageDestination: (m.contract as any)?.usage_destination || 'habitation',
-                                  authorizedActivity: (m.contract as any)?.authorized_activity || ''
+                                  ownerSignatureUrl: resolved.owner.signatureUrl || contractAttachment!.ownerSignatureUrl,
+                                  tenantSignatureUrl: resolved.tenant.signatureUrl || contractAttachment!.tenantSignatureUrl,
+                                  leaseType: (contractAttachment as any)?.usage_destination || 'habitation',
+                                  usageDestination: (contractAttachment as any)?.usage_destination || 'habitation',
+                                  authorizedActivity: (contractAttachment as any)?.authorized_activity || ''
                                 });
                               }}
                               className="py-2 px-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black flex items-center justify-center gap-1 shadow-sm transition-all active:scale-95"
@@ -1936,7 +2077,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     )}
 
                     {/* Restitution de Caution Card (Point 2) */}
-                    {m.restitution && (
+                    {restitutionAttachment && (
                       <div className="mt-3 bg-white text-slate-900 rounded-2xl p-4 border border-emerald-200 shadow-md flex flex-col gap-3">
                         <div className="flex items-center justify-between border-b pb-2">
                           <div className="flex items-center gap-2">
@@ -1948,7 +2089,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                 Restitution de Caution
                               </span>
                               <span className="text-[10px] text-emerald-700 font-mono font-bold">
-                                N° {m.restitution.receiptNumber}
+                                N° {restitutionAttachment.receiptNumber}
                               </span>
                             </div>
                           </div>
@@ -1959,16 +2100,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
                         <div className="flex flex-col gap-1.5 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                           <p className="font-semibold text-slate-800 leading-relaxed">
-                            Votre caution concernant le contrat <strong className="text-blue-700 font-mono">{m.restitution.contractNumber}</strong> a été restituée.
+                            Votre caution concernant le contrat <strong className="text-blue-700 font-mono">{restitutionAttachment.contractNumber}</strong> a été restituée.
                           </p>
                           <div className="flex items-center justify-between pt-1 border-t border-slate-200">
                             <span className="text-slate-500 font-medium">Montant restitué :</span>
-                            <span className="font-black text-emerald-700 text-xs">{formatFCFA(m.restitution.amountRestituted)}</span>
+                            <span className="font-black text-emerald-700 text-xs">{formatFCFA(restitutionAttachment.amountRestituted)}</span>
                           </div>
-                          {m.restitution.deductionAmount > 0 && (
+                          {restitutionAttachment.deductionAmount > 0 && (
                             <div className="flex items-center justify-between text-[10px] text-amber-800">
-                              <span>Retenue appliquée : {formatFCFA(m.restitution.deductionAmount)}</span>
-                              <span className="italic truncate max-w-[160px]">{m.restitution.deductionReason}</span>
+                              <span>Retenue appliquée : {formatFCFA(restitutionAttachment.deductionAmount)}</span>
+                              <span className="italic truncate max-w-[160px]">{restitutionAttachment.deductionReason}</span>
                             </div>
                           )}
                         </div>
@@ -1977,7 +2118,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                         <div className="flex items-center justify-end gap-2 pt-1">
                           <button
                             type="button"
-                            onClick={() => handleDownloadRestitutionPdf(m.restitution!)}
+                            onClick={() => handleDownloadRestitutionPdf(restitutionAttachment!)}
                             className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95"
                           >
                             <FileText className="w-3.5 h-3.5" />

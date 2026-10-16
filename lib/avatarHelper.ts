@@ -67,6 +67,27 @@ export async function compressAvatarImage(
   });
 }
 
+export const SUGGESTED_AVATARS = [
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&q=80', // Femme professionnelle
+  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=256&q=80', // Homme professionnel
+  'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=256&q=80', // Manager / Agence
+  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=256&q=80', // Homme cadre
+  'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&w=256&q=80', // Femme dirigeante
+  'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=256&q=80'  // Conseiller immobilier
+];
+
+export function getDefaultRealisticAvatar(name?: string, role?: string): string {
+  const clean = (name || '').trim().toLowerCase();
+  if (role && role.toLowerCase().includes('agence')) {
+    return SUGGESTED_AVATARS[2]; // Photo professionnelle agence
+  }
+  let sum = 0;
+  for (let i = 0; i < clean.length; i++) {
+    sum += clean.charCodeAt(i);
+  }
+  return SUGGESTED_AVATARS[sum % SUGGESTED_AVATARS.length];
+}
+
 /**
  * Sauvegarde la photo de profil, la met en cache local sans dépasser le quota
  * et la synchronise en temps réel vers Supabase et tous les appareils connectés.
@@ -78,6 +99,38 @@ export async function saveUserAvatarLocallyAndSync(userId: string, avatarDataUrl
       if (userId) {
         localStorage.setItem(`locatrust_user_avatar_${userId}`, avatarDataUrl);
       }
+
+      // Propager également dans les candidatures en cache local
+      const appsRaw = localStorage.getItem('locatrust_rental_applications');
+      if (appsRaw) {
+        const apps = JSON.parse(appsRaw);
+        if (Array.isArray(apps)) {
+          const updatedApps = apps.map((a: any) => {
+            if (a.owner_id === userId || a.agency_id === userId) {
+              return { ...a, owner_avatar: avatarDataUrl };
+            }
+            if (a.tenant_id === userId) {
+              return { ...a, tenant_avatar: avatarDataUrl };
+            }
+            return a;
+          });
+          localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+          window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+        }
+      }
+
+      // Mettre à jour le contact direct dans le cache des contacts
+      if (userId) {
+        const cKey = `locatrust_contact_${userId}`;
+        const existing = localStorage.getItem(cKey);
+        if (existing) {
+          try {
+            const parsed = JSON.parse(existing);
+            localStorage.setItem(cKey, JSON.stringify({ ...parsed, avatar: avatarDataUrl }));
+          } catch {}
+        }
+      }
+
       window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: avatarDataUrl } }));
       window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
     } catch (e) {
