@@ -158,11 +158,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const ownerName = app.agency_name || app.owner_name || (app.owner as any)?.full_name || 'Bailleur Propriétaire';
               const ownerId = app.agency_id || app.owner_id || `owner_${app.property_id || app.id}`;
               const ownerRole = app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur';
-              const ownerAvatar =
-                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') ? app.owner_avatar : null) ||
-                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') ? (app.owner as any).avatar_url : null) ||
-                (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${ownerId}`) || localStorage.getItem('locatrust_user_avatar')) : null) ||
+              const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
+              let ownerAvatar =
+                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') && app.owner_avatar !== myStoredAvatar ? app.owner_avatar : null) ||
+                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') && (app.owner as any).avatar_url !== myStoredAvatar ? (app.owner as any).avatar_url : null) ||
+                (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${ownerId}`) : null) ||
                 getDefaultRealisticAvatar(ownerName, ownerRole);
+
+              if (ownerAvatar === myStoredAvatar) {
+                ownerAvatar = getDefaultRealisticAvatar(ownerName, ownerRole);
+              }
 
               if (!list.some((c) => c.id === ownerId || c.name.toLowerCase() === ownerName.toLowerCase())) {
                 list.push({
@@ -275,11 +280,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
             const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
             const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire Candidat';
-            const contactAvatar =
-              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') ? matchingApp.tenant_avatar : null) ||
-              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') ? matchingApp.owner_avatar : null) ||
+            const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
+            let contactAvatar =
+              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') && matchingApp.tenant_avatar !== myStoredAvatar ? matchingApp.tenant_avatar : null) ||
+              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') && matchingApp.owner_avatar !== myStoredAvatar ? matchingApp.owner_avatar : null) ||
               (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${otherId}`) : null) ||
               getDefaultRealisticAvatar(contactName, contactRole);
+
+            if (contactAvatar === myStoredAvatar) {
+              contactAvatar = getDefaultRealisticAvatar(contactName, contactRole);
+            }
 
             if (!list.some((c) => c.id === otherId || c.name.toLowerCase() === contactName!.toLowerCase())) {
               list.push({
@@ -339,6 +349,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire' && c.name.toLowerCase() !== 'locataire candidat'
     );
 
+    const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
+
     for (const c of list) {
       if (!c || !c.id) continue;
       const lower = (c.name || '').trim().toLowerCase();
@@ -351,11 +363,22 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       if (seenNames.has(lower)) continue;
       seenNames.add(lower);
 
+      const isMe = c.id === currentUserId || myAliases.has(c.id);
       let finalAvatar = c.avatar;
+
+      // Si ce n'est pas moi et que l'avatar est identique à mon propre avatar, le réinitialiser
+      if (!isMe && myStoredAvatar && finalAvatar === myStoredAvatar) {
+        finalAvatar = null;
+      }
+
       if (!finalAvatar || finalAvatar.includes('ui-avatars.com') || finalAvatar.trim().length <= 5) {
         finalAvatar =
-          (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${c.id}`) || localStorage.getItem('locatrust_user_avatar')) : null) ||
+          (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${c.id}`) : null) ||
           getDefaultRealisticAvatar(c.name, c.role);
+      }
+
+      if (!isMe && myStoredAvatar && finalAvatar === myStoredAvatar) {
+        finalAvatar = getDefaultRealisticAvatar(c.name, c.role);
       }
 
       uniqueContacts.push({
@@ -1585,6 +1608,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                   <UserAvatar
                     src={contact.avatar}
                     name={contact.name}
+                    fallbackRole={contact.role}
                     sizeClassName="w-12 h-12"
                     isOnline={contact.online}
                     borderClassName="border-2 border-slate-200 dark:border-slate-700"
@@ -1652,6 +1676,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               <UserAvatar
                 src={activeContact.avatar}
                 name={activeContact.name}
+                fallbackRole={activeContact.role}
                 sizeClassName="w-10 h-10"
                 isOnline={activeContact.online}
                 borderClassName="border-2 border-blue-600/40"

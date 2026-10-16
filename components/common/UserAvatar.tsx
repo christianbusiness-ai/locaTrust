@@ -36,7 +36,21 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
     : 'LT';
 
   const defaultPhoto = getDefaultRealisticAvatar(cleanName, fallbackRole);
-  const isValidCustomSrc = Boolean(src && src.trim().length > 5 && !src.includes('ui-avatars.com'));
+  const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
+  const isErronenousDuplicateOfMe = Boolean(
+    myStoredAvatar &&
+    src === myStoredAvatar &&
+    cleanName &&
+    cleanName.toLowerCase() !== 'christian' &&
+    !cleanName.toLowerCase().includes('chris')
+  );
+
+  const isValidCustomSrc = Boolean(
+    src &&
+    src.trim().length > 5 &&
+    !src.includes('ui-avatars.com') &&
+    !isErronenousDuplicateOfMe
+  );
   const currentImgSrc = hasError ? (src !== defaultPhoto ? defaultPhoto : null) : (isValidCustomSrc ? src! : defaultPhoto);
 
   return (

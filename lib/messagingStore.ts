@@ -854,12 +854,15 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
         ? 'Propriétaire Bailleur'
         : 'Locataire Preneur';
 
-      const propTitle = (c.properties as any)?.title || 'Bien immobilier';
-      const avatarUrl =
-        prof.avatar_url && prof.avatar_url.trim().length > 5 && !prof.avatar_url.includes('ui-avatars.com')
+      const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
+      let avatarUrl =
+        prof.avatar_url && prof.avatar_url.trim().length > 5 && !prof.avatar_url.includes('ui-avatars.com') && prof.avatar_url !== myStoredAvatar
           ? prof.avatar_url
-          : (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${prof.id}`) || localStorage.getItem('locatrust_user_avatar')) : null) ||
-            getDefaultRealisticAvatar(prof.full_name, roleLabel);
+          : (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${prof.id}`) : null);
+
+      if (!avatarUrl || avatarUrl === myStoredAvatar) {
+        avatarUrl = getDefaultRealisticAvatar(prof.full_name, roleLabel);
+      }
 
       if (!realContacts.some((rc) => rc.id === prof.id)) {
         realContacts.push({

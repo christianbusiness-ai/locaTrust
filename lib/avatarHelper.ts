@@ -78,8 +78,16 @@ export const SUGGESTED_AVATARS = [
 
 export function getDefaultRealisticAvatar(name?: string, role?: string): string {
   const clean = (name || '').trim().toLowerCase();
-  if (role && role.toLowerCase().includes('agence')) {
-    return SUGGESTED_AVATARS[2]; // Photo professionnelle agence
+  const cleanRole = (role || '').trim().toLowerCase();
+
+  if (cleanRole.includes('agence') || clean.includes('agence') || clean === 'kk') {
+    return SUGGESTED_AVATARS[2]; // Photo professionnelle directrice d'agence immobilière
+  }
+  if (cleanRole.includes('propriétaire') || cleanRole.includes('bailleur') || clean.includes('bailleur')) {
+    return SUGGESTED_AVATARS[1]; // Photo professionnelle propriétaire bailleur
+  }
+  if (cleanRole.includes('locataire') || clean.includes('christian') || clean.includes('locataire')) {
+    return SUGGESTED_AVATARS[0]; // Photo professionnelle locataire
   }
   let sum = 0;
   for (let i = 0; i < clean.length; i++) {
