@@ -20,6 +20,17 @@ export interface ChatQuittanceAttachment {
   tenantName: string;
   ownerSignatureUrl?: string | null;
   tenantSignatureUrl?: string | null;
+  receiptType?: 'loyer' | 'caution';
+  depositId?: string;
+  durationMonths?: number;
+  leaseStartDate?: string;
+  leaseEndDate?: string;
+  propertyReference?: string;
+  propertyType?: string;
+  ownerCni?: string;
+  ownerPhone?: string;
+  tenantCni?: string;
+  tenantPhone?: string;
 }
 
 export interface ChatContractAttachment {
@@ -873,23 +884,25 @@ export function sendContractReminderToTenant(
 }
 
 export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachment) {
+  const isCaution = q.receiptType === 'caution' || q.receiptNumber.includes('CAUT');
   const pdfData: OfficialReceiptData = {
     receiptNumber: q.receiptNumber,
+    receiptType: isCaution ? 'caution' : 'loyer',
     contractNumber: q.contractNumber,
-    contractToken: 'tok_cnt_ci2026_000123',
+    contractToken: `tok_cnt_${q.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
     propertyTitle: q.propertyTitle,
     propertyAddress: q.propertyAddress,
-    propertyReference: 'BIEN-000456',
-    propertyType: 'Appartement 3 pièces',
-    durationMonths: 12,
-    leaseStartDate: '01/10/2026',
-    leaseEndDate: '30/09/2027',
+    propertyReference: q.propertyReference || 'BIEN-000492',
+    propertyType: q.propertyType || (isCaution ? 'Logement' : 'Appartement 3 pièces'),
+    durationMonths: q.durationMonths || 12,
+    leaseStartDate: q.leaseStartDate || new Date().toLocaleDateString('fr-FR'),
+    leaseEndDate: q.leaseEndDate || new Date(Date.now() + 365 * 24 * 3600 * 1000).toLocaleDateString('fr-FR'),
     ownerName: q.ownerName,
-    ownerCni: 'CI987654321',
-    ownerPhone: '05 05 43 21 00',
+    ownerCni: q.ownerCni || 'CI987654321',
+    ownerPhone: q.ownerPhone || '+225 07 08 09 10 11',
     tenantName: q.tenantName,
-    tenantCni: 'CI123456789',
-    tenantPhone: '07 00 12 34 56',
+    tenantCni: q.tenantCni || 'CI123456789',
+    tenantPhone: q.tenantPhone || '+225 05 00 55 21 41',
     amount: q.amount,
     periodCovered: q.periodCovered,
     paymentDate: q.paymentDate,

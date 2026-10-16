@@ -1,6 +1,8 @@
 import { Deposit } from '@/types/database.types';
-import { ChatMessage, getStoredMessages, saveStoredMessages } from '@/lib/messagingStore';
+import { ChatMessage, getStoredMessages, saveStoredMessages, sendChatMessage, ChatQuittanceAttachment } from '@/lib/messagingStore';
 import { formatFCFA } from '@/lib/utils';
+import { supabase } from '@/src/lib/supabase';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 const STORAGE_KEY = 'locatrust_deposits_v1';
 
@@ -11,8 +13,8 @@ export function getStoredDeposits(): Deposit[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return INITIAL_DEPOSITS;
-    // Purger les données fictives de démonstration résiduelles
-    if (raw.includes("Koffi N'Guessan") || raw.includes('000492') || raw.includes('Amina Diabaté')) {
+    // Purger uniquement les données fictives de démonstration résiduelles avec noms factices
+    if (raw.includes("Koffi N'Guessan") || raw.includes('Amina Diabaté')) {
       localStorage.removeItem(STORAGE_KEY);
       return INITIAL_DEPOSITS;
     }
@@ -309,36 +311,264 @@ export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant',
   return updatedDeposit;
 }
 
-export function sendCautionReceiptToTenant(depositId: string): Deposit | null {
+/**
+ * Résout les détails contractuels réels à partir du contrat scellé ou de la candidature
+ * (Adresse réelle du bien, référence exacte, dates de bail effectives, identités réelles)
+ */
+export function resolveDepositContractDetails(dep: Deposit) {
+  let matchedContract: any = null;
+  const rawContractId = dep.contract_number || dep.contract_id || '';
+
+  try {
+    const rawContracts = typeof window !== 'undefined' ? localStorage.getItem('locatrust_contracts') : null;
+    if (rawContracts) {
+      const list = JSON.parse(rawContracts);
+      if (Array.isArray(list)) {
+        matchedContract = list.find((c: any) =>
+          (rawContractId && (c.contract_number === rawContractId || c.id === rawContractId || c.contract_id === rawContractId)) ||
+          (dep.tenant_id && (c.tenant_id === dep.tenant_id || c.tenant?.id === dep.tenant_id)) ||
+          (dep.property?.title && (c.property?.title === dep.property.title || c.property_title === dep.property.title))
+        );
+      }
+    }
+    if (!matchedContract) {
+      const rawApps = typeof window !== 'undefined' ? localStorage.getItem('locatrust_rental_applications') : null;
+      if (rawApps) {
+        const apps = JSON.parse(rawApps);
+        if (Array.isArray(apps)) {
+          matchedContract = apps.find((a: any) =>
+            (rawContractId && (a.contract_number === rawContractId || a.id === rawContractId || a.contract_id === rawContractId)) ||
+            (dep.tenant_id && (a.tenant_id === dep.tenant_id || a.tenant?.id === dep.tenant_id)) ||
+            (dep.property?.title && a.property_title === dep.property.title)
+          );
+        }
+      }
+    }
+  } catch {}
+
+  const contractNumber =
+    matchedContract?.contract_number ||
+    matchedContract?.contractNumber ||
+    (rawContractId.startsWith('LT-') ? rawContractId : (/^[0-9a-f]{8}/i.test(rawContractId) ? `LT-2026-CI-${rawContractId.slice(0, 8).toUpperCase()}` : 'LT-2026-CI-000492'));
+
+  const propertyTitle =
+    matchedContract?.property_title ||
+    matchedContract?.property?.title ||
+    dep.property?.title ||
+    'Logement LocaTrust';
+
+  const propertyAddress =
+    matchedContract?.property_address ||
+    matchedContract?.property?.address ||
+    matchedContract?.property?.description ||
+    dep.property?.description ||
+    (matchedContract?.property?.commune ? `${matchedContract.property.commune}, ${matchedContract.property.city || 'Abidjan'} - Côte d'Ivoire` : null) ||
+    'Cocody Riviera 2, Abidjan - Côte d\'Ivoire';
+
+  const propertyReference =
+    matchedContract?.property_reference ||
+    matchedContract?.property?.reference ||
+    (matchedContract?.property?.id ? (matchedContract.property.id.startsWith('prop_') ? matchedContract.property.id : `BIEN-${matchedContract.property.id.slice(0, 6).toUpperCase()}`) : null) ||
+    (dep.property?.id ? (dep.property.id.startsWith('prop_') ? dep.property.id : `BIEN-${dep.property.id.slice(0, 6).toUpperCase()}`) : 'BIEN-000492');
+
+  const propertyType =
+    matchedContract?.property?.type ||
+    dep.property?.type ||
+    'appartement';
+
+  const startDateRaw =
+    matchedContract?.signed_at ||
+    matchedContract?.created_at ||
+    matchedContract?.start_date ||
+    dep.created_at ||
+    new Date().toISOString();
+  const startDateObj = new Date(startDateRaw);
+  const validStartDate = !isNaN(startDateObj.getTime()) ? startDateObj : new Date();
+  const leaseStartDate = validStartDate.toLocaleDateString('fr-FR');
+
+  const durationMonths = matchedContract?.duration_months || matchedContract?.durationMonths || 12;
+  const endDateObj = new Date(validStartDate);
+  endDateObj.setMonth(endDateObj.getMonth() + durationMonths);
+  endDateObj.setDate(endDateObj.getDate() - 1);
+  const leaseEndDate = matchedContract?.end_date ? new Date(matchedContract.end_date).toLocaleDateString('fr-FR') : endDateObj.toLocaleDateString('fr-FR');
+
+  const ownerName =
+    matchedContract?.owner_name ||
+    matchedContract?.owner?.full_name ||
+    matchedContract?.agency_name ||
+    dep.confirmed_by ||
+    'Bailleur Propriétaire';
+
+  const ownerCni =
+    matchedContract?.owner_cni ||
+    matchedContract?.owner?.cni ||
+    'CI987654321';
+
+  const ownerPhone =
+    matchedContract?.owner_phone ||
+    matchedContract?.owner?.phone ||
+    '+225 07 08 09 10 11';
+
+  const tenantName =
+    matchedContract?.tenant_name ||
+    matchedContract?.tenant?.full_name ||
+    dep.tenant?.full_name ||
+    'Locataire Preneur';
+
+  const tenantCni =
+    matchedContract?.tenant_cni ||
+    matchedContract?.tenant?.cni ||
+    'CI123456789';
+
+  const tenantPhone =
+    matchedContract?.tenant_phone ||
+    matchedContract?.tenant?.phone ||
+    dep.tenant?.phone ||
+    '+225 05 00 55 21 41';
+
+  return {
+    contractNumber,
+    propertyTitle,
+    propertyAddress,
+    propertyReference,
+    propertyType,
+    durationMonths,
+    leaseStartDate,
+    leaseEndDate,
+    ownerName,
+    ownerCni,
+    ownerPhone,
+    tenantName,
+    tenantCni,
+    tenantPhone,
+    ownerId: matchedContract?.owner_id || matchedContract?.agency_id || dep.owner_id || 'usr_owner',
+    tenantId: matchedContract?.tenant_id || dep.tenant_id || 'usr_tenant'
+  };
+}
+
+export function sendCautionReceiptToTenant(
+  depositId: string,
+  options?: {
+    signatureData?: string | null;
+    actorName?: string;
+  }
+): Deposit | null {
   const all = getStoredDeposits();
   const target = all.find((d) => d.id === depositId);
   if (!target) return null;
 
+  const resolved = resolveDepositContractDetails(target);
   const now = new Date().toISOString();
+  const confirmedAmount = target.amount_paid || target.amount_requested;
+  const finalOwnerSig = options?.signatureData || target.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
+  const finalActorName = options?.actorName || target.confirmed_by || resolved.ownerName;
+
   const updatedDeposit: Deposit = {
     ...target,
+    status: 'paye_complet',
+    amount_paid: confirmedAmount,
+    confirmed_by: finalActorName,
+    confirmed_at: target.confirmed_at || now,
+    owner_signature: finalOwnerSig,
+    owner_signed_at: target.owner_signed_at || now,
     receipt_sent_to_tenant: true
   };
 
   const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
   saveStoredDeposits(updatedList);
 
+  const cleanReceiptNum = `CAUT-${target.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
+  const senderId = target.owner_id || resolved.ownerId || 'usr_owner';
+  const receiverId = target.tenant_id || resolved.tenantId || 'usr_tenant';
+
+  const quittance: ChatQuittanceAttachment = {
+    receiptNumber: cleanReceiptNum,
+    receiptType: 'caution',
+    contractNumber: resolved.contractNumber,
+    propertyTitle: resolved.propertyTitle,
+    propertyAddress: resolved.propertyAddress,
+    propertyReference: resolved.propertyReference,
+    propertyType: resolved.propertyType,
+    durationMonths: resolved.durationMonths,
+    leaseStartDate: resolved.leaseStartDate,
+    leaseEndDate: resolved.leaseEndDate,
+    ownerName: finalActorName,
+    ownerCni: resolved.ownerCni,
+    ownerPhone: resolved.ownerPhone,
+    tenantName: resolved.tenantName,
+    tenantCni: resolved.tenantCni,
+    tenantPhone: resolved.tenantPhone,
+    amount: confirmedAmount,
+    periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+    paymentDate: new Date().toLocaleDateString('fr-FR'),
+    paymentMethod: (target.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+    transactionReference: target.declared_reference || `TR-${cleanReceiptNum}`,
+    ownerSignatureUrl: finalOwnerSig,
+    tenantSignatureUrl: target.tenant_signature || null,
+    depositId: target.id
+  };
+
+  const chatText = `🛡️ Reçu Officiel de Caution (Dépôt de Garantie) Transmis\nVotre caution de ${formatFCFA(confirmedAmount)} pour le logement « ${resolved.propertyTitle} » (Contrat N° ${resolved.contractNumber}) a été vérifiée et validée par votre bailleur.\nVeuillez consulter le reçu ci-dessous et apposer votre signature manuscrite certifiée pour valider définitivement le document.`;
+
   try {
-    const existingMessages = getStoredMessages();
-    const chatText = `Reçu officiel de caution disponible\nVotre caution de ${formatFCFA(target.amount_paid)} pour le contrat ${target.contract_id} a été validée.\nLe reçu officiel est prêt. Veuillez apposer votre signature pour valider le document.`;
-    const msg: ChatMessage = {
-      id: `msg_caution_receipt_${Date.now()}`,
-      sender_id: target.owner_id || 'usr_owner_1',
-      receiver_id: target.tenant_id,
-      text: chatText,
-      created_at: now,
-      status: 'delivered'
-    };
-    saveStoredMessages([...existingMessages, msg]);
-    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+    sendChatMessage(senderId, receiverId, chatText, {
+      propertyTitle: resolved.propertyTitle,
+      quittance
+    });
   } catch (err) {
-    console.error('Error dispatching message:', err);
+    console.warn('Error sending caution receipt chat message:', err);
   }
+
+  // Persistance dans Supabase pour synchronisation multi-appareils (Desktop & Mobile)
+  try {
+    supabase
+      .from('cautions')
+      .update({
+        status: 'paye_complet',
+        amount_paid: confirmedAmount,
+        confirmed_at: now,
+        confirmed_by: finalActorName,
+        owner_signature: finalOwnerSig,
+        receipt_sent_to_tenant: true
+      })
+      .eq('id', target.id)
+      .then();
+  } catch {}
+
+  // Notification in-app ciblée pour le locataire
+  if (typeof window !== 'undefined') {
+    try {
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const tenantNotif = {
+        id: `notif_caut_ready_${Date.now()}`,
+        title: '🛡️ Reçu officiel de caution reçu pour signature',
+        description: `Votre caution de ${formatFCFA(confirmedAmount)} a été validée par ${finalActorName}. Veuillez y apposer votre signature pour débloquer le téléchargement.`,
+        time: "À l'instant",
+        unread: true,
+        type: 'caution',
+        targetTab: 'messages',
+        targetRole: 'locataire',
+        targetUserId: receiverId,
+        senderUserId: senderId
+      };
+      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(currentNotifs) ? currentNotifs : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch {}
+  }
+
+  // Broadcast Realtime pour tous les écrans connectés
+  try {
+    broadcastLiveEvent('CAUTION_CONFIRMED', {
+      depositId: target.id,
+      targetUserId: receiverId,
+      actorId: senderId,
+      data: {
+        receiptNumber: cleanReceiptNum,
+        amount: confirmedAmount
+      }
+    });
+  } catch {}
 
   return updatedDeposit;
 }

@@ -26,7 +26,8 @@ import {
   Trash2,
   ZoomIn,
   UploadCloud,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Lock
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import { Deposit } from '@/types/database.types';
@@ -45,7 +46,8 @@ import {
   restituteCaution,
   declareCautionPayment,
   recordCautionAudit,
-  getCautionAuditTrail
+  getCautionAuditTrail,
+  resolveDepositContractDetails
 } from '@/lib/cautionsStore';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
 import { updateDeclarationMessageStatus, sendChatMessage } from '@/lib/messagingStore';
@@ -278,61 +280,19 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
   };
 
-  // Télécharger le PDF officiel et l'expédier directement dans la messagerie du locataire
-  const handleDownloadAndSendReceipt = async (deposit: Deposit, signatureData: string | null) => {
+  // Transmettre le reçu officiel certifié au locataire pour sa contresignature
+  const handleTransmitCautionReceiptForSigning = async (deposit: Deposit, signatureData: string | null) => {
     const confirmedAmount = deposit.amount_paid || deposit.amount_requested;
     const sig = signatureData || deposit.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
     const now = new Date().toISOString();
 
-    // 1. Téléchargement immédiat du PDF haute résolution avec signature réelle du bailleur
-    try {
-      await generateOfficialReceiptPDF({
-        receiptNumber: `CAUT-${deposit.id.toUpperCase()}`,
-        receiptType: 'caution',
-        contractNumber: getDisplayContractNumber(deposit),
-        contractToken: `tok_cnt_${deposit.id}`,
-        propertyTitle: deposit.property?.title || 'Bien immobilier',
-        propertyAddress: 'Cocody Riviera, Abidjan - Côte d\'Ivoire',
-        propertyReference: 'BIEN-000456',
-        propertyType: deposit.property?.type || 'appartement',
-        durationMonths: 12,
-        leaseStartDate: '01/01/2026',
-        leaseEndDate: '31/12/2026',
-        ownerName: actorName,
-        ownerCni: 'CI987654321',
-        ownerPhone: '+225 07 08 09 10 11',
-        tenantName: deposit.tenant?.full_name || 'Locataire',
-        tenantCni: 'CI123456789',
-        tenantPhone: deposit.tenant?.phone || '+225 05 00 00 00 00',
-        amount: confirmedAmount,
-        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576)',
-        paymentDate: new Date().toLocaleDateString('fr-FR'),
-        paymentMethod: getDisplayPaymentMethod(deposit),
-        transactionReference: deposit.declared_reference || `TR-CAUT-${deposit.id.toUpperCase()}`,
-        ownerSignatureUrl: sig,
-        tenantSignatureUrl: deposit.tenant_signature || null
-      });
-    } catch (pdfErr) {
-      console.warn('PDF caution error:', pdfErr);
-    }
+    // 1. Transmission officielle dans la messagerie avec la quittance certifiée
+    const updated = sendCautionReceiptToTenant(deposit.id, {
+      signatureData: sig,
+      actorName
+    });
 
-    // 2. Persistance dans Supabase
-    try {
-      await supabase
-        .from('cautions')
-        .update({
-          status: 'paye_complet',
-          amount_paid: confirmedAmount,
-          confirmed_at: now,
-          confirmed_by: actorName,
-          owner_signature: sig
-        })
-        .eq('id', deposit.id);
-    } catch {}
-
-    // 3. Persistance dans le store local
-    const all = getStoredDeposits();
-    const updatedDeposit: Deposit = {
+    const updatedDeposit: Deposit = updated || {
       ...deposit,
       status: 'paye_complet',
       amount_paid: confirmedAmount,
@@ -342,62 +302,25 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       owner_signed_at: now,
       receipt_sent_to_tenant: true
     };
-    saveStoredDeposits(all.map(d => d.id === deposit.id ? updatedDeposit : d));
-
-    // 4. Transmission automatique dans la boîte de messagerie du locataire
-    try {
-      sendCautionReceiptToTenant(deposit.id);
-    } catch {}
-
-    // 5. Notification officielle au locataire
-    if (deposit.tenant_id) {
-      try {
-        await supabase.from('notifications').insert({
-          user_id: deposit.tenant_id,
-          title: '✅ Reçu de caution certifié transmis',
-          content: `Votre caution de ${formatFCFA(confirmedAmount)} a été vérifiée et validée par ${actorName}. Votre reçu officiel signé avec QR Code a été déposé dans votre boîte de messagerie.`,
-          type: 'caution_confirmee',
-          read: false,
-          payload: { caution_id: deposit.id, contract_id: deposit.contract_id, amount: confirmedAmount }
-        });
-      } catch {}
-    }
-
-    if (typeof window !== 'undefined') {
-      try {
-        const notifsRaw = localStorage.getItem('locatrust_notifications');
-        const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
-        const tenantNotif = {
-          id: `notif_caut_sent_${Date.now()}`,
-          title: '✅ Reçu officiel de caution disponible',
-          description: `Votre caution de ${formatFCFA(confirmedAmount)} a été validée par ${actorName}. Votre reçu certifié avec signature et QR Code est consultable et téléchargeable.`,
-          time: 'À l\'instant',
-          unread: true,
-          type: 'caution',
-          targetRole: 'locataire',
-          targetUserId: deposit.tenant_id,
-          senderUserId: user?.id || 'usr_owner'
-        };
-        localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
-        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-      } catch {}
-    }
-
-    // 6. Broadcast Realtime
-    try {
-      await broadcastLiveEvent('CAUTION_CONFIRMED', {
-        depositId: deposit.id,
-        targetUserId: deposit.tenant_id,
-        contractId: deposit.contract_id,
-        data: { amount: confirmedAmount }
-      });
-    } catch {}
 
     setDeposits(prev => prev.map(d => d.id === deposit.id ? updatedDeposit : d));
     setGeneratingReceiptDeposit(null);
-    setSuccessFeedback(`Reçu officiel de caution généré, téléchargé et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} !`);
+    setSuccessFeedback(`✅ Reçu officiel de caution certifié et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} ! Le téléchargement sera disponible dès que le locataire aura apposé sa signature.`);
     confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
     window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+  };
+
+  // Renvoyer le reçu de caution dans la messagerie du locataire
+  const handleResendCautionReceipt = (dep: Deposit) => {
+    const updated = sendCautionReceiptToTenant(dep.id, {
+      signatureData: dep.owner_signature,
+      actorName
+    });
+    if (updated) {
+      setDeposits(prev => prev.map(d => d.id === dep.id ? updated : d));
+    }
+    setSuccessFeedback(`Reçu officiel de caution renvoyé avec succès dans la boîte de messagerie de ${dep.tenant?.full_name || 'votre locataire'} !`);
+    confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
   };
 
   // Handle Approval of Caution by Owner / Agency (Points 8, 9, 11)
@@ -921,28 +844,32 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       return;
     }
 
+    const resolved = resolveDepositContractDetails(dep);
+    const cleanNum = `CAUT-${dep.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
+
     await generateOfficialReceiptPDF({
-      receiptNumber: `CAUT-${dep.id.toUpperCase()}`,
-      contractNumber: getDisplayContractNumber(dep),
-      contractToken: `tok_cnt_${dep.id}`,
-      propertyTitle: dep.property?.title || 'Bien immobilier',
-      propertyAddress: 'Cocody Riviera, Abidjan - Côte d\'Ivoire',
-      propertyReference: 'BIEN-000456',
-      propertyType: dep.property?.type || 'appartement',
-      durationMonths: 12,
-      leaseStartDate: '01/01/2026',
-      leaseEndDate: '31/12/2026',
-      ownerName: actorName,
-      ownerCni: 'CI987654321',
-      ownerPhone: '+225 07 08 09 10 11',
-      tenantName: dep.tenant?.full_name || 'Locataire',
-      tenantCni: 'CI123456789',
-      tenantPhone: dep.tenant?.phone || '+225 05 00 00 00 00',
+      receiptNumber: cleanNum,
+      receiptType: 'caution',
+      contractNumber: resolved.contractNumber,
+      contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+      propertyTitle: resolved.propertyTitle,
+      propertyAddress: resolved.propertyAddress,
+      propertyReference: resolved.propertyReference,
+      propertyType: resolved.propertyType,
+      durationMonths: resolved.durationMonths,
+      leaseStartDate: resolved.leaseStartDate,
+      leaseEndDate: resolved.leaseEndDate,
+      ownerName: resolved.ownerName,
+      ownerCni: resolved.ownerCni,
+      ownerPhone: resolved.ownerPhone,
+      tenantName: resolved.tenantName,
+      tenantCni: resolved.tenantCni,
+      tenantPhone: resolved.tenantPhone,
       amount: dep.amount_paid,
-      periodCovered: 'Dépôt de Garantie Contractuel (Loi 2019-576)',
+      periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
       paymentDate: new Date(dep.created_at).toLocaleDateString('fr-FR'),
-      paymentMethod: getDisplayPaymentMethod(dep),
-      transactionReference: `TR-CAUT-${dep.id.toUpperCase()}`,
+      paymentMethod: getDisplayPaymentMethod(dep).replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+      transactionReference: dep.declared_reference || `TR-${cleanNum}`,
       ownerSignatureUrl: dep.owner_signature || 'SIG_OWNER',
       tenantSignatureUrl: dep.tenant_signature || 'SIG_TENANT'
     });
@@ -1372,17 +1299,30 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                           <span>Reçu Restitution</span>
                         </button>
                       ) : dep.amount_paid > 0 && !isAwaitingVerification ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadCautionReceipt(dep)}
-                          className="h-8 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-extrabold text-[11px] border border-blue-200 dark:border-blue-800 flex items-center gap-1.5 transition-colors whitespace-nowrap"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Reçu Caution</span>
-                        </button>
+                        ownerSigned && tenantSigned ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadCautionReceipt(dep)}
+                            className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-sm flex items-center gap-1.5 transition-all active:scale-95 whitespace-nowrap"
+                            title="Télécharger le reçu officiel de caution certifié (scellé avec signatures des 2 parties)"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Télécharger le reçu</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSignatureAlertDoc({ deposit: dep, type: 'caution' })}
+                            className="h-8 px-3 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold text-[11px] border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-not-allowed whitespace-nowrap"
+                            title="Téléchargement bloqué : en attente de la signature du locataire"
+                          >
+                            <Lock className="w-3.5 h-3.5" />
+                            <span>Téléchargement bloqué</span>
+                          </button>
+                        )
                       ) : null}
 
-                      {/* Envoyer le reçu */}
+                      {/* Renvoyer / Transmettre le reçu */}
                       {dep.amount_paid > 0 && !isAwaitingVerification && (
                         <button
                           type="button"
@@ -1390,14 +1330,14 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                             if (isRestituted) {
                               handleSendRestitutionReceipt(dep);
                             } else {
-                              handleSendCautionReceipt(dep);
+                              handleResendCautionReceipt(dep);
                             }
                           }}
-                          className="h-8 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-extrabold text-[11px] flex items-center gap-1.5 transition-colors border border-slate-200 dark:border-slate-700 whitespace-nowrap"
-                          title="Transmettre le reçu certifié dans la messagerie du locataire"
+                          className="h-8 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-extrabold text-[11px] flex items-center gap-1.5 transition-colors border border-blue-200 dark:border-blue-800 whitespace-nowrap"
+                          title="Transmettre ou renvoyer le reçu certifié dans la messagerie du locataire"
                         >
                           <Send className="w-3.5 h-3.5" />
-                          <span>Envoyer</span>
+                          <span>Renvoyer le reçu</span>
                         </button>
                       )}
                     </div>
@@ -1979,7 +1919,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                   <span>Enregistrer le reçu</span>
                 </button>
 
-                {/* Bouton 2 : Télécharger et envoyer le reçu */}
+                {/* Bouton 2 : Transmettre pour signature */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1987,14 +1927,13 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                       setIsSigningReceiptModalOpen(true);
                       return;
                     }
-                    handleDownloadAndSendReceipt(generatingReceiptDeposit, generatedOwnerSignature);
+                    handleTransmitCautionReceiptForSigning(generatingReceiptDeposit, generatedOwnerSignature);
                   }}
                   className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
-                  title="Télécharger le reçu PDF officiel à votre niveau et le transmettre automatiquement dans la messagerie du locataire"
+                  title="Certifier le reçu avec votre signature et le transmettre directement dans la messagerie du locataire pour sa signature"
                 >
-                  <Download className="w-4 h-4" />
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Télécharger & Envoyer le reçu</span>
+                  <Send className="w-4 h-4" />
+                  <span>Transmettre pour signature</span>
                 </button>
               </div>
             </div>

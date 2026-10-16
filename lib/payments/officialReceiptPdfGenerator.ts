@@ -119,6 +119,34 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setLineWidth(0.4);
     doc.line(15, 25.5, 195, 25.5);
 
+    // Helper to sanitize strings for standard jsPDF fonts (strip emojis like 💵 that cause Ø=Ûµ)
+    const cleanPdf = (text: string | null | undefined, fallback: string = ''): string => {
+      if (!text) return fallback;
+      return text
+        .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]/gu, '')
+        .replace(/[^\x00-\x7F\xC0-\xFF]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim() || fallback;
+    };
+
+    // Format clean receipt number without huge UUIDs that overlap titles
+    const formatCleanNum = (num: string | null | undefined, isC: boolean): string => {
+      if (!num) return isC ? 'CAUT-2026-001' : 'REC-2026-001';
+      let clean = num.replace(/^N°\s*:?\s*/i, '').replace(/^REC_/i, '').trim();
+      if (clean.includes('-')) {
+        const parts = clean.split('-');
+        if (parts.length > 2 && parts[1].length >= 8) {
+          return `${parts[0]}-${parts[1].toUpperCase()}`;
+        }
+      }
+      if (clean.length > 18) {
+        return clean.slice(0, 16).toUpperCase();
+      }
+      return clean.toUpperCase();
+    };
+
+    const cleanReceiptNum = formatCleanNum(data.receiptNumber, isCaution);
+
     // 2. HEADER BANNER (Light Blue for Rent, Gold/Orange for Caution, Crisp High Contrast Text)
     if (isCaution) {
       // Warm Gold / Orange Banner for Caution Receipt
@@ -129,22 +157,22 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       doc.rect(15, 43, 180, 1, 'F');
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12);
+      doc.setFontSize(10.5);
       doc.setTextColor(15, 23, 42); // Crisp dark text
-      doc.text('REÇU DE CAUTION (DÉPÔT DE GARANTIE)', 22, 36);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.text('REÇU DE CAUTION (DÉPÔT DE GARANTIE)', 22, 35.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
       doc.setTextColor(67, 56, 202);
       doc.text('Garantie légale obligatoire - Code de la Construction Ivoirien', 22, 40.5);
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9.5);
+      doc.setFontSize(8);
       doc.setTextColor(15, 23, 42);
-      doc.text(`N° REÇU : ${data.receiptNumber}`, 188, 35.5, { align: 'right' });
+      doc.text(`N° REÇU : ${cleanReceiptNum}`, 188, 35.5, { align: 'right' });
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(30, 41, 59);
-      doc.text(`Date d'émission : ${data.paymentDate || '05/09/2026'}`, 188, 40, { align: 'right' });
+      doc.text(`Date d'émission : ${cleanPdf(data.paymentDate, new Date().toLocaleDateString('fr-FR'))}`, 188, 40, { align: 'right' });
     } else {
       // Clear Blue with Orange & Gold accents for Rent Receipt
       doc.setFillColor(2, 132, 199); // Light / Bright Sky Blue #0284C7
@@ -154,22 +182,22 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       doc.rect(15, 43, 180, 1, 'F');
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12);
+      doc.setFontSize(10.5);
       doc.setTextColor(255, 255, 255);
-      doc.text('QUITTANCE / REÇU DE PAIEMENT DE LOYER', 22, 36);
+      doc.text('QUITTANCE / REÇU DE PAIEMENT DE LOYER', 22, 35.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
       doc.setTextColor(240, 249, 255);
       doc.text('Règlement de loyer mensuel certifié - Contrat de bail', 22, 40.5);
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9.5);
+      doc.setFontSize(8);
       doc.setTextColor(255, 255, 255);
-      doc.text(`N° REÇU : ${data.receiptNumber}`, 188, 35.5, { align: 'right' });
+      doc.text(`N° REÇU : ${cleanReceiptNum}`, 188, 35.5, { align: 'right' });
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(224, 242, 254);
-      doc.text(`Date d'émission : ${data.paymentDate || '05/09/2026'}`, 188, 40, { align: 'right' });
+      doc.text(`Date d'émission : ${cleanPdf(data.paymentDate, new Date().toLocaleDateString('fr-FR'))}`, 188, 40, { align: 'right' });
     }
 
     // 3. PAIEMENT VALIDÉ BADGE (Soft Light Blue / Emerald Tint with Crisp High Contrast)
@@ -381,17 +409,17 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setTextColor(15, 23, 42);
     doc.text('Date du paiement', 105, summaryY + 6.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(`:  ${data.paymentDate || '05/09/2026'}`, 140, summaryY + 6.5);
+    doc.text(`:  ${cleanPdf(data.paymentDate, new Date().toLocaleDateString('fr-FR'))}`, 140, summaryY + 6.5);
 
     doc.setFont('helvetica', 'bold');
     doc.text('Mode de paiement', 105, summaryY + 12);
     doc.setFont('helvetica', 'normal');
-    doc.text(`:  ${data.paymentMethod || 'Mobile Money'}`, 140, summaryY + 12);
+    doc.text(`:  ${cleanPdf(data.paymentMethod, 'Espèces (cash)')}`, 140, summaryY + 12);
 
     doc.setFont('helvetica', 'bold');
     doc.text('Réf. transaction', 105, summaryY + 17.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(`:  ${data.transactionReference}`, 140, summaryY + 17.5);
+    doc.text(`:  ${cleanPdf(data.transactionReference, 'ESP-CAUTION')}`, 140, summaryY + 17.5);
 
     doc.setFont('helvetica', 'bold');
     doc.text('Statut d\'encaissement', 105, summaryY + 23);
