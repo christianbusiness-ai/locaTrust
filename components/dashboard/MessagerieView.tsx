@@ -74,6 +74,11 @@ import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
 import { useAuth } from '@/src/context/AuthContext';
+import {
+  resolveContractParties,
+  persistOwnerSignature,
+  persistTenantSignature
+} from '@/lib/contractPartyResolver';
 
 interface MessagerieViewProps {
   userRole?: 'proprietaire' | 'locataire' | 'agence';
@@ -1173,6 +1178,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         return msg;
       });
 
+      if (isTenant) {
+        persistTenantSignature(signatureDataUrl);
+      } else {
+        persistOwnerSignature(signatureDataUrl);
+      }
+
       saveStoredMessages(updatedMessages);
 
       // Envoi du message réel de confirmation dans la conversation
@@ -1843,18 +1854,40 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                             <button
                               type="button"
                               onClick={async () => {
+                                const resolved = await resolveContractParties({
+                                  currentProfile: profile,
+                                  currentUser: user,
+                                  ownerFallback: {
+                                    name: m.contract!.ownerName,
+                                    phone: (m.contract as any)?.ownerPhone || (m.contract as any)?.owner_phone,
+                                    email: (m.contract as any)?.ownerEmail || (m.contract as any)?.owner_email,
+                                    address: (m.contract as any)?.ownerAddress || (m.contract as any)?.owner_address,
+                                    cni: (m.contract as any)?.ownerCni || (m.contract as any)?.owner_cni,
+                                    signatureUrl: m.contract!.ownerSignatureUrl || (m.contract as any)?.owner_signature_url,
+                                  },
+                                  tenantFallback: {
+                                    name: m.contract!.tenantName,
+                                    phone: (m.contract as any)?.tenantPhone || (m.contract as any)?.tenant_phone,
+                                    email: (m.contract as any)?.tenantEmail || (m.contract as any)?.tenant_email,
+                                    address: (m.contract as any)?.tenantAddress || (m.contract as any)?.tenant_address,
+                                    cni: (m.contract as any)?.tenantCni || (m.contract as any)?.tenant_cni,
+                                    signatureUrl: m.contract!.tenantSignatureUrl || (m.contract as any)?.tenant_signature_url,
+                                  }
+                                });
+
                                 await generateOfficialContractPdf({
                                   contractNumber: m.contract!.contractNumber,
                                   isAgency: userRole === 'agence',
-                                  ownerName: m.contract!.ownerName,
-                                  ownerPhone: (m.contract as any)?.ownerPhone || (m.contract as any)?.owner_phone,
-                                  ownerEmail: (m.contract as any)?.ownerEmail || (m.contract as any)?.owner_email,
-                                  ownerAddress: (m.contract as any)?.ownerAddress || (m.contract as any)?.owner_address,
-                                  tenantName: m.contract!.tenantName,
-                                  tenantPhone: (m.contract as any)?.tenantPhone || (m.contract as any)?.tenant_phone,
-                                  tenantEmail: (m.contract as any)?.tenantEmail || (m.contract as any)?.tenant_email,
-                                  tenantAddress: (m.contract as any)?.tenantAddress || (m.contract as any)?.tenant_address,
-                                  tenantCni: (m.contract as any)?.tenantCni || (m.contract as any)?.tenant_cni,
+                                  ownerName: resolved.owner.name,
+                                  ownerPhone: resolved.owner.phone,
+                                  ownerEmail: resolved.owner.email,
+                                  ownerAddress: resolved.owner.address,
+                                  ownerCni: resolved.owner.cni,
+                                  tenantName: resolved.tenant.name,
+                                  tenantPhone: resolved.tenant.phone,
+                                  tenantEmail: resolved.tenant.email,
+                                  tenantAddress: resolved.tenant.address,
+                                  tenantCni: resolved.tenant.cni,
                                   propertyTitle: m.contract!.propertyTitle,
                                   propertyAddress: m.contract!.propertyAddress,
                                   surface: m.contract!.surface,
@@ -1870,8 +1903,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                   cautionMonths: 2,
                                   chargesAmount: 5000,
                                   dueDay: 5,
-                                  ownerSignatureUrl: m.contract!.ownerSignatureUrl || (m.contract as any)?.owner_signature_url,
-                                  tenantSignatureUrl: m.contract!.tenantSignatureUrl || (m.contract as any)?.tenant_signature_url,
+                                  ownerSignatureUrl: resolved.owner.signatureUrl || m.contract!.ownerSignatureUrl,
+                                  tenantSignatureUrl: resolved.tenant.signatureUrl || m.contract!.tenantSignatureUrl,
                                   leaseType: (m.contract as any)?.usage_destination || 'habitation',
                                   usageDestination: (m.contract as any)?.usage_destination || 'habitation',
                                   authorizedActivity: (m.contract as any)?.authorized_activity || ''
@@ -2278,18 +2311,40 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     }
                   }
 
+                  const resolved = await resolveContractParties({
+                    currentProfile: profile,
+                    currentUser: user,
+                    ownerFallback: {
+                      name: previewingContract.ownerName,
+                      phone: (previewingContract as any)?.ownerPhone || (previewingContract as any)?.owner_phone,
+                      email: (previewingContract as any)?.ownerEmail || (previewingContract as any)?.owner_email,
+                      address: (previewingContract as any)?.ownerAddress || (previewingContract as any)?.owner_address,
+                      cni: (previewingContract as any)?.ownerCni || (previewingContract as any)?.owner_cni,
+                      signatureUrl: previewingContract.ownerSignatureUrl || (previewingContract as any)?.owner_signature_url,
+                    },
+                    tenantFallback: {
+                      name: previewingContract.tenantName,
+                      phone: (previewingContract as any)?.tenantPhone || (previewingContract as any)?.tenant_phone,
+                      email: (previewingContract as any)?.tenantEmail || (previewingContract as any)?.tenant_email,
+                      address: (previewingContract as any)?.tenantAddress || (previewingContract as any)?.tenant_address,
+                      cni: (previewingContract as any)?.tenantCni || (previewingContract as any)?.tenant_cni,
+                      signatureUrl: previewingContract.tenantSignatureUrl || (previewingContract as any)?.tenant_signature_url,
+                    }
+                  });
+
                   await generateOfficialContractPdf({
                     contractNumber: previewingContract.contractNumber,
                     isAgency: userRole === 'agence',
-                    ownerName: previewingContract.ownerName,
-                    ownerPhone: (previewingContract as any)?.ownerPhone || (previewingContract as any)?.owner_phone,
-                    ownerEmail: (previewingContract as any)?.ownerEmail || (previewingContract as any)?.owner_email,
-                    ownerAddress: (previewingContract as any)?.ownerAddress || (previewingContract as any)?.owner_address,
-                    tenantName: previewingContract.tenantName,
-                    tenantPhone: (previewingContract as any)?.tenantPhone || (previewingContract as any)?.tenant_phone,
-                    tenantEmail: (previewingContract as any)?.tenantEmail || (previewingContract as any)?.tenant_email,
-                    tenantAddress: (previewingContract as any)?.tenantAddress || (previewingContract as any)?.tenant_address,
-                    tenantCni: (previewingContract as any)?.tenantCni || (previewingContract as any)?.tenant_cni,
+                    ownerName: resolved.owner.name,
+                    ownerPhone: resolved.owner.phone,
+                    ownerEmail: resolved.owner.email,
+                    ownerAddress: resolved.owner.address,
+                    ownerCni: resolved.owner.cni,
+                    tenantName: resolved.tenant.name,
+                    tenantPhone: resolved.tenant.phone,
+                    tenantEmail: resolved.tenant.email,
+                    tenantAddress: resolved.tenant.address,
+                    tenantCni: resolved.tenant.cni,
                     propertyTitle: previewingContract.propertyTitle,
                     propertyAddress: previewingContract.propertyAddress,
                     surface,
@@ -2305,8 +2360,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     cautionMonths: 2,
                     chargesAmount: 5000,
                     dueDay: 5,
-                    ownerSignatureUrl: previewingContract.ownerSignatureUrl || (previewingContract as any)?.owner_signature_url,
-                    tenantSignatureUrl: previewingContract.tenantSignatureUrl || (previewingContract as any)?.tenant_signature_url,
+                    ownerSignatureUrl: resolved.owner.signatureUrl || previewingContract.ownerSignatureUrl,
+                    tenantSignatureUrl: resolved.tenant.signatureUrl || previewingContract.tenantSignatureUrl,
                     leaseType: (previewingContract as any)?.usage_destination || 'habitation',
                     usageDestination: (previewingContract as any)?.usage_destination || 'habitation',
                     authorizedActivity: (previewingContract as any)?.authorized_activity || ''

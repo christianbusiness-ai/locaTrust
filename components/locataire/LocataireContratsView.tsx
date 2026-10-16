@@ -31,6 +31,7 @@ import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
+import { resolveContractParties } from '@/lib/contractPartyResolver';
 import { ContractCardSkeleton } from '@/components/common/SkeletonLoader';
 
 interface TenantPropertyRental {
@@ -51,7 +52,7 @@ interface TenantPropertyRental {
 }
 
 export const LocataireContratsView: React.FC = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [contracts, setContracts] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -294,19 +295,26 @@ export const LocataireContratsView: React.FC = () => {
       }
     }
 
+    const resolved = await resolveContractParties({
+      contract: cnt,
+      currentProfile: profile,
+      currentUser: user
+    });
+
     await generateOfficialContractPdf({
       contractNumber: cnt.contract_number,
-      isAgency,
-      ownerName: cnt.owner?.full_name || "Bailleur",
-      ownerPhone: cnt.owner?.phone || "",
-      ownerEmail: cnt.owner?.email,
-      ownerAddress: cnt.owner?.address,
-      ownerCni: cnt.owner?.cni_number || cnt.owner?.rccm_number,
-      tenantName: user?.user_metadata?.full_name || cnt.tenant?.full_name || "Locataire",
-      tenantPhone: cnt.tenant?.phone || user?.phone || "",
-      tenantEmail: user?.email || cnt.tenant?.email,
-      tenantAddress: cnt.tenant?.address,
-      tenantCni: cnt.tenant?.cni_number || user?.user_metadata?.cni_number || "",
+      isAgency: resolved.isAgency,
+      ownerName: resolved.ownerName,
+      mandantName: resolved.mandantName,
+      ownerPhone: resolved.ownerPhone,
+      ownerEmail: resolved.ownerEmail,
+      ownerAddress: resolved.ownerAddress,
+      ownerCni: resolved.ownerCni,
+      tenantName: resolved.tenantName,
+      tenantPhone: resolved.tenantPhone,
+      tenantEmail: resolved.tenantEmail,
+      tenantAddress: resolved.tenantAddress,
+      tenantCni: resolved.tenantCni,
       propertyTitle: cnt.property?.title || "Logement loué",
       propertyAddress: `${cnt.property?.quartier || ''}, ${cnt.property?.commune || ''} - ${cnt.property?.city || 'Abidjan'}`.trim().replace(/^,\s*/, ''),
       surface,
@@ -322,8 +330,8 @@ export const LocataireContratsView: React.FC = () => {
       cautionMonths: 2,
       chargesAmount: Number(cnt.charges || 0),
       dueDay: cnt.payment_due_day || 5,
-      ownerSignatureUrl: cnt.owner_signature_url || cnt.ownerSignatureUrl,
-      tenantSignatureUrl: cnt.tenant_signature_url || cnt.tenantSignatureUrl,
+      ownerSignatureUrl: resolved.ownerSignatureUrl,
+      tenantSignatureUrl: resolved.tenantSignatureUrl,
       leaseType,
       usageDestination: leaseType,
       authorizedActivity: cnt.authorized_activity || cnt.property?.authorized_activity || ''

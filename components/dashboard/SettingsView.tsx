@@ -344,10 +344,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const { error: updError } = await supabase.from('profiles').update({
         full_name: fullName,
         phone: phone,
+        cni_number: docIdentifier.trim(),
+        address: address.trim(),
         updated_at: new Date().toISOString()
       }).eq('id', user.id);
 
       if (updError) throw updError;
+
+      if (phone) {
+        try { localStorage.setItem('locatrust_user_phone', phone.trim()); } catch {}
+      }
+      if (docIdentifier) {
+        try { localStorage.setItem('locatrust_user_cni', docIdentifier.trim()); } catch {}
+      }
+
       await refreshProfile();
       setSavedMessage('Vos informations personnelles ont été mises à jour avec succès.');
       setTimeout(() => setSavedMessage(null), 3500);
@@ -719,6 +729,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className="w-full p-3 rounded-xl border border-slate-300 font-bold focus:ring-2 focus:ring-blue-600/30"
                   />
                 </div>
+
+                {!isAgency && (
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      N° Pièce d'Identité (CNI / Passeport)
+                    </label>
+                    <input
+                      type="text"
+                      value={docIdentifier}
+                      onChange={(e) => setDocIdentifier(e.target.value)}
+                      placeholder="Ex : CI-002891048-A"
+                      className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold focus:ring-2 focus:ring-blue-600/30"
+                    />
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      Ce numéro d'identification officiel figurera automatiquement sur tous vos contrats de bail certifiés.
+                    </span>
+                  </div>
+                )}
 
                 {isAgency && (
                   <>

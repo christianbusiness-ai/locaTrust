@@ -3,6 +3,35 @@ import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { triggerCelebration } from '@/lib/celebration';
 
+async function ensureImageDataUrl(url?: string | null): Promise<string | null> {
+  if (!url || typeof url !== 'string') return null;
+  if (url.startsWith('data:image/')) return url;
+  if (typeof window === 'undefined') return null;
+  try {
+    return await new Promise<string>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || 460;
+          canvas.height = img.naturalHeight || 140;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(url);
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch {
+          resolve(url);
+        }
+      };
+      img.onerror = () => resolve(url);
+      img.src = url;
+    });
+  } catch {
+    return url;
+  }
+}
+
 export interface ContractPdfData {
   contractNumber: string;
   leaseType?: 'habitation' | 'professionnel';
@@ -201,17 +230,17 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.text(`Propriétaire Mandant : ${mandantName}`, 18, 50);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Téléphone : ${ownerPhone}`, 18, 54);
-      doc.text(`Identifiant : Agence & Mandat vérifié`, 18, 58);
+      doc.text(`Téléphone : ${ownerPhone || data.ownerPhone || 'Non renseigné'}`, 18, 54);
+      doc.text(`Identifiant : ${data.ownerCni ? `RCCM/CNI N° ${data.ownerCni}` : 'Agence & Mandat vérifié'}`, 18, 58);
     } else {
       doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 42);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7);
       doc.setTextColor(51, 65, 85);
       doc.text(`Nom / Raison : ${ownerName}`, 18, 46.5);
-      doc.text(`Téléphone : ${ownerPhone || 'Non renseigné'}`, 18, 50.5);
+      doc.text(`Téléphone : ${ownerPhone || data.ownerPhone || 'Non renseigné'}`, 18, 50.5);
       doc.text(`Adresse : ${data.ownerAddress || 'Abidjan - Côte d\'Ivoire'}`, 18, 54.5);
-      doc.text(`Identifiant : ${data.ownerCni ? `CNI/RCCM N° ${data.ownerCni}` : 'Identité certifiée'}`, 18, 58.5);
+      doc.text(`Identifiant : ${data.ownerCni ? `CNI/Passeport N° ${data.ownerCni}` : 'Identité certifiée'}`, 18, 58.5);
     }
 
     // Preneur (Personne physique ou morale)
@@ -229,13 +258,13 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.setFontSize(7);
     doc.setTextColor(51, 65, 85);
     doc.text(`Nom / Raison sociale : ${tenantName}`, 108, 46.5);
-    doc.text(`Téléphone : ${tenantPhone || 'Non renseigné'}`, 108, 50.5);
+    doc.text(`Téléphone : ${tenantPhone || data.tenantPhone || 'Non renseigné'}`, 108, 50.5);
     if (isProfessional && tenantRccm) {
       doc.text(`Immatriculation RCCM : ${tenantRccm}`, 108, 54.5);
-      doc.text(`Représenté par titulaire CNI N° ${tenantCni || 'Vérifiée'}`, 108, 58.5);
+      doc.text(`Représenté par titulaire CNI N° ${tenantCni || data.tenantCni || 'Vérifiée'}`, 108, 58.5);
     } else {
       doc.text(`Adresse : ${data.tenantAddress || 'Abidjan - Côte d\'Ivoire'}`, 108, 54.5);
-      doc.text(`Pièce d'identité : CNI N° ${tenantCni || 'Vérifiée'}`, 108, 58.5);
+      doc.text(`Pièce d'identité : ${tenantCni || data.tenantCni ? `CNI/Passeport N° ${tenantCni || data.tenantCni}` : 'Identité vérifiée'}`, 108, 58.5);
     }
 
     doc.setFont('helvetica', 'italic');
@@ -585,19 +614,30 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.roundedRect(105, 212, 85, 30, 2, 2, 'FD');
 
     // Résolution des signatures certifiées
-    const resolvedOwnerSig = getCertifiedSignatureDataUrl(
-      ownerName,
-      isAgency ? 'agence' : 'bailleur',
-      data.ownerSignatureUrl,
-      `${startDate} à 10:30`
+    const resolvedOwnerSig = await ensureImageDataUrl(
+      getCertifiedSignatureDataUrl(
+        ownerName,
+        isAgency ? 'agence' : 'bailleur',
+        data.ownerSignatureUrl,
+        `${startDate} à 10:30`
+      )
     );
 
-    const resolvedTenantSig = getCertifiedSignatureDataUrl(
-      tenantName,
-      'locataire',
-      data.tenantSignatureUrl,
-      `${startDate} à 11:15`
+    const resolvedTenantSig = await ensureImageDataUrl(
+      getCertifiedSignatureDataUrl(
+        tenantName,
+        'locataire',
+        data.tenantSignatureUrl,
+        `${startDate} à 11:15`
+      )
     );
+
+    const getImgFormat = (dataUrl?: string | null) => {
+      if (!dataUrl) return 'PNG';
+      if (dataUrl.includes('image/jpeg') || dataUrl.includes('image/jpg')) return 'JPEG';
+      if (dataUrl.includes('image/webp')) return 'WEBP';
+      return 'PNG';
+    };
 
     // 1. Bailleur
     doc.setFont('helvetica', 'bold');
@@ -610,7 +650,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
     if (resolvedOwnerSig) {
       try {
-        doc.addImage(resolvedOwnerSig, 'PNG', 18, 222.5, 48, 12);
+        doc.addImage(resolvedOwnerSig, getImgFormat(resolvedOwnerSig), 18, 222.5, 48, 12);
       } catch (err) {
         console.warn('Could not render owner signature image on PDF:', err);
         doc.setFont('times', 'italic');
@@ -644,7 +684,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
     if (resolvedTenantSig) {
       try {
-        doc.addImage(resolvedTenantSig, 'PNG', 108, 222.5, 48, 12);
+        doc.addImage(resolvedTenantSig, getImgFormat(resolvedTenantSig), 108, 222.5, 48, 12);
       } catch (err) {
         console.warn('Could not render tenant signature image on PDF:', err);
         doc.setFont('times', 'italic');
@@ -927,7 +967,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
       if (resolvedOwnerSig) {
         try {
-          doc.addImage(resolvedOwnerSig, 'PNG', 18, sigY + 10.5, 45, 11);
+          doc.addImage(resolvedOwnerSig, getImgFormat(resolvedOwnerSig), 18, sigY + 10.5, 45, 11);
         } catch (e) {
           doc.setFont('times', 'italic');
           doc.setFontSize(10);
@@ -960,7 +1000,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
       if (resolvedTenantSig) {
         try {
-          doc.addImage(resolvedTenantSig, 'PNG', 108, sigY + 10.5, 45, 11);
+          doc.addImage(resolvedTenantSig, getImgFormat(resolvedTenantSig), 108, sigY + 10.5, 45, 11);
         } catch (e) {
           doc.setFont('times', 'italic');
           doc.setFontSize(10);

@@ -28,6 +28,9 @@ export interface User {
   full_name: string;
   email: string;
   phone?: string;
+  cni_number?: string;
+  address?: string;
+  signature_url?: string;
   avatar_url?: string;
   verification_status: VerificationStatus;
   created_at: string;

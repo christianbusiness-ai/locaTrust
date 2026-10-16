@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
 import { Logo } from '@/components/common/Logo';
-import { Lock, Mail, User, Phone, AlertCircle, Loader2, ArrowRight, ShieldCheck, Eye, EyeOff, Home, Building2, Briefcase, MapPin, Sparkles } from 'lucide-react';
+import { Lock, Mail, User, Phone, AlertCircle, Loader2, ArrowRight, ShieldCheck, Eye, EyeOff, Home, Building2, Briefcase, MapPin, Sparkles, FileText } from 'lucide-react';
 import { triggerCelebration } from '@/lib/celebration';
 
 export const RegisterPage: React.FC = () => {
@@ -16,6 +16,7 @@ export const RegisterPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [phone, setPhone] = useState('');
+  const [cniNumber, setCniNumber] = useState('');
   const [accountType, setAccountType] = useState<'locataire' | 'proprietaire' | 'agence'>('locataire');
   const [roleDetail, setRoleDetail] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,17 @@ export const RegisterPage: React.FC = () => {
       return;
     }
 
+    if (phone.trim()) {
+      try {
+        localStorage.setItem('locatrust_user_phone', phone.trim());
+      } catch {}
+    }
+    if (cniNumber.trim()) {
+      try {
+        localStorage.setItem('locatrust_user_cni', cniNumber.trim());
+      } catch {}
+    }
+
     setLoading(true);
     const result = await signUp({
       fullName,
@@ -57,6 +69,7 @@ export const RegisterPage: React.FC = () => {
       password,
       accountType,
       phone,
+      cniNumber,
     });
     setLoading(false);
 
@@ -384,15 +397,33 @@ export const RegisterPage: React.FC = () => {
             {/* Téléphone */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Téléphone (optionnel)
+                Numéro de téléphone (WhatsApp recommandé) *
               </label>
               <div className="relative">
                 <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="tel"
+                  required
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="+225 07 00 00 00 00"
+                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
+
+            {/* N° Pièce d'identité / RCCM */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                {accountType === 'agence' ? 'N° RCCM ou Agrément Ministériel *' : 'N° CNI ou Passeport (Pour inscription sur vos contrats)'}
+              </label>
+              <div className="relative">
+                <FileText className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  value={cniNumber}
+                  onChange={(e) => setCniNumber(e.target.value)}
+                  placeholder={accountType === 'agence' ? 'Ex : CI-ABJ-2026-B-0192' : 'Ex : C0123456789 ou CI-002891048-A'}
                   className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
                 />
               </div>

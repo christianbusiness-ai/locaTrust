@@ -132,18 +132,31 @@ export function registerUserAccount(data: RegisterUserData): { success: boolean;
   const id = data.id || `usr_${data.role}_${Date.now()}`;
   const fullName = data.role === 'agence' ? (data.agencyName || data.name) : data.name;
 
+  const userAddress = data.commune
+    ? `${data.commune}, ${data.city || 'Abidjan'}`
+    : (data.city || 'Abidjan, Côte d\'Ivoire');
+
   const newUser: User = {
     id,
     role: data.role,
     full_name: fullName.trim(),
     email: data.email.trim(),
     phone: data.phone.trim(),
+    cni_number: data.cniOrRccm?.trim() || '',
+    address: userAddress,
     avatar_url: '',
     verification_status: 'en_attente', // En attente de certification KYC
     created_at: new Date().toISOString()
   };
 
   try {
+    if (data.phone) {
+      try { localStorage.setItem('locatrust_user_phone', data.phone.trim()); } catch {}
+    }
+    if (data.cniOrRccm) {
+      try { localStorage.setItem('locatrust_user_cni', data.cniOrRccm.trim()); } catch {}
+    }
+
     const existing = getStoredUsers();
     existing.push(newUser);
     localStorage.setItem(STORAGE_KEY_REGISTERED_USERS, JSON.stringify(existing));

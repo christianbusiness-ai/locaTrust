@@ -27,6 +27,7 @@ import { formatFCFA } from '@/lib/utils';
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
+import { resolveContractParties, persistOwnerSignature, getStoredOwnerSignature } from '@/lib/contractPartyResolver';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { notifyWaitingListCandidatesOnLeaseFinalized, pushGlobalNotification } from '@/lib/waitingListNotifications';
@@ -90,6 +91,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [contractModalStartStep, setContractModalStartStep] = useState<'form' | 'transmission'>('form');
   const [selectedDossierApp, setSelectedDossierApp] = useState<RentalApplication | null>(null);
   const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
+  const [signingOwnerApp, setSigningOwnerApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
 
   const loadFromDatabase = async () => {
@@ -473,6 +475,20 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       return;
     }
 
+    // Contrôle 3 : Signature manuscrite réelle du propriétaire / agence
+    const existingOwnerSig = (app as any).owner_signature_url || getStoredOwnerSignature(user?.id);
+    if (!existingOwnerSig) {
+      // Déclencher le modal de signature interactive sur canvas pour le bailleur
+      setSigningOwnerApp(app);
+      return;
+    }
+
+    await handleExecuteFinalizeContract(app, existingOwnerSig);
+  };
+
+  const handleExecuteFinalizeContract = async (app: RentalApplication, ownerSigUrl: string) => {
+    persistOwnerSignature(ownerSigUrl, user?.id);
+
     const contractNumber = app.contract_number || `LT-2026-CI-000${Math.floor(100 + Math.random() * 900)}`;
 
     const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
@@ -480,12 +496,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     const isAgencyUser = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (profile?.role as string) === 'agent';
     const matchedProperty = getPropertyForApp(app.property_id);
 
-    const ownerSigUrl = (app as any).owner_signature_url || getCertifiedSignatureDataUrl(
-      ownerName,
-      isAgencyUser ? 'agence' : 'bailleur',
-      null,
-      `${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
-    );
     const tenantSigUrl = (app as any).tenant_signature_url || getCertifiedSignatureDataUrl(
       app.tenant_name,
       'locataire',
@@ -697,35 +707,30 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   // Téléchargement du contrat finalisé au format PDF certifié
   const handleDownloadContract = async (app: RentalApplication) => {
     try {
-      const ownerName = profile?.full_name || user?.user_metadata?.full_name || "Bailleur";
-      const ownerPhone = profile?.phone || "+225 07 00 00 00 00";
       const matchedProperty = getPropertyForApp(app.property_id);
       const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
 
-      const isAgencyUser = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (profile?.role as string) === 'agent';
-
-      const ownerSig = (app as any).owner_signature_url || getCertifiedSignatureDataUrl(
-        ownerName,
-        isAgencyUser ? 'agence' : 'bailleur',
-        null,
-        '01/10/2026 à 10:30'
-      );
-      const tenantSig = (app as any).tenant_signature_url || getCertifiedSignatureDataUrl(
-        app.tenant_name,
-        'locataire',
-        null,
-        '01/10/2026 à 11:15'
-      );
+      const resolved = await resolveContractParties({
+        app,
+        matchedProperty,
+        currentProfile: profile,
+        currentUser: user
+      });
 
       await generateOfficialContractPdf({
         contractNumber: app.contract_number || 'LT-2026-CI-000492',
-        isAgency: isAgencyUser,
-        ownerName: ownerName,
-        mandantName: isAgencyUser ? (matchedProperty as any)?.mandant_name : undefined,
-        ownerPhone: ownerPhone,
-        tenantName: app.tenant_name,
-        tenantPhone: app.tenant_phone,
-        tenantCni: app.tenant_cni,
+        isAgency: resolved.isAgency,
+        ownerName: resolved.ownerName,
+        mandantName: resolved.mandantName,
+        ownerPhone: resolved.ownerPhone,
+        ownerEmail: resolved.ownerEmail,
+        ownerAddress: resolved.ownerAddress,
+        ownerCni: resolved.ownerCni,
+        tenantName: resolved.tenantName,
+        tenantPhone: resolved.tenantPhone,
+        tenantEmail: resolved.tenantEmail,
+        tenantAddress: resolved.tenantAddress,
+        tenantCni: resolved.tenantCni,
         propertyTitle: app.property_title,
         propertyAddress: app.property_address,
         surface: matchedProperty?.surface,
@@ -741,16 +746,16 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         cautionMonths: 2,
         chargesAmount: matchedProperty?.charges ?? 10000,
         dueDay: 5,
-        ownerSignatureUrl: ownerSig,
-        tenantSignatureUrl: tenantSig,
+        ownerSignatureUrl: resolved.ownerSignatureUrl,
+        tenantSignatureUrl: resolved.tenantSignatureUrl,
         isSignedCopy: true,
         leaseType,
         usageDestination: leaseType,
         authorizedActivity: matchedProperty?.authorized_activity || ''
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Download contract PDF error:', err);
-      alert('Erreur lors du téléchargement du contrat.');
+      alert(err?.message || 'Erreur lors du téléchargement du contrat.');
     }
   };
 
@@ -1363,7 +1368,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               tenantEmail: selectedApplicationForContract.tenant_email,
               ownerId: (selectedApplicationForContract as any).owner_id || user?.id,
               ownerName: profile?.full_name || user?.user_metadata?.full_name || ((profile?.role as any) === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
-              ownerPhone: profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00',
+              ownerPhone: profile?.phone || user?.user_metadata?.phone || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_phone') : null) || '+225 07 00 00 00 00',
+              ownerCni: profile?.cni_number || user?.user_metadata?.cni_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A',
+              ownerAddress: (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : 'Abidjan - Côte d\'Ivoire'),
               tenantName: selectedApplicationForContract.tenant_name,
               tenantPhone: selectedApplicationForContract.tenant_phone,
               tenantCni: selectedApplicationForContract.tenant_cni,
@@ -1387,7 +1394,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               propertyType: matchedProperty?.type || '',
               ownerDestinationAuthorized: matchedProperty?.owner_destination_authorized ?? true,
               tenantSignatureUrl: (selectedApplicationForContract as any).tenant_signature_url,
-              ownerSignatureUrl: (selectedApplicationForContract as any).owner_signature_url
+              ownerSignatureUrl: (selectedApplicationForContract as any).owner_signature_url || getStoredOwnerSignature(user?.id)
             }}
           />
         );
@@ -1405,6 +1412,24 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           signerRole="locataire"
           documentTitle={`Bail d'Habitation pour ${signingTenantApp.property_title}`}
           documentNumber={signingTenantApp.contract_number || 'LT-2026-CI-000492'}
+        />
+      )}
+
+      {/* Interactive Owner / Agency Signature Modal (Vraie signature manuscrite sur canvas numérique certifié) */}
+      {signingOwnerApp && (
+        <SignatureModal
+          isOpen={!!signingOwnerApp}
+          onClose={() => setSigningOwnerApp(null)}
+          onConfirmSignature={(signatureDataUrl) => {
+            persistOwnerSignature(signatureDataUrl, user?.id);
+            const targetApp = { ...signingOwnerApp, owner_signature_url: signatureDataUrl };
+            setSigningOwnerApp(null);
+            handleExecuteFinalizeContract(targetApp, signatureDataUrl);
+          }}
+          signerName={profile?.full_name || user?.user_metadata?.full_name || ((profile?.role as any) === 'agence' ? "Directeur d'Agence" : "Propriétaire Bailleur")}
+          signerRole={(profile?.account_type === 'agence' || (profile?.role as any) === 'agence') ? 'agence' : 'bailleur'}
+          documentTitle={`Bail d'Habitation pour ${signingOwnerApp.property_title}`}
+          documentNumber={signingOwnerApp.contract_number || 'LT-2026-CI-000492'}
         />
       )}
 

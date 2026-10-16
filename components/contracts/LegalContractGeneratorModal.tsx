@@ -32,6 +32,7 @@ import { LOCATRUST_QR_CODE_DATA_URL, LOCATRUST_QR_CODE_URL } from '@/lib/qrCodeD
 import { Logo } from '@/components/common/Logo';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { persistOwnerSignature, persistTenantSignature, getStoredOwnerSignature } from '@/lib/contractPartyResolver';
 import {
   runLegalAnalysisEngine,
   IVORIAN_CITIES,
@@ -154,16 +155,16 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.ownerName || profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur')
   );
   const [ownerPhone, setOwnerPhone] = useState<string>(
-    initialData?.ownerPhone || profile?.phone || user?.user_metadata?.phone || ''
+    initialData?.ownerPhone || profile?.phone || user?.user_metadata?.phone || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_phone') : null) || '+225 07 00 00 00 00'
   );
   const [ownerEmail, setOwnerEmail] = useState<string>(
-    initialData?.ownerEmail || user?.email || (profile as any)?.email || ''
+    initialData?.ownerEmail || user?.email || (profile as any)?.email || 'contact@locatrust.ci'
   );
   const [ownerAddress, setOwnerAddress] = useState<string>(
     initialData?.ownerAddress || (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : 'Abidjan - Côte d\'Ivoire')
   );
   const [ownerCni, setOwnerCni] = useState<string>(
-    initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || ''
+    initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A'
   );
   const [mandantName, setMandantName] = useState<string>(initialData?.mandantName || '');
 
@@ -400,7 +401,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   );
 
   // Real Handwritten Signature States (LocaTrust Legal Digital Signatures)
-  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(null);
+  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
+    return initialData?.ownerSignatureUrl || getStoredOwnerSignature() || null;
+  });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
@@ -2962,9 +2965,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
+              persistOwnerSignature(signatureUrl, user?.id);
               setCurrentStep('transmission');
             } else {
               setTenantSignatureUrl(signatureUrl);
+              persistTenantSignature(signatureUrl, (initialData as any)?.tenantId);
             }
             setActiveSigningParty(null);
           }}

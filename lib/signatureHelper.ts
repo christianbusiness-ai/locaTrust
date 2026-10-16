@@ -10,10 +10,14 @@ export function getCertifiedSignatureDataUrl(
   existingUrl?: string | null,
   signDate: string = '01/07/2026 à 10:32'
 ): string {
-  // If valid PNG or JPEG data URL is already provided by user canvas, use it
+  // If valid image data URL, http, https, or blob URL is already provided by user canvas, use it directly
   if (
     existingUrl &&
-    (existingUrl.startsWith('data:image/png') || existingUrl.startsWith('data:image/jpeg'))
+    typeof existingUrl === 'string' &&
+    (existingUrl.startsWith('data:image/') ||
+      existingUrl.startsWith('http://') ||
+      existingUrl.startsWith('https://') ||
+      existingUrl.startsWith('blob:'))
   ) {
     return existingUrl;
   }

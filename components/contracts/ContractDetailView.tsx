@@ -44,6 +44,13 @@ import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { LegalContractAnalyzerModal } from './LegalContractAnalyzerModal';
+import {
+  resolveContractParties,
+  getStoredOwnerSignature,
+  getStoredTenantSignature,
+  persistOwnerSignature,
+  persistTenantSignature
+} from '@/lib/contractPartyResolver';
 
 interface ContractDetailViewProps {
   onBack?: () => void;
@@ -158,10 +165,10 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   // Real Handwritten Signature States from real contract
   const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    return realContract?.owner_signature_url || realContract?.ownerSignatureUrl || null;
+    return realContract?.owner_signature_url || realContract?.ownerSignatureUrl || getStoredOwnerSignature() || null;
   });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(() => {
-    return realContract?.tenant_signature_url || realContract?.tenantSignatureUrl || null;
+    return realContract?.tenant_signature_url || realContract?.tenantSignatureUrl || getStoredTenantSignature() || null;
   });
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -263,20 +270,43 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       console.warn('Property lookup error', e);
     }
 
+    const resolvedParties = await resolveContractParties({
+      ownerId: realContract?.owner_id || realContract?.owner?.id || user?.id,
+      tenantId: realContract?.tenant_id || realContract?.tenant?.id,
+      currentProfile: profile,
+      currentUser: user,
+      ownerFallback: {
+        name: ownerDisplayName,
+        phone: ownerDisplayPhone,
+        email: realContract?.owner?.email || user?.email || (profile as any)?.email,
+        address: realContract?.owner?.address || (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : undefined),
+        cni: realContract?.owner?.cni_number || profile?.cni_number || (profile as any)?.rccm_number,
+        signatureUrl: ownerSignatureUrl,
+      },
+      tenantFallback: {
+        name: tenantData.name,
+        phone: tenantData.phone,
+        email: tenantData.email,
+        address: tenantData.address,
+        cni: tenantData.cni,
+        signatureUrl: tenantSignatureUrl,
+      }
+    });
+
     await generateOfficialContractPdf({
       contractNumber,
       isAgency,
-      ownerName: ownerDisplayName,
+      ownerName: resolvedParties.owner.name,
       mandantName: isAgency ? ((realContract?.property as any)?.mandant_name || (realContract as any)?.mandant_name) : undefined,
-      ownerPhone: ownerDisplayPhone,
-      ownerEmail: realContract?.owner?.email || user?.email || (profile as any)?.email,
-      ownerAddress: realContract?.owner?.address || (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : undefined),
-      ownerCni: realContract?.owner?.cni_number || profile?.cni_number || (profile as any)?.rccm_number,
-      tenantName: tenantData.name,
-      tenantPhone: tenantData.phone,
-      tenantEmail: tenantData.email,
-      tenantAddress: tenantData.address,
-      tenantCni: tenantData.cni,
+      ownerPhone: resolvedParties.owner.phone,
+      ownerEmail: resolvedParties.owner.email,
+      ownerAddress: resolvedParties.owner.address,
+      ownerCni: resolvedParties.owner.cni,
+      tenantName: resolvedParties.tenant.name,
+      tenantPhone: resolvedParties.tenant.phone,
+      tenantEmail: resolvedParties.tenant.email,
+      tenantAddress: resolvedParties.tenant.address,
+      tenantCni: resolvedParties.tenant.cni,
       propertyTitle: tenantData.propertyTitle,
       propertyAddress: tenantData.propertyAddress,
       surface,
@@ -292,8 +322,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       cautionMonths: 2,
       chargesAmount: tenantData.charges,
       dueDay: 5,
-      ownerSignatureUrl,
-      tenantSignatureUrl,
+      ownerSignatureUrl: resolvedParties.owner.signatureUrl || ownerSignatureUrl,
+      tenantSignatureUrl: resolvedParties.tenant.signatureUrl || tenantSignatureUrl,
       leaseType,
       usageDestination: leaseType,
       authorizedActivity: contract?.authorized_activity || (contract?.property as any)?.authorized_activity || ''
@@ -1020,8 +1050,34 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
+              persistOwnerSignature(signatureUrl);
             } else {
               setTenantSignatureUrl(signatureUrl);
+              persistTenantSignature(signatureUrl);
+            }
+            try {
+              const stored = localStorage.getItem('locatrust_contracts');
+              if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) {
+                  const updated = parsed.map((c: any) => {
+                    if (c.contract_number === contractNumber || c.id === contractNumber) {
+                      return {
+                        ...c,
+                        owner_signature_url: activeSigningParty === 'proprietaire' ? signatureUrl : (c.owner_signature_url || c.ownerSignatureUrl),
+                        tenant_signature_url: activeSigningParty === 'locataire' ? signatureUrl : (c.tenant_signature_url || c.tenantSignatureUrl),
+                        owner_signed: activeSigningParty === 'proprietaire' ? true : c.owner_signed,
+                        tenant_signed: activeSigningParty === 'locataire' ? true : c.tenant_signed
+                      };
+                    }
+                    return c;
+                  });
+                  localStorage.setItem('locatrust_contracts', JSON.stringify(updated));
+                  window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updated } }));
+                }
+              }
+            } catch (err) {
+              console.warn('Error saving signature in locatrust_contracts:', err);
             }
             setActiveSigningParty(null);
           }}
