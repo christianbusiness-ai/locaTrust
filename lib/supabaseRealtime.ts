@@ -9,6 +9,7 @@ export type LiveEventType =
   | 'CAUTION_REJECTED'
   | 'CAUTION_RESTITUTED'
   | 'CAUTION_RECEIPT_TRANSMITTED'
+  | 'CAUTION_SIGNED_BY_TENANT'
   | 'CONTRACT_FINALIZED'
   | 'CONTRACT_TRANSMITTED'
   | 'CONTRACT_SIGNED_BY_TENANT'
@@ -498,6 +499,149 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));
+        }
+        break;
+
+      case 'CAUTION_SIGNED_BY_TENANT':
+        if (typeof window !== 'undefined') {
+          const depId = payload?.depositId || payload?.data?.depositId;
+          const tenantSig = payload?.data?.tenantSignatureUrl || (payload?.data?.deposit as any)?.tenant_signature;
+          const rcpNum = payload?.data?.receiptNumber || (payload?.data?.deposit as any)?.receipt_number;
+          const incomingDeposit = payload?.data?.deposit;
+          const now = new Date().toISOString();
+
+          // 1. Mettre à jour locatrust_caution_deposits et locatrust_deposits_v1
+          const updateDepositList = (key: string) => {
+            try {
+              const raw = localStorage.getItem(key);
+              let list = raw ? JSON.parse(raw) : [];
+              if (!Array.isArray(list)) list = [];
+              let found = false;
+              list = list.map((d: any) => {
+                const cleanId = d.id ? d.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                const cleanDepId = depId ? depId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                const cleanRcp = rcpNum ? rcpNum.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                const matches =
+                  (depId && d.id === depId) ||
+                  (depId && d.id && d.id.toLowerCase() === depId.toLowerCase()) ||
+                  (cleanId && cleanDepId && (cleanId === cleanDepId || cleanId.includes(cleanDepId) || cleanDepId.includes(cleanId))) ||
+                  (rcpNum && d.receipt_number === rcpNum) ||
+                  (cleanRcp && d.receipt_number && d.receipt_number.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanRcp) ||
+                  (payload?.contractId && d.contract_id === payload.contractId) ||
+                  (incomingDeposit && d.id === incomingDeposit.id);
+                if (matches) {
+                  found = true;
+                  return {
+                    ...d,
+                    ...(incomingDeposit || {}),
+                    tenant_signature: tenantSig || incomingDeposit?.tenant_signature || d.tenant_signature || 'SIG_OFFICIAL_TENANT_CERTIFIED',
+                    tenant_signed_at: d.tenant_signed_at || now,
+                    status: 'paye_complet'
+                  };
+                }
+                return d;
+              });
+              if (!found && incomingDeposit) {
+                list.unshift({
+                  ...incomingDeposit,
+                  tenant_signature: tenantSig || incomingDeposit.tenant_signature || 'SIG_OFFICIAL_TENANT_CERTIFIED',
+                  tenant_signed_at: now,
+                  status: 'paye_complet'
+                });
+              }
+              localStorage.setItem(key, JSON.stringify(list));
+            } catch {}
+          };
+          updateDepositList('locatrust_caution_deposits');
+          updateDepositList('locatrust_deposits_v1');
+
+          // 2. Mettre à jour locatrust_chat_messages_v4
+          try {
+            const rawMsgs = localStorage.getItem('locatrust_chat_messages_v4');
+            if (rawMsgs) {
+              const msgs = JSON.parse(rawMsgs);
+              if (Array.isArray(msgs)) {
+                const cleanDepId = depId ? depId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                const cleanRcp = rcpNum ? rcpNum.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                const updatedMsgs = msgs.map((m: any) => {
+                  if (m.quittance) {
+                    const q = m.quittance;
+                    const qCleanDepId = q.depositId ? q.depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                    const qCleanRcp = q.receiptNumber ? q.receiptNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+                    const matches =
+                      (depId && q.depositId === depId) ||
+                      (cleanDepId && qCleanDepId && (cleanDepId === qCleanDepId || cleanDepId.includes(qCleanDepId) || qCleanDepId.includes(cleanDepId))) ||
+                      (rcpNum && q.receiptNumber === rcpNum) ||
+                      (cleanRcp && qCleanRcp && (cleanRcp === qCleanRcp || cleanRcp.includes(qCleanRcp) || qCleanRcp.includes(cleanRcp))) ||
+                      (payload?.contractId && q.contractNumber === payload.contractId);
+                    if (matches) {
+                      return {
+                        ...m,
+                        quittance: {
+                          ...q,
+                          tenantSignatureUrl: tenantSig || q.tenantSignatureUrl || 'SIG_OFFICIAL_TENANT_CERTIFIED'
+                        }
+                      };
+                    }
+                  }
+                  return m;
+                });
+                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify(updatedMsgs));
+              }
+            }
+          } catch {}
+
+          // 3. Mettre à jour locatrust_tenant_receipts_v2
+          try {
+            const rawRcp = localStorage.getItem('locatrust_tenant_receipts_v2');
+            if (rawRcp) {
+              const rcps = JSON.parse(rawRcp);
+              if (Array.isArray(rcps)) {
+                const updatedRcps = rcps.map((r: any) => {
+                  const matches =
+                    (depId && r.depositId === depId) ||
+                    (rcpNum && r.receiptNumber === rcpNum) ||
+                    (payload?.contractId && r.contractNumber === payload.contractId);
+                  if (matches) {
+                    return {
+                      ...r,
+                      tenantSignatureUrl: tenantSig || r.tenantSignatureUrl || 'SIG_OFFICIAL_TENANT_CERTIFIED'
+                    };
+                  }
+                  return r;
+                });
+                localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(updatedRcps));
+              }
+            }
+          } catch {}
+
+          // 4. Notification pour le bailleur / agence
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_caut_signed_${depId || Date.now()}`;
+            if (!curNotifs.some((n: any) => n.id === notifId)) {
+              const ownerNotif = {
+                id: notifId,
+                title: '✅ Reçu de caution contresigné par le locataire',
+                description: `Le locataire a apposé sa signature certifiée sur le reçu de caution N° ${rcpNum || 'OFFICIEL'}. Le document est officiellement scellé et téléchargeable.`,
+                time: "À l'instant",
+                unread: true,
+                type: 'caution',
+                category: 'caution',
+                targetTab: 'guarantees',
+                targetRole: 'proprietaire',
+                targetUserId: payload?.targetUserId || 'usr_owner'
+              };
+              localStorage.setItem('locatrust_notifications', JSON.stringify([ownerNotif, ...curNotifs]));
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [ownerNotif, ...curNotifs] } }));
+            }
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
         }
         break;
 

@@ -108,11 +108,20 @@ export const LocatairePaiementsView: React.FC = () => {
       }
 
       // 2. Cautions
-      const { data: ctnData } = await supabase
-        .from('cautions')
-        .select('*')
-        .eq('tenant_id', user.id);
-      setDeposits(ctnData || []);
+      let ctnList: any[] = [];
+      try {
+        const { data: ctnData } = await supabase
+          .from('cautions')
+          .select('*')
+          .eq('tenant_id', user.id);
+        if (ctnData && ctnData.length > 0) {
+          ctnList = ctnData;
+        }
+      } catch {}
+
+      const localDeps = getStoredDeposits();
+      const combinedDeps = ctnList.length > 0 ? ctnList : localDeps;
+      setDeposits(combinedDeps || []);
 
       // 3. Contrats réels pour les formulaires de paiement
       const { data: cntData } = await getContracts(user.id, 'locataire');
@@ -1387,10 +1396,34 @@ export const LocatairePaiementsView: React.FC = () => {
         <SignatureModal
           isOpen={true}
           onClose={() => setIsSigningCautionModalOpen(false)}
-          onConfirmSignature={(signatureData) => {
-            signCautionReceipt(myDeposit.id, 'tenant', signatureData);
+          onConfirmSignature={async (signatureData) => {
+            const updated = signCautionReceipt(myDeposit.id, 'tenant', signatureData, myDeposit);
             setIsSigningCautionModalOpen(false);
-            setDeposits(prev => prev.map(d => d.id === myDeposit.id ? { ...d, tenant_signature: signatureData } : d));
+            const now = new Date().toISOString();
+            const updatedWithSig = updated || {
+              ...myDeposit,
+              status: 'paye_complet',
+              tenant_signature: signatureData,
+              tenant_signed_at: now
+            };
+            setDeposits(prev => prev.map(d => d.id === myDeposit.id ? updatedWithSig : d));
+
+            try {
+              await broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
+                depositId: myDeposit.id,
+                receiptNumber: (myDeposit as any).receipt_number || `REC-CAUT-${myDeposit.id.toUpperCase()}`,
+                actorId: user?.id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+                targetUserId: myDeposit.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+                contractId: myDeposit.contract_id,
+                data: {
+                  deposit: updatedWithSig,
+                  receiptNumber: (myDeposit as any).receipt_number || `REC-CAUT-${myDeposit.id.toUpperCase()}`,
+                  tenantSignatureUrl: signatureData,
+                  amount: myDeposit.amount_paid || myDeposit.amount_requested
+                }
+              });
+            } catch {}
+
             setSuccessModalMessage({
               title: 'Reçu de caution signé avec succès !',
               desc: 'Votre signature certifiée a été apposée sur le reçu officiel. Le téléchargement officiel est désormais débloqué.'

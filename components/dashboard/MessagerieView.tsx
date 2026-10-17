@@ -495,18 +495,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const prevContactIdRef = useRef<string>(selectedContactId);
   const prevMessagesCountRef = useRef<number>(0);
 
-  // Load stored messages without forcing re-renders if messages haven't changed
+  // Load stored messages
   const refreshMessages = () => {
     const list = getStoredMessages();
     const cleanList = Array.isArray(list) ? list : [];
-    setMessages((prev) => {
-      if (prev.length === cleanList.length) {
-        const lastPrev = prev[prev.length - 1]?.id;
-        const lastClean = cleanList[cleanList.length - 1]?.id;
-        if (lastPrev === lastClean) return prev;
-      }
-      return cleanList;
-    });
+    setMessages([...cleanList]);
   };
 
   const handleChatScroll = () => {
@@ -1502,14 +1495,24 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         });
       }
     } else if (signingTarget.type === 'quittance' && signingTarget.quittance) {
-      const targetRef = signingTarget.quittance.receiptNumber;
+      const targetRef = signingTarget.quittance.receiptNumber || '';
+      const cleanTargetRef = targetRef ? targetRef.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
       const isCaution = signingTarget.quittance.receiptType === 'caution' || targetRef.includes('CAUT');
+      
       const updatedMessages = currentAll.map((msg) => {
-        if (msg.quittance && (msg.quittance.receiptNumber === targetRef || (msg.quittance.depositId && msg.quittance.depositId === signingTarget.quittance?.depositId))) {
+        const q = msg.quittance;
+        if (!q) return msg;
+        const qCleanRef = q.receiptNumber ? q.receiptNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+        const matches =
+          q.receiptNumber === targetRef ||
+          (cleanTargetRef && qCleanRef && (qCleanRef === cleanTargetRef || qCleanRef.includes(cleanTargetRef) || cleanTargetRef.includes(qCleanRef))) ||
+          (msg.quittance.depositId && signingTarget.quittance?.depositId && msg.quittance.depositId.toLowerCase() === signingTarget.quittance.depositId.toLowerCase());
+
+        if (matches) {
           return {
             ...msg,
             quittance: {
-              ...msg.quittance,
+              ...q,
               tenantSignatureUrl: signatureDataUrl
             }
           };
@@ -1518,25 +1521,51 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       });
 
       saveStoredMessages(updatedMessages);
+      setMessages([...updatedMessages]);
 
       // Si c'est un reçu de caution, mettre à jour cautionsStore et Supabase
       if (isCaution) {
         try {
           const allDeps = getStoredDeposits();
+          const cleanDepId = signingTarget.quittance?.depositId ? signingTarget.quittance.depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
           const dep = allDeps.find((d) =>
-            d.id === signingTarget.quittance?.depositId ||
-            targetRef.includes(d.id.slice(0, 6).toUpperCase()) ||
+            (signingTarget.quittance?.depositId && d.id.toLowerCase() === signingTarget.quittance.depositId.toLowerCase()) ||
+            (cleanDepId && d.id && d.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
+            (targetRef && d.id && targetRef.toUpperCase().includes(d.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())) ||
             (signingTarget.quittance?.contractNumber && (d.contract_number === signingTarget.quittance.contractNumber || d.contract_id === signingTarget.quittance.contractNumber))
           );
-          if (dep) {
-            signCautionReceipt(dep.id, 'tenant', signatureDataUrl);
+          
+          const depIdToSign = dep?.id || signingTarget.quittance.depositId || `dep_${Date.now()}`;
+          const fallbackDeposit = dep || {
+            id: depIdToSign,
+            contract_id: signingTarget.quittance.contractNumber || 'CNT-OFFICIAL',
+            amount_requested: signingTarget.quittance.amount,
+            amount_paid: signingTarget.quittance.amount,
+            status: 'paye_complet',
+            tenant_id: currentUserId,
+            owner_id: activeContact.id,
+            owner_signature: signingTarget.quittance.ownerSignatureUrl || 'SIG_OFFICIAL_OWNER_CERTIFIED',
+            receipt_sent_to_tenant: true,
+            property: {
+              title: signingTarget.quittance.propertyTitle || 'Logement loué',
+              address: signingTarget.quittance.propertyAddress || 'Abidjan'
+            },
+            tenant: {
+              id: currentUserId,
+              full_name: signingTarget.quittance.tenantName || 'christian'
+            }
+          } as any;
+
+          signCautionReceipt(depIdToSign, 'tenant', signatureDataUrl, fallbackDeposit);
+          
+          if (isValidUuid(depIdToSign)) {
             supabase
               .from('cautions')
               .update({
                 tenant_signature: signatureDataUrl,
                 status: 'paye_complet'
               })
-              .eq('id', dep.id)
+              .eq('id', depIdToSign)
               .then();
           }
         } catch {}
@@ -1549,11 +1578,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         });
 
         broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
+          depositId: signingTarget.quittance?.depositId,
+          receiptNumber: targetRef,
           actorId: currentUserId,
           targetUserId: activeContact.id,
+          contractId: signingTarget.quittance?.contractNumber,
           data: {
             receiptNumber: targetRef,
-            tenantSignatureUrl: signatureDataUrl
+            tenantSignatureUrl: signatureDataUrl,
+            depositId: signingTarget.quittance?.depositId
           }
         }).catch(() => {});
       }

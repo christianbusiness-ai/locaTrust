@@ -962,20 +962,62 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   };
 
   // Callback de confirmation de signature depuis SignatureModal
-  const handleSignatureModalConfirm = (signatureData: string) => {
+  const handleSignatureModalConfirm = async (signatureData: string) => {
     if (!signatureModalConfig.deposit) return;
     const dep = signatureModalConfig.deposit;
+    const now = new Date().toISOString();
 
+    let updatedDep: Deposit | null = null;
     if (signatureModalConfig.type === 'caution') {
-      signCautionReceipt(dep.id, signatureModalConfig.role === 'proprietaire' ? 'owner' : 'tenant', signatureData);
+      updatedDep = signCautionReceipt(
+        dep.id,
+        signatureModalConfig.role === 'proprietaire' ? 'owner' : 'tenant',
+        signatureData,
+        dep
+      );
     } else {
-      signRestitutionReceipt(dep.id, signatureModalConfig.role === 'proprietaire' ? 'owner' : 'tenant', signatureData);
+      updatedDep = signRestitutionReceipt(
+        dep.id,
+        signatureModalConfig.role === 'proprietaire' ? 'owner' : 'tenant',
+        signatureData
+      );
     }
 
-    reloadDeposits();
+    const updatedWithSig: Deposit = updatedDep || {
+      ...dep,
+      status: 'paye_complet',
+      ...(signatureModalConfig.role === 'locataire'
+        ? { tenant_signature: signatureData, tenant_signed_at: now }
+        : { owner_signature: signatureData, owner_signed_at: now })
+    };
+
+    setDeposits(prev => prev.map(d => (d.id === dep.id || (dep.contract_id && d.contract_id === dep.contract_id)) ? updatedWithSig : d));
+
+    if (signatureModalConfig.role === 'locataire') {
+      try {
+        await broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
+          depositId: dep.id,
+          receiptNumber: (dep as any).receipt_number || `REC-CAUT-${dep.id.toUpperCase()}`,
+          actorId: user?.id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+          targetUserId: dep.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          contractId: dep.contract_id,
+          data: {
+            deposit: updatedWithSig,
+            receiptNumber: (dep as any).receipt_number || `REC-CAUT-${dep.id.toUpperCase()}`,
+            tenantSignatureUrl: signatureData,
+            amount: dep.amount_paid || dep.amount_requested
+          }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast CAUTION_SIGNED_BY_TENANT failed:', e);
+      }
+    }
+
     setSignatureModalConfig(prev => ({ ...prev, isOpen: false }));
     setSignatureAlertDoc(null);
-    setSuccessFeedback("Signature apposée et enregistrée avec succès sur le document certifié !");
+    setSuccessFeedback("Signature apposée et enregistrée avec succès sur le document certifié ! Le téléchargement officiel est débloqué.");
+    confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+    await reloadDeposits();
   };
 
   const filteredDeposits = deposits.filter((d) => {

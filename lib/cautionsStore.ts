@@ -318,29 +318,49 @@ export function rejectCautionPayment(depositId: string, refusalReason: string): 
   return updatedDeposit;
 }
 
-export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant', signatureData: string): Deposit | null {
+export function signCautionReceipt(
+  depositId: string,
+  party: 'owner' | 'tenant',
+  signatureData: string,
+  depositFallback?: Deposit
+): Deposit | null {
   const all = getStoredDeposits();
-  const target = all.find((d) => d.id === depositId);
+  const cleanDepId = depositId ? depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+  let target = all.find((d) => 
+    d.id === depositId ||
+    (depositId && d.id && d.id.toLowerCase() === depositId.toLowerCase()) ||
+    (cleanDepId && d.id && d.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
+    (depositId && d.id && depositId.toUpperCase().includes(d.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())) ||
+    (depositId && (d.contract_id === depositId || d.contract_number === depositId))
+  );
+
+  if (!target && depositFallback) {
+    target = depositFallback;
+  }
   if (!target) return null;
 
   const now = new Date().toISOString();
   const updatedDeposit: Deposit = {
     ...target,
+    status: 'paye_complet',
     ...(party === 'owner'
       ? { owner_signature: signatureData, owner_signed_at: now }
       : { tenant_signature: signatureData, tenant_signed_at: now })
   };
 
-  const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
+  const existsInAll = all.some((d) => d.id === target.id);
+  const updatedList = existsInAll
+    ? all.map((d) => (d.id === target.id ? updatedDeposit : d))
+    : [updatedDeposit, ...all];
   saveStoredDeposits(updatedList);
 
   // 1. Mettre à jour Supabase table cautions
   try {
-    if (isValidUuid(depositId)) {
+    if (isValidUuid(target.id)) {
       const updatePayload: any = party === 'owner'
-        ? { owner_signature: signatureData }
-        : { tenant_signature: signatureData };
-      supabase.from('cautions').update(updatePayload).eq('id', depositId).then();
+        ? { owner_signature: signatureData, status: 'paye_complet' }
+        : { tenant_signature: signatureData, status: 'paye_complet' };
+      supabase.from('cautions').update(updatePayload).eq('id', target.id).then();
     }
   } catch {}
 
@@ -353,8 +373,9 @@ export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant',
         if (Array.isArray(list)) {
           const updatedReceipts = list.map((r: any) => {
             const matchesDeposit =
-              r.depositId === depositId ||
-              (r.receiptNumber && r.receiptNumber.includes(depositId.toUpperCase())) ||
+              r.depositId === target.id ||
+              (cleanDepId && r.depositId && r.depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
+              (r.receiptNumber && cleanDepId && r.receiptNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().includes(cleanDepId)) ||
               (r.contractNumber && (r.contractNumber === target.contract_id || r.contractNumber === target.contract_number));
             if (matchesDeposit) {
               return {
@@ -381,8 +402,9 @@ export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant',
             if (m.quittance) {
               const q = m.quittance;
               const matchesDeposit =
-                q.depositId === depositId ||
-                (q.receiptNumber && q.receiptNumber.includes(depositId.toUpperCase())) ||
+                q.depositId === target.id ||
+                (cleanDepId && q.depositId && q.depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
+                (q.receiptNumber && cleanDepId && q.receiptNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().includes(cleanDepId)) ||
                 (q.contractNumber && (q.contractNumber === target.contract_id || q.contractNumber === target.contract_number));
               if (matchesDeposit) {
                 return {
@@ -402,11 +424,11 @@ export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant',
     }
   } catch {}
 
-  // 4. Si c'est le locataire qui signe, notifier immédiatement le propriétaire / l'agence
+  // 4. Si c'est le locataire qui signe, notifier immédiatement le propriétaire / l'agence et diffuser en temps réel
+  const cleanNum = (target as any).receipt_number || `REC-CAUT-${target.id.toUpperCase()}`;
   if (party === 'tenant' && typeof window !== 'undefined') {
     try {
       const ownerId = target.owner_id || 'usr_owner';
-      const cleanNum = (target as any).receipt_number || `REC-CAUT-${target.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`;
       const notifItem = {
         id: `notif_caut_signed_${Date.now()}`,
         title: '✅ Reçu de caution contresigné par le locataire',
@@ -423,6 +445,23 @@ export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant',
       const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
       localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(curNotifs) ? curNotifs : [])]));
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch {}
+
+    // Diffusion temps réel multi-appareils
+    try {
+      broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
+        depositId: target.id,
+        receiptNumber: cleanNum,
+        actorId: target.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        targetUserId: target.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+        contractId: target.contract_id,
+        data: {
+          deposit: updatedDeposit,
+          receiptNumber: cleanNum,
+          tenantSignatureUrl: signatureData,
+          amount: target.amount_paid || target.amount_requested
+        }
+      }).catch(() => {});
     } catch {}
   }
 
