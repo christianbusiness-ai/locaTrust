@@ -45,7 +45,6 @@ import { SignatureModal } from '@/components/common/SignatureModal';
 import { sendQuittanceToTenant } from '@/lib/messagingStore';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
-import { RentScheduleCalendar } from '@/components/common/RentScheduleCalendar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 
 interface PaiementsViewProps {
@@ -740,9 +739,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* Calendrier Réel & Échéancier Dynamique J-3 (Synchronisé Horloge Appareil) */}
-      <RentScheduleCalendar userRole="proprietaire" />
 
       {/* Tabs & Search */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-200 pb-3">

@@ -6,34 +6,89 @@
 
 import { formatFCFA } from '@/lib/utils';
 import { sendChatMessage } from '@/lib/messagingStore';
+import { supabase } from '@/src/lib/supabase';
 
-export interface ContractDueDetails {
-  contractId: string;
-  contractNumber: string;
-  propertyTitle: string;
-  propertyAddress: string;
-  ownerId: string;
-  ownerName: string;
-  tenantId: string;
-  tenantName: string;
-  rentAmount: number;
-  signedDate: string;
-  dueDay: number;
-  nextDueDate: Date;
-  nextDueDateFormatted: string;
-  daysRemaining: number;
-  status: 'paid' | 'due_today' | 'due_soon_3_days' | 'upcoming' | 'overdue';
-  overdueDays: number;
-  targetMonthLabel: string;
-  targetMonthKey: string;
-  isPaidThisMonth: boolean;
+let memoryTimeOffsetMs = 0;
+
+/**
+ * Synchronise l'horloge avec la base de données Supabase / serveur.
+ * Permet de corriger automatiquement les smartphones ou ordinateurs ayant une heure déréglée ou mélangée.
+ */
+export async function syncDatabaseServerTime(): Promise<number> {
+  if (typeof window === 'undefined') return 0;
+  try {
+    let serverDate: Date | null = null;
+    const clientBefore = Date.now();
+
+    // 1. Essai de lecture de l'en-tête Date du serveur Supabase via HEAD
+    try {
+      const supabaseUrl = (supabase as any)?.supabaseUrl;
+      const supabaseKey = (supabase as any)?.supabaseKey;
+      if (supabaseUrl && supabaseKey) {
+        const resp = await fetch(`${supabaseUrl}/rest/v1/`, {
+          method: 'HEAD',
+          headers: { apikey: supabaseKey }
+        });
+        const dateHeader = resp.headers.get('date');
+        if (dateHeader) {
+          serverDate = new Date(dateHeader);
+        }
+      }
+    } catch {}
+
+    // 2. Si l'en-tête n'est pas accessible, vérification du created_at du dernier contrat en base
+    if (!serverDate || isNaN(serverDate.getTime())) {
+      const { data } = await supabase
+        .from('contracts')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (data && data.length > 0 && data[0].created_at) {
+        const recDate = new Date(data[0].created_at);
+        if (!isNaN(recDate.getTime()) && recDate.getFullYear() >= 2026) {
+          const diff = recDate.getTime() - clientBefore;
+          if (Math.abs(diff) > 86400000 * 15) {
+            serverDate = new Date(recDate);
+          }
+        }
+      }
+    }
+
+    if (serverDate && !isNaN(serverDate.getTime())) {
+      const clientAfter = Date.now();
+      const avgClientTime = (clientBefore + clientAfter) / 2;
+      const offset = serverDate.getTime() - avgClientTime;
+      memoryTimeOffsetMs = offset;
+      sessionStorage.setItem('locatrust_db_time_offset', String(offset));
+      return offset;
+    }
+  } catch (err) {
+    console.warn('Sync database server time non-bloquant:', err);
+  }
+  return 0;
 }
 
 /**
- * Extrait la date réelle du système (téléphone, tablette ou ordinateur)
+ * Retourne la date fiable synchronisée avec la base de données (serveur)
+ */
+export function getTrustedDate(): Date {
+  let offset = memoryTimeOffsetMs;
+  if (typeof window !== 'undefined' && offset === 0) {
+    const saved = sessionStorage.getItem('locatrust_db_time_offset');
+    if (saved && !isNaN(Number(saved))) {
+      offset = Number(saved);
+      memoryTimeOffsetMs = offset;
+    }
+  }
+  return new Date(Date.now() + offset);
+}
+
+/**
+ * Extrait la date réelle du système (synchronisée avec la base de données)
  */
 export function getDeviceDate(): Date {
-  return new Date();
+  return getTrustedDate();
 }
 
 /**
@@ -420,4 +475,208 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
     console.error('Erreur checkAndTriggerRentDueAlerts:', err);
     return [];
   }
+}
+
+/**
+ * Structure de synthèse comptable et statistique calculée en arrière-plan
+ */
+export interface RentAccountingSummary {
+  calculatedAt: string;
+  serverDate: string;
+  referenceMonth: string;
+  totalExpectedRent: number;
+  totalCollectedRent: number;
+  totalOverdueRent: number;
+  totalUpcomingRent: number;
+  recoveryRate: number;
+  activeContractsCount: number;
+  contracts: ContractDueDetails[];
+  overdueContracts: ContractDueDetails[];
+  upcomingContracts: ContractDueDetails[];
+}
+
+/**
+ * Exécute l'audit complet du calendrier des loyers en arrière-plan,
+ * connecté à la base de données Supabase et synchronisé avec l'horloge serveur.
+ * Alimente silencieusement les documents comptables, rapports et alertes.
+ */
+export async function runBackgroundRentScheduleAudit(userId?: string): Promise<RentAccountingSummary> {
+  // 1. Synchronisation de l'heure avec le serveur / base de données
+  try {
+    await syncDatabaseServerTime();
+  } catch {}
+
+  const now = getTrustedDate();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const referenceMonth = now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+
+  let contracts: any[] = [];
+  let payments: any[] = [];
+
+  // 2. Connexion à la base de données Supabase pour contrats actifs
+  try {
+    const { data: dbContracts, error: cErr } = await supabase
+      .from('contracts')
+      .select('*, property:properties(*), owner:users!owner_id(*), tenant:users!tenant_id(*)')
+      .eq('status', 'contrat_actif');
+
+    if (!cErr && dbContracts && dbContracts.length > 0) {
+      contracts = dbContracts;
+    }
+  } catch {}
+
+  // 3. Complément / fallback avec les baux locaux
+  if (typeof window !== 'undefined') {
+    try {
+      const storedContracts = localStorage.getItem('locatrust_contracts');
+      if (storedContracts) {
+        const parsed = JSON.parse(storedContracts);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((c) => {
+            if (!contracts.some((x) => x.id === c.id || x.contract_number === c.contract_number)) {
+              contracts.push(c);
+            }
+          });
+        }
+      }
+
+      const storedApps = localStorage.getItem('locatrust_rental_applications');
+      if (storedApps) {
+        const apps = JSON.parse(storedApps);
+        if (Array.isArray(apps)) {
+          apps
+            .filter((a: any) => a.status === 'contrat_actif')
+            .forEach((a: any) => {
+              if (!contracts.some((x) => x.id === a.id || x.contract_number === a.contract_number)) {
+                contracts.push({
+                  id: a.id,
+                  contract_number: a.contract_number || `LT-2026-CI-000492`,
+                  property_title: a.property_title,
+                  property_address: a.property_address,
+                  rent: Number(a.rent_amount || 30000),
+                  monthly_rent: Number(a.rent_amount || 30000),
+                  signed_date: a.signed_date || a.created_at || now.toISOString().split('T')[0],
+                  tenant_id: a.tenant_id,
+                  tenant_name: a.applicant_name || a.tenant_name || 'Christian',
+                  owner_id: a.owner_id,
+                  owner_name: a.owner_name || 'KK',
+                  due_day: 17
+                });
+              }
+            });
+        }
+      }
+    } catch {}
+  }
+
+  // 4. Connexion à la base de données pour les paiements confirmés
+  try {
+    const { data: dbPayments, error: pErr } = await supabase
+      .from('rent_payments')
+      .select('*')
+      .eq('status', 'confirme');
+
+    if (!pErr && dbPayments && dbPayments.length > 0) {
+      payments = dbPayments;
+    }
+  } catch {}
+
+  if (typeof window !== 'undefined') {
+    try {
+      const storedPmts = localStorage.getItem('locatrust_rent_payments');
+      if (storedPmts) {
+        const parsed = JSON.parse(storedPmts);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((p) => {
+            if (!payments.some((x) => x.id === p.id || x.reference === p.reference)) {
+              payments.push(p);
+            }
+          });
+        }
+      }
+      const storedReceipts = localStorage.getItem('locatrust_tenant_receipts_v2');
+      if (storedReceipts) {
+        const parsed = JSON.parse(storedReceipts);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((rcp: any) => {
+            payments.push({
+              ...rcp,
+              status: 'confirme',
+              contract_id: rcp.contractNumber || rcp.contract_id,
+              target_month: rcp.periodCovered
+            });
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // 5. Calculs des échéances pour chaque contrat
+  const allDetails: ContractDueDetails[] = contracts.map((c) =>
+    calculateContractDueDetails(c, payments)
+  );
+
+  const overdueList = allDetails.filter((d) => d.status === 'overdue');
+  const upcomingList = allDetails.filter((d) => d.status !== 'overdue' && d.status !== 'paid');
+
+  let totalExpectedRent = 0;
+  let totalCollectedRent = 0;
+  let totalOverdueRent = 0;
+  let totalUpcomingRent = 0;
+
+  allDetails.forEach((d) => {
+    totalExpectedRent += d.rentAmount;
+    if (d.isPaidThisMonth) {
+      totalCollectedRent += d.rentAmount;
+    } else if (d.status === 'overdue') {
+      totalOverdueRent += d.rentAmount;
+    } else {
+      totalUpcomingRent += d.rentAmount;
+    }
+  });
+
+  const recoveryRate =
+    totalExpectedRent > 0 ? Math.round((totalCollectedRent / totalExpectedRent) * 1000) / 10 : 100;
+
+  const summary: RentAccountingSummary = {
+    calculatedAt: new Date().toISOString(),
+    serverDate: now.toLocaleDateString('fr-FR'),
+    referenceMonth: capitalize(referenceMonth),
+    totalExpectedRent,
+    totalCollectedRent,
+    totalOverdueRent,
+    totalUpcomingRent,
+    recoveryRate,
+    activeContractsCount: contracts.length,
+    contracts: allDetails,
+    overdueContracts: overdueList,
+    upcomingContracts: upcomingList
+  };
+
+  // 6. Sauvegarde en mémoire et dans le stockage local pour les rapports / documents comptables
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('locatrust_accounting_live_summary', JSON.stringify(summary));
+      window.dispatchEvent(
+        new CustomEvent('locatrust:rent-schedule-updated', { detail: summary })
+      );
+    } catch {}
+  }
+
+  // 7. Déclenchement proactif des notifications J-3
+  checkAndTriggerRentDueAlerts(userId);
+
+  return summary;
+}
+
+/**
+ * Récupère le résumé comptable calculé en arrière-plan pour les rapports et documents
+ */
+export function getRentAccountingSummary(): RentAccountingSummary | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('locatrust_accounting_live_summary');
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
 }

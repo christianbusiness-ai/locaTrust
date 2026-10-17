@@ -42,7 +42,7 @@ import {
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
 import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser, isValidUuid } from '@/lib/messagingStore';
-import { checkAndTriggerRentDueAlerts } from '@/lib/dateSystem';
+import { runBackgroundRentScheduleAudit } from '@/lib/dateSystem';
 
 interface NotificationItem {
   id: string;
@@ -172,13 +172,20 @@ export const Header: React.FC<HeaderProps> = ({
     return () => window.removeEventListener('locatrust:messages_updated', updateUnread);
   }, [currentUser]);
 
-  // Déclencheur proactif des alertes d'échéances de loyer à J-3
+  // Audit complet et silencieux du calendrier des loyers en arrière-plan (connecté à la base de données)
   useEffect(() => {
+    let intervalId: any;
     try {
-      checkAndTriggerRentDueAlerts(currentUser?.id);
+      runBackgroundRentScheduleAudit(currentUser?.id);
+      intervalId = setInterval(() => {
+        runBackgroundRentScheduleAudit(currentUser?.id);
+      }, 15 * 60 * 1000);
     } catch (e) {
-      console.warn('Erreur verification alertes echeances:', e);
+      console.warn('Erreur audit calendrier arrière-plan:', e);
     }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [currentUser]);
 
   // Synchronisation dynamique des compteurs de candidatures et de contrats

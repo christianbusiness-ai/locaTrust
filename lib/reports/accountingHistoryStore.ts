@@ -1,5 +1,6 @@
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { getRentAccountingSummary } from '@/lib/dateSystem';
 
 export interface MonthAccountingRecord {
   monthKey: string; // '2026-01', '2026-02', etc.
@@ -501,9 +502,23 @@ export function calculatePeriodStats(params: {
 
   switch (params.periodType) {
     case 'ce_mois': {
-      // Dernier mois actif de l'année (ex: Septembre 2026 ou Décembre 2025)
+      // Intégration directe des calculs d'arrière-plan issus de la base de données
+      const liveSummary = getRentAccountingSummary();
       const currentMonth = records[records.length - 1];
-      const monthLabel = `${currentMonth.monthName} ${year}`;
+      const monthLabel = liveSummary?.referenceMonth || `${currentMonth.monthName} ${year}`;
+
+      if (liveSummary && liveSummary.totalExpectedRent > 0) {
+        const liveRecord: MonthAccountingRecord = {
+          ...currentMonth,
+          expectedRent: liveSummary.totalExpectedRent,
+          collectedRent: liveSummary.totalCollectedRent,
+          lateRent: liveSummary.totalOverdueRent,
+          unpaidRent: liveSummary.totalOverdueRent,
+          contractsActive: liveSummary.activeContractsCount || currentMonth.contractsActive
+        };
+        return aggregateMonths([liveRecord], monthLabel, annualTotalNet);
+      }
+
       return aggregateMonths([currentMonth], monthLabel, annualTotalNet);
     }
 

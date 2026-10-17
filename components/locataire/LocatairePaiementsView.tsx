@@ -39,7 +39,6 @@ import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
-import { RentScheduleCalendar } from '@/components/common/RentScheduleCalendar';
 import { getDeviceDate } from '@/lib/dateSystem';
 
 export const LocatairePaiementsView: React.FC = () => {
@@ -795,16 +794,6 @@ export const LocatairePaiementsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Calendrier Réel & Échéancier Dynamique J-3 (Synchronisé Horloge Appareil) */}
-      <RentScheduleCalendar
-        userRole="locataire"
-        onDeclarePayment={(cntId, mth, amt) => {
-          if (cntId) setSelectedContractId(cntId);
-          if (mth) setTargetMonth(mth);
-          if (amt > 0) setAmount(amt);
-          setShowDeclareModal(true);
-        }}
-      />
 
       {/* Point 8: Dépôt de Garantie (Statut Visuel Clair) */}
       {myDeposit && (
