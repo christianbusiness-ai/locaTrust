@@ -1957,6 +1957,9 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           onConfirmSignature={(signatureData) => {
             setGeneratedOwnerSignature(signatureData);
             setIsSigningReceiptModalOpen(false);
+            if (generatingReceiptDeposit) {
+              handleTransmitCautionReceiptForSigning(generatingReceiptDeposit, signatureData);
+            }
           }}
           signerName={actorName}
           signerRole="proprietaire"

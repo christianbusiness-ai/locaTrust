@@ -97,14 +97,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     if (user?.email) s.add(user.email.toLowerCase());
     if (profile?.id) s.add(profile.id);
     if (currentUserId) s.add(currentUserId);
-    if (userRole === 'locataire') s.add('usr_tenant');
-    if (userRole === 'agence') {
-      s.add('usr_agency');
-      s.add('usr_owner');
+    if (userRole === 'locataire') {
+      s.add('usr_tenant');
+      s.add('usr_locataire');
+      s.add('a939eff5-c93d-4e6e-9f1f-b61c39986a46');
     }
-    if (userRole === 'proprietaire') {
-      s.add('usr_owner');
+    if (userRole === 'agence' || userRole === 'proprietaire') {
       s.add('usr_agency');
+      s.add('usr_owner');
+      s.add('d3a42346-c227-4c67-b4a3-52bd09b98ad9');
     }
     return s;
   }, [user?.id, user?.email, profile?.id, currentUserId, userRole]);
@@ -548,7 +549,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       }).catch(() => {});
     }
 
-    const handleMessagesUpdated = () => {
+    const handleMessagesUpdated = (e?: any) => {
+      const incoming = e?.detail?.data;
+      if (incoming && incoming.id) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, incoming];
+        });
+      }
       refreshMessages();
       if (currentUserId) {
         fetchSupabaseMessages(currentUserId).then(() => refreshMessages()).catch(() => {});
@@ -558,6 +566,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     const handleStorage = (e: StorageEvent) => {
       if (
         e.key === 'locatrust_chat_messages_v4' ||
+        e.key === 'locatrust_tenant_receipts_v2' ||
         e.key === 'locatrust_rental_applications' ||
         e.key === 'locatrust_contracts'
       ) {
@@ -567,6 +576,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     window.addEventListener('locatrust:messages_updated', handleMessagesUpdated);
     window.addEventListener('locatrust:messages-updated', handleMessagesUpdated);
+    window.addEventListener('locatrust:receipts_updated', handleMessagesUpdated);
     window.addEventListener('storage', handleStorage);
 
     // Polling doux de synchronisation automatique sans perturber le scroll
@@ -580,6 +590,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return () => {
       window.removeEventListener('locatrust:messages_updated', handleMessagesUpdated);
       window.removeEventListener('locatrust:messages-updated', handleMessagesUpdated);
+      window.removeEventListener('locatrust:receipts_updated', handleMessagesUpdated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(heartbeat);
     };
@@ -625,6 +636,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       `owner_${activeContact?.id}`,
       ...(isOwnerAgencyRole ? ['usr_owner', 'usr_agency', 'owner_usr_owner'] : ['usr_tenant'])
     ]);
+
+    if (activeContact?.name?.toLowerCase().includes('kk') || activeContact?.id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9') {
+      contactAliases.add('d3a42346-c227-4c67-b4a3-52bd09b98ad9');
+      contactAliases.add('usr_owner');
+      contactAliases.add('usr_agency');
+    }
+    if (activeContact?.name?.toLowerCase().includes('christian') || activeContact?.id === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46') {
+      contactAliases.add('a939eff5-c93d-4e6e-9f1f-b61c39986a46');
+      contactAliases.add('usr_tenant');
+      contactAliases.add('usr_locataire');
+    }
 
     const raw = (Array.isArray(messages) ? messages : []).filter(
       (m) => {

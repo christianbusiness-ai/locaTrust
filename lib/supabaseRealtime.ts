@@ -8,6 +8,7 @@ export type LiveEventType =
   | 'CAUTION_CONFIRMED'
   | 'CAUTION_REJECTED'
   | 'CAUTION_RESTITUTED'
+  | 'CAUTION_RECEIPT_TRANSMITTED'
   | 'CONTRACT_FINALIZED'
   | 'CONTRACT_TRANSMITTED'
   | 'CONTRACT_SIGNED_BY_TENANT'
@@ -128,8 +129,131 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
         }
         break;
 
+      case 'CAUTION_RECEIPT_TRANSMITTED':
+        if (typeof window !== 'undefined') {
+          const q = payload?.data?.quittance;
+          const depId = payload?.depositId;
+          const senderId = payload?.actorId || 'usr_owner';
+          const receiverId = payload?.targetUserId || 'usr_tenant';
+
+          // 1. Ingestion directe dans le registre des reçus du locataire
+          if (q && q.receiptNumber) {
+            try {
+              const curRaw = localStorage.getItem('locatrust_tenant_receipts_v2');
+              const cur = curRaw ? JSON.parse(curRaw) : [];
+              const filtered = cur.filter((r: any) => r.receiptNumber !== q.receiptNumber);
+              localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify([q, ...filtered]));
+            } catch {}
+          }
+
+          // 2. Ingestion du message certifié dans la boîte de messagerie
+          if (q) {
+            try {
+              const msgsRaw = localStorage.getItem('locatrust_chat_messages_v4');
+              const curMsgs = msgsRaw ? JSON.parse(msgsRaw) : [];
+              const exists = curMsgs.some(
+                (m: any) =>
+                  m.quittance?.receiptNumber === q.receiptNumber ||
+                  (m.text && m.text.includes(q.receiptNumber))
+              );
+              if (!exists) {
+                const newMsg = {
+                  id: `msg_caut_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  sender_id: senderId,
+                  receiver_id: receiverId,
+                  text: `🛡️ Reçu Officiel de Caution Émis (N° ${q.receiptNumber})\nVotre dépôt de garantie de ${q.amount} FCFA a été certifié par votre bailleur. Veuillez consulter le document ci-dessous pour apposer votre signature locataire et débloquer le téléchargement.`,
+                  created_at: new Date().toISOString(),
+                  quittance: q,
+                  status: 'delivered'
+                };
+                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify([...curMsgs, newMsg]));
+              }
+            } catch {}
+          }
+
+          // 3. Mettre à jour l'état de la caution en 'paye_complet'
+          if (depId) {
+            try {
+              const depsRaw = localStorage.getItem('locatrust_caution_deposits');
+              if (depsRaw) {
+                const deps = JSON.parse(depsRaw);
+                const updatedDeps = deps.map((d: any) => {
+                  if (d.id === depId) {
+                    return {
+                      ...d,
+                      status: 'paye_complet',
+                      owner_signature: q?.ownerSignatureUrl || d.owner_signature,
+                      receipt_sent_to_tenant: true
+                    };
+                  }
+                  return d;
+                });
+                localStorage.setItem('locatrust_caution_deposits', JSON.stringify(updatedDeps));
+              }
+            } catch {}
+          }
+
+          // 4. Cartes de contacts bidirectionnelles
+          try {
+            if (q) {
+              const ownerCard = {
+                id: senderId,
+                name: q.ownerName || 'kk',
+                role: 'Propriétaire Bailleur',
+                propertyTitle: q.propertyTitle,
+                phone: q.ownerPhone || '+225 07 00 00 00 00',
+                online: true
+              };
+              const tenantCard = {
+                id: receiverId,
+                name: q.tenantName || 'christian',
+                role: 'Locataire',
+                propertyTitle: q.propertyTitle,
+                phone: q.tenantPhone || '+225 05 00 00 00 00',
+                online: true
+              };
+              localStorage.setItem(`locatrust_contact_${senderId}`, JSON.stringify(ownerCard));
+              localStorage.setItem(`locatrust_contact_${receiverId}`, JSON.stringify(tenantCard));
+            }
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));
+        }
+        break;
+
       case 'NEW_MESSAGE':
         if (typeof window !== 'undefined') {
+          const incomingMsg = payload?.data;
+          if (incomingMsg && incomingMsg.id) {
+            try {
+              const msgsRaw = localStorage.getItem('locatrust_chat_messages_v4');
+              const curMsgs = msgsRaw ? JSON.parse(msgsRaw) : [];
+              const exists = curMsgs.some(
+                (m: any) =>
+                  m.id === incomingMsg.id ||
+                  (m.sender_id === incomingMsg.sender_id &&
+                    m.text === incomingMsg.text &&
+                    Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 60000)
+              );
+              if (!exists) {
+                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify([...curMsgs, incomingMsg]));
+              }
+            } catch {}
+
+            // Si le message transporte une quittance ou un reçu de caution
+            if (incomingMsg.quittance && incomingMsg.quittance.receiptNumber) {
+              try {
+                const curRaw = localStorage.getItem('locatrust_tenant_receipts_v2');
+                const cur = curRaw ? JSON.parse(curRaw) : [];
+                const filtered = cur.filter((r: any) => r.receiptNumber !== incomingMsg.quittance.receiptNumber);
+                localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify([incomingMsg.quittance, ...filtered]));
+                window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
+              } catch {}
+            }
+          }
           window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
         }
