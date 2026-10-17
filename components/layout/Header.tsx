@@ -320,9 +320,9 @@ export const Header: React.FC<HeaderProps> = ({
               const matchesMe =
                 n.targetUserId === userId ||
                 (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
-                (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
-                (userRole === 'proprietaire' && (n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId)) ||
-                (userRole === 'agence' && (n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
+                (userRole === 'locataire' && (n.targetRole === 'locataire' || n.targetUserId === 'usr_tenant' || n.targetUserId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46' || !userId || userId === 'usr_tenant' || userId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46')) ||
+                (userRole === 'proprietaire' && (n.targetRole === 'proprietaire' || n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId || n.targetUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9')) ||
+                (userRole === 'agence' && (n.targetRole === 'agence' || n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
               if (!matchesMe) return false;
             } else if (n.targetRole) {
               const matchesRole =
@@ -372,9 +372,9 @@ export const Header: React.FC<HeaderProps> = ({
             const matchesMe =
               n.targetUserId === userId ||
               (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
-              (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
-              (userRole === 'proprietaire' && n.targetUserId === 'usr_owner') ||
-              (userRole === 'agence' && n.targetUserId === 'usr_agency');
+              (userRole === 'locataire' && (n.targetRole === 'locataire' || n.targetUserId === 'usr_tenant' || n.targetUserId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46' || !userId || userId === 'usr_tenant' || userId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46')) ||
+              (userRole === 'proprietaire' && (n.targetRole === 'proprietaire' || n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId || n.targetUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9')) ||
+              (userRole === 'agence' && (n.targetRole === 'agence' || n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
             if (!matchesMe) return false;
           } else if (n.targetRole && n.targetRole !== userRole) {
             return false;
@@ -1048,7 +1048,13 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const target = selectedNotification.targetTab || (selectedNotification.category === 'caution' ? 'guarantees' : 'overview');
+                  const isTenant = currentUser.role === 'locataire';
+                  let target = selectedNotification.targetTab;
+                  if (!target) {
+                    if (selectedNotification.category === 'caution') target = 'guarantees';
+                    else if (selectedNotification.category === 'paiement') target = isTenant ? 'receipts' : 'payments';
+                    else target = 'overview';
+                  }
                   setSelectedNotification(null);
                   if (onNavigateTab) onNavigateTab(target);
                 }}
@@ -1057,9 +1063,9 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>
                   {selectedNotification.category === 'demande' && 'Consulter le dossier candidat'}
                   {selectedNotification.category === 'visite' && 'Voir la demande de visite'}
-                  {selectedNotification.category === 'paiement' && 'Vérifier le paiement'}
+                  {selectedNotification.category === 'paiement' && (currentUser.role === 'locataire' ? 'Télécharger ma quittance' : 'Vérifier le paiement')}
                   {selectedNotification.category === 'contrat' && 'Consulter le contrat'}
-                  {selectedNotification.category === 'caution' && 'Consulter ma caution & Signer'}
+                  {selectedNotification.category === 'caution' && (currentUser.role === 'locataire' ? 'Consulter ma caution & Signer le reçu' : 'Consulter les cautions')}
                   {selectedNotification.category === 'maintenance' && 'Ouvrir le ticket'}
                   {selectedNotification.category === 'abonnement' && 'Voir mon abonnement'}
                   {!['demande', 'visite', 'paiement', 'contrat', 'caution', 'maintenance', 'abonnement'].includes(selectedNotification.category) && 'Accéder à la section'}

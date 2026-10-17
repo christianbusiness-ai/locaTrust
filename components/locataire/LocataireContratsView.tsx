@@ -196,14 +196,62 @@ export const LocataireContratsView: React.FC = () => {
 
       setContracts(Array.from(map.values()));
 
-      // Reçus / quittances réelles
-      const { data: rcpData } = await supabase
-        .from('receipts')
-        .select('*')
-        .eq('tenant_id', user.id)
-        .order('created_at', { ascending: false });
+      // Reçus / quittances réelles (base Supabase + local multi-appareils)
+      let combinedReceipts: any[] = [];
+      try {
+        const { data: rcpData } = await supabase
+          .from('receipts')
+          .select('*')
+          .eq('tenant_id', user.id)
+          .order('created_at', { ascending: false });
+        if (rcpData && Array.isArray(rcpData)) {
+          combinedReceipts = [...rcpData];
+        }
+      } catch {}
 
-      setReceipts(rcpData || []);
+      // Fusionner avec locatrust_tenant_receipts_v2
+      try {
+        const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
+        if (rawV2) {
+          const listV2 = JSON.parse(rawV2);
+          if (Array.isArray(listV2)) {
+            listV2.forEach((item: any) => {
+              const num = item.receiptNumber || item.receipt_number || item.id;
+              if (!combinedReceipts.some(r => r.receipt_number === num || r.id === num)) {
+                combinedReceipts.push({
+                  id: item.id || `rcp_${num}`,
+                  receipt_number: num,
+                  period: item.periodsCovered || item.period || 'Mois en cours',
+                  amount: item.amount || 0,
+                  token: item.token || `tok_${num}`,
+                  type: item.type || 'loyer',
+                  owner_name: item.ownerName,
+                  property_title: item.propertyTitle,
+                  rawReceipt: item
+                });
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // Fusionner avec locatrust_receipts
+      try {
+        const rawRcps = localStorage.getItem('locatrust_receipts');
+        if (rawRcps) {
+          const listRcps = JSON.parse(rawRcps);
+          if (Array.isArray(listRcps)) {
+            listRcps.forEach((item: any) => {
+              const num = item.receipt_number || item.id;
+              if (!combinedReceipts.some(r => r.receipt_number === num || r.id === num)) {
+                combinedReceipts.push(item);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      setReceipts(combinedReceipts);
     } catch (err: any) {
       setLoadError("Erreur réseau lors du chargement de vos baux.");
     } finally {
@@ -220,9 +268,15 @@ export const LocataireContratsView: React.FC = () => {
 
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
     window.addEventListener('locatrust:applications-updated', handleUpdate);
+    window.addEventListener('locatrust:receipts_updated', handleUpdate);
+    window.addEventListener('locatrust:cautions_updated', handleUpdate);
+    window.addEventListener('locatrust:payments-updated', handleUpdate);
     return () => {
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
       window.removeEventListener('locatrust:applications-updated', handleUpdate);
+      window.removeEventListener('locatrust:receipts_updated', handleUpdate);
+      window.removeEventListener('locatrust:cautions_updated', handleUpdate);
+      window.removeEventListener('locatrust:payments-updated', handleUpdate);
     };
   }, [user]);
 
@@ -636,6 +690,31 @@ export const LocataireContratsView: React.FC = () => {
                           Scanner / Vérifier
                         </a>
                       )}
+                      <button
+                        onClick={async () => {
+                          const { generateOfficialReceiptPDF } = await import('@/lib/payments/officialReceiptPdfGenerator');
+                          await generateOfficialReceiptPDF({
+                            receiptNumber: rcp.receipt_number || rcp.id,
+                            type: (rcp.type || 'loyer') as 'loyer' | 'caution',
+                            amount: Number(rcp.amount) || 0,
+                            period: rcp.period || rcp.period_covered || 'Mois en cours',
+                            paymentMethod: rcp.payment_method || 'Mobile Money',
+                            date: rcp.created_at ? new Date(rcp.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+                            ownerName: rcp.owner_name || rcp.rawReceipt?.ownerName || 'Bailleur Certifié',
+                            tenantName: user?.user_metadata?.full_name || 'Locataire',
+                            propertyTitle: rcp.property_title || rcp.rawReceipt?.propertyTitle || 'Logement LocaTrust',
+                            propertyAddress: rcp.property_address || rcp.rawReceipt?.propertyAddress || 'Abidjan, Côte d\'Ivoire',
+                            contractNumber: rcp.contract_number || 'LT-CI-2026',
+                            token: rcp.token || `tok_${Date.now()}`,
+                            ownerSignatureUrl: rcp.rawReceipt?.ownerSignatureUrl || 'SIG_CERTIFIED_BAILLEUR',
+                            tenantSignatureUrl: rcp.rawReceipt?.tenantSignatureUrl
+                          });
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-sm flex items-center gap-1.5 transition-all"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Télécharger PDF</span>
+                      </button>
                     </div>
                   </div>
                 ))}

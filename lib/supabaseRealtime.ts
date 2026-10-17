@@ -51,13 +51,176 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
   try {
     switch (event) {
       case 'PAYMENT_DECLARED':
+        if (typeof window !== 'undefined') {
+          const senderId = payload?.actorId || 'usr_tenant';
+          const receiverId = payload?.targetUserId || 'usr_owner';
+          const amount = payload?.data?.amount;
+          const ref = payload?.data?.reference || payload?.data?.transactionRef;
+          
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_pmt_dec_${payload?.paymentId || Date.now()}`;
+            const exists = curNotifs.some((n: any) => n.id === notifId);
+            if (!exists) {
+              const newNotif = {
+                id: notifId,
+                title: '💳 Nouveau paiement de loyer déclaré',
+                description: `Paiement déclaré${amount ? ` de ${Number(amount).toLocaleString('fr-FR')} FCFA` : ''}${ref ? ` (Réf: ${ref})` : ''}. Cliquez pour vérifier et valider la quittance.`,
+                time: "À l'instant",
+                unread: true,
+                type: 'paiement',
+                category: 'paiement',
+                targetTab: 'payments',
+                targetRole: 'proprietaire',
+                targetUserId: receiverId,
+                senderUserId: senderId,
+                payload: { paymentId: payload?.paymentId, amount }
+              };
+              localStorage.setItem('locatrust_notifications', JSON.stringify([newNotif, ...curNotifs]));
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [newNotif, ...curNotifs] } }));
+            }
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+        }
+        break;
+
       case 'PAYMENT_CONFIRMED':
+        if (typeof window !== 'undefined') {
+          const pmtId = payload?.paymentId;
+          const rcpData = payload?.data?.receipt;
+          const pmtData = payload?.data?.payment;
+          const rcpNum = payload?.data?.receipt_number || payload?.data?.receiptNumber || rcpData?.receiptNumber;
+          const senderId = payload?.actorId || 'usr_owner';
+          const receiverId = payload?.targetUserId || 'usr_tenant';
+          const amount = payload?.data?.amount || rcpData?.amount;
+          const actor = payload?.data?.actorName || 'votre bailleur';
+
+          // 1. Ingestion directe dans locatrust_tenant_receipts_v2 et locatrust_receipts
+          if (rcpNum) {
+            try {
+              const curRaw = localStorage.getItem('locatrust_tenant_receipts_v2');
+              const cur = curRaw ? JSON.parse(curRaw) : [];
+              const receiptObj = rcpData || {
+                receiptNumber: rcpNum,
+                type: 'loyer',
+                amount: amount || 0,
+                propertyTitle: pmtData?.property?.title || 'Logement loué',
+                ownerName: actor,
+                tenantName: 'christian',
+                periodsCovered: pmtData?.period_text || 'Mois en cours',
+                date: new Date().toISOString(),
+                token: `tok_rec_${rcpNum}`
+              };
+              const filtered = cur.filter((r: any) => (r.receiptNumber !== rcpNum && r.receipt_number !== rcpNum));
+              localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify([receiptObj, ...filtered]));
+            } catch {}
+
+            try {
+              const curRcpRaw = localStorage.getItem('locatrust_receipts');
+              const curRcps = curRcpRaw ? JSON.parse(curRcpRaw) : [];
+              const rcpRow = {
+                id: `rcp_${rcpNum}_${Date.now()}`,
+                receipt_number: rcpNum,
+                type: 'loyer',
+                amount: amount || 0,
+                period_covered: pmtData?.period_text || 'Mois en cours',
+                tenant_id: receiverId,
+                owner_id: senderId,
+                token: `tok_rec_${rcpNum}`,
+                created_at: new Date().toISOString()
+              };
+              const filteredRcps = curRcps.filter((r: any) => r.receipt_number !== rcpNum);
+              localStorage.setItem('locatrust_receipts', JSON.stringify([rcpRow, ...filteredRcps]));
+            } catch {}
+          }
+
+          // 2. Notification in-app pour le locataire
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_rent_val_${rcpNum || pmtId || Date.now()}`;
+            const exists = curNotifs.some((n: any) => n.id === notifId);
+            if (!exists) {
+              const rentNotif = {
+                id: notifId,
+                title: '📄 Quittance de loyer officielle disponible !',
+                description: `Votre règlement de loyer${amount ? ` de ${Number(amount).toLocaleString('fr-FR')} FCFA` : ''} a été validé par ${actor}. Votre quittance N° ${rcpNum || 'officielle'} est disponible pour téléchargement.`,
+                time: "À l'instant",
+                unread: true,
+                type: 'paiement_valide',
+                category: 'paiement',
+                targetTab: 'receipts',
+                targetRole: 'locataire',
+                targetUserId: receiverId,
+                senderUserId: senderId,
+                payload: { paymentId: pmtId, receiptNumber: rcpNum, amount }
+              };
+              localStorage.setItem('locatrust_notifications', JSON.stringify([rentNotif, ...curNotifs]));
+
+              try {
+                const rawTenantNotifs = localStorage.getItem('locatrust_tenant_notifications');
+                const parsedTenantNotifs = rawTenantNotifs ? JSON.parse(rawTenantNotifs) : [];
+                const tenantViewNotif = {
+                  id: rentNotif.id,
+                  title: rentNotif.title,
+                  description: rentNotif.description,
+                  category: 'paiement',
+                  timestamp: "À l'instant",
+                  read: false,
+                  actionText: 'Télécharger ma quittance',
+                  targetTab: 'receipts'
+                };
+                localStorage.setItem('locatrust_tenant_notifications', JSON.stringify([tenantViewNotif, ...parsedTenantNotifs]));
+              } catch {}
+
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [rentNotif, ...curNotifs] } }));
+            }
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+        }
+        break;
+
       case 'PAYMENT_REJECTED':
         window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
         break;
 
       case 'CAUTION_DECLARED':
-      case 'CAUTION_CONFIRMED':
+        if (typeof window !== 'undefined') {
+          const senderId = payload?.actorId || 'usr_tenant';
+          const receiverId = payload?.targetUserId || 'usr_owner';
+          const amount = payload?.data?.amount;
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_caut_dec_${payload?.depositId || Date.now()}`;
+            const exists = curNotifs.some((n: any) => n.id === notifId);
+            if (!exists) {
+              const newNotif = {
+                id: notifId,
+                title: '🛡️ Règlement de caution déclaré',
+                description: `Paiement de caution soumis${amount ? ` (${Number(amount).toLocaleString('fr-FR')} FCFA)` : ''}. Cliquez pour vérifier et émettre le reçu officiel.`,
+                time: "À l'instant",
+                unread: true,
+                type: 'caution',
+                category: 'caution',
+                targetTab: 'cautions',
+                targetRole: 'proprietaire',
+                targetUserId: receiverId,
+                senderUserId: senderId,
+                payload: { depositId: payload?.depositId, amount }
+              };
+              localStorage.setItem('locatrust_notifications', JSON.stringify([newNotif, ...curNotifs]));
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [newNotif, ...curNotifs] } }));
+            }
+          } catch {}
+          window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));
+        }
+        break;
+
       case 'CAUTION_REJECTED':
       case 'CAUTION_RESTITUTED':
         window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));
@@ -129,12 +292,17 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
         }
         break;
 
+      case 'CAUTION_CONFIRMED':
       case 'CAUTION_RECEIPT_TRANSMITTED':
         if (typeof window !== 'undefined') {
           const q = payload?.data?.quittance;
-          const depId = payload?.depositId;
+          const incomingDeposit = payload?.data?.deposit;
+          const depId = payload?.depositId || incomingDeposit?.id;
           const senderId = payload?.actorId || 'usr_owner';
-          const receiverId = payload?.targetUserId || 'usr_tenant';
+          const receiverId = payload?.targetUserId || incomingDeposit?.tenant_id || 'usr_tenant';
+          const actor = payload?.data?.actorName || q?.ownerName || 'votre bailleur';
+          const amount = payload?.data?.amount || q?.amount || incomingDeposit?.amount_paid || incomingDeposit?.amount_requested || 0;
+          const amountFormatted = amount ? `${Number(amount).toLocaleString('fr-FR')} FCFA` : 'garantie';
 
           // 1. Ingestion directe dans le registre des reçus du locataire
           if (q && q.receiptNumber) {
@@ -143,6 +311,24 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               const cur = curRaw ? JSON.parse(curRaw) : [];
               const filtered = cur.filter((r: any) => r.receiptNumber !== q.receiptNumber);
               localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify([q, ...filtered]));
+            } catch {}
+
+            try {
+              const curRcpRaw = localStorage.getItem('locatrust_receipts');
+              const curRcps = curRcpRaw ? JSON.parse(curRcpRaw) : [];
+              const rcpRow = {
+                id: `rcp_caut_${q.receiptNumber}_${Date.now()}`,
+                receipt_number: q.receiptNumber,
+                type: 'caution',
+                amount: amount,
+                period_covered: 'Dépôt de garantie',
+                tenant_id: receiverId,
+                owner_id: senderId,
+                token: `tok_caut_${q.receiptNumber}`,
+                created_at: new Date().toISOString()
+              };
+              const filteredRcps = curRcps.filter((r: any) => r.receipt_number !== q.receiptNumber);
+              localStorage.setItem('locatrust_receipts', JSON.stringify([rcpRow, ...filteredRcps]));
             } catch {}
           }
 
@@ -171,34 +357,113 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
             } catch {}
           }
 
-          // 3. Mettre à jour l'état de la caution en 'paye_complet'
-          if (depId) {
+          // 3. Synchronisation complète de la caution dans les deux clés de stockage
+          const applyDepositSync = (storageKey: string) => {
             try {
-              const depsRaw = localStorage.getItem('locatrust_caution_deposits');
-              if (depsRaw) {
-                const deps = JSON.parse(depsRaw);
-                const updatedDeps = deps.map((d: any) => {
-                  if (d.id === depId) {
-                    return {
-                      ...d,
-                      status: 'paye_complet',
-                      owner_signature: q?.ownerSignatureUrl || d.owner_signature,
-                      receipt_sent_to_tenant: true
-                    };
-                  }
-                  return d;
-                });
-                localStorage.setItem('locatrust_caution_deposits', JSON.stringify(updatedDeps));
-              }
-            } catch {}
-          }
+              const raw = localStorage.getItem(storageKey);
+              let list = raw ? JSON.parse(raw) : [];
+              if (!Array.isArray(list)) list = [];
 
-          // 4. Cartes de contacts bidirectionnelles
+              let found = false;
+              list = list.map((d: any) => {
+                if (d.id === depId || (depId && d.contract_id === payload?.contractId)) {
+                  found = true;
+                  return {
+                    ...d,
+                    status: 'paye_complet',
+                    amount_paid: amount || d.amount_paid || d.amount_requested,
+                    confirmed_at: d.confirmed_at || new Date().toISOString(),
+                    confirmed_by: actor,
+                    owner_signature: q?.ownerSignatureUrl || incomingDeposit?.owner_signature || d.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED',
+                    receipt_sent_to_tenant: true
+                  };
+                }
+                return d;
+              });
+
+              if (!found) {
+                const synDep = incomingDeposit || {
+                  id: depId || `dep_${Date.now()}`,
+                  contract_id: payload?.contractId || q?.contractNumber || 'CNT-OFFICIAL',
+                  property_id: q?.propertyId || 'prop_default',
+                  tenant_id: receiverId,
+                  owner_id: senderId,
+                  amount_requested: amount,
+                  amount_paid: amount,
+                  status: 'paye_complet',
+                  receipt_sent_to_tenant: true,
+                  owner_signature: q?.ownerSignatureUrl || 'SIG_OFFICIAL_OWNER_CERTIFIED',
+                  owner_signed_at: new Date().toISOString(),
+                  confirmed_at: new Date().toISOString(),
+                  confirmed_by: actor,
+                  property: {
+                    title: q?.propertyTitle || 'Logement loué',
+                    address: q?.propertyAddress || 'Abidjan'
+                  },
+                  tenant: {
+                    id: receiverId,
+                    full_name: q?.tenantName || 'christian'
+                  }
+                };
+                list.unshift(synDep);
+              }
+
+              localStorage.setItem(storageKey, JSON.stringify(list));
+            } catch {}
+          };
+
+          applyDepositSync('locatrust_caution_deposits');
+          applyDepositSync('locatrust_deposits_v1');
+
+          // 4. Ingestion de la notification in-app pour le locataire
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_caut_ready_${depId || Date.now()}`;
+            const exists = curNotifs.some((n: any) => n.id === notifId);
+            if (!exists) {
+              const tenantNotif = {
+                id: notifId,
+                title: '🛡️ Reçu officiel de caution reçu pour signature',
+                description: `Votre caution de ${amountFormatted} a été validée par ${actor}. Cliquez pour consulter et apposer votre signature locataire.`,
+                time: "À l'instant",
+                unread: true,
+                type: 'caution',
+                category: 'caution',
+                targetTab: 'guarantees',
+                targetRole: 'locataire',
+                targetUserId: receiverId,
+                senderUserId: senderId,
+                payload: { depositId: depId, amount }
+              };
+              localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...curNotifs]));
+
+              try {
+                const rawTenantNotifs = localStorage.getItem('locatrust_tenant_notifications');
+                const parsedTenantNotifs = rawTenantNotifs ? JSON.parse(rawTenantNotifs) : [];
+                const tenantViewNotif = {
+                  id: tenantNotif.id,
+                  title: tenantNotif.title,
+                  description: tenantNotif.description,
+                  category: 'caution',
+                  timestamp: "À l'instant",
+                  read: false,
+                  actionText: 'Signer mon reçu',
+                  targetTab: 'guarantees'
+                };
+                localStorage.setItem('locatrust_tenant_notifications', JSON.stringify([tenantViewNotif, ...parsedTenantNotifs]));
+              } catch {}
+
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [tenantNotif, ...curNotifs] } }));
+            }
+          } catch {}
+
+          // 5. Cartes de contacts bidirectionnelles
           try {
             if (q) {
               const ownerCard = {
                 id: senderId,
-                name: q.ownerName || 'kk',
+                name: q.ownerName || actor || 'kk',
                 role: 'Propriétaire Bailleur',
                 propertyTitle: q.propertyTitle,
                 phone: q.ownerPhone || '+225 07 00 00 00 00',

@@ -11,11 +11,15 @@ export const INITIAL_DEPOSITS: Deposit[] = [];
 export function getStoredDeposits(): Deposit[] {
   if (typeof window === 'undefined') return INITIAL_DEPOSITS;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      raw = localStorage.getItem('locatrust_caution_deposits');
+    }
     if (!raw) return INITIAL_DEPOSITS;
     // Purger uniquement les données fictives de démonstration résiduelles avec noms factices
     if (raw.includes("Koffi N'Guessan") || raw.includes('Amina Diabaté')) {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('locatrust_caution_deposits');
       return INITIAL_DEPOSITS;
     }
     const parsed = JSON.parse(raw);
@@ -30,6 +34,7 @@ export function saveStoredDeposits(deposits: Deposit[]): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(deposits));
+    localStorage.setItem('locatrust_caution_deposits', JSON.stringify(deposits));
     window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
   } catch (err) {
     console.error('Error saving deposits to localStorage:', err);
@@ -687,6 +692,7 @@ export function sendCautionReceiptToTenant(
 
   // 3. Persistance dans Supabase pour synchronisation multi-appareils (Desktop & Mobile)
   try {
+    const confirmedByUuid = isValidUuid(options?.actorId) ? options.actorId : (isValidUuid(senderId) ? senderId : null);
     if (isValidUuid(target.id)) {
       supabase
         .from('cautions')
@@ -694,7 +700,7 @@ export function sendCautionReceiptToTenant(
           status: 'paye_complet',
           amount_paid: confirmedAmount,
           confirmed_at: now,
-          confirmed_by: finalActorName,
+          confirmed_by: confirmedByUuid,
           owner_signature: finalOwnerSig
         })
         .eq('id', target.id)
@@ -709,7 +715,7 @@ export function sendCautionReceiptToTenant(
           amount_paid: confirmedAmount,
           status: 'paye_complet',
           confirmed_at: now,
-          confirmed_by: finalActorName,
+          confirmed_by: confirmedByUuid,
           owner_signature: finalOwnerSig
         })
         .then();
@@ -781,7 +787,9 @@ export function sendCautionReceiptToTenant(
       actorId: senderId,
       data: {
         quittance,
-        amount: confirmedAmount
+        amount: confirmedAmount,
+        deposit: updatedDeposit,
+        actorName: finalActorName
       }
     });
   } catch {}

@@ -50,7 +50,7 @@ import {
   resolveDepositContractDetails
 } from '@/lib/cautionsStore';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
-import { updateDeclarationMessageStatus, sendChatMessage } from '@/lib/messagingStore';
+import { updateDeclarationMessageStatus, sendChatMessage, isValidUuid } from '@/lib/messagingStore';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { useAuth } from '@/src/context/AuthContext';
@@ -240,7 +240,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           status: 'paye_complet',
           amount_paid: confirmedAmount,
           confirmed_at: now,
-          confirmed_by: actorName,
+          confirmed_by: isValidUuid(user?.id) ? user.id : null,
           owner_signature: sig
         })
         .eq('id', deposit.id);
@@ -343,7 +343,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           status: 'paye_complet',
           amount_paid: confirmedAmount,
           confirmed_at: new Date().toISOString(),
-          confirmed_by: actorName
+          confirmed_by: isValidUuid(user?.id) ? user.id : null
         })
         .eq('id', deposit.id);
 
@@ -355,7 +355,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       confirmCautionReceipt(deposit.id, actorName);
 
       // 3. Insert notification for tenant in Supabase
-      if (deposit.tenant_id) {
+      if (deposit.tenant_id && isValidUuid(deposit.tenant_id)) {
         try {
           await supabase.from('notifications').insert({
             user_id: deposit.tenant_id,
@@ -374,13 +374,25 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         }
       }
 
+      const updatedDepositObj: Deposit = {
+        ...deposit,
+        status: 'paye_complet',
+        amount_paid: confirmedAmount,
+        confirmed_at: new Date().toISOString(),
+        confirmed_by: actorName,
+        receipt_sent_to_tenant: true
+      };
+
       // 4. Broadcast live event across all connected devices
       await broadcastLiveEvent('CAUTION_CONFIRMED', {
         depositId: deposit.id,
         targetUserId: deposit.tenant_id,
         contractId: deposit.contract_id,
+        actorId: user?.id,
         data: {
-          amount: confirmedAmount
+          amount: confirmedAmount,
+          deposit: updatedDepositObj,
+          actorName
         }
       });
 

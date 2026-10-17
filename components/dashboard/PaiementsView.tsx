@@ -382,9 +382,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         paymentId: validatingPayment.id,
         targetUserId: validatingPayment.tenant_id,
         contractId: validatingPayment.contract_id,
+        actorId: user?.id,
         data: {
           amount: extractedOcrData.amount,
-          receipt_number: extractedOcrData.reference
+          receipt_number: extractedOcrData.reference,
+          receipt: result.generatedReceipt,
+          payment: confirmedPmt,
+          actorName: user?.user_metadata?.full_name || 'Bailleur'
         }
       });
 
@@ -493,7 +497,27 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       await broadcastLiveEvent('PAYMENT_CONFIRMED', {
         actorId: ownerId,
         targetUserId: tenantId,
-        data: { paymentId: pmt.id, receiptNumber: receiptNum, amount: pmt.amount }
+        paymentId: pmt.id,
+        contractId: pmt.contract_id,
+        data: {
+          paymentId: pmt.id,
+          receiptNumber: receiptNum,
+          amount: pmt.amount,
+          receipt: {
+            receiptNumber: receiptNum,
+            type: 'loyer',
+            amount: pmt.amount,
+            propertyTitle: pmt.property?.title,
+            ownerName: ownerName,
+            tenantName: tenantName,
+            ownerSignatureUrl: ownerSignatureUrl || 'SIG_CERTIFIED_BAILLEUR',
+            tenantSignatureUrl: tenantSignatureUrl || undefined,
+            periodsCovered: pmt.period_text || 'Mois en cours',
+            date: new Date().toISOString()
+          },
+          payment: pmt,
+          actorName: ownerName
+        }
       });
 
       // 4. Modal de confirmation
