@@ -168,9 +168,13 @@ export function calculateContractDueDetails(
   const currentMonth = now.getMonth(); // 0-11
   const todayDay = now.getDate();
 
-  // Extraction de la date de signature ou de prise d'effet réelle
+  // Extraction de la date de signature ou de prise d'effet réelle (priorité aux signatures effectives)
   const rawSignedDate =
+    contract.tenant_signed_at ||
+    contract.owner_signed_at ||
+    contract.signed_at ||
     contract.signed_date ||
+    contract.lease_start_date ||
     contract.start_date ||
     contract.created_at ||
     getDeviceDateFormatted('iso');
@@ -178,10 +182,9 @@ export function calculateContractDueDetails(
   const signedDateObj = parseAnyDate(rawSignedDate);
   
   // Jour contractuel d'exigibilité :
-  // Si le contrat a été signé un 16 ou 17, l'échéance mensuelle tombe ce même jour
-  // sauf si un due_day explicite (ex: le 05) a été convenu.
+  // Si le contrat a été signé un 16, l'échéance mensuelle tombe le 16
   const signedDay = signedDateObj.getDate();
-  const dueDay = contract.due_day ? Number(contract.due_day) : (signedDay || 5);
+  const dueDay = contract.due_day ? Number(contract.due_day) : (signedDay || 16);
   
   const rentAmount = Number(
     contract.monthly_rent ||
@@ -225,7 +228,7 @@ export function calculateContractDueDetails(
     contract.tenant_name ||
     'Locataire';
 
-  // Vérifier si le loyer du mois courant (ou de la période courante) a déjà été payé et validé
+  // Vérifier si le loyer du mois courant a été payé ou déclaré
   const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
   
   const isPaidThisMonth = paidPayments.some((p: any) => {
@@ -235,8 +238,15 @@ export function calculateContractDueDetails(
       p.reference?.includes(contractNumber) ||
       (contract.property_id && p.property_id === contract.property_id);
 
-    const isConfirmed = p.status === 'confirme' || p.status === 'validé' || p.status === 'valide';
-    if (!isConfirmed) return false;
+    // Paiement confirmé ou déclaré par le locataire
+    const isSettledOrDeclared =
+      p.status === 'confirme' ||
+      p.status === 'validé' ||
+      p.status === 'valide' ||
+      p.status === 'declare' ||
+      p.status === 'en_attente';
+
+    if (!isSettledOrDeclared) return false;
 
     // Correspondance sur le mois cible ou la date de paiement
     const pMonth = p.target_month ? String(p.target_month).slice(0, 7) : '';
@@ -246,27 +256,24 @@ export function calculateContractDueDetails(
     return isMatchingContract && isThisMonth;
   });
 
-  // Calcul de la date de la prochaine échéance
+  // Si le contrat a été signé durant le mois courant, le premier mois est déjà convenu à l'entrée
+  const isSignedThisMonth =
+    signedDateObj.getFullYear() === currentYear &&
+    signedDateObj.getMonth() === currentMonth;
+
+  const isCurrentMonthCovered = isPaidThisMonth || isSignedThisMonth;
+
+  // Calcul de la date de la prochaine échéance :
+  // Si le mois en cours est couvert (signé ce mois-ci ou loyer déclaré), prochaine échéance le mois prochain !
   let nextDueDate: Date;
   let targetMonthObj: Date;
 
-  if (isPaidThisMonth) {
-    // Si le mois en cours est déjà payé (ex: payé le 17 octobre),
-    // la prochaine échéance est le mois suivant (ex: 17 novembre)
+  if (isCurrentMonthCovered) {
     targetMonthObj = new Date(currentYear, currentMonth + 1, 1);
     nextDueDate = new Date(currentYear, currentMonth + 1, dueDay);
   } else {
-    // Si pas encore payé ce mois-ci :
-    // Est-ce que le jour d'échéance de ce mois est déjà passé ou à venir ?
-    if (todayDay > dueDay) {
-      // Échéance de ce mois est passée et impayée (en retard)
-      targetMonthObj = new Date(currentYear, currentMonth, 1);
-      nextDueDate = new Date(currentYear, currentMonth, dueDay);
-    } else {
-      // Échéance de ce mois est à venir
-      targetMonthObj = new Date(currentYear, currentMonth, 1);
-      nextDueDate = new Date(currentYear, currentMonth, dueDay);
-    }
+    targetMonthObj = new Date(currentYear, currentMonth, 1);
+    nextDueDate = new Date(currentYear, currentMonth, dueDay);
   }
 
   // Calcul du nombre de jours restants
@@ -355,6 +362,8 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
             .filter((a: any) => a.status === 'contrat_actif')
             .forEach((a: any) => {
               if (!contracts.some((c) => c.contract_number === a.contract_number || c.id === a.id)) {
+                const effectiveSigned = a.tenant_signed_at || a.owner_signed_at || a.signed_date || a.created_at || getDeviceDateFormatted('iso');
+                const parsedSigned = parseAnyDate(effectiveSigned);
                 contracts.push({
                   id: a.id,
                   contract_number: a.contract_number || `LT-2026-CI-000492`,
@@ -362,12 +371,12 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
                   property_address: a.property_address,
                   rent: Number(a.rent_amount || 30000),
                   monthly_rent: Number(a.rent_amount || 30000),
-                  signed_date: a.signed_date || a.created_at || getDeviceDateFormatted('iso'),
+                  signed_date: effectiveSigned,
                   tenant_id: a.tenant_id,
                   tenant_name: a.applicant_name || a.tenant_name || 'Christian',
                   owner_id: a.owner_id,
                   owner_name: a.owner_name || 'KK',
-                  due_day: 17
+                  due_day: a.due_day ? Number(a.due_day) : (parsedSigned.getDate() || 16)
                 });
               }
             });
@@ -375,7 +384,7 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
       } catch {}
     }
 
-    // 2. Récupération des paiements validés
+    // 2. Récupération des paiements validés ou déclarés
     let payments: any[] = [];
     const storedPmts = localStorage.getItem('locatrust_rent_payments');
     if (storedPmts) {
@@ -409,24 +418,20 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
       const details = calculateContractDueDetails(contract, payments);
       alertsToReturn.push(details);
 
-      // Si l'échéance est dans 3 jours ou moins (J-3, J-2, J-1, Jour J) et non encore payée
+      // Si l'échéance arrive à terme (J-3 ou jour J) et n'est pas encore réglée
+      // Rappel discret envoyé UNIQUEMENT dans la boîte de notifications du locataire (cloche en haut)
+      // Aucun envoi au propriétaire ni à l'agence, aucun bot intrusif dans le tchat
       if (details.status === 'due_soon_3_days' || details.status === 'due_today') {
         const reminderSentKey = `locatrust_due_alert_sent_${details.contractNumber}_${details.targetMonthKey}_${todayIso}`;
         const alreadySentToday = localStorage.getItem(reminderSentKey);
 
         if (!alreadySentToday) {
-          // Créer la notification pour le locataire et le propriétaire
-          const notifTitle =
-            details.status === 'due_today'
-              ? '🔔 Échéance de loyer due AUJOURD\'HUI'
-              : `⏳ Rappel de loyer : Échéance dans ${details.daysRemaining} jour${details.daysRemaining > 1 ? 's' : ''}`;
-
+          const notifTitle = "Rappel d'échéance de loyer";
           const notifDescription =
             details.status === 'due_today'
-              ? `Votre loyer de ${formatFCFA(details.rentAmount)} pour "${details.propertyTitle}" est exigible aujourd'hui (${details.nextDueDateFormatted}).`
-              : `Votre loyer de ${formatFCFA(details.rentAmount)} pour "${details.propertyTitle}" arrive à échéance le ${details.nextDueDateFormatted} (dans ${details.daysRemaining} jours).`;
+              ? `Votre loyer de ${formatFCFA(details.rentAmount)} pour "${details.propertyTitle}" est à régler aujourd'hui.`
+              : `Vous devez payer votre loyer de ${formatFCFA(details.rentAmount)} pour "${details.propertyTitle}" le ${details.nextDueDateFormatted} prochain.`;
 
-          // Injection dans locatrust_notifications
           try {
             const rawNotifs = localStorage.getItem('locatrust_notifications');
             let notifsList: any[] = [];
@@ -441,30 +446,22 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
               title: notifTitle,
               description: notifDescription,
               timestamp: 'À l\'instant',
-              category: 'paiement',
+              category: 'paiement' as const,
               read: false,
-              targetTab: 'paiements'
+              targetTab: 'paiements',
+              userId: details.tenantId // Visible uniquement pour le locataire
             };
 
             notifsList.unshift(newNotif);
             localStorage.setItem('locatrust_notifications', JSON.stringify(notifsList));
 
-            // Notifier également dans la messagerie interne
-            if (details.ownerId && details.tenantId) {
-              sendChatMessage(
-                'system_bot',
-                details.tenantId,
-                `📅 ALERTE ÉCHÉANCE DE LOYER (J-${details.daysRemaining})\n\nBonjour ${details.tenantName},\n\nVotre prochain loyer d'un montant de ${formatFCFA(details.rentAmount)} pour le logement "${details.propertyTitle}" arrive à échéance le ${details.nextDueDateFormatted}.\n\nPensez à effectuer votre déclaration de règlement via Mobile Money ou virement pour recevoir votre quittance certifiée conforme.\n\nCordialement,\nLocaTrust Automate`
-              );
-            }
-
             // Marquer comme envoyé pour aujourd'hui
             localStorage.setItem(reminderSentKey, 'true');
 
-            // Dispatch live update
+            // Dispatch live update pour la cloche supérieure
             window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { newNotif } }));
           } catch (e) {
-            console.warn('Erreur envoi alerte J-3 loyer:', e);
+            console.warn('Erreur envoi rappel loyer:', e);
           }
         }
       }
@@ -548,6 +545,8 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
             .filter((a: any) => a.status === 'contrat_actif')
             .forEach((a: any) => {
               if (!contracts.some((x) => x.id === a.id || x.contract_number === a.contract_number)) {
+                const effectiveSigned = a.tenant_signed_at || a.owner_signed_at || a.signed_date || a.created_at || now.toISOString().split('T')[0];
+                const parsedSigned = parseAnyDate(effectiveSigned);
                 contracts.push({
                   id: a.id,
                   contract_number: a.contract_number || `LT-2026-CI-000492`,
@@ -555,12 +554,12 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
                   property_address: a.property_address,
                   rent: Number(a.rent_amount || 30000),
                   monthly_rent: Number(a.rent_amount || 30000),
-                  signed_date: a.signed_date || a.created_at || now.toISOString().split('T')[0],
+                  signed_date: effectiveSigned,
                   tenant_id: a.tenant_id,
                   tenant_name: a.applicant_name || a.tenant_name || 'Christian',
                   owner_id: a.owner_id,
                   owner_name: a.owner_name || 'KK',
-                  due_day: 17
+                  due_day: a.due_day ? Number(a.due_day) : (parsedSigned.getDate() || 16)
                 });
               }
             });
@@ -569,12 +568,12 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
     } catch {}
   }
 
-  // 4. Connexion à la base de données pour les paiements confirmés
+  // 4. Connexion à la base de données pour les paiements confirmés et déclarés
   try {
     const { data: dbPayments, error: pErr } = await supabase
       .from('rent_payments')
       .select('*')
-      .eq('status', 'confirme');
+      .in('status', ['confirme', 'declare', 'validé', 'valide', 'en_attente']);
 
     if (!pErr && dbPayments && dbPayments.length > 0) {
       payments = dbPayments;

@@ -968,6 +968,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       {/* MODAL 1: VALIDATION DU PAIEMENT DÉCLARÉ & QUITTANCE */}
       {validatingPayment && extractedOcrData && (() => {
+        const resolvedContract = resolveRealReceiptData(validatingPayment, user);
         const isCash = extractedOcrData.payment_method === 'Espèces' || validatingPayment.reference?.startsWith('ESP');
         const hasRealProof = Boolean(validatingPayment.proof_url && validatingPayment.proof_url.trim().length > 0 && !isCash);
 
@@ -1017,11 +1018,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   </div>
                   <div className="flex flex-col text-xs gap-1 flex-1">
                     <span className="font-extrabold text-slate-800">
-                      Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Locataire'}</strong>
+                      Locataire : <strong className="text-blue-900">{resolvedContract.tenantName}</strong>
                     </span>
-                    <span className="text-slate-500">Contrat : {validatingPayment.contract_id || 'LT-2026-CI-000492'}</span>
+                    <span className="text-slate-600 font-medium">Contrat : <strong className="text-slate-900 font-mono">{resolvedContract.contractNumber}</strong></span>
                     <span className="text-[11px] text-emerald-700 font-black flex items-center gap-1 mt-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Justificatif transmis par le locataire
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Justificatif de transaction transmis
                     </span>
                   </div>
                 </div>
@@ -1033,15 +1034,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   <div className="flex flex-col text-xs gap-1 flex-1">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="font-extrabold text-slate-800">
-                        Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Locataire'}</strong>
+                        Locataire : <strong className="text-blue-900">{resolvedContract.tenantName}</strong>
                       </span>
                       <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
                         💵 Règlement en Espèces
                       </span>
                     </div>
-                    <span className="text-slate-500">Contrat : {validatingPayment.contract_id || 'LT-2026-CI-000492'}</span>
-                    <span className="text-[11px] text-slate-600 flex items-center gap-1 mt-0.5">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Remise directe sans capture mobile money requise
+                    <span className="text-slate-600 font-medium mt-1">
+                      Contrat : <strong className="text-slate-900 font-mono">{resolvedContract.contractNumber}</strong>
                     </span>
                   </div>
                 </div>

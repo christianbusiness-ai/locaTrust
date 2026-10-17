@@ -795,71 +795,7 @@ export const LocatairePaiementsView: React.FC = () => {
       </div>
 
 
-      {/* Point 8: Dépôt de Garantie (Statut Visuel Clair) */}
-      {myDeposit && (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200 dark:border-amber-800">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">
-                Dépôt de garantie contractuel ({myDeposit.contract_id})
-              </span>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xl font-black text-slate-900 dark:text-white">
-                  {formatFCFA(myDeposit.amount_paid)}
-                </span>
-                <span className="text-xs text-slate-400 font-semibold">
-                  / {formatFCFA(myDeposit.amount_requested)} exigés
-                </span>
-              </div>
-              <span className="text-[11px] text-slate-500">
-                {myDeposit.property?.title || 'Logement loué'}
-              </span>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-3">
-            {/* Unified Status Badge */}
-            <PaymentStatusBadge status={myDeposit.status} />
-
-            {(myDeposit.status === 'paye_complet' || myDeposit.status === 'caution_confirmee' || (myDeposit as any).status === 'valide') && (
-              myDeposit.tenant_signature ? (
-                <button
-                  type="button"
-                  onClick={() => handleDownloadCautionReceipt(myDeposit)}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition-all active:scale-95 cursor-pointer"
-                  title="Télécharger le reçu officiel de caution certifié (PDF)"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Télécharger le reçu</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setIsSigningCautionModalOpen(true)}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black shadow-md shadow-blue-500/20 animate-pulse transition-all active:scale-95 cursor-pointer"
-                  title="Apposer ma signature numérique sur le reçu de caution"
-                >
-                  <PenTool className="w-3.5 h-3.5" />
-                  <span>Signer mon reçu</span>
-                </button>
-              )
-            )}
-
-            {myDeposit.status !== 'paye_complet' && myDeposit.status !== 'caution_confirmee' && (
-              <button
-                type="button"
-                onClick={() => setShowCautionModal(true)}
-                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-all"
-              >
-                Mettre à jour
-              </button>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Declarations History Table */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
