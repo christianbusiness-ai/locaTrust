@@ -41,8 +41,8 @@ import {
 } from 'lucide-react';
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
-import { supabase } from '@/src/lib/supabase';
 import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser, isValidUuid } from '@/lib/messagingStore';
+import { checkAndTriggerRentDueAlerts } from '@/lib/dateSystem';
 
 interface NotificationItem {
   id: string;
@@ -170,6 +170,15 @@ export const Header: React.FC<HeaderProps> = ({
     updateUnread();
     window.addEventListener('locatrust:messages_updated', updateUnread);
     return () => window.removeEventListener('locatrust:messages_updated', updateUnread);
+  }, [currentUser]);
+
+  // Déclencheur proactif des alertes d'échéances de loyer à J-3
+  useEffect(() => {
+    try {
+      checkAndTriggerRentDueAlerts(currentUser?.id);
+    } catch (e) {
+      console.warn('Erreur verification alertes echeances:', e);
+    }
   }, [currentUser]);
 
   // Synchronisation dynamique des compteurs de candidatures et de contrats

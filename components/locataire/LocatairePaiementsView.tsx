@@ -39,6 +39,8 @@ import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { RentScheduleCalendar } from '@/components/common/RentScheduleCalendar';
+import { getDeviceDate } from '@/lib/dateSystem';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -57,11 +59,15 @@ export const LocatairePaiementsView: React.FC = () => {
   const [isSubmittingPayment, setIsSubmittingPayment] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
 
-  // Rent Form State
+  // Rent Form State (dynamique selon la date réelle de la machine)
   const [selectedContractId, setSelectedContractId] = useState<string>('');
-  const [targetMonth, setTargetMonth] = useState('2026-10-01');
+  const [targetMonth, setTargetMonth] = useState(() => {
+    const d = getDeviceDate();
+    const lbl = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    return lbl.charAt(0).toUpperCase() + lbl.slice(1);
+  });
   const [paymentType, setPaymentType] = useState<'loyer' | 'partiel' | 'autre'>('loyer');
-  const [amount, setAmount] = useState<number>(150000);
+  const [amount, setAmount] = useState<number>(30000);
   const [method, setMethod] = useState('Wave CI');
   const [reference, setReference] = useState('');
   const [proofUrl, setProofUrl] = useState('');
@@ -735,6 +741,19 @@ export const LocatairePaiementsView: React.FC = () => {
     return matchRef || matchMonth || matchAmount;
   });
 
+  const dynamicMonthOptions = React.useMemo(() => {
+    const list: { value: string; label: string }[] = [];
+    const base = getDeviceDate();
+    for (let i = -2; i <= 3; i++) {
+      const d = new Date(base.getFullYear(), base.getMonth() + i, 1);
+      const label = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+      const capitalized = label.charAt(0).toUpperCase() + label.slice(1);
+      const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      list.push({ value: val, label: capitalized });
+    }
+    return list;
+  }, []);
+
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
       {/* Header Banner */}
@@ -775,6 +794,17 @@ export const LocatairePaiementsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Calendrier Réel & Échéancier Dynamique J-3 (Synchronisé Horloge Appareil) */}
+      <RentScheduleCalendar
+        userRole="locataire"
+        onDeclarePayment={(cntId, mth, amt) => {
+          if (cntId) setSelectedContractId(cntId);
+          if (mth) setTargetMonth(mth);
+          if (amt > 0) setAmount(amt);
+          setShowDeclareModal(true);
+        }}
+      />
 
       {/* Point 8: Dépôt de Garantie (Statut Visuel Clair) */}
       {myDeposit && (
@@ -1278,15 +1308,17 @@ export const LocatairePaiementsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="font-extrabold text-slate-800 block mb-1">Mois Cible</label>
+                <label className="font-extrabold text-slate-800 block mb-1">Mois Cible (Calculé selon la date de votre bail)</label>
                 <select
                   value={targetMonth}
                   onChange={(e) => setTargetMonth(e.target.value)}
                   className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
                 >
-                  <option value="Septembre 2026">Septembre 2026</option>
-                  <option value="Octobre 2026">Octobre 2026</option>
-                  <option value="Novembre 2026">Novembre 2026</option>
+                  {dynamicMonthOptions.map((opt) => (
+                    <option key={opt.value} value={opt.label}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
