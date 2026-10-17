@@ -289,7 +289,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     // 1. Transmission officielle dans la messagerie avec la quittance certifiée
     const updated = sendCautionReceiptToTenant(deposit.id, {
       signatureData: sig,
-      actorName
+      actorName,
+      actorId: user?.id
     });
 
     const updatedDeposit: Deposit = updated || {
@@ -308,19 +309,26 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     setSuccessFeedback(`✅ Reçu officiel de caution certifié et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} ! Le téléchargement sera disponible dès que le locataire aura apposé sa signature.`);
     confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
     window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
   };
 
   // Renvoyer le reçu de caution dans la messagerie du locataire
   const handleResendCautionReceipt = (dep: Deposit) => {
     const updated = sendCautionReceiptToTenant(dep.id, {
       signatureData: dep.owner_signature,
-      actorName
+      actorName,
+      actorId: user?.id
     });
     if (updated) {
       setDeposits(prev => prev.map(d => d.id === dep.id ? updated : d));
     }
     setSuccessFeedback(`Reçu officiel de caution renvoyé avec succès dans la boîte de messagerie de ${dep.tenant?.full_name || 'votre locataire'} !`);
     confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
+    window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
   };
 
   // Handle Approval of Caution by Owner / Agency (Points 8, 9, 11)

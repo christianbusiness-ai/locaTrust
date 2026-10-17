@@ -243,16 +243,22 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               : undefined;
 
             let contractObj = m.contract;
-            if (!contractObj && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"ownerName"'))) {
+            let quittanceObj = m.quittance;
+            if ((!contractObj || !quittanceObj) && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"quittance"') || m.text.includes('"ownerName"'))) {
               try {
                 let p = JSON.parse(m.text.trim());
                 if (Array.isArray(p)) p = p[0];
                 if (p?.contract) contractObj = p.contract;
+                if (p?.quittance) quittanceObj = p.quittance;
               } catch {}
             }
 
             if (!contactName && contractObj) {
               contactName = userRole === 'locataire' ? contractObj.ownerName : contractObj.tenantName;
+            }
+
+            if (!contactName && quittanceObj) {
+              contactName = userRole === 'locataire' ? quittanceObj.ownerName : quittanceObj.tenantName;
             }
 
             if (!contactName) {
@@ -625,11 +631,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         if (!activeContact?.id) return false;
 
         let msgContract = m.contract;
-        if (!msgContract && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"ownerName"'))) {
+        let msgQuittance = m.quittance;
+        if ((!msgContract || !msgQuittance) && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"quittance"') || m.text.includes('"ownerName"'))) {
           try {
             let p = JSON.parse(m.text.trim());
             if (Array.isArray(p)) p = p[0];
             if (p?.contract) msgContract = p.contract;
+            if (p?.quittance) msgQuittance = p.quittance;
           } catch {}
         }
 
@@ -638,12 +646,18 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           ((msgContract.ownerName && msgContract.ownerName.toLowerCase() === activeContact.name.toLowerCase()) ||
            (msgContract.propertyTitle && activeContact.propertyTitle && msgContract.propertyTitle === activeContact.propertyTitle));
 
+        const matchesQuittanceParty =
+          msgQuittance &&
+          ((msgQuittance.ownerName && activeContact.name && msgQuittance.ownerName.toLowerCase().includes(activeContact.name.toLowerCase())) ||
+           (msgQuittance.tenantName && activeContact.name && msgQuittance.tenantName.toLowerCase().includes(activeContact.name.toLowerCase())) ||
+           (msgQuittance.propertyTitle && activeContact.propertyTitle && msgQuittance.propertyTitle === activeContact.propertyTitle));
+
         const sentByMeToContact =
           myAliases.has(m.sender_id) &&
-          (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || matchesContractParty);
+          (contactAliases.has(m.receiver_id) || m.receiver_id === activeContact.id || matchesContractParty || matchesQuittanceParty);
 
         const sentByContactToMe =
-          (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || matchesContractParty) &&
+          (contactAliases.has(m.sender_id) || m.sender_id === activeContact.id || matchesContractParty || matchesQuittanceParty) &&
           myAliases.has(m.receiver_id);
 
         return sentByMeToContact || sentByContactToMe;
