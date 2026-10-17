@@ -1523,6 +1523,18 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       saveStoredMessages(updatedMessages);
       setMessages([...updatedMessages]);
 
+      // Mettre à jour le message correspondant dans Supabase
+      const matchedSignedMsg = updatedMessages.find(m => m.quittance?.receiptNumber === targetRef);
+      if (matchedSignedMsg && isValidUuid(matchedSignedMsg.id)) {
+        supabase.from('messages').update({
+          content: JSON.stringify({
+            type: 'quittance',
+            text: matchedSignedMsg.text,
+            quittance: matchedSignedMsg.quittance
+          })
+        }).eq('id', matchedSignedMsg.id).then();
+      }
+
       // Si c'est un reçu de caution, mettre à jour cautionsStore et Supabase
       if (isCaution) {
         try {
@@ -1535,7 +1547,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             (signingTarget.quittance?.contractNumber && (d.contract_number === signingTarget.quittance.contractNumber || d.contract_id === signingTarget.quittance.contractNumber))
           );
           
-          const depIdToSign = dep?.id || signingTarget.quittance.depositId || `dep_${Date.now()}`;
+          const depIdToSign = dep?.id || signingTarget.quittance.depositId || crypto.randomUUID();
           const fallbackDeposit = dep || {
             id: depIdToSign,
             contract_id: signingTarget.quittance.contractNumber || 'CNT-OFFICIAL',
@@ -1558,16 +1570,28 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
           signCautionReceipt(depIdToSign, 'tenant', signatureDataUrl, fallbackDeposit);
           
+          const updateCautionPayload: any = {
+            tenant_signature: signatureDataUrl,
+            status: 'paye_complet',
+            tenant_signed_at: new Date().toISOString()
+          };
+
           if (isValidUuid(depIdToSign)) {
             supabase
               .from('cautions')
-              .update({
-                tenant_signature: signatureDataUrl,
-                status: 'paye_complet'
-              })
+              .update(updateCautionPayload)
               .eq('id', depIdToSign)
               .then();
+          } else if (isValidUuid(currentUserId)) {
+            supabase
+              .from('cautions')
+              .update(updateCautionPayload)
+              .eq('tenant_id', currentUserId)
+              .then();
           }
+
+          window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+          window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
         } catch {}
 
         pushGlobalNotification({

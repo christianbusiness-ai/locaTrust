@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
+import { syncUserData } from '@/lib/unifiedSyncEngine';
+import { subscribeToLiveSync } from '@/lib/supabaseRealtime';
 
 export interface UserProfile {
   id: string;
@@ -161,6 +163,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mounted) {
         setProfile(p);
         setLoading(false);
+        subscribeToLiveSync(verifiedUser.id);
+        syncUserData(verifiedUser.id, p?.account_type).catch(console.warn);
       }
     }).catch(() => {
       if (mounted) setLoading(false);
@@ -190,7 +194,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           p = await fetchProfile(newSession.user.id);
         }
-        if (mounted) setProfile(p);
+        if (mounted) {
+          setProfile(p);
+          subscribeToLiveSync(newSession.user.id);
+          syncUserData(newSession.user.id, p?.account_type).catch(console.warn);
+        }
       } else {
         if (mounted) setProfile(null);
       }
@@ -199,12 +207,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 3. Écoute réactive des mises à jour de profil (événements personnalisés & retour au premier plan)
     const handleProfileSync = () => {
-      if (mounted) refreshProfile();
+      if (mounted) {
+        refreshProfile();
+        supabase.auth.getUser().then(({ data: { user: curUser } }) => {
+          if (curUser) syncUserData(curUser.id).catch(console.warn);
+        }).catch(() => {});
+      }
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && mounted) {
         refreshProfile();
+        supabase.auth.getUser().then(({ data: { user: curUser } }) => {
+          if (curUser) syncUserData(curUser.id).catch(console.warn);
+        }).catch(() => {});
       }
     };
 

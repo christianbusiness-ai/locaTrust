@@ -405,7 +405,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         }
         const propToSave = dbData || {
           ...newPropPayload,
-          id: 'prop_' + Date.now(),
+          id: crypto.randomUUID(),
           created_at: new Date().toISOString(),
           owner_id: currentPublisherId,
           owner_name: currentPublisherName,

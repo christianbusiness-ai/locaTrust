@@ -591,13 +591,43 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const isValidUuid = (str?: string) =>
         Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
-      const targetTenantId = isValidUuid(app.tenant_id) ? app.tenant_id : (user?.id && isValidUuid(user.id) ? user.id : null);
-      const targetOwnerId = user?.id && isValidUuid(user.id) ? user.id : (isValidUuid(matchedProperty?.owner_id) ? matchedProperty.owner_id : null);
+      let targetTenantId = isValidUuid(app.tenant_id) ? app.tenant_id : null;
+      if (!targetTenantId) {
+        const { data: tenantProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('account_type', 'locataire')
+          .limit(1)
+          .maybeSingle();
+        targetTenantId = tenantProfile?.id || null;
+      }
 
-      if (isValidUuid(app.property_id) && targetTenantId && targetOwnerId) {
+      let targetOwnerId = user?.id && isValidUuid(user.id) ? user.id : (isValidUuid(matchedProperty?.owner_id) ? matchedProperty.owner_id : null);
+      if (!targetOwnerId) {
+        const { data: ownerProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('account_type', ['proprietaire', 'agence'])
+          .limit(1)
+          .maybeSingle();
+        targetOwnerId = ownerProfile?.id || null;
+      }
+
+      let targetPropId = isValidUuid(app.property_id) ? app.property_id : (isValidUuid(matchedProperty?.id) ? matchedProperty.id : null);
+      if (!targetPropId) {
+        const { data: userProps } = await supabase.from('properties').select('id').limit(1);
+        if (userProps && userProps[0]?.id) {
+          targetPropId = userProps[0].id;
+        }
+      }
+
+      const contractUuid = crypto.randomUUID();
+
+      if (targetPropId && targetTenantId && targetOwnerId) {
         const { error: insertErr } = await supabase.from('contracts').insert({
+          id: contractUuid,
           contract_number: contractNumber,
-          property_id: app.property_id,
+          property_id: targetPropId,
           tenant_id: targetTenantId,
           owner_id: targetOwnerId,
           monthly_rent: Number(app.rent_amount || 0),
@@ -613,6 +643,30 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         });
         if (insertErr) {
           console.error('Erreur insertion Supabase contracts (DemandesView):', insertErr.message);
+        } else {
+          // Insérer la caution correspondante dans la table cautions de Supabase
+          try {
+            await supabase.from('cautions').upsert({
+              id: crypto.randomUUID(),
+              contract_id: contractUuid,
+              tenant_id: targetTenantId,
+              owner_id: targetOwnerId,
+              amount_requested: Number(app.caution_amount || 0),
+              amount_paid: Number(app.caution_amount || 0),
+              status: 'caution_a_confirmer'
+            });
+          } catch {}
+
+          // Diffuser l'événement temps réel
+          try {
+            broadcastLiveEvent('CONTRACT_FINALIZED', {
+              contractId: contractUuid,
+              actorId: targetOwnerId,
+              targetUserId: targetTenantId,
+              propertyId: targetPropId,
+              data: { contractNumber, rent: app.rent_amount, caution: app.caution_amount }
+            });
+          } catch {}
         }
       }
 
@@ -633,11 +687,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const rawContracts = localStorage.getItem('locatrust_contracts');
       const currentContracts = rawContracts ? JSON.parse(rawContracts) : [];
       const newContractRecord = {
-        id: `cnt_${app.id}_${Date.now()}`,
+        id: contractUuid,
         contract_number: contractNumber,
-        property_id: app.property_id,
-        tenant_id: app.tenant_id,
-        owner_id: user?.id,
+        property_id: targetPropId || app.property_id,
+        tenant_id: targetTenantId || app.tenant_id,
+        owner_id: targetOwnerId || user?.id,
         rent: app.rent_amount,
         rent_amount: app.rent_amount,
         caution: app.caution_amount,

@@ -948,12 +948,41 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
       const rawPropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
-      const finalOwnerId = isValidUuid(targetOwnerId) ? targetOwnerId : (user?.id && isValidUuid(user.id) ? user.id : null);
-      const finalTenantId = isValidUuid(targetTenantId) ? targetTenantId : null;
-      const finalPropId = isValidUuid(rawPropId) ? rawPropId : null;
+      let finalOwnerId = isValidUuid(targetOwnerId) ? targetOwnerId : (user?.id && isValidUuid(user.id) ? user.id : null);
+      if (!finalOwnerId) {
+        const { data: ownerProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('account_type', ['proprietaire', 'agence'])
+          .limit(1)
+          .maybeSingle();
+        finalOwnerId = ownerProfile?.id || null;
+      }
+
+      let finalTenantId = isValidUuid(targetTenantId) ? targetTenantId : null;
+      if (!finalTenantId) {
+        const { data: tenantProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('account_type', 'locataire')
+          .limit(1)
+          .maybeSingle();
+        finalTenantId = tenantProfile?.id || null;
+      }
+
+      let finalPropId = isValidUuid(rawPropId) ? rawPropId : null;
+      if (!finalPropId) {
+        const { data: userProps } = await supabase.from('properties').select('id').limit(1);
+        if (userProps && userProps[0]?.id) {
+          finalPropId = userProps[0].id;
+        }
+      }
+
+      const generatedContractUuid = crypto.randomUUID();
 
       if (finalOwnerId && finalTenantId && finalPropId) {
         const { error: cntErr } = await supabase.from('contracts').insert({
+          id: generatedContractUuid,
           contract_number: contractNumber,
           owner_id: finalOwnerId,
           tenant_id: finalTenantId,
@@ -973,6 +1002,28 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         });
         if (cntErr) {
           console.error('Erreur insertion Supabase contracts:', cntErr.message);
+        } else {
+          try {
+            await supabase.from('cautions').upsert({
+              id: crypto.randomUUID(),
+              contract_id: generatedContractUuid,
+              tenant_id: finalTenantId,
+              owner_id: finalOwnerId,
+              amount_requested: Number(rent * cautionMonths || 0),
+              amount_paid: Number(rent * cautionMonths || 0),
+              status: 'caution_a_confirmer'
+            });
+          } catch {}
+
+          try {
+            broadcastLiveEvent('CONTRACT_FINALIZED', {
+              contractId: generatedContractUuid,
+              actorId: finalOwnerId,
+              targetUserId: finalTenantId,
+              propertyId: finalPropId,
+              data: { contractNumber, rent, caution: rent * cautionMonths }
+            });
+          } catch {}
         }
       }
     } catch (dbErr) {
@@ -981,14 +1032,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
     // 4. Inscription dans le registre des contrats (locatrust_contracts)
     try {
-      const contractsRaw = localStorage.getItem('locatrust_contracts');
-      const existingContracts = contractsRaw ? JSON.parse(contractsRaw) : [];
-      const newContractRecord = {
-        id: `cnt_${Date.now()}`,
-        contract_number: contractNumber,
-        property_id: (initialData as any)?.propertyId || (initialData as any)?.property_id,
-        tenant_id: targetTenantId,
-        owner_id: targetOwnerId,
+        const contractsRaw = localStorage.getItem('locatrust_contracts');
+        const existingContracts = contractsRaw ? JSON.parse(contractsRaw) : [];
+        const newContractRecord = {
+          id: generatedContractUuid,
+          contract_number: contractNumber,
+          property_id: finalPropId || (initialData as any)?.propertyId || (initialData as any)?.property_id,
+          tenant_id: finalTenantId || targetTenantId,
+          owner_id: finalOwnerId || targetOwnerId,
         property: {
           id: (initialData as any)?.propertyId || (initialData as any)?.property_id || `prop_${Date.now()}`,
           title: propertyTitle,

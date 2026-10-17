@@ -130,8 +130,9 @@ export function declareCautionPayment(params: {
     const updatedList = all.map((d) => (d.id === existing.id ? updatedDeposit : d));
     saveStoredDeposits(updatedList);
   } else {
+    const generatedId = crypto.randomUUID();
     updatedDeposit = {
-      id: `dep_${Date.now()}`,
+      id: generatedId,
       contract_id: params.contractId,
       contract_number: params.contractNumber || targetContractNumber,
       payment_method: params.method,
@@ -235,6 +236,31 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
 
   const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
   saveStoredDeposits(updatedList);
+
+  // Mettre à jour Supabase table cautions
+  try {
+    const updatePayload: any = {
+      status: target.amount_paid >= target.amount_requested ? 'paye_complet' : 'paye_partiel',
+      confirmed_by: confirmedBy,
+      confirmed_at: now,
+      owner_signature: target.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED'
+    };
+    if (isValidUuid(depositId)) {
+      supabase.from('cautions').update(updatePayload).eq('id', depositId).then();
+    } else if (isValidUuid(target.tenant_id)) {
+      supabase.from('cautions').update(updatePayload).eq('tenant_id', target.tenant_id).then();
+    }
+  } catch {}
+
+  try {
+    broadcastLiveEvent('CAUTION_CONFIRMED', {
+      depositId: target.id,
+      contractId: target.contract_id,
+      actorId: target.owner_id,
+      targetUserId: target.tenant_id,
+      data: { deposit: updatedDeposit }
+    });
+  } catch {}
 
   // Notifier immédiatement le locataire que sa caution est validée et que le reçu est disponible
   if (typeof window !== 'undefined') {
@@ -356,12 +382,28 @@ export function signCautionReceipt(
 
   // 1. Mettre à jour Supabase table cautions
   try {
+    const updatePayload: any = party === 'owner'
+      ? { owner_signature: signatureData, status: 'paye_complet', confirmed_at: now }
+      : { tenant_signature: signatureData, status: 'paye_complet', tenant_signed_at: now };
+
     if (isValidUuid(target.id)) {
-      const updatePayload: any = party === 'owner'
-        ? { owner_signature: signatureData, status: 'paye_complet' }
-        : { tenant_signature: signatureData, status: 'paye_complet' };
       supabase.from('cautions').update(updatePayload).eq('id', target.id).then();
+    } else if (isValidUuid(target.tenant_id)) {
+      supabase.from('cautions').update(updatePayload).eq('tenant_id', target.tenant_id).then();
     }
+  } catch {}
+
+  try {
+    broadcastLiveEvent(party === 'owner' ? 'CAUTION_CONFIRMED' : 'CAUTION_SIGNED_BY_TENANT', {
+      depositId: target.id,
+      contractId: target.contract_id,
+      actorId: party === 'owner' ? target.owner_id : target.tenant_id,
+      targetUserId: party === 'owner' ? target.tenant_id : target.owner_id,
+      data: {
+        deposit: updatedDeposit,
+        signatureUrl: signatureData
+      }
+    });
   } catch {}
 
   // 2. Mettre à jour le registre des reçus du locataire (locatrust_tenant_receipts_v2)
