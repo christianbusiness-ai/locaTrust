@@ -121,7 +121,6 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     const { data: serverApps, error: appErr } = await supabase
       .from('rental_applications')
       .select('*')
-      .or(`tenant_id.eq.${userId}`)
       .order('created_at', { ascending: false });
 
     if (!appErr && Array.isArray(serverApps)) {
@@ -145,8 +144,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     // 4. SYNCHRONISATION DES CAUTIONS (CAUTIONS / DEPOSITS)
     const { data: serverCautions, error: cauErr } = await supabase
       .from('cautions')
-      .select('*')
-      .or(`owner_id.eq.${userId},tenant_id.eq.${userId}`)
+      .select('*, contract:contract_id(*)')
       .order('created_at', { ascending: false });
 
     if (!cauErr && Array.isArray(serverCautions)) {
@@ -158,6 +156,11 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
           const normalizedServerCautions = serverCautions.map(c => ({
             ...c,
+            contract_number: c.contract?.contract_number || c.contract_number,
+            property: c.contract?.property || {
+              title: 'Logement LocaTrust',
+              address: 'Abidjan'
+            },
             amount_requested: c.amount_requested,
             amount_paid: c.amount_paid,
             status: c.status || 'caution_a_confirmer',
@@ -182,8 +185,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     // 5. SYNCHRONISATION DES PAIEMENTS DE LOYERS (RENT PAYMENTS)
     const { data: serverPayments, error: pmtErr } = await supabase
       .from('rent_payments')
-      .select('*')
-      .or(`owner_id.eq.${userId},tenant_id.eq.${userId}`)
+      .select('*, contract:contract_id(*)')
       .order('created_at', { ascending: false });
 
     if (!pmtErr && Array.isArray(serverPayments)) {
