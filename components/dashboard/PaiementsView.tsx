@@ -308,12 +308,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         };
       }
 
-      // 2. Update payment status to confirmed with exact receipt reference
+      // 2. Update payment status to en_attente_signature_locataire with owner signature
+      const resolvedContract = resolveRealReceiptData(validatingPayment, user);
       const confirmedPmt: RentPayment = {
         ...validatingPayment,
-        status: 'confirme',
+        status: 'en_attente_signature_locataire',
         amount: extractedOcrData.amount,
         reference: extractedOcrData.reference,
+        owner_signature_url: ownerSignatureUrl || undefined,
         target_month: result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month || 'Période en cours',
         confirmed_at: new Date().toISOString(),
       };
@@ -351,7 +353,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             paymentDate: new Date().toLocaleDateString('fr-FR'),
             paymentMethod: extractedOcrData.payment_method,
             transactionReference: extractedOcrData.reference,
-            ownerName: user?.user_metadata?.full_name || 'Bailleur',
+            ownerName: resolvedContract.ownerName || 'KK',
             tenantName: validatingPayment.tenant?.full_name || 'Locataire',
             ownerSignatureUrl: ownerSignatureUrl,
             tenantSignatureUrl: tenantSignatureUrl,
@@ -383,7 +385,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             payment_method: extractedOcrData.payment_method,
             created_at: new Date().toISOString(),
             owner_signature_url: ownerSignatureUrl,
-            status: 'confirme'
+            status: 'en_attente_signature_locataire'
           });
           localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(receiptsV2));
           window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
@@ -407,6 +409,40 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           }
         }
       } catch {}
+
+      // 4. Créer la notification d'invitation à signer pour le locataire
+      try {
+        if (typeof window !== 'undefined') {
+          const notifId = `notif_sign_rec_${Date.now()}`;
+          const newNotif = {
+            id: notifId,
+            title: '🛡️ Quittance de loyer reçue pour signature',
+            description: `Votre quittance N° ${extractedOcrData.reference} (${formatFCFA(extractedOcrData.amount)}) a été validée par ${resolvedContract.ownerName}. Veuillez y apposer votre signature manuscrite pour la sceller.`,
+            timestamp: "À l'instant",
+            time: "À l'instant",
+            read: false,
+            processed: false,
+            category: 'paiement',
+            type: 'quittance_signature_requise',
+            targetTab: 'payments',
+            targetRole: 'locataire',
+            targetUserId: tenantId,
+            payload: {
+              paymentId: validatingPayment.id,
+              receiptNumber: extractedOcrData.reference,
+              contractId: validatingPayment.contract_id,
+              action: 'sign_receipt'
+            }
+          };
+          const notifsRaw = localStorage.getItem('locatrust_notifications');
+          const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+          const updatedNotifs = [newNotif, ...(Array.isArray(currentNotifs) ? currentNotifs : [])];
+          localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updatedNotifs } }));
+        }
+      } catch (nErr) {
+        console.warn('Erreur notification locataire signature:', nErr);
+      }
 
       // Synchroniser avec Supabase & notifier le locataire
       try {
@@ -435,14 +471,15 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           try {
             await supabase.from('notifications').insert({
               user_id: validatingPayment.tenant_id,
-              title: 'Paiement de loyer validé !',
-              content: `Votre règlement de ${formatFCFA(extractedOcrData.amount)} pour ${result?.generatedReceipt?.periods_covered_text || 'votre loyer'} a été validé. Votre quittance officielle est disponible.`,
-              type: 'paiement_valide',
+              title: '🛡️ Quittance de loyer reçue pour signature',
+              content: `Votre quittance de loyer N° ${extractedOcrData.reference} (${formatFCFA(extractedOcrData.amount)}) a été validée par ${resolvedContract.ownerName}. Veuillez y apposer votre signature manuscrite pour la sceller.`,
+              type: 'quittance_signature_requise',
               read: false,
               payload: {
                 payment_id: validatingPayment.id,
                 receipt_number: extractedOcrData.reference,
-                amount: extractedOcrData.amount
+                amount: extractedOcrData.amount,
+                action: 'sign_receipt'
               }
             });
           } catch (nErr) {
@@ -461,7 +498,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             receipt_number: extractedOcrData.reference,
             receipt: result?.generatedReceipt,
             payment: confirmedPmt,
-            actorName: user?.user_metadata?.full_name || 'Bailleur'
+            actorName: resolvedContract.ownerName || 'KK'
           }
         });
       } catch (dbErr) {
@@ -470,18 +507,16 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
 
-      // Déclencher la modale de confirmation et la prévisualisation du reçu
+      // Déclencher la modale d'opération réussie avec confettis et bouton "J'ai compris"
       setConfirmationModal({
         isOpen: true,
         type: 'payment_validated',
-        title: 'Paiement validé avec succès !',
-        message: `La quittance N° ${extractedOcrData.reference} a été certifiée conforme et transmise directement dans la boîte de messagerie du locataire ${validatingPayment.tenant?.full_name || 'Locataire'}.`,
+        title: 'Opération réussie !',
+        message: `La quittance N° ${extractedOcrData.reference} a été confirmée avec succès. Elle est maintenant transmise au locataire ${validatingPayment.tenant?.full_name || 'Locataire'} et passée sous le statut « En attente de signature du locataire » afin d'être scellée.`,
         details: `Périodes couvertes : ${result?.generatedReceipt?.periods_covered_text || 'Loyer en cours'} • Montant : ${formatFCFA(extractedOcrData.amount)}`,
-        confirmText: 'Consulter la quittance',
+        confirmText: "J'ai compris",
         withCelebration: true
       });
-
-      setPreviewingReceipt(confirmedPmt);
     } catch (err: any) {
       console.error('Erreur validation paiement:', err);
       alert('La quittance a été validée localement.');
@@ -612,7 +647,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     }
   };
 
-  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(null);
+  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('locatrust_owner_signature') || localStorage.getItem('locatrust_user_signature') || null;
+    }
+    return null;
+  });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
@@ -878,6 +918,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                         Déclaré (Attente validation)
                       </span>
                     )}
+                    {pmt.status === 'en_attente_signature_locataire' && (
+                      <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-[10px] inline-flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                        En attente signature locataire
+                      </span>
+                    )}
                     {pmt.status === 'confirme' && (
                       <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-900 font-extrabold text-[10px]">
                         Confirmé & Affecté
@@ -906,6 +952,20 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                         >
                           <XCircle className="w-3.5 h-3.5" />
                           <span>Refuser</span>
+                        </button>
+                      </div>
+                    ) : pmt.status === 'en_attente_signature_locataire' ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-500 text-[11px] font-bold border border-slate-200">
+                          Signé bailleur • Attente preneur
+                        </span>
+                        <button
+                          onClick={() => setPreviewingReceipt(pmt)}
+                          className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all"
+                          title="Visualiser la quittance en cours de contre-signature"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Aperçu</span>
                         </button>
                       </div>
                     ) : pmt.status === 'confirme' ? (
@@ -1125,8 +1185,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                           <img src={ownerSignatureUrl} alt="Signature bailleur" className="max-h-full max-w-full object-contain" />
                         </div>
                         <div className="flex flex-col text-xs">
-                          <span className="font-extrabold text-slate-900">{user?.user_metadata?.full_name || 'Bailleur Propriétaire'}</span>
-                          <span className="text-[10px] text-slate-500">Bailleur certifié</span>
+                          <span className="font-extrabold text-slate-900">{resolvedContract.ownerName}</span>
+                          <span className="text-[10px] text-slate-500">
+                            {resolvedContract.ownerName.toLowerCase().includes('agence') || (user as any)?.account_type === 'agence' || user?.user_metadata?.account_type === 'agence' ? 'Agence certifiée' : 'Bailleur certifié'}
+                          </span>
                           <span className="text-[9px] text-emerald-600 font-bold">Horodatée et liée à la quittance</span>
                         </div>
                       </div>
@@ -1551,12 +1613,26 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
+              try {
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_owner_signature', signatureUrl);
+                  localStorage.setItem('locatrust_user_signature', signatureUrl);
+                }
+              } catch {}
             } else {
               setTenantSignatureUrl(signatureUrl);
             }
             setActiveSigningParty(null);
           }}
-          signerName={activeSigningParty === 'proprietaire' ? user?.user_metadata?.full_name || 'Bailleur' : (validatingPayment?.tenant?.full_name || previewingReceipt?.tenant?.full_name || "Locataire")}
+          signerName={
+            activeSigningParty === 'proprietaire'
+              ? ((validatingPayment ? resolveRealReceiptData(validatingPayment, user).ownerName : null) ||
+                 (previewingReceipt ? resolveRealReceiptData(previewingReceipt, user).ownerName : null) ||
+                 user?.user_metadata?.agency_name ||
+                 (typeof window !== 'undefined' ? localStorage.getItem('locatrust_agency_name') : null) ||
+                 'KK')
+              : (validatingPayment?.tenant?.full_name || previewingReceipt?.tenant?.full_name || "Locataire")
+          }
           signerRole={activeSigningParty}
           documentTitle="Reçu de Paiement Officiel"
           documentNumber={validatingPayment?.reference || previewingReceipt?.reference || 'REC-2026-000987'}

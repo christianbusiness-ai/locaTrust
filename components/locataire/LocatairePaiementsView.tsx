@@ -54,6 +54,8 @@ export const LocatairePaiementsView: React.FC = () => {
   const [showDeclareModal, setShowDeclareModal] = useState<boolean>(false);
   const [showCautionModal, setShowCautionModal] = useState<boolean>(false);
   const [isSigningCautionModalOpen, setIsSigningCautionModalOpen] = useState<boolean>(false);
+  const [signingReceiptPayment, setSigningReceiptPayment] = useState<any | null>(null);
+  const [isSigningReceiptModalOpen, setIsSigningReceiptModalOpen] = useState<boolean>(false);
   const [isSubmittingCaution, setIsSubmittingCaution] = useState<boolean>(false);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
@@ -228,7 +230,7 @@ export const LocatairePaiementsView: React.FC = () => {
             });
           }
         }
-      } catch {}
+      } catch { }
 
       if (allContracts.length > 0) {
         setUserContracts(allContracts);
@@ -257,14 +259,43 @@ export const LocatairePaiementsView: React.FC = () => {
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
+    window.addEventListener('locatrust:receipts_updated', handleUpdate);
     window.addEventListener('locatrust:cautions_updated', handleUpdate);
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
+
+    const handleOpenSignReceipt = (e: any) => {
+      const pId = e.detail?.paymentId || e.detail?.payment_id;
+      const rNum = e.detail?.receiptNumber || e.detail?.receipt_number;
+      if (pId || rNum) {
+        // Chercher dans payments ou dans localStorage
+        let target = payments.find((p: any) => (pId && p.id === pId) || (rNum && p.reference === rNum));
+        if (!target) {
+          try {
+            const raw = localStorage.getItem('locatrust_rent_payments');
+            if (raw) {
+              const list = JSON.parse(raw);
+              if (Array.isArray(list)) {
+                target = list.find((p: any) => (pId && p.id === pId) || (rNum && p.reference === rNum));
+              }
+            }
+          } catch {}
+        }
+        if (target) {
+          setSigningReceiptPayment(target);
+          setIsSigningReceiptModalOpen(true);
+        }
+      }
+    };
+    window.addEventListener('locatrust:open_sign_receipt', handleOpenSignReceipt);
+
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
+      window.removeEventListener('locatrust:receipts_updated', handleUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleUpdate);
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
+      window.removeEventListener('locatrust:open_sign_receipt', handleOpenSignReceipt);
     };
-  }, [user]);
+  }, [user, payments]);
 
   // Résolution multi-sources de l'identifiant réel du propriétaire ou de l'agence
   const resolveTargetOwnerId = async (chosenContract: any): Promise<string | null> => {
@@ -295,7 +326,7 @@ export const LocatairePaiementsView: React.FC = () => {
           if (resolved && isValidUuid(resolved)) return resolved;
         }
       }
-    } catch {}
+    } catch { }
 
     // 2. Chercher dans contracts de Supabase
     try {
@@ -312,7 +343,7 @@ export const LocatairePaiementsView: React.FC = () => {
           return cntData.owner_id;
         }
       }
-    } catch {}
+    } catch { }
 
     // 3. Chercher dans properties de Supabase
     try {
@@ -328,7 +359,7 @@ export const LocatairePaiementsView: React.FC = () => {
           if (resolved && isValidUuid(resolved)) return resolved;
         }
       }
-    } catch {}
+    } catch { }
 
     // 4. Chercher dans les profils agence ou propriétaire actifs de Supabase (ex: agence kk)
     try {
@@ -343,7 +374,7 @@ export const LocatairePaiementsView: React.FC = () => {
       if (agencyProfile?.id && isValidUuid(agencyProfile.id)) {
         return agencyProfile.id;
       }
-    } catch {}
+    } catch { }
 
     return ownerId;
   };
@@ -387,7 +418,7 @@ export const LocatairePaiementsView: React.FC = () => {
       try {
         const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
         localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
-      } catch {}
+      } catch { }
 
       // Send real notification to owner/agency in Supabase
       if (ownerUuid) {
@@ -445,7 +476,7 @@ export const LocatairePaiementsView: React.FC = () => {
             month: targetMonth
           }
         });
-      } catch {}
+      } catch { }
 
       // Send declaration document directly to owner / agency messaging inbox
       try {
@@ -566,7 +597,7 @@ export const LocatairePaiementsView: React.FC = () => {
               method: cautionMethod
             }
           });
-        } catch {}
+        } catch { }
       }
 
       // Persist in local store for seamless demo & multi-tab responsiveness
@@ -644,7 +675,7 @@ export const LocatairePaiementsView: React.FC = () => {
             tenantId: user?.id
           }
         });
-      } catch {}
+      } catch { }
 
       // Send caution declaration document directly to owner / agency messaging inbox
       try {
@@ -692,6 +723,121 @@ export const LocatairePaiementsView: React.FC = () => {
     }
   };
 
+  const handleConfirmTenantReceiptSignature = async (signatureData: string) => {
+    if (!signingReceiptPayment) return;
+    const pmt = signingReceiptPayment;
+    try {
+      const now = new Date().toISOString();
+      const updatedPmt = {
+        ...pmt,
+        tenant_signature_url: signatureData,
+        status: 'confirme',
+        confirmed_at: pmt.confirmed_at || now,
+      };
+
+      // 1. Mettre à jour l'état local
+      setPayments((prev) => prev.map((p) => (p.id === pmt.id || p.reference === pmt.reference ? updatedPmt : p)));
+
+      // 2. Mettre à jour locatrust_rent_payments
+      try {
+        const raw = localStorage.getItem('locatrust_rent_payments');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const updatedList = list.map((p: any) => (p.id === pmt.id || p.reference === pmt.reference ? updatedPmt : p));
+            localStorage.setItem('locatrust_rent_payments', JSON.stringify(updatedList));
+          }
+        }
+      } catch {}
+
+      // 3. Mettre à jour locatrust_tenant_receipts_v2
+      try {
+        const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
+        if (rawV2) {
+          const list = JSON.parse(rawV2);
+          if (Array.isArray(list)) {
+            const updatedV2 = list.map((r: any) => {
+              if (r.receipt_number === pmt.reference || r.receiptNumber === pmt.reference || r.payment_id === pmt.id) {
+                return { ...r, tenant_signature_url: signatureData, status: 'confirme' };
+              }
+              return r;
+            });
+            localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(updatedV2));
+          }
+        }
+      } catch {}
+
+      // 4. Mettre à jour Supabase si possible
+      try {
+        if (isValidUuid(pmt.id)) {
+          await supabase.from('rent_payments').update({
+            status: 'confirme'
+          }).eq('id', pmt.id);
+        }
+      } catch {}
+
+      // 5. Retirer / marquer comme traitée la notification liée
+      try {
+        const notifsRaw = localStorage.getItem('locatrust_notifications');
+        if (notifsRaw) {
+          const notifs = JSON.parse(notifsRaw);
+          if (Array.isArray(notifs)) {
+            const filtered = notifs.map((n: any) => {
+              const isMatch =
+                (n.type === 'quittance_signature_requise' || n.payload?.action === 'sign_receipt') &&
+                (n.payload?.paymentId === pmt.id || n.payload?.receiptNumber === pmt.reference || n.id?.includes(pmt.id) || n.description?.includes(pmt.reference));
+              if (isMatch) {
+                return { ...n, read: true, processed: true };
+              }
+              return n;
+            });
+            localStorage.setItem('locatrust_notifications', JSON.stringify(filtered));
+            window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: filtered } }));
+          }
+        }
+      } catch {}
+
+      // 6. Notifier le bailleur / l'agence
+      try {
+        const ownerId = pmt.owner_id || pmt.contract?.owner_id || 'usr_owner';
+        const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Christian';
+        const notifItem = {
+          id: `notif_rec_signed_${Date.now()}`,
+          title: '✅ Quittance contresignée par le locataire',
+          description: `Le locataire ${tenantName} a apposé sa signature certifiée sur la quittance N° ${pmt.reference}. Le document est officiellement scellé et téléchargeable par tous.`,
+          time: "À l'instant",
+          timestamp: "À l'instant",
+          unread: true,
+          read: false,
+          type: 'paiement',
+          category: 'paiement',
+          targetTab: 'payments',
+          targetRole: 'proprietaire',
+          targetUserId: ownerId
+        };
+        const notifsRaw = localStorage.getItem('locatrust_notifications');
+        const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+        localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(curNotifs) ? curNotifs : [])]));
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+      } catch {}
+
+      // 7. Diffuser les événements temps réel
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
+      confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
+
+      setSuccessModalMessage({
+        title: 'Quittance signée avec succès !',
+        desc: `Votre signature manuscrite certifiée a été apposée sur la quittance N° ${pmt.reference}. Le document officiel est désormais scellé et téléchargeable.`
+      });
+    } catch (e) {
+      console.error('Erreur signature locataire quittance:', e);
+    } finally {
+      setIsSigningReceiptModalOpen(false);
+      setSigningReceiptPayment(null);
+    }
+  };
+
   const handleDownloadCautionReceipt = async (dep: any) => {
     try {
       const resolved = resolveDepositContractDetails(dep);
@@ -730,6 +876,42 @@ export const LocatairePaiementsView: React.FC = () => {
   };
 
   const myDeposit = deposits[0];
+
+  // 24H RETENTION LOGIC POUR LA NOTIFICATION DU REÇU DE CAUTION (Instruction audio utilisateur)
+  // Si le locataire a vérifié et signé son reçu de caution, cette carte reste affichée 24h sur cet écran.
+  // Une fois les 24h passées, elle s'efface d'elle-même car le document est conservé dans l'onglet Cautions.
+  const hasTenantSignedDeposit = Boolean(
+    myDeposit && (myDeposit.tenant_signature || myDeposit.tenant_signed_at || myDeposit.status === 'paye_complet')
+  );
+
+  const depositSignedTimestamp = React.useMemo(() => {
+    if (!myDeposit) return null;
+    const timeStr = myDeposit.tenant_signed_at || (myDeposit as any).tenant_signature_date || myDeposit.confirmed_at || (myDeposit as any).updated_at;
+    if (!timeStr) return null;
+    const parsed = new Date(timeStr).getTime();
+    return isNaN(parsed) ? null : parsed;
+  }, [myDeposit]);
+
+  const isWithin24HoursOfSignature = React.useMemo(() => {
+    if (!depositSignedTimestamp) {
+      return hasTenantSignedDeposit;
+    }
+    const elapsed = Date.now() - depositSignedTimestamp;
+    return elapsed >= 0 && elapsed <= 24 * 60 * 60 * 1000;
+  }, [depositSignedTimestamp, hasTenantSignedDeposit]);
+
+  const isDepositReadyForTenantSignature = Boolean(
+    myDeposit && !hasTenantSignedDeposit && (myDeposit.status === 'caution_confirmee' || myDeposit.status === 'validee' || myDeposit.owner_signature)
+  );
+
+  const showCautionBanner = Boolean(
+    myDeposit && (
+      // Cas 1 : En attente de signature par le locataire
+      isDepositReadyForTenantSignature ||
+      // Cas 2 : Signé et propre -> affiché pendant 24h chrono
+      (hasTenantSignedDeposit && isWithin24HoursOfSignature)
+    )
+  );
 
   const filteredPayments = payments.filter((pmt) => {
     if (!searchQuery.trim()) return true;
@@ -794,10 +976,73 @@ export const LocatairePaiementsView: React.FC = () => {
         </div>
       </div>
 
+      {/* BANNIÈRE DE NOTIFICATION DU REÇU DE CAUTION (RÈGLE DES 24H) */}
+      {showCautionBanner && myDeposit && (
+        <div className={`p-5 rounded-3xl border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+          hasTenantSignedDeposit
+            ? 'bg-gradient-to-r from-emerald-50 via-teal-50 to-white dark:from-emerald-950/20 dark:via-slate-900 dark:to-slate-900 border-emerald-200 dark:border-emerald-800'
+            : 'bg-gradient-to-r from-amber-50 via-orange-50 to-white dark:from-amber-950/20 dark:via-slate-900 dark:to-slate-900 border-amber-200 dark:border-amber-800'
+        }`}>
+          <div className="flex items-start gap-3.5">
+            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
+              hasTenantSignedDeposit
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+            }`}>
+              {hasTenantSignedDeposit ? <FileCheck className="w-6 h-6" /> : <PenTool className="w-5 h-5" />}
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                  hasTenantSignedDeposit
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300'
+                }`}>
+                  {hasTenantSignedDeposit ? '✓ Reçu de caution certifié' : 'Action requise : Signature'}
+                </span>
+                {hasTenantSignedDeposit && (
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>Disponible ici pendant 24h</span>
+                  </span>
+                )}
+              </div>
+              <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                {hasTenantSignedDeposit
+                  ? 'Votre reçu officiel de caution est disponible au téléchargement'
+                  : 'Votre reçu de caution a été validé par le bailleur et attend votre signature'}
+              </h4>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
+                {hasTenantSignedDeposit
+                  ? `Dépôt de garantie de ${formatFCFA(myDeposit.amount_paid || myDeposit.amount_requested || 60000)} consigné sous séquestre conforme. Ce raccourci reste affiché pendant 24h (retrouvez-le ensuite de façon permanente dans votre onglet Cautions).`
+                  : `Le bailleur a validé votre versement de ${formatFCFA(myDeposit.amount_paid || myDeposit.amount_requested || 60000)}. Apposez votre signature certifiée pour générer le reçu officiel avec QR Code.`}
+              </p>
+            </div>
+          </div>
 
-
-
-      {/* Declarations History Table */}
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+            {hasTenantSignedDeposit ? (
+              <button
+                type="button"
+                onClick={() => handleDownloadCautionReceipt(myDeposit)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition-all active:scale-95"
+              >
+                <Download className="w-4 h-4" />
+                <span>Télécharger le reçu (PDF)</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsSigningCautionModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md shadow-amber-600/20 transition-all active:scale-95 animate-pulse"
+              >
+                <PenTool className="w-4 h-4" />
+                <span>Vérifier & Signer</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}      {/* Declarations History Table */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
         <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -895,36 +1140,57 @@ export const LocatairePaiementsView: React.FC = () => {
                     </td>
                     <td className="p-4 text-slate-500">{pmt.payment_date}</td>
                     <td className="p-4">
-                      <PaymentStatusBadge status={pmt.status} />
+                      {pmt.status === 'en_attente_signature_locataire' ? (
+                        <PaymentStatusBadge status="en_attente_signature_locataire" customText="Signature requise" />
+                      ) : (
+                        <PaymentStatusBadge status={pmt.status} />
+                      )}
                     </td>
                     <td className="p-4 text-right">
-                      {pmt.status === 'confirme' ? (
+                      {pmt.status === 'en_attente_signature_locataire' ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSigningReceiptPayment(pmt);
+                            setIsSigningReceiptModalOpen(true);
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black inline-flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition-all active:scale-95 animate-pulse cursor-pointer"
+                          title="Apposer votre signature manuscrite pour sceller la quittance officielle"
+                        >
+                          <PenTool className="w-3.5 h-3.5" />
+                          <span>Signer la quittance</span>
+                        </button>
+                      ) : pmt.status === 'confirme' ? (
                         <button
                           type="button"
                           onClick={async () => {
                             const { generateOfficialReceiptPDF } = await import('@/lib/payments/officialReceiptPdfGenerator');
+                            const { resolveRealReceiptData } = await import('@/lib/payments/receiptDataResolver');
+                            const resolved = resolveRealReceiptData(pmt, user);
                             await generateOfficialReceiptPDF({
                               receiptNumber: pmt.reference,
-                              contractNumber: pmt.contract?.contract_number || pmt.contract_id || 'LT-CONTRAT',
-                              contractToken: pmt.contract?.token || 'tok_receipt',
-                              propertyTitle: pmt.contract?.property?.title || 'Logement loué',
-                              propertyAddress: pmt.contract?.property?.commune || 'Abidjan',
-                              propertyReference: 'BIEN-REF',
-                              propertyType: 'Logement',
-                              durationMonths: 12,
-                              leaseStartDate: pmt.contract?.start_date || '01/01/2026',
-                              leaseEndDate: '31/12/2026',
-                              ownerName: pmt.contract?.owner?.full_name || 'Bailleur',
-                              ownerCni: 'CI0000000',
-                              ownerPhone: pmt.contract?.owner?.phone || '',
-                              tenantName: user?.user_metadata?.full_name || 'Locataire',
-                              tenantCni: 'CI0000000',
-                              tenantPhone: user?.phone || '',
+                              contractNumber: resolved.contractNumber,
+                              contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+                              propertyTitle: resolved.propertyTitle,
+                              propertyAddress: resolved.propertyAddress,
+                              propertyReference: resolved.propertyReference,
+                              propertyType: resolved.propertyType,
+                              durationMonths: resolved.durationMonths,
+                              leaseStartDate: resolved.leaseStartDate,
+                              leaseEndDate: resolved.leaseEndDate,
+                              ownerName: resolved.ownerName,
+                              ownerCni: resolved.ownerCni,
+                              ownerPhone: resolved.ownerPhone,
+                              tenantName: resolved.tenantName,
+                              tenantCni: resolved.tenantCni,
+                              tenantPhone: resolved.tenantPhone,
                               amount: pmt.amount,
                               periodCovered: pmt.target_month,
                               paymentDate: pmt.payment_date,
                               paymentMethod: pmt.payment_method || 'Mobile Money',
-                              transactionReference: pmt.reference
+                              transactionReference: pmt.reference,
+                              ownerSignatureUrl: pmt.owner_signature_url || resolved.ownerSignatureUrl,
+                              tenantSignatureUrl: pmt.tenant_signature_url || resolved.tenantSignatureUrl
                             });
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-500 text-xs font-black inline-flex items-center gap-1 shadow-sm transition-all active:scale-95"
@@ -1177,27 +1443,24 @@ export const LocatairePaiementsView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setPaymentType('loyer')}
-                    className={`p-2 rounded-xl border text-center font-bold ${
-                      paymentType === 'loyer' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-slate-50 border-slate-200'
-                    }`}
+                    className={`p-2 rounded-xl border text-center font-bold ${paymentType === 'loyer' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-slate-50 border-slate-200'
+                      }`}
                   >
                     Loyer complet
                   </button>
                   <button
                     type="button"
                     onClick={() => setPaymentType('partiel')}
-                    className={`p-2 rounded-xl border text-center font-bold ${
-                      paymentType === 'partiel' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-slate-50 border-slate-200'
-                    }`}
+                    className={`p-2 rounded-xl border text-center font-bold ${paymentType === 'partiel' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-slate-50 border-slate-200'
+                      }`}
                   >
                     Paiement partiel
                   </button>
                   <button
                     type="button"
                     onClick={() => setPaymentType('autre')}
-                    className={`p-2 rounded-xl border text-center font-bold ${
-                      paymentType === 'autre' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-slate-50 border-slate-200'
-                    }`}
+                    className={`p-2 rounded-xl border text-center font-bold ${paymentType === 'autre' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-slate-50 border-slate-200'
+                      }`}
                   >
                     Autre frais
                   </button>
@@ -1426,7 +1689,7 @@ export const LocatairePaiementsView: React.FC = () => {
                   amount: myDeposit.amount_paid || myDeposit.amount_requested
                 }
               });
-            } catch {}
+            } catch { }
 
             setSuccessModalMessage({
               title: 'Reçu de caution signé avec succès !',
@@ -1438,6 +1701,22 @@ export const LocatairePaiementsView: React.FC = () => {
           signerRole="locataire"
           documentTitle="Reçu Officiel de Caution"
           documentNumber={`REC-CAUT-${(myDeposit.id || 'OFFICIEL').toUpperCase()}`}
+        />
+      )}
+
+      {/* MODAL DE SIGNATURE DE LA QUITTANCE DE LOYER PAR LE LOCATAIRE */}
+      {isSigningReceiptModalOpen && signingReceiptPayment && (
+        <SignatureModal
+          isOpen={true}
+          onClose={() => {
+            setIsSigningReceiptModalOpen(false);
+            setSigningReceiptPayment(null);
+          }}
+          onConfirmSignature={(signatureData) => handleConfirmTenantReceiptSignature(signatureData)}
+          signerName={user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'}
+          signerRole="locataire"
+          documentTitle="Quittance de Paiement de Loyer"
+          documentNumber={signingReceiptPayment.reference || 'REC-OFFICIEL'}
         />
       )}
     </div>

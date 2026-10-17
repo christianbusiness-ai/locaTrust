@@ -225,7 +225,7 @@ export const LocataireContratsView: React.FC = () => {
                   amount: item.amount || 0,
                   token: item.token || `tok_${num}`,
                   type: item.type || 'loyer',
-                  owner_name: item.ownerName,
+                  owner_name: item.ownerName === 'Nat Yao' || (item.ownerName && item.ownerName.toLowerCase() === 'kk') ? 'KK' : (item.ownerName || 'KK'),
                   property_title: item.propertyTitle,
                   rawReceipt: item
                 });
@@ -701,7 +701,7 @@ export const LocataireContratsView: React.FC = () => {
                             period: rcp.period || rcp.period_covered || 'Mois en cours',
                             paymentMethod: rcp.payment_method || 'Mobile Money',
                             date: rcp.created_at ? new Date(rcp.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-                            ownerName: rcp.owner_name || rcp.rawReceipt?.ownerName || 'Bailleur Certifié',
+                            ownerName: rcp.owner_name === 'Nat Yao' ? 'KK' : (rcp.owner_name || rcp.rawReceipt?.ownerName || 'KK'),
                             tenantName: user?.user_metadata?.full_name || 'Locataire',
                             propertyTitle: rcp.property_title || rcp.rawReceipt?.propertyTitle || 'Logement LocaTrust',
                             propertyAddress: rcp.property_address || rcp.rawReceipt?.propertyAddress || 'Abidjan, Côte d\'Ivoire',

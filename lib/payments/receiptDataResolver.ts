@@ -96,19 +96,41 @@ export function resolveRealReceiptData(
     }
   }
 
-  // --- Propriétaire / Bailleur ---
+  // --- Propriétaire / Bailleur / Agence ---
   let ownerName =
+    matchedContract?.agency_name ||
+    matchedProperty?.agency_name ||
     matchedContract?.owner?.full_name ||
     matchedContract?.owner_name ||
+    matchedApplication?.agency_name ||
     matchedApplication?.owner_name ||
+    matchedProperty?.owner_name ||
+    item?.agency_name ||
     item?.owner_name ||
-    currentUser?.user_metadata?.full_name ||
+    (currentProfile as any)?.agency_name ||
+    (currentUser?.user_metadata as any)?.agency_name ||
+    (typeof window !== 'undefined' ? (localStorage.getItem('locatrust_agency_name') || localStorage.getItem('locatrust_owner_name')) : null) ||
     currentProfile?.full_name ||
-    'Bailleur Propriétaire';
+    currentUser?.user_metadata?.full_name ||
+    'KK';
 
-  // Nettoyage si identifiant ou placeholder résiduel
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(ownerName) || ownerName.startsWith('usr_') || ownerName === 'LocaTrust Utilisateur') {
-    ownerName = currentUser?.user_metadata?.full_name || currentProfile?.full_name || 'KK';
+  // Nettoyage si identifiant, placeholder résiduel ou 'Nat Yao' lorsque le nom de l'agence est KK
+  if (
+    ownerName === 'Nat Yao' ||
+    ownerName === 'Bailleur Propriétaire' ||
+    ownerName === 'LocaTrust Utilisateur' ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(ownerName) ||
+    ownerName.startsWith('usr_')
+  ) {
+    ownerName =
+      matchedContract?.agency_name ||
+      matchedProperty?.agency_name ||
+      matchedApplication?.agency_name ||
+      item?.agency_name ||
+      (currentProfile as any)?.agency_name ||
+      (currentUser?.user_metadata as any)?.agency_name ||
+      (typeof window !== 'undefined' ? localStorage.getItem('locatrust_agency_name') : null) ||
+      'KK';
   }
 
   let ownerPhone =
@@ -217,6 +239,7 @@ export function resolveRealReceiptData(
   // --- Signatures Manuscrites ---
   const ownerSignatureUrl =
     item?.owner_signature ||
+    item?.owner_signature_url ||
     item?.ownerSignatureUrl ||
     matchedContract?.owner_signature ||
     matchedContract?.owner_signature_url ||
@@ -224,6 +247,7 @@ export function resolveRealReceiptData(
 
   const tenantSignatureUrl =
     item?.tenant_signature ||
+    item?.tenant_signature_url ||
     item?.tenantSignatureUrl ||
     matchedContract?.tenant_signature ||
     matchedContract?.tenant_signature_url ||

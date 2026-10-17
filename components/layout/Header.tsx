@@ -487,6 +487,20 @@ export const Header: React.FC<HeaderProps> = ({
 
     setShowNotifications(false);
     setSelectedNotification(item);
+
+    // Redirection directe contextuelle selon la notification
+    if (item.type === 'quittance_signature_requise' || item.payload?.action === 'sign_receipt') {
+      if (onNavigateTab) {
+        onNavigateTab('payments');
+      }
+      setTimeout(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('locatrust:open_sign_receipt', { detail: item.payload }));
+        }
+      }, 150);
+    } else if (item.targetTab && onNavigateTab) {
+      onNavigateTab(item.targetTab);
+    }
   };
 
   return (

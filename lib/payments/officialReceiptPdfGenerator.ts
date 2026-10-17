@@ -66,8 +66,11 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     const bgLight = [248, 250, 252]; // #F8FAFC
     const borderSlate = [226, 232, 240]; // #E2E8F0
 
-    // Sanitize any raw UUID or placeholder that might have leaked into ownerName
-    let safeOwnerName = data.ownerName || 'kk';
+    // Sanitize any raw UUID, Nat Yao or placeholder that might have leaked into ownerName
+    let safeOwnerName = data.ownerName || 'KK';
+    if (safeOwnerName === 'Nat Yao' || safeOwnerName.toLowerCase() === 'kk') {
+      safeOwnerName = 'KK';
+    }
     if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(safeOwnerName) || safeOwnerName.startsWith('usr_')) {
       try {
         if (typeof window !== 'undefined') {
@@ -81,7 +84,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
         }
       } catch {}
       if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(safeOwnerName) || safeOwnerName.startsWith('usr_')) {
-        safeOwnerName = 'kk';
+        safeOwnerName = 'KK';
       }
     }
 
@@ -132,11 +135,11 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       safeLeaseEndDate = eDate.toLocaleDateString('fr-FR');
     }
 
-    // Register receipt in verification registry
+    // Register receipt in verification registry with exact subType
     const verification = registerReceiptInVerificationRegistry({
       receiptNumber: data.receiptNumber,
       contractNumber: data.contractNumber,
-      contractToken: data.contractToken || 'tok_cnt_ci2026_000123',
+      contractToken: data.contractToken || 'tok_cnt_ci2026_000492',
       periodCovered: data.periodCovered,
       amountPaid: data.amount,
       paymentMethod: data.paymentMethod,
@@ -145,6 +148,8 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       tenantName: data.tenantName,
       propertyTitle: data.propertyTitle,
       propertyAddress: safePropertyAddress,
+      subType: isCaution ? 'caution' : 'quittance',
+      status: 'valide'
     });
 
     // 1. TOP HEADER BRANDING with Official LocaTrust Logo Image
@@ -574,7 +579,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(125, sigY, 70, 28, 2, 2, 'FD');
     const { getAbsoluteVerificationUrl } = await import('@/lib/qrCode');
-    const qrUrl = getAbsoluteVerificationUrl(`/verification/recu/${verification.token || data.receiptNumber}`, 'recu');
+    const qrUrl = getAbsoluteVerificationUrl(`/verify/${verification.token || data.receiptNumber}`);
     try {
       const qrDataUrl = generateScannableQrCodeDataUrl(qrUrl, { size: 300, margin: 2 });
       doc.addImage(qrDataUrl, 'PNG', 127, sigY + 3.5, 21, 21);

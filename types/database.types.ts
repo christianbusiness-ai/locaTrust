@@ -18,7 +18,7 @@ export type PropertyType =
 export type PropertyStatus = 'disponible' | 'reserve' | 'loue' | 'fin_contrat' | 'desactive';
 export type ContractStatus = 'actif' | 'termine' | 'resilie';
 export type CautionStatus = 'partiel' | 'complet' | 'restitue' | 'retenu';
-export type RentPaymentStatus = 'declare' | 'confirme' | 'refuse';
+export type RentPaymentStatus = 'declare' | 'confirme' | 'refuse' | 'en_attente_signature_locataire';
 export type DisputeStatus = 'ouvert' | 'resolu_locataire' | 'resolu_proprietaire';
 export type SubscriptionTier = '1_bien' | '2_10_biens' | '11_20_biens' | '20plus_biens';
 
@@ -159,6 +159,8 @@ export interface RentPayment {
   status: RentPaymentStatus;
   confirmed_by?: string;
   confirmed_at?: string;
+  owner_signature_url?: string;
+  tenant_signature_url?: string;
   created_at: string;
 
   contract?: Contract;

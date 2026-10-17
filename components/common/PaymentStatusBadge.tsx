@@ -9,6 +9,7 @@ export type PaymentStatusType =
   | 'reserve_en_garantie'
   | 'en_attente'
   | 'declare'
+  | 'en_attente_signature_locataire'
   | 'confirme'
   | 'refuse'
   | 'restitue_total'
@@ -56,6 +57,12 @@ export const PaymentStatusBadge: React.FC<PaymentStatusBadgeProps> = ({
       label = label || 'Réservé en garantie';
       colorStyles = 'bg-blue-50 text-blue-800 border-blue-200';
       dotColor = 'bg-blue-600';
+      break;
+
+    case 'en_attente_signature_locataire':
+      label = label || 'En attente signature locataire';
+      colorStyles = 'bg-amber-50 text-amber-900 border-amber-300';
+      dotColor = 'bg-amber-500 animate-pulse';
       break;
 
     case 'en_attente':
