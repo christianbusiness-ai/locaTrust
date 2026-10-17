@@ -666,7 +666,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         owner_signature_url: ownerSigUrl,
         tenant_signature_url: tenantSigUrl,
         status: 'actif',
-        signed_date: new Date().toLocaleDateString('fr-FR')
+        signed_date: new Date().toLocaleDateString('fr-FR'),
+        start_date: new Date().toLocaleDateString('fr-FR'),
+        created_at: new Date().toISOString()
       };
       localStorage.setItem('locatrust_contracts', JSON.stringify([newContractRecord, ...currentContracts]));
 
@@ -750,7 +752,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         amenities: matchedProperty?.equipments,
         propertyDescription: matchedProperty?.description,
         durationMonths: 12,
-        startDate: '01/10/2026',
+        startDate: app.signed_date || (app.signed_at ? new Date(app.signed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         rent: app.rent_amount,
         cautionMonths: 2,
         chargesAmount: matchedProperty?.charges ?? 10000,

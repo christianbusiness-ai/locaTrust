@@ -299,11 +299,28 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           const q = payload?.data?.quittance;
           const incomingDeposit = payload?.data?.deposit;
           const depId = payload?.depositId || incomingDeposit?.id;
-          const senderId = payload?.actorId || 'usr_owner';
-          const receiverId = payload?.targetUserId || incomingDeposit?.tenant_id || 'usr_tenant';
-          const actor = payload?.data?.actorName || q?.ownerName || 'votre bailleur';
+          const senderId = payload?.actorId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
+          const receiverId = payload?.targetUserId || incomingDeposit?.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+          
+          let actor = payload?.data?.actorName || q?.ownerName || 'kk';
+          if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(actor) || actor.startsWith('usr_')) {
+            actor = 'kk';
+          }
+
           const amount = payload?.data?.amount || q?.amount || incomingDeposit?.amount_paid || incomingDeposit?.amount_requested || 0;
           const amountFormatted = amount ? `${Number(amount).toLocaleString('fr-FR')} FCFA` : 'garantie';
+
+          // 0. Stocker immédiatement la fiche de contact du bailleur pour éviter tout affichage d'UUID
+          try {
+            localStorage.setItem(`locatrust_contact_${senderId}`, JSON.stringify({
+              id: senderId,
+              name: actor,
+              phone: q?.ownerPhone || '0500552141',
+              role: 'Bailleur Propriétaire',
+              propertyTitle: q?.propertyTitle || 'appartement',
+              online: true
+            }));
+          } catch {}
 
           // 1. Ingestion directe dans le registre des reçus du locataire
           if (q && q.receiptNumber) {
@@ -382,7 +399,14 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                     confirmed_at: d.confirmed_at || new Date().toISOString(),
                     confirmed_by: actor,
                     owner_signature: q?.ownerSignatureUrl || incomingDeposit?.owner_signature || d.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED',
-                    receipt_sent_to_tenant: true
+                    receipt_sent_to_tenant: true,
+                    property: {
+                      ...(d.property || {}),
+                      title: q?.propertyTitle || d.property?.title || 'appartement',
+                      address: q?.propertyAddress || d.property?.address || "100 villard, yamoussoukro - Côte d'Ivoire",
+                      reference: q?.propertyReference || d.property?.reference || 'BIEN-1B0E4B',
+                      owner_name: actor
+                    }
                   };
                 }
                 return d;
@@ -394,10 +418,18 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                   status: 'paye_complet',
                   amount_paid: amount || incomingDeposit.amount_paid || incomingDeposit.amount_requested,
                   owner_signature: q?.ownerSignatureUrl || incomingDeposit.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED',
-                  receipt_sent_to_tenant: true
+                  receipt_sent_to_tenant: true,
+                  confirmed_by: actor,
+                  property: {
+                    ...(incomingDeposit.property || {}),
+                    title: q?.propertyTitle || incomingDeposit.property?.title || 'appartement',
+                    address: q?.propertyAddress || incomingDeposit.property?.address || "100 villard, yamoussoukro - Côte d'Ivoire",
+                    reference: q?.propertyReference || incomingDeposit.property?.reference || 'BIEN-1B0E4B',
+                    owner_name: actor
+                  }
                 } : {
                   id: depId || `dep_${Date.now()}`,
-                  contract_id: payload?.contractId || q?.contractNumber || 'CNT-OFFICIAL',
+                  contract_id: payload?.contractId || q?.contractNumber || 'LT-2026-CI-000492',
                   property_id: q?.propertyId || 'prop_default',
                   tenant_id: receiverId,
                   owner_id: senderId,
@@ -410,12 +442,16 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                   confirmed_at: new Date().toISOString(),
                   confirmed_by: actor,
                   property: {
-                    title: q?.propertyTitle || 'Logement loué',
-                    address: q?.propertyAddress || 'Abidjan'
+                    title: q?.propertyTitle || 'appartement',
+                    address: q?.propertyAddress || "100 villard, yamoussoukro - Côte d'Ivoire",
+                    reference: q?.propertyReference || 'BIEN-1B0E4B',
+                    owner_name: actor
                   },
                   tenant: {
                     id: receiverId,
-                    full_name: q?.tenantName || 'christian'
+                    full_name: q?.tenantName || 'christian',
+                    phone: q?.tenantPhone || '0500552141',
+                    cni: q?.tenantCni || 'CI123456789'
                   }
                 };
                 list.unshift(synDep);

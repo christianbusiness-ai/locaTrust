@@ -135,10 +135,10 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         rent: Number(realContract.monthly_rent || realContract.rent || 0),
         caution: Number(realContract.caution_amount || 0),
         charges: Number(realContract.charges_amount || realContract.charges || 0),
-        startDate: realContract.start_date || '01/10/2026',
+        startDate: realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         duration: Number(realContract.duration_months || 12),
-        dateSignature: realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : 'Date non définie',
-        periode: `${realContract.start_date || '01/10/2026'} (12 mois)`,
+        dateSignature: realContract.signed_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
+        periode: `${realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'))} (${realContract.duration_months || 12} mois)`,
         avatar: realContract.tenant?.avatar_url || ''
       };
     }
@@ -1067,7 +1067,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                         owner_signature_url: activeSigningParty === 'proprietaire' ? signatureUrl : (c.owner_signature_url || c.ownerSignatureUrl),
                         tenant_signature_url: activeSigningParty === 'locataire' ? signatureUrl : (c.tenant_signature_url || c.tenantSignatureUrl),
                         owner_signed: activeSigningParty === 'proprietaire' ? true : c.owner_signed,
-                        tenant_signed: activeSigningParty === 'locataire' ? true : c.tenant_signed
+                        tenant_signed: activeSigningParty === 'locataire' ? true : c.tenant_signed,
+                        signed_date: new Date().toLocaleDateString('fr-FR'),
+                        start_date: c.start_date || new Date().toLocaleDateString('fr-FR')
                       };
                     }
                     return c;

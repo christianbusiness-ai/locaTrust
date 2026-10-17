@@ -34,7 +34,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
-import { declareCautionPayment, signCautionReceipt } from '@/lib/cautionsStore';
+import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
@@ -648,26 +648,32 @@ export const LocatairePaiementsView: React.FC = () => {
 
   const handleDownloadCautionReceipt = async (dep: any) => {
     try {
+      const resolved = resolveDepositContractDetails(dep);
+      const cleanNum = `CAUT-${(dep.id || 'OFFICIEL').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
+
       await generateOfficialReceiptPDF({
-        receiptNumber: `REC-CAUT-${(dep.id || 'OFFICIEL').toUpperCase()}`,
+        receiptNumber: cleanNum,
         receiptType: 'caution',
-        contractNumber: dep.contract_id || 'LT-CONTRAT-2026',
-        contractToken: `tok_caut_${dep.id || Date.now()}`,
-        propertyTitle: dep.property?.title || 'Logement LocaTrust',
-        propertyAddress: dep.property?.description || 'Abidjan, Côte d\'Ivoire',
-        propertyReference: 'BIEN-CAUT-001',
-        propertyType: dep.property?.type || 'appartement',
-        durationMonths: 12,
-        leaseStartDate: '01/01/2026',
-        leaseEndDate: '31/12/2026',
-        ownerName: dep.property?.owner_name || 'Bailleur / Agence Agréée',
-        tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-        tenantPhone: user?.phone || '+225 07 08 09 10 11',
+        contractNumber: resolved.contractNumber,
+        contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+        propertyTitle: resolved.propertyTitle,
+        propertyAddress: resolved.propertyAddress,
+        propertyReference: resolved.propertyReference,
+        propertyType: resolved.propertyType,
+        durationMonths: resolved.durationMonths,
+        leaseStartDate: resolved.leaseStartDate,
+        leaseEndDate: resolved.leaseEndDate,
+        ownerName: resolved.ownerName,
+        ownerCni: resolved.ownerCni,
+        ownerPhone: resolved.ownerPhone,
+        tenantName: resolved.tenantName,
+        tenantCni: resolved.tenantCni,
+        tenantPhone: resolved.tenantPhone,
         amount: dep.amount_paid || dep.amount_requested || 60000,
-        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576)',
+        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
         paymentDate: dep.declared_at ? new Date(dep.declared_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-        paymentMethod: dep.declared_reference ? 'Mobile Money / Espèces' : 'Paiement certifié',
-        transactionReference: dep.declared_reference || `TXN-${Date.now()}`,
+        paymentMethod: dep.payment_method ? (dep.payment_method.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)') : 'Espèces (cash)',
+        transactionReference: dep.declared_reference || `TR-${cleanNum}`,
         ownerSignatureUrl: dep.owner_signature || 'SIG_CERTIFIED_OWNER',
         tenantSignatureUrl: dep.tenant_signature || 'SIG_CERTIFIED_TENANT'
       });

@@ -314,18 +314,48 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     setSuccessFeedback(`✅ Reçu officiel de caution certifié et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} ! Le téléchargement sera disponible dès que le locataire aura apposé sa signature.`);
     confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
 
-    // Diffusion temps réel multi-appareils
+    // Diffusion temps réel multi-appareils avec la quittance complète
     try {
+      const resolved = resolveDepositContractDetails(deposit);
+      const cleanReceiptNum = (updatedDeposit as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`;
+      const quittancePayload = {
+        receiptNumber: cleanReceiptNum,
+        receiptType: 'caution' as const,
+        contractNumber: resolved.contractNumber,
+        propertyTitle: resolved.propertyTitle,
+        propertyAddress: resolved.propertyAddress,
+        propertyReference: resolved.propertyReference,
+        propertyType: resolved.propertyType,
+        durationMonths: resolved.durationMonths,
+        leaseStartDate: resolved.leaseStartDate,
+        leaseEndDate: resolved.leaseEndDate,
+        ownerName: resolved.ownerName,
+        ownerCni: resolved.ownerCni,
+        ownerPhone: resolved.ownerPhone,
+        tenantName: resolved.tenantName,
+        tenantCni: resolved.tenantCni,
+        tenantPhone: resolved.tenantPhone,
+        amount: confirmedAmount,
+        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+        paymentDate: new Date().toLocaleDateString('fr-FR'),
+        paymentMethod: (deposit.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+        transactionReference: deposit.declared_reference || `TR-${cleanReceiptNum}`,
+        ownerSignatureUrl: sig,
+        tenantSignatureUrl: deposit.tenant_signature || null,
+        depositId: deposit.id
+      };
+
       await broadcastLiveEvent('CAUTION_RECEIPT_TRANSMITTED', {
         depositId: deposit.id,
-        receiptNumber: (updatedDeposit as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`,
+        receiptNumber: cleanReceiptNum,
         targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
         actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
         contractId: deposit.contract_id,
         data: {
           amount: confirmedAmount,
           deposit: updatedDeposit,
-          actorName
+          actorName: resolved.ownerName,
+          quittance: quittancePayload
         }
       });
       await broadcastLiveEvent('CAUTION_CONFIRMED', {
@@ -336,7 +366,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         data: {
           amount: confirmedAmount,
           deposit: updatedDeposit,
-          actorName
+          actorName: resolved.ownerName,
+          quittance: quittancePayload
         }
       });
     } catch {}
@@ -693,6 +724,35 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       // Transmettre le reçu officiel dans la messagerie
       sendCautionReceiptToTenant(deposit.id);
 
+      const resolved = resolveDepositContractDetails(updated);
+      const cleanReceiptNum = (updated as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`;
+      const quittancePayload = {
+        receiptNumber: cleanReceiptNum,
+        receiptType: 'caution' as const,
+        contractNumber: resolved.contractNumber,
+        propertyTitle: resolved.propertyTitle,
+        propertyAddress: resolved.propertyAddress,
+        propertyReference: resolved.propertyReference,
+        propertyType: resolved.propertyType,
+        durationMonths: resolved.durationMonths,
+        leaseStartDate: resolved.leaseStartDate,
+        leaseEndDate: resolved.leaseEndDate,
+        ownerName: resolved.ownerName,
+        ownerCni: resolved.ownerCni,
+        ownerPhone: resolved.ownerPhone,
+        tenantName: resolved.tenantName,
+        tenantCni: resolved.tenantCni,
+        tenantPhone: resolved.tenantPhone,
+        amount: deposit.amount_paid,
+        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+        paymentDate: new Date().toLocaleDateString('fr-FR'),
+        paymentMethod: (deposit.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+        transactionReference: deposit.declared_reference || `TR-${cleanReceiptNum}`,
+        ownerSignatureUrl: updated.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED',
+        tenantSignatureUrl: updated.tenant_signature || null,
+        depositId: deposit.id
+      };
+
       // Diffuser l'événement de confirmation en temps réel
       broadcastLiveEvent('CAUTION_CONFIRMED', {
         depositId: deposit.id,
@@ -700,7 +760,9 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         contractId: deposit.contract_id,
         data: {
           deposit: updated,
-          amount: deposit.amount_paid
+          amount: deposit.amount_paid,
+          actorName: resolved.ownerName,
+          quittance: quittancePayload
         }
       });
 
