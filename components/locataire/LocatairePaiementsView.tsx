@@ -364,6 +364,7 @@ export const LocatairePaiementsView: React.FC = () => {
         target_month: targetMonth,
         amount: amount,
         payment_date: new Date().toISOString().split('T')[0],
+        payment_method: method,
         reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
         proof_url: proofUrl || null,
         status: 'declare'

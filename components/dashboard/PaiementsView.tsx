@@ -24,7 +24,9 @@ import {
   Receipt,
   X,
   Building2,
-  PenTool
+  PenTool,
+  Banknote,
+  Lock
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import confetti from 'canvas-confetti';
@@ -238,14 +240,19 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       alert('Ce paiement a déjà été vérifié et validé.');
       return;
     }
-    // LocaTrust Intelligent OCR extraction from payment proof
-    const sampleRef = pmt.reference || `OM-CI-${Math.floor(100000 + Math.random() * 900000)}`;
+    const rawRef = pmt.reference || '';
+    const isEsp = rawRef.startsWith('ESP') || (pmt as any).payment_method === 'Espèces' || (pmt as any).method === 'Espèces';
+    const sampleRef = rawRef || (isEsp ? `ESP-${Date.now().toString().slice(-6)}` : `OM-CI-${Math.floor(100000 + Math.random() * 900000)}`);
+    const resolvedMethod = isEsp
+      ? 'Espèces'
+      : (pmt as any).payment_method || (pmt as any).method || (sampleRef.startsWith('OM') ? 'Orange Money CI' : sampleRef.startsWith('WAVE') ? 'Wave Mobile Money' : sampleRef.startsWith('MTN') ? 'MTN Mobile Money' : 'Mobile Money');
+
     setExtractedOcrData({
       reference: sampleRef,
-      amount: pmt.amount || 150000,
-      payment_method: sampleRef.startsWith('OM') ? 'Orange Money CI' : sampleRef.startsWith('WAVE') ? 'Wave Mobile Money' : 'MTN Mobile Money',
+      amount: Number(pmt.amount || 0),
+      payment_method: resolvedMethod,
       sender_phone: pmt.tenant?.phone || '+225 07 08 09 10 11',
-      detected_month: pmt.target_month || 'Août 2026',
+      detected_month: pmt.target_month || 'Mois en cours',
     });
     setValidatingPayment(pmt);
   };
@@ -889,172 +896,214 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 1: EXTRACTION INTELLIGENTE DES NUMÉROS DE LA PREUVE (OCR LOCATRUST) & GÉNÉRATION */}
-      {validatingPayment && extractedOcrData && (
-        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
-                  <Sparkles className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Extraction des Données de Paiement</h3>
-                  <p className="text-xs text-slate-500">Lecture automatique de la capture / preuve mobile money</p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setValidatingPayment(null);
-                  setExtractedOcrData(null);
-                }}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* MODAL 1: VALIDATION DU PAIEMENT DÉCLARÉ & QUITTANCE */}
+      {validatingPayment && extractedOcrData && (() => {
+        const isCash = extractedOcrData.payment_method === 'Espèces' || validatingPayment.reference?.startsWith('ESP');
+        const hasRealProof = Boolean(validatingPayment.proof_url && validatingPayment.proof_url.trim().length > 0 && !isCash);
 
-            {/* Proof thumbnail & extracted fields */}
-            <div className="flex gap-4 items-start bg-slate-50 p-4 rounded-2xl border border-slate-200">
-              <div className="w-24 h-24 rounded-xl overflow-hidden border border-slate-300 shrink-0 bg-black">
-                <img
-                  src={validatingPayment.proof_url || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=400&q=80'}
-                  alt="Capture de paiement"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex flex-col text-xs gap-1">
-                <span className="font-extrabold text-slate-800">
-                  Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Bailleur'}</strong>
-                </span>
-                <span className="text-slate-500">Contrat : {validatingPayment.contract_id || 'LT-2026-CI-000492'}</span>
-                <span className="text-[11px] text-emerald-700 font-black flex items-center gap-1 mt-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Données extraites avec succès
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                  Numéro de référence de la transaction (Extrait de la capture)
-                </label>
-                <input
-                  type="text"
-                  value={extractedOcrData.reference}
-                  onChange={(e) => setExtractedOcrData({ ...extractedOcrData, reference: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-mono text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+        return (
+          <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
+            <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-2xl ${isCash ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'} flex items-center justify-center font-black shrink-0`}>
+                    {isCash ? <Banknote className="w-5 h-5 text-emerald-600" /> : <Sparkles className="w-5 h-5 text-blue-600" />}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">
+                      {isCash ? 'Validation du Règlement en Espèces' : 'Validation du Paiement Déclaré'}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {isCash ? 'Paiement direct en mains propres déclaré par le locataire' : hasRealProof ? 'Vérification du justificatif et émission de quittance' : 'Déclaration de règlement transmise par le locataire'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setValidatingPayment(null);
+                    setExtractedOcrData(null);
+                  }}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Montant Détecté (FCFA)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="0"
-                    value={extractedOcrData.amount === 0 ? '' : extractedOcrData.amount}
-                    onChange={(e) => setExtractedOcrData({ ...extractedOcrData, amount: sanitizeNumericInput(e.target.value) })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-extrabold text-emerald-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Canal Opérateur</label>
-                  <select
-                    value={extractedOcrData.payment_method}
-                    onChange={(e) => setExtractedOcrData({ ...extractedOcrData, payment_method: e.target.value })}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              {/* Justificatif ou bandeau Espèces */}
+              {hasRealProof ? (
+                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-start bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200">
+                  <div 
+                    onClick={() => setSelectedProofUrl(validatingPayment.proof_url!)}
+                    className="w-full sm:w-24 h-32 sm:h-24 rounded-xl overflow-hidden border border-slate-300 shrink-0 bg-slate-900 cursor-pointer relative group"
                   >
-                    <option value="Orange Money CI">Orange Money CI</option>
-                    <option value="Wave Mobile Money">Wave Mobile Money</option>
-                    <option value="MTN Mobile Money">MTN Mobile Money</option>
-                    <option value="Moov Money">Moov Money</option>
-                    <option value="Virement Bancaire">Virement Bancaire</option>
-                    <option value="Espèces">💵 Espèces (cash)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* SECTION SIGNATURE MANUELLE DU BAILLEUR (OBLIGATOIRE POUR ÉMETTRE LA QUITTANCE) */}
-              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200 flex flex-col gap-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <PenTool className="w-4 h-4 text-amber-700" />
-                    <span className="text-xs font-black text-slate-900 uppercase">
-                      Signature Manuelle du Bailleur
+                    <img
+                      src={validatingPayment.proof_url!}
+                      alt="Capture de paiement"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    />
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Eye className="w-5 h-5 text-white" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col text-xs gap-1 flex-1">
+                    <span className="font-extrabold text-slate-800">
+                      Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Locataire'}</strong>
+                    </span>
+                    <span className="text-slate-500">Contrat : {validatingPayment.contract_id || 'LT-2026-CI-000492'}</span>
+                    <span className="text-[11px] text-emerald-700 font-black flex items-center gap-1 mt-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Justificatif transmis par le locataire
                     </span>
                   </div>
-                  {ownerSignatureUrl ? (
-                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black flex items-center gap-1 border border-emerald-300">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Signature certifiée
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-start bg-slate-50 p-3.5 sm:p-4 rounded-2xl border border-slate-200">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                    <Banknote className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <div className="flex flex-col text-xs gap-1 flex-1">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="font-extrabold text-slate-800">
+                        Locataire : <strong className="text-blue-900">{validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Locataire'}</strong>
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                        💵 Règlement en Espèces
+                      </span>
+                    </div>
+                    <span className="text-slate-500">Contrat : {validatingPayment.contract_id || 'LT-2026-CI-000492'}</span>
+                    <span className="text-[11px] text-slate-600 flex items-center gap-1 mt-0.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Remise directe sans capture mobile money requise
                     </span>
-                  ) : (
-                    <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-black">
-                      Signature requise
+                  </div>
+                </div>
+              )}
+
+              {/* DÉTAILS DE LA DÉCLARATION — EN LECTURE SEULE (NON MODIFIABLE PAR LE BAILLEUR) */}
+              <div className="flex flex-col gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-slate-700">
+                      Numéro de référence de la transaction
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                      <Lock className="w-3 h-3" /> Déclaré par le locataire
                     </span>
-                  )}
+                  </div>
+                  <div className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 font-mono text-xs font-bold bg-slate-50 text-slate-800 flex items-center justify-between">
+                    <span>{extractedOcrData.reference}</span>
+                    <span className="px-2 py-0.5 rounded bg-slate-200/70 text-slate-600 text-[10px] font-sans font-semibold">
+                      Fixé
+                    </span>
+                  </div>
                 </div>
 
-                <p className="text-[11px] text-slate-600 leading-snug">
-                  Pour certifier et émettre cette quittance, apposez votre véritable signature manuscrite (doigt sur smartphone/tablette ou souris/pavé tactile).
-                </p>
-
-                {/* Zone d'affichage et déclencheur de signature */}
-                <div className="bg-white rounded-xl border border-slate-200 p-3 flex items-center justify-between gap-4">
-                  {ownerSignatureUrl ? (
-                    <div className="flex items-center gap-3">
-                      <div className="h-14 w-28 bg-slate-50 rounded-lg border border-slate-200 p-1 flex items-center justify-center">
-                        <img src={ownerSignatureUrl} alt="Signature bailleur" className="max-h-full max-w-full object-contain" />
-                      </div>
-                      <div className="flex flex-col text-xs">
-                        <span className="font-extrabold text-slate-900">LocaTrust Utilisateur</span>
-                        <span className="text-[10px] text-slate-500">Bailleur propriétaire</span>
-                        <span className="text-[9px] text-emerald-600 font-bold">Horodatée et liée à la quittance</span>
-                      </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-bold text-slate-700">Montant Déclaré</label>
+                      <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                        <Lock className="w-3 h-3" /> Fixé
+                      </span>
                     </div>
-                  ) : (
-                    <div className="text-xs text-slate-500 italic flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                      <span>Aucune signature apposée pour le moment.</span>
+                    <div className="w-full px-3.5 py-2.5 rounded-xl border border-emerald-200 text-sm font-extrabold text-emerald-700 bg-emerald-50/50 flex items-center justify-between">
+                      <span>{formatFCFA(extractedOcrData.amount)}</span>
+                      <span className="text-[10px] font-bold text-emerald-600 uppercase">FCFA</span>
                     </div>
-                  )}
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-bold text-slate-700">Moyen de Règlement</label>
+                      <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                        <Lock className="w-3 h-3" /> Fixé
+                      </span>
+                    </div>
+                    <div className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 flex items-center justify-between">
+                      <span>{extractedOcrData.payment_method}</span>
+                      <span className="text-slate-400 text-xs">{isCash ? '💵' : '📱'}</span>
+                    </div>
+                  </div>
+                </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveSigningParty('proprietaire')}
-                    className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-sm flex items-center gap-1.5 transition-all shrink-0 active:scale-95"
-                  >
-                    <PenTool className="w-3.5 h-3.5" />
-                    <span>{ownerSignatureUrl ? 'Modifier ma signature' : 'Dessiner ma signature'}</span>
-                  </button>
+                {/* SECTION SIGNATURE MANUELLE DU BAILLEUR (OBLIGATOIRE POUR ÉMETTRE LA QUITTANCE) */}
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-amber-50/80 border border-amber-200 flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <PenTool className="w-4 h-4 text-amber-700" />
+                      <span className="text-xs font-black text-slate-900 uppercase">
+                        Signature Manuelle du Bailleur
+                      </span>
+                    </div>
+                    {ownerSignatureUrl ? (
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black flex items-center gap-1 border border-emerald-300">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Signature certifiée
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-black">
+                        Signature requise
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 leading-snug">
+                    Pour certifier et émettre cette quittance, apposez votre véritable signature manuscrite (doigt sur smartphone/tablette ou souris/pavé tactile).
+                  </p>
+
+                  {/* Zone d'affichage et déclencheur de signature (100% responsive mobile) */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    {ownerSignatureUrl ? (
+                      <div className="flex items-center gap-3">
+                        <div className="h-14 w-28 bg-slate-50 rounded-lg border border-slate-200 p-1 flex items-center justify-center shrink-0">
+                          <img src={ownerSignatureUrl} alt="Signature bailleur" className="max-h-full max-w-full object-contain" />
+                        </div>
+                        <div className="flex flex-col text-xs">
+                          <span className="font-extrabold text-slate-900">{user?.user_metadata?.full_name || 'Bailleur Propriétaire'}</span>
+                          <span className="text-[10px] text-slate-500">Bailleur certifié</span>
+                          <span className="text-[9px] text-emerald-600 font-bold">Horodatée et liée à la quittance</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500 italic flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+                        <span>Aucune signature apposée pour le moment.</span>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveSigningParty('proprietaire')}
+                      className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-2 transition-all shrink-0 active:scale-95"
+                    >
+                      <PenTool className="w-3.5 h-3.5" />
+                      <span>{ownerSignatureUrl ? 'Modifier ma signature' : 'Dessiner ma signature'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t">
-              <button
-                type="button"
-                onClick={() => {
-                  setValidatingPayment(null);
-                  setExtractedOcrData(null);
-                }}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={handleFinalizeValidation}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-lg flex items-center gap-2 active:scale-95 transition-all"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Confirmer & Émettre la Quittance</span>
-              </button>
+              {/* BOUTONS D'ACTION (RESPONSIVE MOBILE) */}
+              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValidatingPayment(null);
+                    setExtractedOcrData(null);
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 text-center"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFinalizeValidation}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Confirmer & Émettre la Quittance</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL 2: VISUALISATION OFFICIELLE DU REÇU / QUITTANCE PAR LE PROPRIÉTAIRE (100% TEMPLATE LOCATRUST) */}
       {previewingReceipt && (
