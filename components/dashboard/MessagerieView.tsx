@@ -1925,7 +1925,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
                     {/* Quittance / Caution Attachment Card */}
                     {quittanceAttachment && (() => {
-                      const isCaution = quittanceAttachment.receiptType === 'caution' || quittanceAttachment.receiptNumber.includes('CAUT');
+                      const isCaution = quittanceAttachment.receiptType === 'caution' || Boolean(quittanceAttachment.receiptNumber && quittanceAttachment.receiptNumber.includes('CAUT'));
                       const tenantSigned = Boolean(quittanceAttachment.tenantSignatureUrl);
 
                       return (
