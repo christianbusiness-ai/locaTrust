@@ -38,7 +38,7 @@ import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { formatFCFA } from '@/lib/utils';
-import { sendContractReminderToTenant, sendContractToTenant } from '@/lib/messagingStore';
+import { sendContractReminderToTenant, sendContractToTenant, sendChatMessage, isValidUuid } from '@/lib/messagingStore';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
@@ -55,12 +55,14 @@ import {
 interface ContractDetailViewProps {
   onBack?: () => void;
   contractNumber?: string;
+  initialContract?: any;
   isAgency?: boolean;
 }
 
 export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
   onBack,
   contractNumber = 'CT-2026-00058',
+  initialContract,
   isAgency = false,
 }) => {
   const { user, profile } = useAuth();
@@ -107,8 +109,13 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     loadFromDb();
   }, [contractNumber]);
 
-  const realContract = dbContract || localContract;
+  const realContract = initialContract || dbContract || localContract;
   const contract = realContract;
+
+  const isTenantView =
+    profile?.account_type === 'locataire' ||
+    user?.user_metadata?.account_type === 'locataire' ||
+    Boolean(user?.id && (realContract?.tenant_id === user.id || realContract?.tenant?.id === user.id));
 
   const ownerDisplayName =
     realContract?.owner?.full_name ||
@@ -124,17 +131,21 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   const tenantData = React.useMemo(() => {
     if (realContract) {
+      const rentVal = Number(realContract.monthly_rent || realContract.rent || realContract.rent_amount || 30000);
+      const cautionVal = Number(realContract.caution_amount || realContract.caution || rentVal * 2);
+      const chargesVal = Number(realContract.charges_amount || realContract.charges || 0);
+
       return {
-        name: realContract.tenant?.full_name || realContract.tenant_name || 'Locataire',
+        name: realContract.tenant?.full_name || realContract.tenant_name || user?.user_metadata?.full_name || 'Locataire',
         phone: realContract.tenant?.phone || realContract.tenant_phone || '+225 07 00 00 00 00',
         email: realContract.tenant?.email || realContract.tenant_email || 'locataire@locatrust.ci',
         cni: realContract.tenant?.cni_number || realContract.tenant_cni || 'CI-00000000',
         address: realContract.property?.address || realContract.property_address || 'Abidjan, Côte d\'Ivoire',
         propertyTitle: realContract.property?.title || realContract.property_title || 'Logement loué',
         propertyAddress: realContract.property?.address || realContract.property_address || 'Côte d\'Ivoire',
-        rent: Number(realContract.monthly_rent || realContract.rent || 0),
-        caution: Number(realContract.caution_amount || 0),
-        charges: Number(realContract.charges_amount || realContract.charges || 0),
+        rent: rentVal,
+        caution: cautionVal,
+        charges: chargesVal,
         startDate: realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         duration: Number(realContract.duration_months || 12),
         dateSignature: realContract.signed_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
@@ -150,26 +161,117 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       address: 'Abidjan, Côte d\'Ivoire',
       propertyTitle: 'Bien immobilier',
       propertyAddress: 'Abidjan - Côte d\'Ivoire',
-      rent: 150000,
-      caution: 300000,
-      charges: 10000,
+      rent: 30000,
+      caution: 60000,
+      charges: 0,
       startDate: '01/10/2026',
       duration: 12,
-      dateSignature: '24 septembre 2026',
-      periode: '01/10/2026 au 30/09/2027',
+      dateSignature: '15 octobre 2026',
+      periode: '01/10/2026 (12 mois)',
       avatar: ''
     };
   }, [realContract]);
+
+  const propertyDetails = React.useMemo(() => {
+    const p = realContract?.property || {};
+    return {
+      image: p.main_image || p.image_url || p.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=600&q=80',
+      surface: p.surface || realContract?.surface || 85,
+      rooms: p.rooms || realContract?.rooms || 3,
+      bedrooms: p.bedrooms || realContract?.bedrooms || 2,
+      bathrooms: p.bathrooms || realContract?.bathrooms || 1,
+      equipments: Array.isArray(p.equipments) ? p.equipments.join(', ') : (p.equipments || 'Eau CIE/SODECI, compteur individuel, accès sécurisé'),
+      type: p.property_type || p.type || 'Logement loué'
+    };
+  }, [realContract]);
+
+  // Calcul d'éligibilité au renouvellement (Audio 2: s'active 4 ou 5 mois avant échéance)
+  const renewalInfo = React.useMemo(() => {
+    try {
+      const rawStart = realContract?.start_date || realContract?.signed_date || '2026-10-01';
+      const duration = Number(realContract?.duration_months || 12);
+      let startDateObj = new Date(rawStart);
+      if (isNaN(startDateObj.getTime()) && rawStart.includes('/')) {
+        const parts = rawStart.split('/');
+        startDateObj = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+      }
+      const endDateObj = new Date(startDateObj);
+      endDateObj.setMonth(endDateObj.getMonth() + duration);
+      
+      const now = new Date();
+      const diffMs = endDateObj.getTime() - now.getTime();
+      const monthsRemaining = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24 * 30.5)));
+      
+      // S'active quand il reste 4 ou 5 mois avant la fin du contrat
+      const isEligible = monthsRemaining <= 5;
+      return {
+        monthsRemaining,
+        endDateFormatted: isNaN(endDateObj.getTime()) ? 'Terme convenu' : endDateObj.toLocaleDateString('fr-FR'),
+        isEligible
+      };
+    } catch {
+      return { monthsRemaining: 12, endDateFormatted: 'Terme convenu', isEligible: false };
+    }
+  }, [realContract]);
+
+  const [hasRequestedRenewal, setHasRequestedRenewal] = useState(false);
+
+  const handleRequestRenewal = async () => {
+    const ownerId = realContract?.owner_id || realContract?.owner?.id || 'usr_owner';
+    const tenantName = tenantData.name;
+    const propertyTitle = tenantData.propertyTitle;
+
+    try {
+      sendChatMessage(
+        user?.id || 'usr_tenant',
+        ownerId,
+        `🔄 DEMANDE OFFICIELLE DE RENOUVELLEMENT DE BAIL\n\nMadame, Monsieur,\nPar la présente, je sollicite formellement le renouvellement de mon contrat de bail N° ${contractNumber} portant sur le logement "${propertyTitle}" (Loyer mensuel : ${formatFCFA(tenantData.rent)}) pour une nouvelle période contractuelle de 12 mois.\n\nJe me tiens à votre entière disposition pour la validation de cette reconduction.\n\nCordialement,\n${tenantName}`
+      );
+
+      if (ownerId && isValidUuid(ownerId)) {
+        await supabase.from('notifications').insert({
+          user_id: ownerId,
+          title: '🔄 Demande de renouvellement de bail',
+          content: `${tenantName} a formulé une demande officielle de renouvellement pour le bail N° ${contractNumber} (${propertyTitle}).`,
+          type: 'contrat',
+          read: false
+        });
+      }
+
+      setHasRequestedRenewal(true);
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
+      setConfirmationModal({
+        isOpen: true,
+        type: 'download',
+        title: 'Demande de renouvellement transmise !',
+        message: `Votre demande officielle de renouvellement de bail a été transmise directement dans la messagerie de votre bailleur. Vous recevrez une notification dès sa confirmation.`,
+        confirmText: 'Compris',
+        withCelebration: true
+      });
+    } catch (e) {
+      console.warn('Erreur demande renouvellement:', e);
+    }
+  };
 
   const [showQrZoomModal, setShowQrZoomModal] = useState(false);
 
   // Real Handwritten Signature States from real contract
   const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    return realContract?.owner_signature_url || realContract?.ownerSignatureUrl || getStoredOwnerSignature() || null;
+    return realContract?.owner_signature_url || realContract?.owner_signature || realContract?.ownerSignatureUrl || realContract?.landlord_signature || getStoredOwnerSignature() || null;
   });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(() => {
-    return realContract?.tenant_signature_url || realContract?.tenantSignatureUrl || getStoredTenantSignature() || null;
+    return realContract?.tenant_signature_url || realContract?.tenant_signature || realContract?.tenantSignatureUrl || realContract?.applicant_signature || getStoredTenantSignature() || null;
   });
+
+  // Synchronisation dynamique dès chargement du contrat réel
+  React.useEffect(() => {
+    if (realContract) {
+      const sigOwner = realContract.owner_signature_url || realContract.owner_signature || realContract.ownerSignatureUrl || realContract.landlord_signature || getStoredOwnerSignature();
+      const sigTenant = realContract.tenant_signature_url || realContract.tenant_signature || realContract.tenantSignatureUrl || realContract.applicant_signature || getStoredTenantSignature();
+      if (sigOwner) setOwnerSignatureUrl(sigOwner);
+      if (sigTenant) setTenantSignatureUrl(sigTenant);
+    }
+  }, [realContract]);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [relanceSuccess, setRelanceSuccess] = useState<string | null>(null);
@@ -693,46 +795,85 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           </div>
 
           {/* ACTIONS RAPIDES */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-card flex flex-col gap-2.5">
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-card flex flex-col gap-2.5">
             <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider mb-1">Actions Rapides</h4>
-            <button
-              onClick={handleSendContractToTenantInbox}
-              className="w-full py-2.5 px-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Envoyer le contrat au locataire</span>
-            </button>
+            
+            {/* Bouton d'envoi uniquement pour bailleur/agence */}
+            {!isTenantView && (
+              <button
+                onClick={handleSendContractToTenantInbox}
+                className="w-full min-h-[40px] py-2.5 px-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm"
+              >
+                <Send className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Envoyer le contrat au locataire</span>
+              </button>
+            )}
+
+            {/* Bouton de Demande de Renouvellement (Espace Locataire - Audio 2) */}
+            {isTenantView && (
+              <button
+                onClick={handleRequestRenewal}
+                disabled={!renewalInfo.isEligible || hasRequestedRenewal}
+                title={
+                  hasRequestedRenewal
+                    ? 'Votre demande est déjà en cours de traitement par le bailleur.'
+                    : renewalInfo.isEligible
+                    ? 'Cliquez pour formuler votre demande officielle de reconduction du bail.'
+                    : `Ce bouton s'activera automatiquement à 4 ou 5 mois de l'échéance (encore ${renewalInfo.monthsRemaining} mois).`
+                }
+                className={`w-full min-h-[40px] py-2.5 px-3 rounded-xl text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm ${
+                  hasRequestedRenewal
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
+                    : renewalInfo.isEligible
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20 active:scale-95 animate-pulse'
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                }`}
+              >
+                <RotateCcw className={`w-3.5 h-3.5 shrink-0 ${renewalInfo.isEligible && !hasRequestedRenewal ? 'animate-spin' : ''}`} />
+                <span className="leading-tight">
+                  {hasRequestedRenewal
+                    ? 'Demande de renouvellement transmise ✓'
+                    : renewalInfo.isEligible
+                    ? 'Demander le renouvellement du bail'
+                    : `Renouvellement (${renewalInfo.monthsRemaining} mois restants)`}
+                </span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsAnalyzerModalOpen(true)}
-              className="w-full py-2.5 px-4 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm"
+              className="w-full min-h-[40px] py-2.5 px-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm"
             >
-              <Scale className="w-3.5 h-3.5 text-amber-700" />
-              <span>🔍 Analyser le contrat (CI & OHADA)</span>
+              <Scale className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+              <span className="truncate">🔍 Analyser le contrat (CI & OHADA)</span>
             </button>
+
             <button
               onClick={() => setIsAvenantInitiatedOpen(true)}
-              className="w-full py-2.5 px-4 rounded-xl border border-slate-300 text-slate-800 hover:bg-slate-50 text-xs font-bold text-center transition-all flex items-center justify-center gap-2"
+              className="w-full min-h-[40px] py-2.5 px-3 rounded-xl border border-slate-300 text-slate-800 hover:bg-slate-50 text-xs font-bold text-center transition-all flex items-center justify-center gap-2"
             >
-              <FileText className="w-3.5 h-3.5 text-slate-600" />
-              <span>Créer un avenant</span>
+              <FileText className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+              <span className="truncate">Créer un avenant</span>
             </button>
+
             <button
               onClick={() => setIsTerminationFormOpen(true)}
-              className="w-full py-2.5 px-4 rounded-xl border border-rose-300 text-rose-700 bg-rose-50/50 hover:bg-rose-100/70 text-xs font-bold text-center transition-all flex items-center justify-center gap-2"
+              className="w-full min-h-[40px] py-2.5 px-3 rounded-xl border border-rose-300 text-rose-700 bg-rose-50/50 hover:bg-rose-100/70 text-xs font-bold text-center transition-all flex items-center justify-center gap-2"
             >
-              <Clock className="w-3.5 h-3.5 text-rose-600" />
-              <span>Fin du contrat & Restitution</span>
+              <Clock className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <span className="truncate">Fin du contrat & Restitution</span>
             </button>
+
             <button
               onClick={handleDownloadPDF}
-              className={`w-full py-2.5 px-4 rounded-xl text-xs font-black text-center shadow-sm transition-all flex items-center justify-center gap-2 ${
+              className={`w-full min-h-[40px] py-2.5 px-3 rounded-xl text-xs font-black text-center shadow-sm transition-all flex items-center justify-center gap-2 ${
                 isBothSigned
                   ? 'bg-slate-900 hover:bg-slate-800 text-white'
                   : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
               }`}
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>{isBothSigned ? 'Télécharger le contrat final (Signé)' : 'Télécharger (Signature requise)'}</span>
+              <Download className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{isBothSigned ? 'Télécharger le contrat final (Signé)' : 'Télécharger (Signature requise)'}</span>
             </button>
           </div>
 
@@ -802,15 +943,17 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           {/* Property Image & Details Banner */}
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row gap-4 items-center">
             <img
-              src="https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=600&q=80"
-              alt="Bien immobilier"
+              src={propertyDetails.image}
+              alt={tenantData.propertyTitle || 'Bien immobilier'}
               className="w-full md:w-36 h-28 rounded-xl object-cover border"
             />
             <div className="flex-1 flex flex-col gap-1 text-xs">
               <span className="font-extrabold text-slate-900 text-sm">{tenantData.propertyTitle}</span>
               <span className="text-slate-500">Localisation: {tenantData.propertyAddress}</span>
-              <span className="text-slate-500">Surface: 120 m² | Composition: 3 pièces, 2 chambres, 1 salon, 2 salles de bain</span>
-              <span className="text-slate-500">Équipements: Climatisation, chauffe-eau, groupe électrogène, parking</span>
+              <span className="text-slate-500">
+                Surface: {propertyDetails.surface} m² | Composition: {propertyDetails.rooms} pièces, {propertyDetails.bedrooms} chambre{propertyDetails.bedrooms > 1 ? 's' : ''}, {propertyDetails.bathrooms} salle{propertyDetails.bathrooms > 1 ? 's' : ''} de bain
+              </span>
+              <span className="text-slate-500">Équipements: {propertyDetails.equipments}</span>
             </div>
           </div>
 

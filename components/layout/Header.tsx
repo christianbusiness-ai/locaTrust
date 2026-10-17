@@ -42,7 +42,7 @@ import {
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
 import { supabase } from '@/src/lib/supabase';
-import { getUnreadMessagesCountForUser, isValidUuid } from '@/lib/messagingStore';
+import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser, isValidUuid } from '@/lib/messagingStore';
 
 interface NotificationItem {
   id: string;
@@ -556,6 +556,8 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => {
               setShowNotifications(false);
               setSelectedNotification(null);
+              markAllMessagesAsReadForUser(currentUser?.id);
+              setUnreadMessagesCount(0);
               if (onOpenMessages) onOpenMessages();
               if (onNavigateTab) onNavigateTab('messages');
             }}
@@ -574,7 +576,13 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="relative" ref={notifRef}>
             <button
               type="button"
-              onClick={() => setShowNotifications(!showNotifications)}
+              onClick={() => {
+                const nextState = !showNotifications;
+                setShowNotifications(nextState);
+                if (nextState) {
+                  markAllAsRead();
+                }
+              }}
               className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"
               title="Notifications"
             >

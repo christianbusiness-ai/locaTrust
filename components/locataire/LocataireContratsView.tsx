@@ -421,6 +421,7 @@ export const LocataireContratsView: React.FC = () => {
     return (
       <ContractDetailView
         contractNumber={selectedContractNumber}
+        initialContract={currentCnt}
         isAgency={isAgency}
         onBack={() => setSelectedContractNumber(null)}
       />

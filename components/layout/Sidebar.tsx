@@ -36,7 +36,7 @@ import { Logo } from '@/components/common/Logo';
 import { UserRole } from '@/types/database.types';
 import { getActiveUser } from '@/lib/authStore';
 import { useAuth } from '@/src/context/AuthContext';
-import { getUnreadMessagesCountForUser } from '@/lib/messagingStore';
+import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser } from '@/lib/messagingStore';
 
 interface SidebarProps {
   currentRole: UserRole;
@@ -335,6 +335,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     if (item.id === 'support' && onOpenSupport) {
                       onOpenSupport();
                     } else {
+                      if (item.id === 'messages') {
+                        markAllMessagesAsReadForUser(user?.id);
+                        setMsgCount(0);
+                      }
                       onSelectTab?.(item.id);
                     }
                   }}
@@ -409,7 +413,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 return (
                   <button
                     key={item.id}
-                    onClick={() => onSelectTab?.(item.id)}
+                    onClick={() => {
+                      if (item.id === 'messages') {
+                        markAllMessagesAsReadForUser(user?.id);
+                        setMsgCount(0);
+                      }
+                      onSelectTab?.(item.id);
+                    }}
                     className={`flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs transition-all duration-150 whitespace-nowrap ${isActive
                         ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-600/30'
                         : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'

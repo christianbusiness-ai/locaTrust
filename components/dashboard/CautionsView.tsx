@@ -1270,7 +1270,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           {/* Cautions Encaissées */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Caution versée</span>
+              <span className="text-xs font-bold text-slate-500">Caution reçue</span>
               <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                 <CheckCircle2 className="w-4 h-4" />
               </div>
@@ -1282,7 +1282,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           {/* Solde en attente */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Caution en attente de remboursement</span>
+              <span className="text-xs font-bold text-slate-500">Caution à rembourser</span>
               <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
                 <AlertTriangle className="w-4 h-4" />
               </div>
