@@ -366,10 +366,16 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
               let found = false;
               list = list.map((d: any) => {
-                if (d.id === depId || (depId && d.contract_id === payload?.contractId)) {
+                const matches = 
+                  d.id === depId || 
+                  (depId && d.id && d.id.toLowerCase() === depId.toLowerCase()) ||
+                  (depId && d.contract_id === payload?.contractId) ||
+                  (incomingDeposit && incomingDeposit.id && d.id === incomingDeposit.id);
+                if (matches) {
                   found = true;
                   return {
                     ...d,
+                    ...(incomingDeposit || {}),
                     status: 'paye_complet',
                     amount_paid: amount || d.amount_paid || d.amount_requested,
                     confirmed_at: d.confirmed_at || new Date().toISOString(),
@@ -382,7 +388,13 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               });
 
               if (!found) {
-                const synDep = incomingDeposit || {
+                const synDep = incomingDeposit ? {
+                  ...incomingDeposit,
+                  status: 'paye_complet',
+                  amount_paid: amount || incomingDeposit.amount_paid || incomingDeposit.amount_requested,
+                  owner_signature: q?.ownerSignatureUrl || incomingDeposit.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED',
+                  receipt_sent_to_tenant: true
+                } : {
                   id: depId || `dep_${Date.now()}`,
                   contract_id: payload?.contractId || q?.contractNumber || 'CNT-OFFICIAL',
                   property_id: q?.propertyId || 'prop_default',

@@ -577,10 +577,18 @@ export function sendCautionReceiptToTenant(
     signatureData?: string | null;
     actorName?: string;
     actorId?: string;
+    depositFallback?: Deposit;
   }
 ): Deposit | null {
   const all = getStoredDeposits();
-  const target = all.find((d) => d.id === depositId);
+  let target = all.find((d) => 
+    d.id === depositId ||
+    d.id.toLowerCase() === depositId.toLowerCase() ||
+    d.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+  );
+  if (!target && options?.depositFallback) {
+    target = options.depositFallback;
+  }
   if (!target) return null;
 
   const resolved = resolveDepositContractDetails(target);
@@ -604,7 +612,10 @@ export function sendCautionReceiptToTenant(
     receipt_sent_to_tenant: true
   };
 
-  const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
+  const existsInAll = all.some((d) => d.id === target.id);
+  const updatedList = existsInAll
+    ? all.map((d) => (d.id === target.id ? updatedDeposit : d))
+    : [updatedDeposit, ...all];
   saveStoredDeposits(updatedList);
 
   let senderId = options?.actorId || target.owner_id || resolved.ownerId || 'usr_owner';

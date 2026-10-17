@@ -283,14 +283,18 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   // Transmettre le reçu officiel certifié au locataire pour sa contresignature
   const handleTransmitCautionReceiptForSigning = async (deposit: Deposit, signatureData: string | null) => {
     const confirmedAmount = deposit.amount_paid || deposit.amount_requested;
-    const sig = signatureData || deposit.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
+    const sig = signatureData || deposit.owner_signature || generatedOwnerSignature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
     const now = new Date().toISOString();
 
     // 1. Transmission officielle dans la messagerie avec la quittance certifiée
     const updated = sendCautionReceiptToTenant(deposit.id, {
       signatureData: sig,
       actorName,
-      actorId: user?.id
+      actorId: user?.id,
+      depositFallback: {
+        ...deposit,
+        owner_signature: sig
+      }
     });
 
     const updatedDeposit: Deposit = updated || {
@@ -306,8 +310,37 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
     setDeposits(prev => prev.map(d => d.id === deposit.id ? updatedDeposit : d));
     setGeneratingReceiptDeposit(null);
+    setGeneratedOwnerSignature(null);
     setSuccessFeedback(`✅ Reçu officiel de caution certifié et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} ! Le téléchargement sera disponible dès que le locataire aura apposé sa signature.`);
     confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+
+    // Diffusion temps réel multi-appareils
+    try {
+      await broadcastLiveEvent('CAUTION_RECEIPT_TRANSMITTED', {
+        depositId: deposit.id,
+        receiptNumber: (updatedDeposit as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`,
+        targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+        contractId: deposit.contract_id,
+        data: {
+          amount: confirmedAmount,
+          deposit: updatedDeposit,
+          actorName
+        }
+      });
+      await broadcastLiveEvent('CAUTION_CONFIRMED', {
+        depositId: deposit.id,
+        targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+        contractId: deposit.contract_id,
+        data: {
+          amount: confirmedAmount,
+          deposit: updatedDeposit,
+          actorName
+        }
+      });
+    } catch {}
+
     window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
     window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
     window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
@@ -2030,10 +2063,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           onClose={() => setIsSigningReceiptModalOpen(false)}
           onConfirmSignature={(signatureData) => {
             setGeneratedOwnerSignature(signatureData);
+            setGeneratingReceiptDeposit(prev => prev ? { ...prev, owner_signature: signatureData } : null);
             setIsSigningReceiptModalOpen(false);
-            if (generatingReceiptDeposit) {
-              handleTransmitCautionReceiptForSigning(generatingReceiptDeposit, signatureData);
-            }
           }}
           signerName={actorName}
           signerRole="proprietaire"
