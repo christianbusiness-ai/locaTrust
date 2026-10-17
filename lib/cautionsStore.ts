@@ -521,18 +521,34 @@ export function sendCautionReceiptToTenant(
 
   // Persistance dans Supabase pour synchronisation multi-appareils (Desktop & Mobile)
   try {
-    supabase
-      .from('cautions')
-      .update({
-        status: 'paye_complet',
-        amount_paid: confirmedAmount,
-        confirmed_at: now,
-        confirmed_by: finalActorName,
-        owner_signature: finalOwnerSig,
-        receipt_sent_to_tenant: true
-      })
-      .eq('id', target.id)
-      .then();
+    if (isValidUuid(target.id)) {
+      supabase
+        .from('cautions')
+        .update({
+          status: 'paye_complet',
+          amount_paid: confirmedAmount,
+          confirmed_at: now,
+          confirmed_by: finalActorName,
+          owner_signature: finalOwnerSig
+        })
+        .eq('id', target.id)
+        .then();
+    }
+
+    if (isValidUuid(receiverId)) {
+      supabase.from('notifications').insert({
+        user_id: receiverId,
+        title: '🛡️ Reçu officiel de caution reçu pour signature',
+        content: `Votre caution de ${formatFCFA(confirmedAmount)} a été validée par ${finalActorName}. Veuillez y apposer votre signature dans la messagerie pour débloquer le téléchargement.`,
+        type: 'caution',
+        read: false,
+        payload: {
+          deposit_id: target.id,
+          receipt_number: cleanReceiptNum,
+          amount: confirmedAmount
+        }
+      }).then();
+    }
   } catch {}
 
   // Notification in-app ciblée pour le locataire

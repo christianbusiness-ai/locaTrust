@@ -42,7 +42,7 @@ import {
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
 import { supabase } from '@/src/lib/supabase';
-import { getUnreadMessagesCountForUser } from '@/lib/messagingStore';
+import { getUnreadMessagesCountForUser, isValidUuid } from '@/lib/messagingStore';
 
 interface NotificationItem {
   id: string;
@@ -251,56 +251,93 @@ export const Header: React.FC<HeaderProps> = ({
       document.documentElement.classList.remove('dark');
     }
 
-    const loadStoredNotifs = () => {
+    const loadStoredNotifs = async () => {
       try {
+        let parsed: any[] = [];
         const raw = localStorage.getItem('locatrust_notifications');
         if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            // Filtrer les fausses notifications mock générées ou résiduelles + filtrage strict destinataire vs expéditeur
-            const userRole = currentUser.role || 'proprietaire';
-            const userId = currentUser.id || '';
-            const userEmail = (currentUser.email || '').toLowerCase();
+          try {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) parsed = arr;
+          } catch {}
+        }
 
-            const isNotificationForMe = (n: any) => {
-              if (!n) return false;
-              const id = String(n.id || '');
-              if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
-              if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
-              if (n.description && (n.description.includes('Kwame Koffi') || n.description.includes('Moussa Touré'))) return false;
+        // Récupérer également les notifications persistantes en base Supabase
+        const userId = currentUser.id || '';
+        if (userId && isValidUuid(userId)) {
+          try {
+            const { data: dbNotifs } = await supabase
+              .from('notifications')
+              .select('*')
+              .eq('user_id', userId)
+              .order('created_at', { ascending: false })
+              .limit(40);
 
-              // Règle absolue : L'expéditeur ne reçoit JAMAIS sa propre notification de message !
-              if (n.senderUserId) {
-                if (n.senderUserId === userId) return false;
-                if (userRole === 'locataire' && n.senderUserId === 'usr_tenant') return false;
-                if (userRole === 'proprietaire' && n.senderUserId === 'usr_owner') return false;
-                if (userRole === 'agence' && n.senderUserId === 'usr_agency') return false;
-              }
-
-              // Si un destinataire ciblé est défini, vérifier la correspondance
-              if (n.targetUserId) {
-                const matchesMe =
-                  n.targetUserId === userId ||
-                  (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
-                  (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
-                  (userRole === 'proprietaire' && (n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId)) ||
-                  (userRole === 'agence' && (n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
-                if (!matchesMe) return false;
-              } else if (n.targetRole) {
-                const matchesRole =
-                  n.targetRole === userRole ||
-                  (userRole === 'agence' && n.targetRole === 'proprietaire') ||
-                  (userRole === 'proprietaire' && n.targetRole === 'agence');
-                if (!matchesRole) return false;
-              }
-
-              return true;
-            };
-
-            const cleaned = parsed.filter(isNotificationForMe);
-            setNotifications(cleaned);
-            return;
+            if (dbNotifs && Array.isArray(dbNotifs)) {
+              const existingIds = new Set(parsed.map((n) => n.id));
+              dbNotifs.forEach((dbN) => {
+                if (!existingIds.has(dbN.id)) {
+                  parsed.unshift({
+                    id: dbN.id,
+                    title: dbN.title,
+                    description: dbN.content,
+                    time: new Date(dbN.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+                    unread: !dbN.read,
+                    type: dbN.type,
+                    targetUserId: dbN.user_id,
+                    payload: dbN.payload
+                  });
+                }
+              });
+            }
+          } catch (dbErr) {
+            console.warn('Erreur chargement notifications Supabase:', dbErr);
           }
+        }
+
+        if (parsed.length > 0) {
+          // Filtrer les fausses notifications mock générées ou résiduelles + filtrage strict destinataire vs expéditeur
+          const userRole = currentUser.role || 'proprietaire';
+          const userEmail = (currentUser.email || '').toLowerCase();
+
+          const isNotificationForMe = (n: any) => {
+            if (!n) return false;
+            const id = String(n.id || '');
+            if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
+            if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
+            if (n.description && (n.description.includes('Kwame Koffi') || n.description.includes('Moussa Touré'))) return false;
+
+            // Règle absolue : L'expéditeur ne reçoit JAMAIS sa propre notification de message !
+            if (n.senderUserId) {
+              if (n.senderUserId === userId) return false;
+              if (userRole === 'locataire' && n.senderUserId === 'usr_tenant') return false;
+              if (userRole === 'proprietaire' && n.senderUserId === 'usr_owner') return false;
+              if (userRole === 'agence' && n.senderUserId === 'usr_agency') return false;
+            }
+
+            // Si un destinataire ciblé est défini, vérifier la correspondance
+            if (n.targetUserId) {
+              const matchesMe =
+                n.targetUserId === userId ||
+                (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
+                (userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
+                (userRole === 'proprietaire' && (n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId)) ||
+                (userRole === 'agence' && (n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
+              if (!matchesMe) return false;
+            } else if (n.targetRole) {
+              const matchesRole =
+                n.targetRole === userRole ||
+                (userRole === 'agence' && n.targetRole === 'proprietaire') ||
+                (userRole === 'proprietaire' && n.targetRole === 'agence');
+              if (!matchesRole) return false;
+            }
+
+            return true;
+          };
+
+          const cleaned = parsed.filter(isNotificationForMe);
+          setNotifications(cleaned);
+          return;
         }
       } catch (e) {
         console.warn('Error reading notifications:', e);
@@ -397,6 +434,10 @@ export const Header: React.FC<HeaderProps> = ({
       }
       return updated;
     });
+
+    if (currentUser?.id && isValidUuid(currentUser.id)) {
+      supabase.from('notifications').update({ read: true }).eq('user_id', currentUser.id).then();
+    }
   };
 
   const clearAllNotifications = () => {
@@ -406,6 +447,9 @@ export const Header: React.FC<HeaderProps> = ({
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [] } }));
     } catch (e) {
       console.warn(e);
+    }
+    if (currentUser?.id && isValidUuid(currentUser.id)) {
+      supabase.from('notifications').delete().eq('user_id', currentUser.id).then();
     }
   };
 
@@ -420,6 +464,11 @@ export const Header: React.FC<HeaderProps> = ({
       }
       return updated;
     });
+
+    if (item.id && isValidUuid(item.id)) {
+      supabase.from('notifications').update({ read: true }).eq('id', item.id).then();
+    }
+
     setShowNotifications(false);
     setSelectedNotification(item);
   };

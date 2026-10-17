@@ -234,6 +234,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const [previewingReceipt, setPreviewingReceipt] = useState<RentPayment | null>(null);
 
   const handleStartValidation = (pmt: RentPayment) => {
+    if (pmt.status === 'confirme') {
+      alert('Ce paiement a déjà été vérifié et validé.');
+      return;
+    }
     // LocaTrust Intelligent OCR extraction from payment proof
     const sampleRef = pmt.reference || `OM-CI-${Math.floor(100000 + Math.random() * 900000)}`;
     setExtractedOcrData({
@@ -248,6 +252,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
   const handleFinalizeValidation = async () => {
     if (!validatingPayment || !extractedOcrData) return;
+    if (validatingPayment.status === 'confirme') {
+      alert('Ce paiement a déjà été vérifié et validé.');
+      return;
+    }
 
     if (!ownerSignatureUrl) {
       setConfirmationModal({
@@ -289,6 +297,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       prev.map((p) => (p.id === validatingPayment.id ? confirmedPmt : p))
     );
 
+    const ownerId = user?.id || 'usr_owner';
+    const tenantId = validatingPayment.tenant_id || 'usr_tenant';
+
     // 3. Dispatch official receipt to Tenant Messaging Inbox
     sendQuittanceToTenant(
       {
@@ -306,9 +317,27 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         ownerSignatureUrl: ownerSignatureUrl,
         tenantSignatureUrl: tenantSignatureUrl,
       },
-      validatingPayment.tenant_id,
-      user?.id
+      ownerId,
+      tenantId
     );
+
+    // Marquer la notification initiale de déclaration comme traitée
+    try {
+      if (typeof window !== 'undefined') {
+        const notifsRaw = localStorage.getItem('locatrust_notifications');
+        if (notifsRaw) {
+          const parsed = JSON.parse(notifsRaw);
+          const updated = parsed.map((n: any) => {
+            if (n.payload?.payment_id === validatingPayment.id || n.id?.includes(validatingPayment.id)) {
+              return { ...n, unread: false, processed: true };
+            }
+            return n;
+          });
+          localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+        }
+      }
+    } catch {}
 
     // Synchroniser avec Supabase & notifier le locataire
     try {
@@ -318,12 +347,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       }).eq('id', validatingPayment.id);
 
       await supabase.from('receipts').insert({
-        receipt_number: `REC-${Date.now().toString().slice(-6)}`,
+        receipt_number: extractedOcrData.reference,
         type: 'loyer',
         contract_id: validatingPayment.contract_id,
         rent_payment_id: validatingPayment.id,
-        tenant_id: validatingPayment.tenant_id,
-        owner_id: user?.id,
+        tenant_id: tenantId,
+        owner_id: ownerId,
         amount: extractedOcrData.amount,
         token: `tok_rec_${Date.now()}`
       });
@@ -394,6 +423,91 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         console.warn('Sync payment rejection error:', e);
       }
       alert('Paiement refusé et notifié au locataire.');
+    }
+  };
+
+  const handleTransmitReceipt = async (pmt: RentPayment) => {
+    try {
+      const receiptNum = pmt.reference || `REC-${Date.now().toString().slice(-6)}`;
+      const targetMonth = pmt.target_month || new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+      const tenantId = pmt.tenant_id || (pmt.tenant as any)?.id || 'usr_tenant';
+      const ownerId = user?.id || pmt.owner_id || 'usr_owner';
+      const ownerName = user?.user_metadata?.full_name || (user as any)?.name || 'Bailleur';
+      const tenantName = pmt.tenant?.full_name || 'Locataire';
+
+      // 1. Send receipt attachment to tenant via messagingStore
+      sendQuittanceToTenant(
+        {
+          receiptNumber: receiptNum,
+          contractNumber: pmt.contract_id || (pmt.contract as any)?.contract_number || 'LT-CI-2026-000123',
+          propertyTitle: pmt.contract?.property?.title || 'Logement LocaTrust',
+          propertyAddress: (pmt.contract?.property as any)?.address || [(pmt.contract?.property as any)?.quartier, (pmt.contract?.property as any)?.commune, (pmt.contract?.property as any)?.city].filter(Boolean).join(', ') || 'Abidjan - Côte d\'Ivoire',
+          amount: pmt.amount,
+          periodCovered: targetMonth,
+          paymentDate: new Date(pmt.confirmed_at || pmt.payment_date || Date.now()).toLocaleDateString('fr-FR'),
+          paymentMethod: pmt.reference?.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
+          transactionReference: receiptNum,
+          ownerName: ownerName,
+          tenantName: tenantName,
+          ownerSignatureUrl: ownerSignatureUrl || 'SIG_CERTIFIED_BAILLEUR',
+          tenantSignatureUrl: tenantSignatureUrl || undefined,
+        },
+        ownerId,
+        tenantId
+      );
+
+      // 2. Persist in Supabase receipts table
+      if (isValidUuid(tenantId) && isValidUuid(ownerId)) {
+        try {
+          await supabase.from('receipts').insert({
+            receipt_number: receiptNum,
+            type: 'loyer',
+            contract_id: isValidUuid(pmt.contract_id) ? pmt.contract_id : undefined,
+            rent_payment_id: isValidUuid(pmt.id) ? pmt.id : undefined,
+            tenant_id: tenantId,
+            owner_id: ownerId,
+            amount: pmt.amount,
+            token: `tok_${receiptNum}_${Date.now()}`
+          });
+        } catch (dbErr) {
+          console.warn('Supabase receipts insert notice:', dbErr);
+        }
+
+        try {
+          await supabase.from('notifications').insert({
+            user_id: tenantId,
+            title: '📄 Quittance de loyer transmise',
+            content: `Votre bailleur ${ownerName} vous a transmis votre quittance de loyer (${formatFCFA(pmt.amount)}). Veuillez la signer dans votre messagerie.`,
+            type: 'quittance',
+            read: false,
+            payload: {
+              payment_id: pmt.id,
+              receipt_number: receiptNum,
+              amount: pmt.amount
+            }
+          });
+        } catch {}
+      }
+
+      // 3. Diffuser l'événement en temps réel
+      await broadcastLiveEvent('PAYMENT_CONFIRMED', {
+        actorId: ownerId,
+        targetUserId: tenantId,
+        data: { paymentId: pmt.id, receiptNumber: receiptNum, amount: pmt.amount }
+      });
+
+      // 4. Modal de confirmation
+      setConfirmationModal({
+        isOpen: true,
+        type: 'sent',
+        title: 'Quittance transmise avec succès !',
+        message: `La quittance officielle N° ${receiptNum} a été transmise directement dans la boîte de messagerie du locataire ${tenantName}.`,
+        confirmText: 'OK, parfait',
+        withCelebration: true
+      });
+    } catch (err: any) {
+      console.error('Erreur transmission quittance:', err);
+      alert(`Erreur lors de la transmission : ${err?.message || 'Vérifiez la connexion réseau.'}`);
     }
   };
 
@@ -711,17 +825,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                           <span>PDF</span>
                         </button>
                         <button
-                          onClick={() => {
-                            setConfirmationModal({
-                              isOpen: true,
-                              type: 'sent',
-                              title: 'Quittance transmise avec succès !',
-                              message: `La quittance officielle a été transmise directement dans la boîte de messagerie du locataire ${pmt.tenant?.full_name || ''}.`,
-                              confirmText: 'OK, parfait',
-                              withCelebration: true
-                            });
-                          }}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-extrabold text-xs flex items-center justify-center gap-1"
+                          onClick={() => handleTransmitReceipt(pmt)}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-extrabold text-xs flex items-center justify-center gap-1 active:scale-95 transition-all"
                           title="Transmettre la quittance au locataire"
                         >
                           <Send className="w-3.5 h-3.5" />
@@ -1233,8 +1338,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                         ownerSignatureUrl: ownerSignatureUrl,
                         tenantSignatureUrl: tenantSignatureUrl,
                       },
-                      previewingReceipt.tenant_id,
-                      user?.id
+                      user?.id,
+                      previewingReceipt.tenant_id
                     );
                     setConfirmationModal({
                       isOpen: true,

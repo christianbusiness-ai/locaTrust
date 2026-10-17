@@ -464,22 +464,51 @@ export const LocatairePaiementsView: React.FC = () => {
         proof_url: cautionProofUrl || null
       };
 
+      const dbCautionPayload: any = {
+        amount_requested: cautionAmount,
+        amount_paid: cautionAmount,
+        status: 'caution_a_confirmer'
+      };
+      if (contractUuid) dbCautionPayload.contract_id = contractUuid;
+      if (tenantUuid) dbCautionPayload.tenant_id = tenantUuid;
+      if (ownerUuid) dbCautionPayload.owner_id = ownerUuid;
+
       let savedCaution: any = null;
       try {
         const { data: dbCaution, error: ctnErr } = await supabase
           .from('cautions')
-          .insert(cautionData)
+          .insert(dbCautionPayload)
           .select()
           .maybeSingle();
 
         if (dbCaution) {
-          savedCaution = dbCaution;
+          savedCaution = { ...cautionData, ...dbCaution };
         } else {
           if (ctnErr) console.warn('Supabase caution insert notice:', ctnErr.message);
           savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
         }
       } catch {
         savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
+      }
+
+      // Notification Supabase persistante pour le bailleur/agence
+      if (ownerUuid) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: ownerUuid,
+            title: '💰 Nouveau versement de caution déclaré',
+            content: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} - ${cautionMethod}). Veuillez vérifier et valider la caution.`,
+            type: 'caution',
+            read: false,
+            payload: {
+              deposit_id: savedCaution.id,
+              contract_id: contractUuid,
+              amount: cautionAmount,
+              reference: cautionData.declared_reference,
+              method: cautionMethod
+            }
+          });
+        } catch {}
       }
 
       // Persist in local store for seamless demo & multi-tab responsiveness
