@@ -944,8 +944,55 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     return matchTenant || matchProperty || matchContract || matchRef || matchAmount;
   });
 
+  // Détection des cautions en attente de la signature du locataire (Solution 2A)
+  const depositsAwaitingTenantSignature = isTenant
+    ? deposits.filter(
+        (d) => (d.owner_signature || d.confirmed_by) && !d.tenant_signature && (d.amount_paid > 0 || d.status === 'paye_complet' || d.status === 'caution_confirmee')
+      )
+    : [];
+
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+      {/* Bannière d'Action Immédiate pour le Locataire (Solution 2A & Audio utilisateur) */}
+      {isTenant && depositsAwaitingTenantSignature.length > 0 && (
+        <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white shadow-xl shadow-blue-500/20 border border-blue-400/30 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fadeIn">
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md text-white flex items-center justify-center shrink-0 shadow-inner">
+              <PenTool className="w-6 h-6 text-amber-300 animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider shadow-xs">
+                  Action requise
+                </span>
+                <span className="text-xs text-blue-100 font-bold">
+                  Reçu N° REC-CAUT-{depositsAwaitingTenantSignature[0].id.slice(0, 8).toUpperCase()}
+                </span>
+              </div>
+              <h3 className="text-base sm:text-lg font-black text-white mt-1">
+                Votre reçu officiel de caution de {formatFCFA(depositsAwaitingTenantSignature[0].amount_paid || depositsAwaitingTenantSignature[0].amount_requested)} est prêt pour votre signature
+              </h3>
+              <p className="text-xs text-blue-100 mt-0.5 leading-relaxed">
+                Votre bailleur a certifié et scellé ce document. Cliquez ci-dessous pour apposer votre signature numérique certifiée et débloquer instantanément le téléchargement officiel du PDF avec QR Code certifié.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSignatureModalConfig({
+              isOpen: true,
+              deposit: depositsAwaitingTenantSignature[0],
+              type: 'caution',
+              role: 'locataire'
+            })}
+            className="px-6 py-3 rounded-2xl bg-white text-blue-900 hover:bg-blue-50 font-black text-xs sm:text-sm shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+          >
+            <PenTool className="w-4 h-4 text-blue-600" />
+            <span>Apposer ma signature</span>
+          </button>
+        </div>
+      )}
+
       {/* Header Banner - LocaTrust Colors */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
@@ -1271,8 +1318,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                         )
                       )}
 
-                      {/* Restituer la caution — désactivé si déjà restitué */}
-                      {!isRestituted && dep.amount_paid > 0 && !isAwaitingVerification ? (
+                      {/* Restituer la caution — réservé exclusivement au bailleur ou à l'agence */}
+                      {!isRestituted && dep.amount_paid > 0 && !isAwaitingVerification && !isTenant ? (
                         <button
                           type="button"
                           onClick={() => {
@@ -1296,7 +1343,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                         </span>
                       ) : null}
 
-                      {/* Télécharger le reçu */}
+                      {/* Télécharger le reçu officiel */}
                       {isRestituted ? (
                         <button
                           type="button"
@@ -1311,11 +1358,26 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                           <button
                             type="button"
                             onClick={() => handleDownloadCautionReceipt(dep)}
-                            className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-sm flex items-center gap-1.5 transition-all active:scale-95 whitespace-nowrap"
+                            className="h-8 px-3.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] shadow-sm flex items-center gap-1.5 transition-all active:scale-95 whitespace-nowrap cursor-pointer"
                             title="Télécharger le reçu officiel de caution certifié (scellé avec signatures des 2 parties)"
                           >
                             <Download className="w-3.5 h-3.5" />
                             <span>Télécharger le reçu</span>
+                          </button>
+                        ) : isTenant && ownerSigned && !tenantSigned ? (
+                          <button
+                            type="button"
+                            onClick={() => setSignatureModalConfig({
+                              isOpen: true,
+                              deposit: dep,
+                              type: 'caution',
+                              role: 'locataire'
+                            })}
+                            className="h-8 px-3.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-[11px] shadow-md shadow-blue-500/20 flex items-center gap-1.5 animate-pulse transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                            title="Apposer votre signature pour valider et débloquer le reçu officiel"
+                          >
+                            <PenTool className="w-3.5 h-3.5" />
+                            <span>Signer mon reçu</span>
                           </button>
                         ) : (
                           <button
@@ -1330,8 +1392,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                         )
                       ) : null}
 
-                      {/* Renvoyer / Transmettre le reçu */}
-                      {dep.amount_paid > 0 && !isAwaitingVerification && (
+                      {/* Renvoyer / Transmettre le reçu (seulement si bailleur ou agence) */}
+                      {!isTenant && dep.amount_paid > 0 && !isAwaitingVerification && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1341,7 +1403,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                               handleResendCautionReceipt(dep);
                             }
                           }}
-                          className="h-8 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-extrabold text-[11px] flex items-center gap-1.5 transition-colors border border-blue-200 dark:border-blue-800 whitespace-nowrap"
+                          className="h-8 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-extrabold text-[11px] flex items-center gap-1.5 transition-colors border border-blue-200 dark:border-blue-800 whitespace-nowrap cursor-pointer"
                           title="Transmettre ou renvoyer le reçu certifié dans la messagerie du locataire"
                         >
                           <Send className="w-3.5 h-3.5" />

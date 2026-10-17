@@ -1048,7 +1048,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const target = selectedNotification.targetTab;
+                  const target = selectedNotification.targetTab || (selectedNotification.category === 'caution' ? 'guarantees' : 'overview');
                   setSelectedNotification(null);
                   if (onNavigateTab) onNavigateTab(target);
                 }}
@@ -1059,9 +1059,10 @@ export const Header: React.FC<HeaderProps> = ({
                   {selectedNotification.category === 'visite' && 'Voir la demande de visite'}
                   {selectedNotification.category === 'paiement' && 'Vérifier le paiement'}
                   {selectedNotification.category === 'contrat' && 'Consulter le contrat'}
+                  {selectedNotification.category === 'caution' && 'Consulter ma caution & Signer'}
                   {selectedNotification.category === 'maintenance' && 'Ouvrir le ticket'}
                   {selectedNotification.category === 'abonnement' && 'Voir mon abonnement'}
-                  {!['demande', 'visite', 'paiement', 'contrat', 'maintenance', 'abonnement'].includes(selectedNotification.category) && 'Accéder à la section'}
+                  {!['demande', 'visite', 'paiement', 'contrat', 'caution', 'maintenance', 'abonnement'].includes(selectedNotification.category) && 'Accéder à la section'}
                 </span>
                 <ChevronRight className="w-4 h-4" />
               </button>

@@ -102,6 +102,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [appCount, setAppCount] = React.useState<number>(0);
   const [msgCount, setMsgCount] = React.useState<number>(0);
   const [contractCount, setContractCount] = React.useState<number>(0);
+  const [cautionPendingCount, setCautionPendingCount] = React.useState<number>(0);
 
   React.useEffect(() => {
     const updateCounts = () => {
@@ -151,6 +152,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         setContractCount(countContracts);
 
+        // Cautions awaiting tenant signature or owner verification
+        let countCautions = 0;
+        const cautionsRaw = localStorage.getItem('locatrust_caution_deposits');
+        if (cautionsRaw) {
+          const cList = JSON.parse(cautionsRaw);
+          if (Array.isArray(cList)) {
+            if (isLocataire) {
+              countCautions = cList.filter((c: any) =>
+                (c.owner_signature || c.confirmed_by) && !c.tenant_signature && (c.amount_paid > 0 || c.status === 'paye_complet' || c.status === 'caution_confirmee')
+              ).length;
+            } else if (isProprietaire || isAgence) {
+              countCautions = cList.filter((c: any) =>
+                c.status === 'en_attente_verification' || c.status === 'declare_paye'
+              ).length;
+            }
+          }
+        }
+        setCautionPendingCount(countCautions);
+
         const countMsgs = getUnreadMessagesCountForUser(
           user ? { id: user.id, email: user.email, role: user.role || currentRole } : { role: currentRole }
         );
@@ -159,6 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setAppCount(0);
         setMsgCount(0);
         setContractCount(0);
+        setCautionPendingCount(0);
       }
     };
 
@@ -166,10 +187,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     window.addEventListener('locatrust:applications-updated', updateCounts);
     window.addEventListener('locatrust:contracts-updated', updateCounts);
     window.addEventListener('locatrust:messages_updated', updateCounts);
+    window.addEventListener('locatrust:cautions_updated', updateCounts);
     return () => {
       window.removeEventListener('locatrust:applications-updated', updateCounts);
       window.removeEventListener('locatrust:contracts-updated', updateCounts);
       window.removeEventListener('locatrust:messages_updated', updateCounts);
+      window.removeEventListener('locatrust:cautions_updated', updateCounts);
     };
   }, [user, isLocataire, isProprietaire, isAgence]);
 
@@ -184,7 +207,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements', icon: CreditCard },
     { id: 'receipts', name: 'Reçus', icon: Receipt },
-    { id: 'guarantees', name: 'Cautions', icon: ShieldCheck },
+    { id: 'guarantees', name: 'Cautions', icon: ShieldCheck, badge: cautionPendingCount > 0 ? cautionPendingCount : undefined },
     { id: 'maintenance', name: 'Maintenance', icon: Wrench },
     { id: 'notifications', name: 'Notifications', icon: Bell },
     { id: 'profile', name: 'Mon profil', icon: UserIcon },
@@ -217,7 +240,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'applications', name: 'Demandes de location', icon: Eye, badge: appCount > 0 ? appCount : undefined },
     { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements & Loyers', icon: CreditCard },
-    { id: 'guarantees', name: 'Cautions', icon: ShieldCheck },
+    { id: 'guarantees', name: 'Cautions', icon: ShieldCheck, badge: cautionPendingCount > 0 ? cautionPendingCount : undefined },
     { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
     { id: 'visits', name: 'Demandes de visite', icon: Eye },
     { id: 'documents', name: 'Documents', icon: Folder },

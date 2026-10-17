@@ -243,11 +243,31 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
         time: 'À l\'instant',
         unread: true,
         type: 'caution',
+        category: 'caution',
+        targetTab: 'guarantees',
         targetRole: 'locataire',
         targetUserId: target.tenant_id,
         senderUserId: target.owner_id || 'usr_owner'
       };
       localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
+
+      // Also persist to locatrust_tenant_notifications
+      try {
+        const rawTenantNotifs = localStorage.getItem('locatrust_tenant_notifications');
+        const parsedTenantNotifs = rawTenantNotifs ? JSON.parse(rawTenantNotifs) : [];
+        const tenantViewNotif = {
+          id: tenantNotif.id,
+          title: tenantNotif.title,
+          description: tenantNotif.description,
+          category: 'caution',
+          timestamp: "À l'instant",
+          read: false,
+          actionText: 'Consulter ma caution',
+          targetTab: 'guarantees'
+        };
+        localStorage.setItem('locatrust_tenant_notifications', JSON.stringify([tenantViewNotif, ...(Array.isArray(parsedTenantNotifs) ? parsedTenantNotifs : [])]));
+      } catch {}
+
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
     } catch {}
   }
@@ -308,6 +328,106 @@ export function signCautionReceipt(depositId: string, party: 'owner' | 'tenant',
 
   const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
   saveStoredDeposits(updatedList);
+
+  // 1. Mettre à jour Supabase table cautions
+  try {
+    if (isValidUuid(depositId)) {
+      const updatePayload: any = party === 'owner'
+        ? { owner_signature: signatureData }
+        : { tenant_signature: signatureData };
+      supabase.from('cautions').update(updatePayload).eq('id', depositId).then();
+    }
+  } catch {}
+
+  // 2. Mettre à jour le registre des reçus du locataire (locatrust_tenant_receipts_v2)
+  try {
+    if (typeof window !== 'undefined') {
+      const rawReceipts = localStorage.getItem('locatrust_tenant_receipts_v2');
+      if (rawReceipts) {
+        const list = JSON.parse(rawReceipts);
+        if (Array.isArray(list)) {
+          const updatedReceipts = list.map((r: any) => {
+            const matchesDeposit =
+              r.depositId === depositId ||
+              (r.receiptNumber && r.receiptNumber.includes(depositId.toUpperCase())) ||
+              (r.contractNumber && (r.contractNumber === target.contract_id || r.contractNumber === target.contract_number));
+            if (matchesDeposit) {
+              return {
+                ...r,
+                ...(party === 'owner' ? { ownerSignatureUrl: signatureData } : { tenantSignatureUrl: signatureData })
+              };
+            }
+            return r;
+          });
+          localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(updatedReceipts));
+        }
+      }
+    }
+  } catch {}
+
+  // 3. Mettre à jour le message de chat contenant cette quittance
+  try {
+    if (typeof window !== 'undefined') {
+      const rawMsgs = localStorage.getItem('locatrust_chat_messages_v4');
+      if (rawMsgs) {
+        const msgs = JSON.parse(rawMsgs);
+        if (Array.isArray(msgs)) {
+          const updatedMsgs = msgs.map((m: any) => {
+            if (m.quittance) {
+              const q = m.quittance;
+              const matchesDeposit =
+                q.depositId === depositId ||
+                (q.receiptNumber && q.receiptNumber.includes(depositId.toUpperCase())) ||
+                (q.contractNumber && (q.contractNumber === target.contract_id || q.contractNumber === target.contract_number));
+              if (matchesDeposit) {
+                return {
+                  ...m,
+                  quittance: {
+                    ...q,
+                    ...(party === 'owner' ? { ownerSignatureUrl: signatureData } : { tenantSignatureUrl: signatureData })
+                  }
+                };
+              }
+            }
+            return m;
+          });
+          localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify(updatedMsgs));
+        }
+      }
+    }
+  } catch {}
+
+  // 4. Si c'est le locataire qui signe, notifier immédiatement le propriétaire / l'agence
+  if (party === 'tenant' && typeof window !== 'undefined') {
+    try {
+      const ownerId = target.owner_id || 'usr_owner';
+      const cleanNum = (target as any).receipt_number || `REC-CAUT-${target.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`;
+      const notifItem = {
+        id: `notif_caut_signed_${Date.now()}`,
+        title: '✅ Reçu de caution contresigné par le locataire',
+        description: `Le locataire ${target.tenant?.full_name || 'Christian'} a apposé sa signature certifiée sur le reçu N° ${cleanNum}. Le document est officiellement scellé et téléchargeable.`,
+        time: "À l'instant",
+        unread: true,
+        type: 'caution',
+        category: 'caution',
+        targetTab: 'guarantees',
+        targetRole: 'proprietaire',
+        targetUserId: ownerId
+      };
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(curNotifs) ? curNotifs : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch {}
+  }
+
+  // 5. Émettre les événements de rafraîchissement
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+  }
+
   return updatedDeposit;
 }
 
@@ -623,12 +743,31 @@ export function sendCautionReceiptToTenant(
         time: "À l'instant",
         unread: true,
         type: 'caution',
-        targetTab: 'messages',
+        category: 'caution',
+        targetTab: 'guarantees',
         targetRole: 'locataire',
         targetUserId: receiverId,
         senderUserId: senderId
       };
       localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(currentNotifs) ? currentNotifs : [])]));
+
+      // Also persist directly into locatrust_tenant_notifications for LocataireNotificationsView
+      try {
+        const rawTenantNotifs = localStorage.getItem('locatrust_tenant_notifications');
+        const parsedTenantNotifs = rawTenantNotifs ? JSON.parse(rawTenantNotifs) : [];
+        const tenantViewNotif = {
+          id: tenantNotif.id,
+          title: tenantNotif.title,
+          description: tenantNotif.description,
+          category: 'caution',
+          timestamp: "À l'instant",
+          read: false,
+          actionText: 'Signer mon reçu',
+          targetTab: 'guarantees'
+        };
+        localStorage.setItem('locatrust_tenant_notifications', JSON.stringify([tenantViewNotif, ...(Array.isArray(parsedTenantNotifs) ? parsedTenantNotifs : [])]));
+      } catch {}
+
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
     } catch {}
   }

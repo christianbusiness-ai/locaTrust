@@ -22,7 +22,8 @@ import {
   UploadCloud,
   ZoomIn,
   FileText,
-  Download
+  Download,
+  PenTool
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
@@ -33,10 +34,11 @@ import { useAuth } from '@/src/context/AuthContext';
 import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
-import { declareCautionPayment } from '@/lib/cautionsStore';
+import { declareCautionPayment, signCautionReceipt } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { SignatureModal } from '@/components/common/SignatureModal';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -50,6 +52,7 @@ export const LocatairePaiementsView: React.FC = () => {
   // Modal States
   const [showDeclareModal, setShowDeclareModal] = useState<boolean>(false);
   const [showCautionModal, setShowCautionModal] = useState<boolean>(false);
+  const [isSigningCautionModalOpen, setIsSigningCautionModalOpen] = useState<boolean>(false);
   const [isSubmittingCaution, setIsSubmittingCaution] = useState<boolean>(false);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
@@ -747,15 +750,27 @@ export const LocatairePaiementsView: React.FC = () => {
             <PaymentStatusBadge status={myDeposit.status} />
 
             {(myDeposit.status === 'paye_complet' || myDeposit.status === 'caution_confirmee' || (myDeposit as any).status === 'valide') && (
-              <button
-                type="button"
-                onClick={() => handleDownloadCautionReceipt(myDeposit)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition-all active:scale-95 cursor-pointer"
-                title="Télécharger le reçu officiel de caution certifié (PDF)"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Télécharger le reçu</span>
-              </button>
+              myDeposit.tenant_signature ? (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadCautionReceipt(myDeposit)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition-all active:scale-95 cursor-pointer"
+                  title="Télécharger le reçu officiel de caution certifié (PDF)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Télécharger le reçu</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsSigningCautionModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-black shadow-md shadow-blue-500/20 animate-pulse transition-all active:scale-95 cursor-pointer"
+                  title="Apposer ma signature numérique sur le reçu de caution"
+                >
+                  <PenTool className="w-3.5 h-3.5" />
+                  <span>Signer mon reçu</span>
+                </button>
+              )
             )}
 
             {myDeposit.status !== 'paye_complet' && myDeposit.status !== 'caution_confirmee' && (
@@ -1366,6 +1381,27 @@ export const LocatairePaiementsView: React.FC = () => {
             </button>
           </div>
         </div>
+      )}
+      {/* MODAL DE SIGNATURE DU REÇU DE CAUTION (Solution 2B) */}
+      {isSigningCautionModalOpen && myDeposit && (
+        <SignatureModal
+          isOpen={true}
+          onClose={() => setIsSigningCautionModalOpen(false)}
+          onConfirmSignature={(signatureData) => {
+            signCautionReceipt(myDeposit.id, 'tenant', signatureData);
+            setIsSigningCautionModalOpen(false);
+            setDeposits(prev => prev.map(d => d.id === myDeposit.id ? { ...d, tenant_signature: signatureData } : d));
+            setSuccessModalMessage({
+              title: 'Reçu de caution signé avec succès !',
+              desc: 'Votre signature certifiée a été apposée sur le reçu officiel. Le téléchargement officiel est désormais débloqué.'
+            });
+            confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+          }}
+          signerName={user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'}
+          signerRole="locataire"
+          documentTitle="Reçu Officiel de Caution"
+          documentNumber={`REC-CAUT-${(myDeposit.id || 'OFFICIEL').toUpperCase()}`}
+        />
       )}
     </div>
   );
