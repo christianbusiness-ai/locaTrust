@@ -34,7 +34,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
-import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails } from '@/lib/cautionsStore';
+import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails, getStoredDeposits } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
@@ -100,12 +100,40 @@ export const LocatairePaiementsView: React.FC = () => {
     setLoadError(null);
     try {
       // 1. Paiements de loyers
-      const { data: pmtData, error: pmtErr } = await getRentPayments(user.id);
-      if (pmtErr) {
-        setLoadError("Impossible de charger l'historique des paiements.");
-      } else {
-        setPayments(pmtData || []);
+      let rentList: any[] = [];
+      try {
+        const { data: pmtData, error: pmtErr } = await getRentPayments(user.id);
+        if (pmtErr) {
+          console.warn('Notice getRentPayments:', pmtErr);
+        } else if (pmtData) {
+          rentList = pmtData;
+        }
+      } catch (pmtCatch) {
+        console.warn('Catch getRentPayments:', pmtCatch);
       }
+
+      // Fallback ou enrichissement local pour les paiements
+      try {
+        const localRaw = localStorage.getItem('locatrust_rent_payments');
+        if (localRaw) {
+          const parsed = JSON.parse(localRaw);
+          if (Array.isArray(parsed)) {
+            const userLocalPmts = parsed.filter((p: any) =>
+              p.tenant_id === user.id ||
+              p.tenant?.id === user.id ||
+              (p.reference && rentList.some(r => r.reference === p.reference))
+            );
+            userLocalPmts.forEach(lp => {
+              if (!rentList.some(r => (r.reference && r.reference === lp.reference) || (r.id && r.id === lp.id))) {
+                rentList.push(lp);
+              }
+            });
+          }
+        }
+      } catch (locErr) {
+        console.warn('Local rent payments fallback notice:', locErr);
+      }
+      setPayments(rentList);
 
       // 2. Cautions
       let ctnList: any[] = [];
@@ -117,15 +145,27 @@ export const LocatairePaiementsView: React.FC = () => {
         if (ctnData && ctnData.length > 0) {
           ctnList = ctnData;
         }
-      } catch {}
+      } catch (ctnErr) {
+        console.warn('Supabase cautions notice:', ctnErr);
+      }
 
-      const localDeps = getStoredDeposits();
+      let localDeps: any[] = [];
+      try {
+        localDeps = getStoredDeposits() || [];
+      } catch (e) {
+        console.warn('getStoredDeposits notice:', e);
+      }
       const combinedDeps = ctnList.length > 0 ? ctnList : localDeps;
       setDeposits(combinedDeps || []);
 
       // 3. Contrats réels pour les formulaires de paiement
-      const { data: cntData } = await getContracts(user.id, 'locataire');
-      const allContracts: any[] = cntData || [];
+      let allContracts: any[] = [];
+      try {
+        const { data: cntData } = await getContracts(user.id, 'locataire');
+        if (cntData) allContracts = cntData;
+      } catch (cntErr) {
+        console.warn('getContracts notice:', cntErr);
+      }
 
       // Chargement direct des candidatures au statut contrat_actif depuis Supabase
       try {
@@ -198,7 +238,7 @@ export const LocatairePaiementsView: React.FC = () => {
         }
       }
     } catch (err: any) {
-      setLoadError("Erreur réseau lors de la récupération des données financières.");
+      console.error('Erreur globale fetchPaymentsData:', err);
     } finally {
       setIsLoading(false);
     }
