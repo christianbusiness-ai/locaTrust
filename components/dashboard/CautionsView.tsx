@@ -922,8 +922,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     });
 
     if (res) {
-      // Auto-set owner signature for restitution
-      signRestitutionReceipt(depositToRestitute.id, 'owner', 'SIG_RESTITUTION_OWNER_CERTIFIED');
+      // Auto-set owner signature for restitution (using existing real signature if available)
+      signRestitutionReceipt(depositToRestitute.id, 'owner', depositToRestitute.owner_signature || 'SIG_RESTITUTION_OWNER_CERTIFIED');
       reloadDeposits();
 
       const tenantName = depositToRestitute.tenant?.full_name || 'Locataire';
@@ -1000,17 +1000,18 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       return;
     }
 
+    const resolved = resolveDepositContractDetails(dep);
     const isImp = dep.restitution_status === 'impute_loyers';
     const receiptNum = isImp ? `IMP-2026-${Math.floor(100000 + Math.random() * 900000)}` : `RRC-2026-${Math.floor(100000 + Math.random() * 900000)}`;
     await generateRestitutionReceiptPDF({
       receiptNumber: receiptNum,
-      contractNumber: getDisplayContractNumber(dep),
-      propertyTitle: dep.property?.title || 'Logement LocaTrust',
-      propertyAddress: dep.property?.description || 'Cocody Riviera, Abidjan',
-      ownerName: actorName,
-      ownerPhone: '+225 07 48 92 11 00',
-      tenantName: dep.tenant?.full_name || 'Locataire',
-      tenantPhone: dep.tenant?.phone || '+225 07 08 09 10 11',
+      contractNumber: resolved.contractNumber,
+      propertyTitle: resolved.propertyTitle,
+      propertyAddress: resolved.propertyAddress,
+      ownerName: resolved.ownerName || actorName,
+      ownerPhone: resolved.ownerPhone,
+      tenantName: resolved.tenantName,
+      tenantPhone: resolved.tenantPhone,
       initialCautionAmount: dep.amount_paid,
       amountRestituted: isImp ? 0 : (dep.amount_restituted ?? dep.amount_paid),
       deductionAmount: isImp ? dep.amount_paid : (dep.deduction_amount ?? 0),
@@ -1018,8 +1019,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       restitutionDate: dep.restituted_at ? new Date(dep.restituted_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
       paymentMethod: isImp ? 'Compensation sur loyers' : getDisplayPaymentMethod(dep),
       transactionReference: `TXN-${receiptNum}`,
-      ownerSignatureUrl: dep.restitution_owner_signature || 'SIG_OWNER',
-      tenantSignatureUrl: dep.restitution_tenant_signature || 'SIG_TENANT'
+      ownerSignatureUrl: dep.restitution_owner_signature || dep.owner_signature || 'SIG_OWNER',
+      tenantSignatureUrl: dep.restitution_tenant_signature || dep.tenant_signature || 'SIG_TENANT'
     });
   };
 

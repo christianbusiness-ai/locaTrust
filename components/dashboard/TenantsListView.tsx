@@ -28,6 +28,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { TenantCardSkeleton } from '@/components/common/SkeletonLoader';
+import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 
 import { UserAvatar } from '@/components/common/UserAvatar';
 
@@ -224,28 +225,43 @@ export const TenantsListView: React.FC = () => {
 
   // Download official PDF receipt
   const handleDownloadReceipt = async (rcp: TenantReceiptItem, t: TenantProfile) => {
+    const resolved = resolveRealReceiptData(
+      {
+        reference: rcp.receiptNumber,
+        contract_id: t.contractNumber,
+        tenant_id: t.id,
+        tenant: {
+          full_name: t.fullName,
+          phone: t.phone
+        }
+      },
+      user
+    );
+
     await generateOfficialReceiptPDF({
       receiptNumber: rcp.receiptNumber,
-      contractNumber: t.contractNumber,
-      contractToken: 'tok_cnt_ci2026_000123',
-      propertyTitle: t.propertyTitle,
-      propertyAddress: t.propertyAddress,
-      propertyReference: 'BIEN-000456',
-      propertyType: t.propertyTitle,
-      durationMonths: 12,
-      leaseStartDate: t.contractStartDate,
-      leaseEndDate: t.contractEndDate,
-      ownerName: 'Bailleur',
-      ownerCni: 'CI987654321',
-      ownerPhone: '05 05 43 21 00',
-      tenantName: t.fullName,
-      tenantCni: 'CI123456789',
-      tenantPhone: t.phone,
+      contractNumber: resolved.contractNumber,
+      contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+      propertyTitle: t.propertyTitle || resolved.propertyTitle,
+      propertyAddress: t.propertyAddress || resolved.propertyAddress,
+      propertyReference: resolved.propertyReference,
+      propertyType: resolved.propertyType,
+      durationMonths: resolved.durationMonths,
+      leaseStartDate: t.contractStartDate || resolved.leaseStartDate,
+      leaseEndDate: t.contractEndDate || resolved.leaseEndDate,
+      ownerName: resolved.ownerName,
+      ownerCni: resolved.ownerCni,
+      ownerPhone: resolved.ownerPhone,
+      tenantName: t.fullName || resolved.tenantName,
+      tenantCni: resolved.tenantCni,
+      tenantPhone: t.phone || resolved.tenantPhone,
       amount: rcp.amount,
       periodCovered: rcp.targetMonth,
       paymentDate: rcp.issuedDate,
       paymentMethod: rcp.paymentMethod,
-      transactionReference: rcp.reference
+      transactionReference: rcp.reference,
+      ownerSignatureUrl: resolved.ownerSignatureUrl,
+      tenantSignatureUrl: resolved.tenantSignatureUrl
     });
   };
 

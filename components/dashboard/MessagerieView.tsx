@@ -2448,7 +2448,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                 contract: {
                                   contractNumber: m.reminderContractNumber!,
                                   propertyTitle: activeContact.propertyTitle,
-                                  propertyAddress: 'Cocody Riviera 3, Abidjan',
+                                  propertyAddress: (activeContact as any)?.propertyAddress || 'Abidjan - Côte d\'Ivoire',
                                   rentAmount: 75000,
                                   cautionAmount: 150000,
                                   durationMonths: 12,

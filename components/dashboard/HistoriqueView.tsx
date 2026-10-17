@@ -34,6 +34,7 @@ import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { TableRowsSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
+import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 
 interface TenantReceiptItem {
   id: string;
@@ -171,30 +172,44 @@ export const HistoriqueView: React.FC = () => {
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
   const handleDownloadReceiptPDF = async (rcp: TenantReceiptItem, tenant: ComprehensiveTenant) => {
+    const resolved = resolveRealReceiptData(
+      {
+        reference: rcp.receipt_number,
+        contract_id: tenant.contract_number,
+        tenant_id: tenant.id,
+        tenant: {
+          full_name: tenant.full_name,
+          phone: tenant.phone
+        },
+        property_id: tenant.property_id
+      },
+      user
+    );
+
     await generateOfficialReceiptPDF({
       receiptNumber: rcp.receipt_number,
-      contractNumber: tenant.contract_number,
-      contractToken: 'tok_cnt_ci2026_000123',
-      propertyTitle: tenant.property_title,
-      propertyAddress: tenant.property_address,
-      propertyReference: 'BIEN-000456',
-      propertyType: tenant.property_title,
-      durationMonths: 12,
-      leaseStartDate: '01/01/2026',
-      leaseEndDate: '31/12/2026',
-      ownerName: user?.user_metadata?.full_name || "Bailleur",
-      ownerCni: 'CI987654321',
-      ownerPhone: '05 05 43 21 00',
-      tenantName: tenant.full_name,
-      tenantCni: 'CI123456789',
-      tenantPhone: tenant.phone,
+      contractNumber: resolved.contractNumber,
+      contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+      propertyTitle: tenant.property_title || resolved.propertyTitle,
+      propertyAddress: tenant.property_address || resolved.propertyAddress,
+      propertyReference: resolved.propertyReference,
+      propertyType: resolved.propertyType,
+      durationMonths: resolved.durationMonths,
+      leaseStartDate: resolved.leaseStartDate,
+      leaseEndDate: resolved.leaseEndDate,
+      ownerName: resolved.ownerName,
+      ownerCni: resolved.ownerCni,
+      ownerPhone: resolved.ownerPhone,
+      tenantName: tenant.full_name || resolved.tenantName,
+      tenantCni: resolved.tenantCni,
+      tenantPhone: tenant.phone || resolved.tenantPhone,
       amount: rcp.amount,
       periodCovered: rcp.target_month,
       paymentDate: rcp.issued_date,
       paymentMethod: rcp.payment_method,
       transactionReference: rcp.reference,
-      ownerSignatureUrl,
-      tenantSignatureUrl,
+      ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl,
+      tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl,
     });
   };
 
@@ -698,297 +713,327 @@ export const HistoriqueView: React.FC = () => {
       )}
 
       {/* MODAL APERÇU REÇU / QUITTANCE AVEC LE VRAI QR CODE OFFICIEL ET SIGNATURES */}
-      {previewReceipt && (
-        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
-            
-            <div className="flex items-center justify-between border-b pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
-                  <Receipt className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">Reçu Officiel Certifié LocaTrust</h3>
-                  <p className="text-xs text-slate-500">Quittance authentifiée avec signatures électroniques réelles</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setPreviewReceipt(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {previewReceipt && (() => {
+        const resolved = resolveRealReceiptData(
+          {
+            reference: previewReceipt.receipt.receipt_number,
+            contract_id: previewReceipt.tenant.contract_number,
+            tenant_id: previewReceipt.tenant.id,
+            tenant: {
+              full_name: previewReceipt.tenant.full_name,
+              phone: previewReceipt.tenant.phone
+            },
+            property_id: previewReceipt.tenant.property_id
+          },
+          user
+        );
+        const effectiveOwnerSig = ownerSignatureUrl || resolved.ownerSignatureUrl;
+        const effectiveTenantSig = tenantSignatureUrl || resolved.tenantSignatureUrl;
+        const hasBothSignatures = Boolean(effectiveOwnerSig) && Boolean(effectiveTenantSig);
 
-            {/* Document Body (Matching exact User Screenshot) */}
-            <div className="p-4 sm:p-6 rounded-2xl bg-white border border-slate-200 flex flex-col gap-4 text-xs font-sans text-slate-800 shadow-sm">
+        return (
+          <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
+            <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
               
-              {/* Header Branding with Official LocaTrust Logo from User Image */}
-              <div className="flex items-start justify-between border-b border-slate-200 pb-3">
-                <div className="flex flex-col">
-                  <img
-                    src="/locatrust-official-logo.png"
-                    alt="Logo Officiel LocaTrust"
-                    className="h-10 object-contain object-left"
-                  />
-                  <span className="text-[10px] text-slate-400 font-semibold mt-0.5">Votre bien, notre priorité</span>
-                </div>
-
-                <div className="text-right text-[10px] text-slate-500 leading-tight">
-                  <div className="font-extrabold text-slate-800 text-[11px]">Plateforme Sécurisée LocaTrust</div>
-                  <div className="text-slate-400">République de Côte d'Ivoire • Loi n° 2019-576</div>
-                  <div className="text-slate-400 font-mono">support@locatrust.ci • www.locatrust.ci</div>
-                </div>
-              </div>
-
-              {/* Header Banner (Light Sky Blue with Gold/Orange Accents) */}
-              <div className="bg-gradient-to-r from-sky-600 to-blue-700 text-white p-3.5 rounded-xl flex items-center justify-between shadow-sm border-b-2 border-amber-400">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-                    <FileText className="w-4 h-4 text-white" />
+              <div className="flex items-center justify-between border-b pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
+                    <Receipt className="w-5 h-5 text-blue-600" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-black tracking-wide uppercase">QUITTANCE / REÇU DE PAIEMENT DE LOYER</h4>
-                    <span className="text-[10px] text-sky-100 font-medium">Bail d'habitation certifié • LocaTrust</span>
+                    <h3 className="text-base font-black text-slate-900">Reçu Officiel Certifié LocaTrust</h3>
+                    <p className="text-xs text-slate-500">Quittance authentifiée avec signatures électroniques réelles</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[11px] font-black tracking-wider text-amber-200">N° {previewReceipt.receipt.receipt_number}</div>
-                  <div className="text-[9px] text-sky-100">
-                    Date d'émission : {previewReceipt.receipt.issued_date}
-                  </div>
-                </div>
+                <button
+                  onClick={() => setPreviewReceipt(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {/* Status Banner */}
-              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-emerald-900 font-bold">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <div className="text-[11px]">
-                  <span className="font-black text-emerald-800">PAIEMENT VALIDÉ</span> — Ce reçu est authentique et enregistré sur LocaTrust.
-                </div>
-              </div>
-
-              {/* 4 Cards Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
-                {/* Tenant Card */}
-                <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
-                  <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du locataire</span>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Nom et prénom :</span>
-                    <strong className="text-slate-900">{previewReceipt.tenant.full_name}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">CNI :</span>
-                    <span className="font-mono text-slate-700">CI123456789</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Téléphone :</span>
-                    <span className="text-slate-700">{previewReceipt.tenant.phone}</span>
-                  </div>
-                </div>
-
-                {/* Owner Card */}
-                <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
-                  <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du propriétaire</span>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Nom et prénom :</span>
-                    <strong className="text-slate-900">Bailleur</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">CNI :</span>
-                    <span className="font-mono text-slate-700">CI987654321</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Téléphone :</span>
-                    <span className="text-slate-700">05 05 43 21 00</span>
-                  </div>
-                </div>
-
-                {/* Property Card */}
-                <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
-                  <span className="font-extrabold text-blue-700 uppercase text-[10px]">Bien immobilier</span>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Type :</span>
-                    <strong className="text-slate-900">{previewReceipt.tenant.property_title}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Adresse :</span>
-                    <span className="text-slate-700">{previewReceipt.tenant.property_address}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Réf bien :</span>
-                    <span className="font-mono text-slate-700">BIEN-000456</span>
-                  </div>
-                </div>
-
-                {/* Contract Card */}
-                <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
-                  <span className="font-extrabold text-blue-700 uppercase text-[10px]">Contrat de bail</span>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">N° contrat :</span>
-                    <strong className="text-slate-900">{previewReceipt.tenant.contract_number}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Durée du bail :</span>
-                    <span className="text-slate-700">12 mois</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Période :</span>
-                    <span className="text-slate-700">{previewReceipt.tenant.contract_period}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Table Breakdown */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-[11px]">
-                  <thead className="bg-[#0B192C] text-white font-extrabold">
-                    <tr>
-                      <th className="p-2.5">Détail du paiement</th>
-                      <th className="p-2.5">Période(s) concernée(s)</th>
-                      <th className="p-2.5">Montant unitaire</th>
-                      <th className="p-2.5 text-right">Montant total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    <tr>
-                      <td className="p-2.5 font-bold text-slate-900">Loyer mensuel</td>
-                      <td className="p-2.5 text-slate-700">{previewReceipt.receipt.target_month}</td>
-                      <td className="p-2.5 font-medium text-slate-700">{formatFCFA(previewReceipt.receipt.amount)}</td>
-                      <td className="p-2.5 text-right font-black text-slate-900">{formatFCFA(previewReceipt.receipt.amount)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Amount Box + Payment Metadata */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-center">
-                  <span className="text-[10px] font-extrabold text-slate-500 uppercase">Montant payé</span>
-                  <span className="text-xl font-black text-blue-700 mt-0.5">{formatFCFA(previewReceipt.receipt.amount)}</span>
-                  <span className="text-[10px] text-slate-400 font-medium">({formatFCFA(previewReceipt.receipt.amount)} réglés)</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col gap-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Date du paiement :</span>
-                    <strong className="text-slate-800">{previewReceipt.receipt.issued_date}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Mode de paiement :</span>
-                    <strong className="text-slate-800">{previewReceipt.receipt.payment_method}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Réf transaction :</span>
-                    <span className="font-mono text-slate-700">{previewReceipt.receipt.reference}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Statut :</span>
-                    <span className="text-emerald-700 font-extrabold flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Payé
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* SIGNATURES & QR CODE CONTAINER (Exact Match Template) */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-200 items-center">
+              {/* Document Body */}
+              <div className="p-4 sm:p-6 rounded-2xl bg-white border border-slate-200 flex flex-col gap-4 text-xs font-sans text-slate-800 shadow-sm">
                 
-                {/* Propriétaire Signature */}
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center text-center">
-                  <span className="text-[10px] font-extrabold text-slate-500 uppercase">Signature du propriétaire</span>
-                  <div className="h-14 w-full flex items-center justify-center my-1">
-                    {ownerSignatureUrl ? (
-                      <img src={ownerSignatureUrl} alt="Signature propriétaire" className="max-h-12 max-w-full object-contain" />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setActiveSigningParty('proprietaire')}
-                        className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold text-[10px] flex items-center gap-1"
-                      >
-                        <PenTool className="w-3 h-3" />
-                        <span>Signer le reçu</span>
-                      </button>
-                    )}
+                {/* Header Branding */}
+                <div className="flex items-start justify-between border-b border-slate-200 pb-3">
+                  <div className="flex flex-col">
+                    <img
+                      src="/locatrust-official-logo.png"
+                      alt="Logo Officiel LocaTrust"
+                      className="h-10 object-contain object-left"
+                    />
+                    <span className="text-[10px] text-slate-400 font-semibold mt-0.5">Votre bien, notre priorité</span>
                   </div>
-                  <span className="font-bold text-slate-800 text-[10px]">Bailleur</span>
+
+                  <div className="text-right text-[10px] text-slate-500 leading-tight">
+                    <div className="font-extrabold text-slate-800 text-[11px]">Plateforme Sécurisée LocaTrust</div>
+                    <div className="text-slate-400">République de Côte d'Ivoire • Loi n° 2019-576</div>
+                    <div className="text-slate-400 font-mono">support@locatrust.ci • www.locatrust.ci</div>
+                  </div>
                 </div>
 
-                {/* Locataire Signature */}
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center text-center">
-                  <span className="text-[10px] font-extrabold text-slate-500 uppercase">Signature du locataire</span>
-                  <div className="h-14 w-full flex items-center justify-center my-1">
-                    {tenantSignatureUrl ? (
-                      <img src={tenantSignatureUrl} alt="Signature locataire" className="max-h-12 max-w-full object-contain" />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setActiveSigningParty('locataire')}
-                        className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold text-[10px] flex items-center gap-1"
-                      >
-                        <PenTool className="w-3 h-3" />
-                        <span>Signer le reçu</span>
-                      </button>
-                    )}
+                {/* Header Banner */}
+                <div className="bg-gradient-to-r from-sky-600 to-blue-700 text-white p-3.5 rounded-xl flex items-center justify-between shadow-sm border-b-2 border-amber-400">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black tracking-wide uppercase">QUITTANCE / REÇU DE PAIEMENT DE LOYER</h4>
+                      <span className="text-[10px] text-sky-100 font-medium">Bail d'habitation certifié • LocaTrust</span>
+                    </div>
                   </div>
-                  <span className="font-bold text-slate-800 text-[10px]">{previewReceipt.tenant.full_name}</span>
+                  <div className="text-right">
+                    <div className="text-[11px] font-black tracking-wider text-amber-200">N° {previewReceipt.receipt.receipt_number}</div>
+                    <div className="text-[9px] text-sky-100">
+                      Date d'émission : {previewReceipt.receipt.issued_date}
+                    </div>
+                  </div>
                 </div>
 
-                {/* QR Code Verification */}
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-2">
-                  <div className="w-14 h-14 bg-white border border-slate-300 rounded-lg p-1 shrink-0 flex items-center justify-center shadow-sm">
-                    <img src={LOCATRUST_QR_CODE_DATA_URL} alt="QR Code" className="w-full h-full object-contain" />
+                {/* Status Banner */}
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-2 text-emerald-900 font-bold">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div className="text-[11px]">
+                    <span className="font-black text-emerald-800">PAIEMENT VALIDÉ</span> — Ce reçu est authentique et enregistré sur LocaTrust.
                   </div>
-                  <div className="flex flex-col text-[9px] leading-tight text-slate-500">
-                    <strong className="text-slate-800 text-[10px]">Vérifier l'authenticité</strong>
-                    <span>Scannez ce QR code pour vérifier ce reçu sur LocaTrust.</span>
-                    <span className="text-blue-700 font-extrabold mt-1">LocaTrust • Sécurité</span>
+                </div>
+
+                {/* 4 Cards Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+                  {/* Tenant Card */}
+                  <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
+                    <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du locataire</span>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Nom et prénom :</span>
+                      <strong className="text-slate-900">{resolved.tenantName}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">CNI :</span>
+                      <span className="font-mono text-slate-700">{resolved.tenantCni}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Téléphone :</span>
+                      <span className="text-slate-700">{resolved.tenantPhone}</span>
+                    </div>
                   </div>
+
+                  {/* Owner Card */}
+                  <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
+                    <span className="font-extrabold text-blue-700 uppercase text-[10px]">Informations du propriétaire</span>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Nom et prénom :</span>
+                      <strong className="text-slate-900">{resolved.ownerName}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">CNI :</span>
+                      <span className="font-mono text-slate-700">{resolved.ownerCni}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Téléphone :</span>
+                      <span className="text-slate-700">{resolved.ownerPhone}</span>
+                    </div>
+                  </div>
+
+                  {/* Property Card */}
+                  <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
+                    <span className="font-extrabold text-blue-700 uppercase text-[10px]">Bien immobilier</span>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Type :</span>
+                      <strong className="text-slate-900">{resolved.propertyType}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Adresse :</span>
+                      <span className="text-slate-700">{resolved.propertyAddress}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Réf bien :</span>
+                      <span className="font-mono text-slate-700">{resolved.propertyReference}</span>
+                    </div>
+                  </div>
+
+                  {/* Contract Card */}
+                  <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex flex-col gap-1">
+                    <span className="font-extrabold text-blue-700 uppercase text-[10px]">Contrat de bail</span>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">N° contrat :</span>
+                      <strong className="text-slate-900">{resolved.contractNumber}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Durée du bail :</span>
+                      <span className="text-slate-700">{resolved.durationMonths} mois</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Période :</span>
+                      <span className="text-slate-700">{resolved.periodText}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table Breakdown */}
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="bg-[#0B192C] text-white font-extrabold">
+                      <tr>
+                        <th className="p-2.5">Détail du paiement</th>
+                        <th className="p-2.5">Période(s) concernée(s)</th>
+                        <th className="p-2.5">Montant unitaire</th>
+                        <th className="p-2.5 text-right">Montant total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      <tr>
+                        <td className="p-2.5 font-bold text-slate-900">Loyer mensuel</td>
+                        <td className="p-2.5 text-slate-700">{previewReceipt.receipt.target_month}</td>
+                        <td className="p-2.5 font-medium text-slate-700">{formatFCFA(previewReceipt.receipt.amount)}</td>
+                        <td className="p-2.5 text-right font-black text-slate-900">{formatFCFA(previewReceipt.receipt.amount)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Amount Box + Payment Metadata */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-center">
+                    <span className="text-[10px] font-extrabold text-slate-500 uppercase">Montant payé</span>
+                    <span className="text-xl font-black text-blue-700 mt-0.5">{formatFCFA(previewReceipt.receipt.amount)}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">({formatFCFA(previewReceipt.receipt.amount)} réglés)</span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col gap-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Date du paiement :</span>
+                      <strong className="text-slate-800">{previewReceipt.receipt.issued_date}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Mode de paiement :</span>
+                      <strong className="text-slate-800">{previewReceipt.receipt.payment_method}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Réf transaction :</span>
+                      <span className="font-mono text-slate-700">{previewReceipt.receipt.reference}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Statut :</span>
+                      <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Payé
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SIGNATURES & DYNAMIC SCANNABLE QR CODE CONTAINER */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-200 items-center">
+                  
+                  {/* Propriétaire Signature */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center text-center">
+                    <span className="text-[10px] font-extrabold text-slate-500 uppercase">Signature du propriétaire</span>
+                    <div className="h-14 w-full flex items-center justify-center my-1">
+                      {effectiveOwnerSig ? (
+                        <img src={effectiveOwnerSig} alt="Signature propriétaire" className="max-h-12 max-w-full object-contain" />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setActiveSigningParty('proprietaire')}
+                          className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold text-[10px] flex items-center gap-1"
+                        >
+                          <PenTool className="w-3 h-3" />
+                          <span>Signer le reçu</span>
+                        </button>
+                      )}
+                    </div>
+                    <span className="font-bold text-slate-800 text-[10px]">{resolved.ownerName}</span>
+                  </div>
+
+                  {/* Locataire Signature */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center text-center">
+                    <span className="text-[10px] font-extrabold text-slate-500 uppercase">Signature du locataire</span>
+                    <div className="h-14 w-full flex items-center justify-center my-1">
+                      {effectiveTenantSig ? (
+                        <img src={effectiveTenantSig} alt="Signature locataire" className="max-h-12 max-w-full object-contain" />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setActiveSigningParty('locataire')}
+                          className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold text-[10px] flex items-center gap-1"
+                        >
+                          <PenTool className="w-3 h-3" />
+                          <span>Signer le reçu</span>
+                        </button>
+                      )}
+                    </div>
+                    <span className="font-bold text-slate-800 text-[10px]">{resolved.tenantName}</span>
+                  </div>
+
+                  {/* QR Code Verification */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-2">
+                    <div className="w-14 h-14 bg-white border border-slate-300 rounded-lg p-0.5 shrink-0 flex items-center justify-center shadow-sm">
+                      <img src={resolved.qrDataUrl || LOCATRUST_QR_CODE_DATA_URL} alt="QR Code officiel" className="w-full h-full object-contain" />
+                    </div>
+                    <div className="flex flex-col text-[9px] leading-tight text-slate-500">
+                      <strong className="text-slate-800 text-[10px]">Vérifier l'authenticité</strong>
+                      <span>Scannez ce QR code pour vérifier ce reçu sur LocaTrust.</span>
+                      <span className="text-blue-700 font-extrabold mt-1">LocaTrust • Sécurité</span>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Note de bas de page */}
+                <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[10px] text-slate-400">
+                  <span>Ce reçu fait partie intégrante du contrat de bail n° {resolved.contractNumber}.</span>
+                  <span className="font-semibold text-slate-600">Merci pour votre confiance ! LocaTrust</span>
                 </div>
 
               </div>
 
-              {/* Note de bas de page */}
-              <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[10px] text-slate-400">
-                <span>Ce reçu fait partie intégrante du contrat de bail n° {previewReceipt.tenant.contract_number}.</span>
-                <span className="font-semibold text-slate-600">Merci pour votre confiance ! LocaTrust</span>
+              {/* Actions */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setPreviewReceipt(null)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 font-bold text-slate-700 text-xs hover:bg-slate-200 transition-colors"
+                >
+                  Fermer
+                </button>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleResendReceipt(previewReceipt.receipt.receipt_number, resolved.tenantName)}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{effectiveTenantSig ? "Renvoyer au Locataire" : "Transmettre pour signature"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!hasBothSignatures) {
+                        alert("Le téléchargement officiel nécessite la signature du propriétaire et du locataire.");
+                        return;
+                      }
+                      handleDownloadReceiptPDF(previewReceipt.receipt, previewReceipt.tenant);
+                    }}
+                    disabled={!hasBothSignatures}
+                    className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-md flex items-center gap-1.5 transition-all ${
+                      hasBothSignatures
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
+                        : 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed opacity-75'
+                    }`}
+                  >
+                    {hasBothSignatures ? <Download className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
+                    <span>{hasBothSignatures ? "Télécharger PDF (Officiel)" : "Télécharger PDF (Signatures requises)"}</span>
+                  </button>
+                </div>
               </div>
 
             </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between pt-2 border-t">
-              <button
-                type="button"
-                onClick={() => setPreviewReceipt(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 font-bold text-slate-700 text-xs"
-              >
-                Fermer
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleResendReceipt(previewReceipt.receipt.receipt_number, previewReceipt.tenant.full_name)}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-xs flex items-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Renvoyer au Locataire</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDownloadReceiptPDF(previewReceipt.receipt, previewReceipt.tenant)}
-                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-lg flex items-center gap-1.5"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Télécharger PDF (Officiel)</span>
-                </button>
-              </div>
-            </div>
-
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Interactive Signature Modal for HistoriqueView */}
       {activeSigningParty && (
