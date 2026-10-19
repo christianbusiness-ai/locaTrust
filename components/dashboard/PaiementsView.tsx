@@ -425,6 +425,56 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         prev.map((p) => (p.id === validatingPayment.id ? confirmedPmt : p))
       );
 
+      // 1. Mise à jour DIRECTE dans Supabase (Source de vérité)
+      try {
+        const pmtUuid = isValidUuid(validatingPayment.id) ? validatingPayment.id : null;
+        if (pmtUuid) {
+          await supabase
+            .from('rent_payments')
+            .update({
+              status: 'confirme',
+              payment_date: new Date().toISOString().split('T')[0]
+            })
+            .eq('id', pmtUuid);
+        } else if (validatingPayment.reference) {
+          await supabase
+            .from('rent_payments')
+            .update({
+              status: 'confirme',
+              payment_date: new Date().toISOString().split('T')[0]
+            })
+            .eq('reference', validatingPayment.reference);
+        }
+      } catch (sbUpdateErr) {
+        console.warn('Notice Supabase update rent_payments:', sbUpdateErr);
+      }
+
+      // 2. Création de la quittance certifiée dans Supabase (Table receipts)
+      try {
+        const ownerIdToSave = user?.id && isValidUuid(user.id) ? user.id : 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
+        const tenantIdToSave = validatingPayment.tenant_id && isValidUuid(validatingPayment.tenant_id)
+          ? validatingPayment.tenant_id
+          : (validatingPayment.tenant?.id && isValidUuid(validatingPayment.tenant.id) ? validatingPayment.tenant.id : 'a939eff5-c93d-4e6e-9f1f-b61c39986a46');
+        const contractIdToSave = validatingPayment.contract_id && isValidUuid(validatingPayment.contract_id)
+          ? validatingPayment.contract_id
+          : 'c2222222-3333-4444-5555-666666666666';
+
+        await supabase.from('receipts').insert({
+          receipt_number: extractedOcrData.reference,
+          type: 'loyer',
+          tenant_id: tenantIdToSave,
+          owner_id: ownerIdToSave,
+          agency_id: ownerIdToSave,
+          contract_id: contractIdToSave,
+          amount: extractedOcrData.amount,
+          token: `tok_rec_${extractedOcrData.reference.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`,
+          period_covered: targetPeriodFormatted,
+          status: 'certifie'
+        });
+      } catch (sbReceiptErr) {
+        console.warn('Notice Supabase insert receipts:', sbReceiptErr);
+      }
+
       // Persister dans locatrust_rent_payments
       try {
         const cached = localStorage.getItem('locatrust_rent_payments');

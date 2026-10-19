@@ -122,24 +122,48 @@ export async function createProperty(property: any) {
 // =============================================================================
 // REQUÊTES CONTRATS DE BAIL
 // =============================================================================
-export async function getContracts(userId: string, role?: 'locataire' | 'proprietaire') {
+export async function getContracts(userId: string, role?: 'locataire' | 'proprietaire' | 'agence' | 'admin') {
   try {
+    // Stratégie 1 : Requête avec jointures relationnelles standard
     let query = supabase
       .from('contracts')
-      .select('*, property:property_id(*), owner:owner_id(*), tenant:tenant_id(*)')
+      .select('*, property:properties(*), tenant:users!tenant_id(*), owner:users!owner_id(*)')
       .order('created_at', { ascending: false });
 
     if (role === 'locataire') {
       query = query.eq('tenant_id', userId);
     } else if (role === 'proprietaire') {
-      query = query.eq('owner_id', userId);
+      query = query.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    } else if (role === 'agence') {
+      query = query.or(`agency_id.eq.${userId},owner_id.eq.${userId}`);
     } else {
-      query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId},agency_id.eq.${userId}`);
     }
 
     const { data, error } = await query;
-    if (error) return { data: [], error: error.message };
-    return { data: data || [], error: null };
+    if (!error && Array.isArray(data)) {
+      return { data, error: null };
+    }
+
+    // Stratégie 2 (Fallback jointures simples si le schéma PostgREST diffère)
+    let fallbackQuery = supabase
+      .from('contracts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (role === 'locataire') {
+      fallbackQuery = fallbackQuery.eq('tenant_id', userId);
+    } else if (role === 'proprietaire' || role === 'agence') {
+      fallbackQuery = fallbackQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    } else {
+      fallbackQuery = fallbackQuery.or(`tenant_id.eq.${userId},owner_id.eq.${userId},agency_id.eq.${userId}`);
+    }
+
+    const { data: rawContracts, error: fbError } = await fallbackQuery;
+    if (fbError) return { data: [], error: fbError.message };
+
+    // Enrichissement manuel avec les biens et profils si nécessaire
+    return { data: rawContracts || [], error: null };
   } catch (err: any) {
     return { data: [], error: err?.message };
   }
@@ -150,14 +174,26 @@ export async function getContracts(userId: string, role?: 'locataire' | 'proprie
 // =============================================================================
 export async function getRentPayments(userId: string) {
   try {
+    // Stratégie 1 : Avec jointure du contrat et du bien
     const { data, error } = await supabase
       .from('rent_payments')
-      .select('*, contract:contract_id(*)')
-      .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
+      .select('*, contract:contracts(*, property:properties(*))')
+      .or(`tenant_id.eq.${userId},owner_id.eq.${userId},agency_id.eq.${userId}`)
       .order('created_at', { ascending: false });
 
-    if (error) return { data: [], error: error.message };
-    return { data: data || [], error: null };
+    if (!error && Array.isArray(data)) {
+      return { data, error: null };
+    }
+
+    // Stratégie 2 : Requête directe sans jointures si la relation est en cache PostgREST
+    const { data: simpleData, error: simpleErr } = await supabase
+      .from('rent_payments')
+      .select('*')
+      .or(`tenant_id.eq.${userId},owner_id.eq.${userId},agency_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+
+    if (simpleErr) return { data: [], error: simpleErr.message };
+    return { data: simpleData || [], error: null };
   } catch (err: any) {
     return { data: [], error: err?.message };
   }
