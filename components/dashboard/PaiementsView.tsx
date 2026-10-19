@@ -38,6 +38,8 @@ import { supabase } from '@/src/lib/supabase';
 import {
   MonthlyScheduleItem,
   processChronologicalRentPayment,
+  calculateRentPaymentAllocation,
+  RentAllocationResult,
   AllocationResult
 } from '@/lib/payments/rentScheduleEngine';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
@@ -292,6 +294,40 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
   const [isSubmittingValidation, setIsSubmittingValidation] = useState<boolean>(false);
 
+  // Répartition automatique proposée par LocaTrust pour le paiement en cours de vérification (Point 16)
+  const proposedAllocations = React.useMemo(() => {
+    if (!validatingPayment) return null;
+
+    if (Array.isArray((validatingPayment as any).allocations) && (validatingPayment as any).allocations.length > 0) {
+      return {
+        allocations: (validatingPayment as any).allocations,
+        periodsCoveredText: validatingPayment.target_month || formatPeriodCovered(validatingPayment.target_month),
+        remainingCredit: (validatingPayment as any).remaining_credit || 0
+      };
+    }
+
+    const contract = validatingPayment.contract || {
+      id: validatingPayment.contract_id || 'LT-2026-CI-000492',
+      contract_number: validatingPayment.contract_id || 'LT-2026-CI-000492',
+      monthly_rent: Number(validatingPayment.amount || 30000),
+      due_day: 5
+    };
+
+    const res = calculateRentPaymentAllocation({
+      contract,
+      paymentAmount: Number(validatingPayment.amount || 0),
+      paymentDate: validatingPayment.payment_date || validatingPayment.created_at || new Date(),
+      existingPayments: payments.filter(p => p.id !== validatingPayment.id),
+      includePendingDeclarations: false
+    });
+
+    return {
+      allocations: res.allocations,
+      periodsCoveredText: res.periods_covered_text,
+      remainingCredit: res.remaining_credit
+    };
+  }, [validatingPayment, payments]);
+
   const handleFinalizeValidation = async () => {
     if (!validatingPayment || !extractedOcrData) return;
     if (validatingPayment.status === 'confirme') {
@@ -324,7 +360,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           extractedOcrData.amount,
           extractedOcrData.payment_method,
           extractedOcrData.reference,
-          validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Bailleur',
+          validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Christian',
           validatingPayment.contract_id || 'LT-2026-CI-000492',
           validatingPayment.contract?.property?.title || 'Logement certifié'
         );
@@ -335,7 +371,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         result = {
           generatedReceipt: {
             receipt_number: extractedOcrData.reference,
-            periods_covered_text: validatingPayment.target_month || 'Période en cours'
+            periods_covered_text: proposedAllocations?.periodsCoveredText || validatingPayment.target_month || 'Période en cours'
           }
         };
       }
@@ -346,7 +382,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       if (effectiveOwnerSig) {
         persistOwnerSignature(effectiveOwnerSig, user?.id);
       }
-      const rawTargetPeriod = result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month || 'Période en cours';
+      const rawTargetPeriod = proposedAllocations?.periodsCoveredText || result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month || 'Période en cours';
       const targetPeriodFormatted = formatPeriodCovered(rawTargetPeriod);
 
       const confirmedPmt: RentPayment = {
@@ -356,6 +392,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         reference: extractedOcrData.reference,
         owner_signature_url: effectiveOwnerSig,
         target_month: targetPeriodFormatted,
+        allocations: proposedAllocations?.allocations || (validatingPayment as any).allocations,
         confirmed_at: new Date().toISOString(),
       };
 
@@ -1193,6 +1230,52 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* RÉPARTITION PROPOSÉE PAR LOCATRUST (Point 16) */}
+                {proposedAllocations && proposedAllocations.allocations.length > 0 && (
+                  <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-br from-blue-50/80 to-slate-50 border border-blue-200 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between border-b border-blue-100 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span className="text-xs font-black text-slate-900">
+                          Répartition proposée par LocaTrust
+                        </span>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-300">
+                        Statut : À vérifier
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto pr-1">
+                      {proposedAllocations.allocations.map((alloc: any, idx: number) => (
+                        <div key={idx} className="flex items-center justify-between p-2 rounded-xl bg-white border border-blue-100 text-xs shadow-xs">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <div className="flex flex-col">
+                              <span className="font-extrabold text-slate-800">{alloc.target_month}</span>
+                              <div className="flex items-center gap-1.5 text-[9px]">
+                                {alloc.is_past_unpaid && <span className="text-rose-600 font-black">Régularisation impayé</span>}
+                                {alloc.is_current_month && <span className="text-blue-600 font-black">Mois courant</span>}
+                                {alloc.is_advance && <span className="text-amber-600 font-black">Avance</span>}
+                                {alloc.status_after === 'partiel' && (
+                                  <span className="text-rose-600 font-black">Partiel (Reste : {formatFCFA(alloc.remaining_balance)})</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <span className="font-black text-emerald-700">{formatFCFA(alloc.amount_allocated)}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {proposedAllocations.remainingCredit > 0 && (
+                      <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-bold flex justify-between">
+                        <span>Crédit locatif restant :</span>
+                        <span className="font-black">{formatFCFA(proposedAllocations.remainingCredit)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* SECTION SIGNATURE MANUELLE DU BAILLEUR (OBLIGATOIRE POUR ÉMETTRE LA QUITTANCE) */}
                 <div className="p-3.5 sm:p-4 rounded-2xl bg-amber-50/80 border border-amber-200 flex flex-col gap-2.5">

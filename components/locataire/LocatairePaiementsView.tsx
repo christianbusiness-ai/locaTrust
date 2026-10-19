@@ -23,7 +23,8 @@ import {
   ZoomIn,
   FileText,
   Download,
-  PenTool
+  PenTool,
+  Sparkles
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput, formatPeriodCovered } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
@@ -42,6 +43,7 @@ import { getStoredOwnerSignature, persistTenantSignature } from '@/lib/signature
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getDeviceDate } from '@/lib/dateSystem';
+import { calculateRentPaymentAllocation, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -79,6 +81,23 @@ export const LocatairePaiementsView: React.FC = () => {
   const [method, setMethod] = useState('Wave CI');
   const [reference, setReference] = useState('');
   const [proofUrl, setProofUrl] = useState('');
+
+  // Contrat sélectionné pour la déclaration de loyer
+  const currentRentContract = React.useMemo(() => {
+    return userContracts.find(c => c.id === selectedContractId) || userContracts[0] || null;
+  }, [userContracts, selectedContractId]);
+
+  // Calcul automatique en temps réel de la répartition du paiement
+  const rentAllocationPreview = React.useMemo(() => {
+    if (!currentRentContract) return null;
+    return calculateRentPaymentAllocation({
+      contract: currentRentContract,
+      paymentAmount: Number(amount) || 0,
+      paymentDate: getDeviceDate(),
+      existingPayments: payments,
+      includePendingDeclarations: false
+    });
+  }, [currentRentContract, amount, payments]);
 
   // Caution Form State
   const [cautionContractId, setCautionContractId] = useState('');
@@ -413,17 +432,25 @@ export const LocatairePaiementsView: React.FC = () => {
       const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
       const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
 
+      const calculatedPeriodText = rentAllocationPreview?.periods_covered_text || targetMonth;
+      const calculatedAllocations = rentAllocationPreview?.allocations || [];
+
       const newPaymentData: any = {
         contract_id: contractUuid,
         tenant_id: tenantUuid,
         owner_id: ownerUuid,
-        target_month: targetMonth,
+        target_month: calculatedPeriodText,
         amount: amount,
         payment_date: new Date().toISOString().split('T')[0],
         payment_method: method,
         reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
         proof_url: proofUrl || null,
-        status: 'declare'
+        status: 'declare',
+        allocations: calculatedAllocations,
+        period_start: calculatedAllocations[0]?.target_month || calculatedPeriodText,
+        period_end: calculatedAllocations[calculatedAllocations.length - 1]?.target_month || calculatedPeriodText,
+        periods_covered: calculatedAllocations.map(a => a.target_month),
+        remaining_credit: rentAllocationPreview?.remaining_credit || 0
       };
 
       let savedPayment: any = null;
@@ -446,15 +473,16 @@ export const LocatairePaiementsView: React.FC = () => {
           await supabase.from('notifications').insert({
             user_id: ownerUuid,
             title: '💳 Nouveau règlement de loyer déclaré',
-            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) pour le mois de ${targetMonth}.`,
+            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) couvrant automatiquement : ${calculatedPeriodText}.`,
             type: 'paiement',
             read: false,
             payload: {
               payment_id: savedPayment.id,
               amount: amount,
-              month: targetMonth,
+              month: calculatedPeriodText,
               reference: newPaymentData.reference,
-              payment_method: method
+              payment_method: method,
+              allocations: calculatedAllocations
             }
           });
         } catch (err) {
@@ -466,7 +494,7 @@ export const LocatairePaiementsView: React.FC = () => {
       try {
         pushGlobalNotification({
           title: '💳 Nouveau règlement de loyer déclaré',
-          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) pour le mois de ${targetMonth}.`,
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) couvrant automatiquement : ${calculatedPeriodText}.`,
           category: 'paiement',
           targetRole: 'proprietaire',
           targetUserId: targetOwnerId || undefined,
@@ -474,7 +502,7 @@ export const LocatairePaiementsView: React.FC = () => {
         });
         pushGlobalNotification({
           title: '💳 Nouveau règlement de loyer déclaré',
-          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) pour le mois de ${targetMonth}.`,
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) couvrant automatiquement : ${calculatedPeriodText}.`,
           category: 'paiement',
           targetRole: 'agence',
           targetUserId: targetOwnerId || undefined,
@@ -493,7 +521,8 @@ export const LocatairePaiementsView: React.FC = () => {
           data: {
             payment: savedPayment,
             amount,
-            month: targetMonth
+            month: calculatedPeriodText,
+            allocations: calculatedAllocations
           }
         });
       } catch { }
@@ -509,8 +538,8 @@ export const LocatairePaiementsView: React.FC = () => {
           paymentMethod: method,
           reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
           date: new Date().toLocaleDateString('fr-FR'),
-          month: targetMonth,
-          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian yao Koffi',
+          month: calculatedPeriodText,
+          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian',
           tenantId: user?.id || 'usr_locataire',
           ownerId: targetOwnerId || 'usr_owner',
           proofUrl: proofUrl || undefined,
@@ -1627,20 +1656,7 @@ export const LocatairePaiementsView: React.FC = () => {
                 )}
               </div>
 
-              <div>
-                <label className="font-extrabold text-slate-800 block mb-1">Mois Cible (Calculé selon la date de votre bail)</label>
-                <select
-                  value={targetMonth}
-                  onChange={(e) => setTargetMonth(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
-                >
-                  {dynamicMonthOptions.map((opt) => (
-                    <option key={opt.value} value={opt.label}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1688,6 +1704,101 @@ export const LocatairePaiementsView: React.FC = () => {
               {method === 'Espèces' && (
                 <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-semibold flex items-center gap-2">
                   💵 Paiement en espèces — aucune référence de transaction requise.
+                </div>
+              )}
+
+              {/* PRÉVISUALISATION DE LA RÉPARTITION AUTOMATIQUE LOCATRUST */}
+              {rentAllocationPreview && !rentAllocationPreview.is_ambiguous && (
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-br from-blue-50/80 via-white to-slate-50 border border-blue-200 shadow-sm flex flex-col gap-3">
+                  <div className="flex items-center justify-between border-b border-blue-100 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+                      <span className="text-xs font-black text-slate-900">
+                        Répartition automatique de votre paiement
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-black text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded-full">
+                      Automatique
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-slate-50/80 p-2.5 rounded-xl border border-slate-200">
+                    <div>
+                      <span className="text-slate-500 font-semibold block text-[10px]">Loyer mensuel :</span>
+                      <span className="font-extrabold text-slate-900">{formatFCFA(rentAllocationPreview.monthly_rent)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-semibold block text-[10px]">Montant déclaré :</span>
+                      <span className="font-extrabold text-blue-700">{formatFCFA(amount)}</span>
+                    </div>
+                  </div>
+
+                  {rentAllocationPreview.allocations.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider">
+                        Période(s) couverte(s) selon votre contrat & historique :
+                      </span>
+                      <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
+                        {rentAllocationPreview.allocations.map((alloc, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2 rounded-xl bg-white border border-slate-200 text-xs shadow-xs"
+                          >
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <div className="flex flex-col">
+                                <span className="font-black text-slate-900">{alloc.target_month}</span>
+                                <div className="flex items-center gap-1.5 text-[10px]">
+                                  {alloc.is_past_unpaid && (
+                                    <span className="text-rose-600 font-black">Régularisation impayé</span>
+                                  )}
+                                  {alloc.is_current_month && (
+                                    <span className="text-blue-600 font-black">Mois courant</span>
+                                  )}
+                                  {alloc.is_advance && (
+                                    <span className="text-amber-600 font-black">Avance loyer</span>
+                                  )}
+                                  {alloc.status_after === 'partiel' && (
+                                    <span className="text-rose-600 font-black">
+                                      Partiel (Reste dû : {formatFCFA(alloc.remaining_balance)})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="font-black text-emerald-700 text-xs">
+                              {formatFCFA(alloc.amount_allocated)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {rentAllocationPreview.remaining_credit > 0 && (
+                        <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center justify-between">
+                          <span>Crédit locatif / Avance supplémentaire :</span>
+                          <span className="font-black">{formatFCFA(rentAllocationPreview.remaining_credit)}</span>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1.5 border-t border-blue-100 text-xs font-black text-slate-900">
+                        <span>Total couvert :</span>
+                        <span className="text-blue-700 text-sm font-black">{formatFCFA(rentAllocationPreview.total_allocated)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-amber-50 text-amber-800 text-[11px] text-center font-bold">
+                      Entrez un montant supérieur à 0 pour calculer automatiquement la répartition.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {rentAllocationPreview?.is_ambiguous && (
+                <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-[11px] leading-relaxed flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Vérification manuelle requise :</strong> Nous ne pouvons pas déterminer automatiquement la répartition de ce paiement ({rentAllocationPreview.ambiguity_reason}). Votre déclaration sera transmise directement au propriétaire/agence pour examen et affectation.
+                  </div>
                 </div>
               )}
 

@@ -171,8 +171,30 @@ export async function createRentPayment(payment: any) {
       .select()
       .single();
 
-    if (error) return { data: null, error: error.message };
-    return { data, error: null };
+    if (!error && data) {
+      return { data, error: null };
+    }
+
+    // Si Supabase signale une colonne inconnue (ex: allocations ou periods_covered)
+    if (error && (error.message?.includes('column') || error.code === 'PGRST204' || error.code === '42703')) {
+      const sanitized: any = {
+        contract_id: payment.contract_id,
+        tenant_id: payment.tenant_id,
+        owner_id: payment.owner_id,
+        target_month: payment.target_month,
+        amount: payment.amount,
+        payment_date: payment.payment_date,
+        reference: payment.reference,
+        proof_url: payment.proof_url,
+        status: payment.status
+      };
+      const retry = await supabase.from('rent_payments').insert(sanitized).select().single();
+      if (!retry.error && retry.data) {
+        return { data: { ...payment, ...retry.data }, error: null };
+      }
+    }
+
+    return { data: null, error: error?.message || 'Erreur insertion' };
   } catch (err: any) {
     return { data: null, error: err?.message };
   }
