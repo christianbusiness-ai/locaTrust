@@ -137,7 +137,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     const { data: serverContracts, error: cntErr } = await supabase
       .from('contracts')
       .select('*, property:property_id(*), owner:owner_id(*), tenant:tenant_id(*)')
-      .or(`owner_id.eq.${userId},tenant_id.eq.${userId}`)
+      .or(`owner_id.eq.${userId},tenant_id.eq.${userId},agency_id.eq.${userId}`)
       .order('created_at', { ascending: false });
 
     if (!cntErr && Array.isArray(serverContracts)) {
