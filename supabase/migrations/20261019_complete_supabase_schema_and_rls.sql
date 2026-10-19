@@ -131,6 +131,7 @@ BEGIN
     END IF;
 
     -- RECEIPTS
+    ALTER TABLE public.receipts DROP CONSTRAINT IF EXISTS receipts_status_check;
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'pdf_url' AND is_nullable = 'NO') THEN
         ALTER TABLE public.receipts ALTER COLUMN pdf_url DROP NOT NULL;
     END IF;
@@ -148,6 +149,51 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'status') THEN
         ALTER TABLE public.receipts ADD COLUMN status TEXT DEFAULT 'certifie';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'owner_signature') THEN
+        ALTER TABLE public.receipts ADD COLUMN owner_signature TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'owner_signed_at') THEN
+        ALTER TABLE public.receipts ADD COLUMN owner_signed_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'tenant_signature') THEN
+        ALTER TABLE public.receipts ADD COLUMN tenant_signature TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'tenant_signed_at') THEN
+        ALTER TABLE public.receipts ADD COLUMN tenant_signed_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'signer_identity') THEN
+        ALTER TABLE public.receipts ADD COLUMN signer_identity TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'signer_role') THEN
+        ALTER TABLE public.receipts ADD COLUMN signer_role TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'transmitted_at') THEN
+        ALTER TABLE public.receipts ADD COLUMN transmitted_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'finalized_at') THEN
+        ALTER TABLE public.receipts ADD COLUMN finalized_at TIMESTAMPTZ;
+    END IF;
+
+    -- RENT_PAYMENTS
+    ALTER TABLE public.rent_payments DROP CONSTRAINT IF EXISTS rent_payments_status_check;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'rent_payments' AND column_name = 'owner_signature') THEN
+        ALTER TABLE public.rent_payments ADD COLUMN owner_signature TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'rent_payments' AND column_name = 'owner_signed_at') THEN
+        ALTER TABLE public.rent_payments ADD COLUMN owner_signed_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'rent_payments' AND column_name = 'tenant_signature') THEN
+        ALTER TABLE public.rent_payments ADD COLUMN tenant_signature TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'rent_payments' AND column_name = 'tenant_signed_at') THEN
+        ALTER TABLE public.rent_payments ADD COLUMN tenant_signed_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'rent_payments' AND column_name = 'transmitted_at') THEN
+        ALTER TABLE public.rent_payments ADD COLUMN transmitted_at TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'rent_payments' AND column_name = 'finalized_at') THEN
+        ALTER TABLE public.rent_payments ADD COLUMN finalized_at TIMESTAMPTZ;
     END IF;
 
     -- NOTIFICATIONS

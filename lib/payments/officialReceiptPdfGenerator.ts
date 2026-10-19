@@ -272,26 +272,81 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       doc.text(`Date d'émission : ${cleanPdf(data.paymentDate, new Date().toLocaleDateString('fr-FR'))}`, 188, 40, { align: 'right' });
     }
 
-    // 3. PAIEMENT VALIDÉ BADGE (Soft Light Blue / Emerald Tint with Crisp High Contrast)
-    doc.setFillColor(240, 249, 255); // #F0F9FF Light Sky Blue tint
-    doc.setDrawColor(2, 132, 199); // #0284C7
-    doc.setLineWidth(0.4);
-    doc.roundedRect(15, 47, 180, 11, 2.5, 2.5, 'FD');
+    // Check if both parties have actually signed graphically
+    const isRealOwnerSig = Boolean(
+      data.ownerSignatureUrl &&
+      typeof data.ownerSignatureUrl === 'string' &&
+      (data.ownerSignatureUrl.startsWith('data:image/') ||
+       data.ownerSignatureUrl.startsWith('http://') ||
+       data.ownerSignatureUrl.startsWith('https://') ||
+       data.ownerSignatureUrl.startsWith('blob:'))
+    );
 
-    doc.setFillColor(2, 132, 199);
-    doc.circle(22, 52.5, 3.5, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
-    doc.setTextColor(255, 255, 255);
-    doc.text('✓', 21, 53.5);
+    const isRealTenantSig = Boolean(
+      data.tenantSignatureUrl &&
+      typeof data.tenantSignatureUrl === 'string' &&
+      (data.tenantSignatureUrl.startsWith('data:image/') ||
+       data.tenantSignatureUrl.startsWith('http://') ||
+       data.tenantSignatureUrl.startsWith('https://') ||
+       data.tenantSignatureUrl.startsWith('blob:'))
+    );
 
-    doc.setFontSize(8.5);
-    doc.setTextColor(15, 23, 42); // Crisp dark text
-    doc.text(isCaution ? 'CAUTION LÉGALE CONSIGNÉE & VALIDÉE' : 'PAIEMENT DE LOYER ENREGISTRÉ & VALIDÉ', 28, 51.5);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(2, 132, 199);
-    doc.text('Document officiel certifié conforme et authentique sur LocaTrust.', 28, 55.5);
+    const isFullySigned = isRealOwnerSig && isRealTenantSig;
+
+    // Watermark if unfinalized
+    if (!isFullySigned) {
+      try {
+        doc.saveGraphicsState();
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(22);
+        doc.setTextColor(226, 232, 240);
+        doc.text('DOCUMENT PROVISOIRE — EN ATTENTE DE CONTRE-SIGNATURE', 105, 145, { align: 'center', angle: 35 });
+        doc.restoreGraphicsState();
+      } catch {}
+    }
+
+    // 3. STATUT BADGE (Green if finalized, Amber if pending tenant signature)
+    if (isFullySigned) {
+      doc.setFillColor(236, 253, 245); // #ECFDF5 Emerald light
+      doc.setDrawColor(5, 150, 105); // #059669
+      doc.setLineWidth(0.4);
+      doc.roundedRect(15, 47, 180, 11, 2.5, 2.5, 'FD');
+
+      doc.setFillColor(5, 150, 105);
+      doc.circle(22, 52.5, 3.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(255, 255, 255);
+      doc.text('✓', 21, 53.5);
+
+      doc.setFontSize(8.5);
+      doc.setTextColor(6, 78, 59);
+      doc.text(isCaution ? 'CAUTION LÉGALE DÉFINITIVEMENT SCELLÉE & FINALISÉE' : 'PAIEMENT DE LOYER DÉFINITIVEMENT VALIDÉ & FINALISÉ', 28, 51.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(5, 150, 105);
+      doc.text('Document officiel certifié conforme, scellé électroniquement par les deux parties avec valeur probante.', 28, 55.5);
+    } else {
+      doc.setFillColor(254, 243, 199); // #FEF3C7 Amber light
+      doc.setDrawColor(217, 119, 6); // #D97706
+      doc.setLineWidth(0.4);
+      doc.roundedRect(15, 47, 180, 11, 2.5, 2.5, 'FD');
+
+      doc.setFillColor(217, 119, 6);
+      doc.circle(22, 52.5, 3.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(255, 255, 255);
+      doc.text('!', 21.2, 53.5);
+
+      doc.setFontSize(8.5);
+      doc.setTextColor(146, 64, 14);
+      doc.text('REÇU PROVISOIRE — EN ATTENTE DE CONTRE-SIGNATURE DU LOCATAIRE', 28, 51.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(180, 83, 9);
+      doc.text('Vérifié et signé par le bailleur/agence. En attente de la signature électronique du preneur.', 28, 55.5);
+    }
 
     // 4. FOUR INFORMATION CARDS (2x2 GRID)
     const cardW = 88;
@@ -500,67 +555,44 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
 
     doc.setFont('helvetica', 'bold');
     doc.text('Statut d\'encaissement', 105, summaryY + 23);
-    doc.setTextColor(5, 150, 105);
-    doc.text(':  Confirmé & Authentifié', 140, summaryY + 23);
+    if (isFullySigned) {
+      doc.setTextColor(5, 150, 105);
+      doc.text(':  Confirmé & Finalisé', 140, summaryY + 23);
+    } else {
+      doc.setTextColor(217, 119, 6);
+      doc.text(':  Vérifié (Attente signature locataire)', 140, summaryY + 23);
+    }
 
     // 7. SIGNATURES & QR CODE SECTION
     const sigY = 170;
 
-    const rawOwnerSig =
-      data.ownerSignatureUrl ||
-      getStoredOwnerSignature() ||
-      (typeof window !== 'undefined'
-        ? (localStorage.getItem('locatrust_owner_signature') ||
-           localStorage.getItem('locatrust_user_signature') ||
-           localStorage.getItem('locatrust_signature_url'))
-        : null);
+    const isAgency = data.ownerName?.toLowerCase().includes('agence') || (data as any)?.signerRole === 'agence';
 
-    const resolvedOwnerSig = getCertifiedSignatureDataUrl(
-      data.ownerName,
-      'bailleur',
-      rawOwnerSig,
-      `${safePaymentDate} à 14:20`
-    );
-
-    const rawTenantSig =
-      data.tenantSignatureUrl ||
-      getStoredTenantSignature() ||
-      (typeof window !== 'undefined'
-        ? (localStorage.getItem('locatrust_tenant_signature'))
-        : null);
-
-    const resolvedTenantSig = getCertifiedSignatureDataUrl(
-      data.tenantName,
-      'locataire',
-      rawTenantSig,
-      `${safePaymentDate} à 14:15`
-    );
-
-    // Signature Propriétaire Box
+    // Signature Propriétaire / Agence Box
     doc.setDrawColor(226, 232, 240);
     doc.setFillColor(255, 255, 255);
     doc.roundedRect(15, sigY, 52, 28, 2, 2, 'FD');
 
-    if (resolvedOwnerSig) {
+    if (isRealOwnerSig && data.ownerSignatureUrl) {
       try {
-        doc.addImage(resolvedOwnerSig, 'PNG', 18, sigY + 2, 46, 15);
+        doc.addImage(data.ownerSignatureUrl, 'PNG', 18, sigY + 2, 46, 15);
       } catch (err) {
-        console.warn('Could not add owner signature to receipt PDF:', err);
-        doc.setFont('helvetica', 'bolditalic');
-        doc.setFontSize(8);
-        doc.setTextColor(15, 39, 90);
-        doc.text(data.ownerName?.length <= 3 ? 'K. Kouamé' : data.ownerName, 20, sigY + 11);
+        console.warn('Could not add owner graphic signature to receipt PDF:', err);
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('Signature certifiée', 41, sigY + 10, { align: 'center' });
       }
     } else {
-      doc.setFont('helvetica', 'bolditalic');
-      doc.setFontSize(8);
-      doc.setTextColor(15, 39, 90);
-      doc.text(data.ownerName?.length <= 3 ? 'K. Kouamé' : data.ownerName, 20, sigY + 11);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(isAgency ? "Signature agence en attente" : "Signature propriétaire en attente", 41, sigY + 10, { align: 'center' });
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);
     doc.setTextColor(15, 23, 42);
-    doc.text('Signature du propriétaire', 18, sigY + 20);
+    doc.text(isAgency ? "Signature de l'agence" : "Signature du propriétaire", 18, sigY + 20);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
@@ -571,21 +603,21 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(70, sigY, 52, 28, 2, 2, 'FD');
 
-    if (resolvedTenantSig) {
+    if (isRealTenantSig && data.tenantSignatureUrl) {
       try {
-        doc.addImage(resolvedTenantSig, 'PNG', 73, sigY + 2, 46, 15);
+        doc.addImage(data.tenantSignatureUrl, 'PNG', 73, sigY + 2, 46, 15);
       } catch (err) {
-        console.warn('Could not add tenant signature to receipt PDF:', err);
-        doc.setFont('times', 'italic');
-        doc.setFontSize(10);
-        doc.setTextColor(30, 58, 138);
-        doc.text(data.tenantName, 75, sigY + 11);
+        console.warn('Could not add tenant graphic signature to receipt PDF:', err);
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('Signature certifiée', 96, sigY + 10, { align: 'center' });
       }
     } else {
-      doc.setFont('times', 'italic');
-      doc.setFontSize(10);
-      doc.setTextColor(30, 58, 138);
-      doc.text(data.tenantName, 75, sigY + 11);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('Signature locataire en attente', 96, sigY + 10, { align: 'center' });
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);

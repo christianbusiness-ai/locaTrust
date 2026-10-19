@@ -425,41 +425,39 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         prev.map((p) => (p.id === validatingPayment.id ? confirmedPmt : p))
       );
 
+      const now = new Date().toISOString();
+      const pmtUuid = isValidUuid(validatingPayment.id) ? validatingPayment.id : null;
+      const ownerIdToSave = user?.id && isValidUuid(user.id) ? user.id : 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
+      const tenantIdToSave = validatingPayment.tenant_id && isValidUuid(validatingPayment.tenant_id)
+        ? validatingPayment.tenant_id
+        : (validatingPayment.tenant?.id && isValidUuid(validatingPayment.tenant.id) ? validatingPayment.tenant.id : 'a939eff5-c93d-4e6e-9f1f-b61c39986a46');
+      const contractIdToSave = validatingPayment.contract_id && isValidUuid(validatingPayment.contract_id)
+        ? validatingPayment.contract_id
+        : 'c2222222-3333-4444-5555-666666666666';
+      const verificationToken = `tok_rec_${extractedOcrData.reference.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
+
       // 1. Mise à jour DIRECTE dans Supabase (Source de vérité)
       try {
-        const pmtUuid = isValidUuid(validatingPayment.id) ? validatingPayment.id : null;
+        const updatePayload: any = {
+          status: 'en_attente_signature_locataire',
+          owner_signature: effectiveOwnerSig,
+          owner_signature_url: effectiveOwnerSig,
+          owner_signed_at: now,
+          transmitted_at: now,
+          target_month: targetPeriodFormatted
+        };
         if (pmtUuid) {
-          await supabase
-            .from('rent_payments')
-            .update({
-              status: 'confirme',
-              payment_date: new Date().toISOString().split('T')[0]
-            })
-            .eq('id', pmtUuid);
+          await supabase.from('rent_payments').update(updatePayload).eq('id', pmtUuid);
         } else if (validatingPayment.reference) {
-          await supabase
-            .from('rent_payments')
-            .update({
-              status: 'confirme',
-              payment_date: new Date().toISOString().split('T')[0]
-            })
-            .eq('reference', validatingPayment.reference);
+          await supabase.from('rent_payments').update(updatePayload).eq('reference', validatingPayment.reference);
         }
       } catch (sbUpdateErr) {
         console.warn('Notice Supabase update rent_payments:', sbUpdateErr);
       }
 
-      // 2. Création de la quittance certifiée dans Supabase (Table receipts)
+      // 2. Création/mise à jour du reçu dans Supabase (Table receipts)
       try {
-        const ownerIdToSave = user?.id && isValidUuid(user.id) ? user.id : 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
-        const tenantIdToSave = validatingPayment.tenant_id && isValidUuid(validatingPayment.tenant_id)
-          ? validatingPayment.tenant_id
-          : (validatingPayment.tenant?.id && isValidUuid(validatingPayment.tenant.id) ? validatingPayment.tenant.id : 'a939eff5-c93d-4e6e-9f1f-b61c39986a46');
-        const contractIdToSave = validatingPayment.contract_id && isValidUuid(validatingPayment.contract_id)
-          ? validatingPayment.contract_id
-          : 'c2222222-3333-4444-5555-666666666666';
-
-        await supabase.from('receipts').insert({
+        await supabase.from('receipts').upsert({
           receipt_number: extractedOcrData.reference,
           type: 'loyer',
           tenant_id: tenantIdToSave,
@@ -467,12 +465,40 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           agency_id: ownerIdToSave,
           contract_id: contractIdToSave,
           amount: extractedOcrData.amount,
-          token: `tok_rec_${extractedOcrData.reference.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`,
+          token: verificationToken,
+          verification_token: verificationToken,
           period_covered: targetPeriodFormatted,
-          status: 'certifie'
-        });
+          status: 'EN_ATTENTE_SIGNATURE_LOCATAIRE',
+          owner_signature: effectiveOwnerSig,
+          owner_signed_at: now,
+          transmitted_at: now,
+          signer_identity: user?.user_metadata?.full_name || 'Propriétaire',
+          signer_role: (user as any)?.account_type === 'agence' ? 'agence' : 'proprietaire'
+        }, { onConflict: 'receipt_number' });
       } catch (sbReceiptErr) {
         console.warn('Notice Supabase insert receipts:', sbReceiptErr);
+      }
+
+      // 3. Notification réelle dans Supabase pour le locataire (Sections 5 & 6)
+      try {
+        await supabase.from('notifications').insert({
+          user_id: tenantIdToSave,
+          title: '📄 Un reçu de paiement vous a été transmis',
+          content: `Le propriétaire/l'agence a vérifié et signé le reçu pour votre règlement de ${formatFCFA(extractedOcrData.amount)} (${targetPeriodFormatted}). Votre signature est maintenant requise pour finaliser le document.`,
+          type: 'quittance_signature_requise',
+          read: false,
+          payload: {
+            action: 'sign_receipt',
+            paymentId: validatingPayment.id,
+            receiptNumber: extractedOcrData.reference,
+            reference: extractedOcrData.reference,
+            amount: extractedOcrData.amount,
+            month: targetPeriodFormatted,
+            token: verificationToken
+          }
+        });
+      } catch (notifErr) {
+        console.warn('Notice Supabase insert notification:', notifErr);
       }
 
       // Persister dans locatrust_rent_payments
@@ -609,52 +635,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         console.warn('Erreur notification locataire signature:', nErr);
       }
 
-      // Synchroniser avec Supabase & notifier le locataire
       try {
-        if (isValidUuid(validatingPayment.id)) {
-          const isoTarget = parseMonthToIsoDate(targetPeriodFormatted);
-          await supabase.from('rent_payments').update({
-            status: 'valide',
-            confirmed_at: new Date().toISOString(),
-            target_month: isoTarget
-          }).eq('id', validatingPayment.id);
-        }
-
-        const receiptPayload: any = {
-          receipt_number: extractedOcrData.reference,
-          type: 'loyer',
-          amount: extractedOcrData.amount,
-          token: `tok_rec_${Date.now()}`
-        };
-        if (isValidUuid(validatingPayment.contract_id)) receiptPayload.contract_id = validatingPayment.contract_id;
-        if (isValidUuid(tenantId)) receiptPayload.tenant_id = tenantId;
-        if (isValidUuid(ownerId)) receiptPayload.owner_id = ownerId;
-
-        await supabase.from('receipts').insert(receiptPayload);
-
-        // Notifier le locataire en base
-        if (isValidUuid(validatingPayment.tenant_id)) {
-          try {
-            await supabase.from('notifications').insert({
-              user_id: validatingPayment.tenant_id,
-              title: '🛡️ Quittance de loyer reçue pour signature',
-              content: `Votre quittance de loyer N° ${extractedOcrData.reference} (${formatFCFA(extractedOcrData.amount)}) a été validée par ${resolvedContract.ownerName}. Veuillez y apposer votre signature manuscrite pour la sceller.`,
-              type: 'quittance_signature_requise',
-              read: false,
-              payload: {
-                payment_id: validatingPayment.id,
-                receipt_number: extractedOcrData.reference,
-                amount: extractedOcrData.amount,
-                action: 'sign_receipt'
-              }
-            });
-          } catch (nErr) {
-            console.warn('Erreur notification Supabase:', nErr);
-          }
-        }
-
         // Diffuser l'événement en temps réel sur tous les appareils
-        await broadcastLiveEvent('PAYMENT_CONFIRMED', {
+        await broadcastLiveEvent('RECEIPT_TRANSMITTED', {
           paymentId: validatingPayment.id,
           targetUserId: validatingPayment.tenant_id,
           contractId: validatingPayment.contract_id,
@@ -668,7 +651,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           }
         });
       } catch (dbErr) {
-        console.warn('Supabase sync notice in payment confirmation:', dbErr);
+        console.warn('Supabase sync notice in payment transmission:', dbErr);
       }
 
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
@@ -1106,15 +1089,15 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => handleStartValidation(pmt)}
-                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95"
-                          title="Extraire les données de la preuve et générer la quittance"
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                          title="Vérifier le règlement et signer le reçu"
                         >
-                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                          <span>Valider & Générer Quittance</span>
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Vérifier</span>
                         </button>
                         <button
                           onClick={() => handleReject(pmt.id)}
-                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold text-xs flex items-center gap-1 transition-all"
+                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold text-xs flex items-center gap-1 transition-all cursor-pointer"
                         >
                           <XCircle className="w-3.5 h-3.5" />
                           <span>Refuser</span>
@@ -1122,13 +1105,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       </div>
                     ) : pmt.status === 'en_attente_signature_locataire' ? (
                       <div className="flex items-center justify-center gap-2">
-                        <span className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-500 text-[11px] font-bold border border-slate-200">
-                          Signé bailleur • Attente preneur
+                        <span className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 text-[11px] font-black border border-amber-200 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                          Signature du locataire en attente
                         </span>
                         <button
                           onClick={() => setPreviewingReceipt(pmt)}
-                          className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all"
-                          title="Visualiser la quittance en cours de contre-signature"
+                          className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                          title="Visualiser le reçu en cours de signature"
                         >
                           <Eye className="w-3.5 h-3.5 text-blue-600" />
                           <span>Aperçu</span>
@@ -1138,26 +1122,19 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => setPreviewingReceipt(pmt)}
-                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all"
-                          title="Visualiser la quittance officielle générée"
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                          title="Visualiser le reçu officiel finalisé"
                         >
                           <Eye className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Aperçu Quittance</span>
+                          <span>Aperçu</span>
                         </button>
                         <button
                           onClick={() => handleDownloadReceiptPDF(pmt)}
-                          className="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-extrabold text-xs flex items-center justify-center gap-1"
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 font-extrabold text-xs flex items-center justify-center gap-1 shadow-sm active:scale-95 transition-all cursor-pointer"
+                          title="Télécharger le reçu officiel finalisé"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          <span>PDF</span>
-                        </button>
-                        <button
-                          onClick={() => handleTransmitReceipt(pmt)}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-extrabold text-xs flex items-center justify-center gap-1 active:scale-95 transition-all"
-                          title="Transmettre la quittance au locataire"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>Envoyer</span>
+                          <span>Télécharger</span>
                         </button>
                       </div>
                     ) : (
@@ -1437,16 +1414,17 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={isSubmittingValidation}
+                  disabled={isSubmittingValidation || !ownerSignatureUrl}
                   onClick={handleFinalizeValidation}
-                  className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-lg flex items-center justify-center gap-2 transition-all ${
-                    isSubmittingValidation
-                      ? 'bg-emerald-400 cursor-not-allowed opacity-80'
+                  className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    isSubmittingValidation || !ownerSignatureUrl
+                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-80'
                       : 'bg-emerald-600 hover:bg-emerald-500 active:scale-95'
                   }`}
+                  title={!ownerSignatureUrl ? "Veuillez apposer votre signature avant de transmettre le reçu" : "Transmettre le reçu au locataire pour sa signature"}
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isSubmittingValidation ? 'Émission en cours...' : 'Confirmer & Émettre la Quittance'}</span>
+                  <Send className="w-4 h-4" />
+                  <span>{isSubmittingValidation ? 'Transmission en cours...' : 'Transmettre le reçu au locataire'}</span>
                 </button>
               </div>
             </div>

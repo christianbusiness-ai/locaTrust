@@ -44,6 +44,7 @@ import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getDeviceDate } from '@/lib/dateSystem';
 import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
+import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantReceiptReviewAndSignModal';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -883,20 +884,56 @@ export const LocatairePaiementsView: React.FC = () => {
         }
       } catch {}
 
-      // 4. Mettre à jour Supabase si possible
+      // 4. Mettre à jour Supabase (Tables rent_payments et receipts)
       try {
+        const updatePmt: any = {
+          status: 'confirme',
+          tenant_signature: signatureData,
+          tenant_signature_url: signatureData,
+          owner_signature: effectiveOwnerSig,
+          owner_signature_url: effectiveOwnerSig,
+          tenant_signed_at: now,
+          finalized_at: now,
+          confirmed_at: pmt.confirmed_at || now
+        };
         if (isValidUuid(pmt.id)) {
-          await supabase.from('rent_payments').update({
-            status: 'confirme',
-            tenant_signature_url: signatureData,
-            owner_signature_url: effectiveOwnerSig,
-            confirmed_at: pmt.confirmed_at || now
-          }).eq('id', pmt.id);
+          await supabase.from('rent_payments').update(updatePmt).eq('id', pmt.id);
+        } else if (pmt.reference) {
+          await supabase.from('rent_payments').update(updatePmt).eq('reference', pmt.reference);
         }
-      } catch {}
+
+        // Mettre à jour la table receipts
+        const updateReceipt: any = {
+          status: 'FINALISE',
+          tenant_signature: signatureData,
+          tenant_signed_at: now,
+          finalized_at: now
+        };
+        if (pmt.reference) {
+          await supabase.from('receipts').update(updateReceipt).eq('receipt_number', pmt.reference);
+        }
+        if (isValidUuid(pmt.contract_id)) {
+          await supabase.from('receipts').update(updateReceipt).eq('contract_id', pmt.contract_id);
+        }
+
+        // Mettre à jour la table document_verifications
+        if (pmt.reference) {
+          await supabase.from('document_verifications').update({
+            is_tenant_signed: true,
+            tenant_signed_at: now,
+            finalized_at: now,
+            status: 'valide'
+          }).eq('document_number', pmt.reference);
+        }
+      } catch (sbErr) {
+        console.warn('Notice Supabase update rent_payments/receipts:', sbErr);
+      }
 
       // 5. Retirer / marquer comme traitée la notification liée
       try {
+        if (user?.id && isValidUuid(user.id)) {
+          await supabase.from('notifications').update({ read: true }).eq('user_id', user.id).eq('type', 'quittance_signature_requise');
+        }
         const notifsRaw = localStorage.getItem('locatrust_notifications');
         if (notifsRaw) {
           const notifs = JSON.parse(notifsRaw);
@@ -916,14 +953,31 @@ export const LocatairePaiementsView: React.FC = () => {
         }
       } catch {}
 
-      // 6. Notifier le bailleur / l'agence
+      // 6. Notifier le bailleur / l'agence dans Supabase et localement
       try {
-        const ownerId = pmt.owner_id || pmt.contract?.owner_id || 'usr_owner';
+        const ownerId = pmt.owner_id || pmt.contract?.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
         const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Christian';
+        
+        if (isValidUuid(ownerId)) {
+          await supabase.from('notifications').insert({
+            user_id: ownerId,
+            title: '✅ Reçu de paiement finalisé',
+            content: `Le locataire ${tenantName} a signé le reçu N° ${pmt.reference}. Le document est officiellement scellé et téléchargeable par les deux parties.`,
+            type: 'paiement',
+            read: false,
+            payload: {
+              action: 'receipt_finalized',
+              paymentId: pmt.id,
+              receiptNumber: pmt.reference,
+              reference: pmt.reference
+            }
+          });
+        }
+
         const notifItem = {
           id: `notif_rec_signed_${Date.now()}`,
-          title: '✅ Quittance contresignée par le locataire',
-          description: `Le locataire ${tenantName} a apposé sa signature certifiée sur la quittance N° ${pmt.reference}. Le document est officiellement scellé et téléchargeable par tous.`,
+          title: '✅ Reçu de paiement finalisé',
+          description: `Le locataire ${tenantName} a apposé sa signature certifiée sur le reçu N° ${pmt.reference}. Le document est officiellement scellé et téléchargeable par tous.`,
           time: "À l'instant",
           timestamp: "À l'instant",
           unread: true,
@@ -1926,19 +1980,17 @@ export const LocatairePaiementsView: React.FC = () => {
         />
       )}
 
-      {/* MODAL DE SIGNATURE DE LA QUITTANCE DE LOYER PAR LE LOCATAIRE */}
+      {/* MODAL DE SIGNATURE DE LA QUITTANCE DE LOYER PAR LE LOCATAIRE (Point 7 du prompt) */}
       {isSigningReceiptModalOpen && signingReceiptPayment && (
-        <SignatureModal
+        <TenantReceiptReviewAndSignModal
           isOpen={true}
           onClose={() => {
             setIsSigningReceiptModalOpen(false);
             setSigningReceiptPayment(null);
           }}
+          payment={signingReceiptPayment}
+          currentUser={user}
           onConfirmSignature={(signatureData) => handleConfirmTenantReceiptSignature(signatureData)}
-          signerName={user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'}
-          signerRole="locataire"
-          documentTitle="Quittance de Paiement de Loyer"
-          documentNumber={signingReceiptPayment.reference || 'REC-OFFICIEL'}
         />
       )}
     </div>

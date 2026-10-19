@@ -157,8 +157,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 payment_date: new Date(r.created_at || Date.now()).toLocaleDateString('fr-FR'),
                 transaction_ref: r.token || r.id.slice(0, 12),
                 status: 'certifie',
-                owner_signed: true,
-                tenant_signed: true
+                owner_signed: Boolean(r.owner_signature || r.owner_signature_url),
+                tenant_signed: Boolean(r.tenant_signature || r.tenant_signature_url)
               });
             }
           }
@@ -194,8 +194,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 payment_date: new Date(p.payment_date || Date.now()).toLocaleDateString('fr-FR'),
                 transaction_ref: p.reference || ref,
                 status: 'certifie',
-                owner_signed: Boolean(p.owner_signature_url),
-                tenant_signed: Boolean(p.tenant_signature_url)
+                owner_signed: Boolean(p.owner_signature || p.owner_signature_url),
+                tenant_signed: Boolean(p.tenant_signature || p.tenant_signature_url)
               });
             }
           }

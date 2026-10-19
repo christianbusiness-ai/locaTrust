@@ -353,77 +353,79 @@ export const generateRestitutionReceiptPDF = async (data: RestitutionReceiptData
     // 6. SIGNATURES & SCANNABLE QR CODE
     const sigY = totalBoxY + 31;
 
-    const resolvedOwnerSig = getCertifiedSignatureDataUrl(
-      data.ownerName,
-      'bailleur',
-      data.ownerSignatureUrl,
-      `${data.restitutionDate || '30/09/2026'} à 15:30`
+    const isRealOwnerSig = Boolean(
+      data.ownerSignatureUrl &&
+      typeof data.ownerSignatureUrl === 'string' &&
+      (data.ownerSignatureUrl.startsWith('data:image/') ||
+       data.ownerSignatureUrl.startsWith('http') ||
+       data.ownerSignatureUrl.startsWith('blob:'))
     );
 
-    const resolvedTenantSig = getCertifiedSignatureDataUrl(
-      data.tenantName,
-      'locataire',
-      data.tenantSignatureUrl,
-      `${data.restitutionDate || '30/09/2026'} à 15:45`
+    const isRealTenantSig = Boolean(
+      data.tenantSignatureUrl &&
+      typeof data.tenantSignatureUrl === 'string' &&
+      (data.tenantSignatureUrl.startsWith('data:image/') ||
+       data.tenantSignatureUrl.startsWith('http') ||
+       data.tenantSignatureUrl.startsWith('blob:'))
     );
 
     // Signature Bailleur
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(15, sigY, 52, 26, 2, 2, 'FD');
-    if (resolvedOwnerSig) {
+    if (isRealOwnerSig && data.ownerSignatureUrl) {
       try {
-        doc.addImage(resolvedOwnerSig, 'PNG', 18, sigY + 2, 46, 15);
+        doc.addImage(data.ownerSignatureUrl, 'PNG', 18, sigY + 2, 46, 14);
       } catch (err) {
         console.warn('Signature error:', err);
-        doc.setFont('times', 'italic');
-        doc.setFontSize(10);
-        doc.setTextColor(15, 39, 90);
-        doc.text(data.ownerName, 20, sigY + 11);
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text('Signature certifiée', 41, sigY + 10, { align: 'center' });
       }
     } else {
-      doc.setFont('times', 'italic');
-      doc.setFontSize(10);
-      doc.setTextColor(15, 39, 90);
-      doc.text(data.ownerName, 20, sigY + 11);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('Signature en attente', 41, sigY + 10, { align: 'center' });
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);
     doc.setTextColor(15, 23, 42);
-    doc.text('Signature du bailleur', 18, sigY + 20);
+    doc.text('Signature du bailleur', 18, sigY + 19);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text(data.ownerName, 18, sigY + 24);
+    doc.text(data.ownerName, 18, sigY + 23);
 
     // Signature Locataire
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(70, sigY, 52, 26, 2, 2, 'FD');
-    if (resolvedTenantSig) {
+    if (isRealTenantSig && data.tenantSignatureUrl) {
       try {
-        doc.addImage(resolvedTenantSig, 'PNG', 73, sigY + 2, 46, 15);
+        doc.addImage(data.tenantSignatureUrl, 'PNG', 73, sigY + 2, 46, 14);
       } catch (err) {
         console.warn('Signature error:', err);
-        doc.setFont('times', 'italic');
-        doc.setFontSize(10);
-        doc.setTextColor(30, 58, 138);
-        doc.text(data.tenantName, 75, sigY + 11);
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text('Signature certifiée', 96, sigY + 10, { align: 'center' });
       }
     } else {
-      doc.setFont('times', 'italic');
-      doc.setFontSize(10);
-      doc.setTextColor(30, 58, 138);
-      doc.text(data.tenantName, 75, sigY + 11);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('Signature en attente', 96, sigY + 10, { align: 'center' });
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);
     doc.setTextColor(15, 23, 42);
-    doc.text('Pour accord & décharge du locataire', 73, sigY + 20);
+    doc.text('Pour accord & décharge du locataire', 73, sigY + 19);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text(data.tenantName, 73, sigY + 24);
+    doc.text(data.tenantName, 73, sigY + 23);
 
     // QR Code Verification (REAL 100% SCANNABLE QR CODE)
     doc.setFillColor(255, 255, 255);

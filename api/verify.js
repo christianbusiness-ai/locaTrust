@@ -361,29 +361,36 @@ export default async function handler(req, res) {
       const rList = await rRes.json();
       if (Array.isArray(rList) && rList.length > 0) {
         const rData = rList[0];
+        const isOwnerSigned = Boolean(rData.owner_signature || rData.owner_signature_url);
+        const isTenantSigned = Boolean(rData.tenant_signature || rData.tenant_signature_url);
+        const isFullyFinalized = isOwnerSigned && isTenantSigned;
+
         const rec = {
           type: 'recu',
-          subType: 'quittance',
-          token: rData.token || queryToken,
+          subType: rData.type || 'quittance',
+          token: rData.token || rData.verification_token || queryToken,
           receiptNumber: rData.receipt_number || queryToken,
-          contractNumber: 'LT-2026-CI-000492',
-          status: 'valide',
-          periodCovered: 'Quittance officielle certifiée',
+          contractNumber: rData.contract_id || 'LT-2026-CI-000492',
+          status: isFullyFinalized ? 'valide' : 'en_attente',
+          periodCovered: rData.period_covered || 'Période courante',
           amountPaid: Number(rData.amount || 30000),
           currency: 'FCFA',
           paymentDate: new Date(rData.created_at || Date.now()).toLocaleDateString('fr-FR'),
-          paymentMethod: 'Paiement Validé',
+          paymentMethod: rData.payment_method || 'Paiement Validé',
           transactionReference: rData.receipt_number || queryToken,
           parties: {
-            ownerName: 'KK',
-            tenantName: 'Christian'
+            ownerName: rData.signer_identity || 'KK',
+            tenantName: 'Christian',
+            isOwnerSigned,
+            isTenantSigned
           },
           property: {
             type: 'Logement LocaTrust',
-            location: 'Abidjan - Côte d\'Ivoire'
+            location: '100 villard, Yamoussoukro - Côte d\'Ivoire'
           },
-          isValidatedByOwner: true,
-          validatedAt: new Date(rData.created_at || Date.now()).toLocaleString('fr-FR')
+          isValidatedByOwner: isOwnerSigned,
+          validatedAt: rData.owner_signed_at ? new Date(rData.owner_signed_at).toLocaleString('fr-FR') : new Date(rData.created_at || Date.now()).toLocaleString('fr-FR'),
+          finalizedAt: rData.finalized_at ? new Date(rData.finalized_at).toLocaleString('fr-FR') : null
         };
 
         return res.status(200).json({

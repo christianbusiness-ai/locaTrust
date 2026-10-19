@@ -241,6 +241,17 @@ export function resolveRealReceiptData(
   const formattedPeriod = formatPeriodCovered(item?.target_month || item?.period_covered || item?.periods_covered_text);
 
   // --- Signatures Manuscrites ---
+  // Pour un reçu/quittance, on ne doit JAMAIS hériter la signature du locataire depuis le contrat de bail,
+  // car cela faisait apparaître à tort la signature du locataire avant qu'il n'ait réellement signé le reçu !
+  const isReceiptOrPayment = Boolean(
+    item?.receipt_number ||
+    item?.receiptNumber ||
+    item?.type === 'loyer' ||
+    item?.type === 'caution' ||
+    item?.payment_method ||
+    item?.target_month
+  );
+
   const ownerSignatureUrl =
     item?.owner_signature ||
     item?.owner_signature_url ||
@@ -262,15 +273,17 @@ export function resolveRealReceiptData(
     item?.tenant_signature ||
     item?.tenant_signature_url ||
     item?.tenantSignatureUrl ||
-    matchedContract?.tenant_signature ||
-    matchedContract?.tenant_signature_url ||
-    matchedContract?.tenantSignatureUrl ||
-    matchedApplication?.applicant_signature ||
-    matchedApplication?.tenant_signature ||
-    getStoredTenantSignature(matchedContract?.tenant_id || item?.tenant_id) ||
-    getStoredTenantSignature() ||
-    (typeof window !== 'undefined'
-      ? (localStorage.getItem('locatrust_tenant_signature'))
+    (!isReceiptOrPayment
+      ? (matchedContract?.tenant_signature ||
+         matchedContract?.tenant_signature_url ||
+         matchedContract?.tenantSignatureUrl ||
+         matchedApplication?.applicant_signature ||
+         matchedApplication?.tenant_signature ||
+         getStoredTenantSignature(matchedContract?.tenant_id || item?.tenant_id) ||
+         getStoredTenantSignature() ||
+         (typeof window !== 'undefined'
+           ? localStorage.getItem('locatrust_tenant_signature')
+           : null))
       : null);
 
   // --- QR Code Dynamique Scannable ---
