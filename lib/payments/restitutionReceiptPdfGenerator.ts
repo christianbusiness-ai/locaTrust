@@ -430,7 +430,26 @@ export const generateRestitutionReceiptPDF = async (data: RestitutionReceiptData
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(125, sigY, 70, 26, 2, 2, 'FD');
     
-    const verificationUrl = `https://locatrust.ci/verification/restitution/${data.receiptNumber}`;
+    // Enregistrement dans le registre de vérification cryptographique
+    const { registerReceiptInVerificationRegistry } = await import('@/lib/verificationRegistry');
+    const { getAbsoluteVerificationUrl } = await import('@/lib/qrCode');
+
+    const verification = registerReceiptInVerificationRegistry({
+      receiptNumber: data.receiptNumber,
+      contractNumber: data.contractNumber,
+      periodCovered: 'Restitution de Dépôt de Garantie',
+      amountPaid: data.amountRestituted,
+      paymentMethod: data.paymentMethod,
+      transactionReference: data.transactionReference,
+      ownerName: data.ownerName,
+      tenantName: data.tenantName,
+      propertyTitle: data.propertyTitle,
+      propertyAddress: data.propertyAddress,
+      subType: 'restitution',
+      status: 'valide'
+    });
+
+    const verificationUrl = getAbsoluteVerificationUrl(`/verify/${verification.token || data.receiptNumber}`);
     try {
       const qrDataUrl = generateScannableQrCodeDataUrl(verificationUrl, { size: 300, margin: 2 });
       doc.addImage(qrDataUrl, 'PNG', 127, sigY + 3, 20, 20);
@@ -461,7 +480,7 @@ export const generateRestitutionReceiptPDF = async (data: RestitutionReceiptData
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(4.8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`locatrust.ci/v/r/${data.receiptNumber}`, 149, sigY + 24.5);
+    doc.text(`locatrust.site/verify/${verification.token.slice(0, 16)}...`, 149, sigY + 24.5);
 
     // 7. FOOTER NOTE
     const footerY = 275;

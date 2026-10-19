@@ -633,7 +633,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(4.8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`locatrust.com/verify/recu/${verification.token.slice(0, 18)}...`, 150, sigY + 26);
+    doc.text(`locatrust.site/verify/${verification.token.slice(0, 18)}...`, 150, sigY + 26);
 
     // 8. FOOTER NOTE
     const footerY = 205;

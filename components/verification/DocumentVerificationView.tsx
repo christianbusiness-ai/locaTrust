@@ -49,6 +49,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [contractData, setContractData] = useState<ContractVerificationRecord | undefined>(undefined);
+  const [receiptData, setReceiptData] = useState<ReceiptVerificationRecord | undefined>(undefined);
   const [verificationResult, setVerificationResult] = useState<UnifiedVerificationResult | null>(null);
 
   const fetchDocument = useCallback(async () => {
