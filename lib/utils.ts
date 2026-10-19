@@ -58,3 +58,76 @@ export function generateUniqueContractNumber(prefix = 'LT'): string {
   return `${prefix}-${year}-CI-${timeSlice}${rand}`;
 }
 
+const MONTHS_FR = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+];
+
+/**
+ * Formate proprement une période ou un mois de loyer en français normé
+ * Exemples :
+ * - "2026-10-01" -> "Octobre 2026"
+ * - "2026-10" -> "Octobre 2026"
+ * - "10/2026" -> "Octobre 2026"
+ * - "Octobre 2026" -> "Octobre 2026"
+ */
+export function formatPeriodCovered(period: string | undefined | null): string {
+  if (!period) return 'Mois en cours';
+  const clean = String(period).trim();
+  if (!clean) return 'Mois en cours';
+
+  // Si contient plusieurs périodes séparées par virgule ou 'et'
+  if (clean.includes(',') || clean.includes(' et ')) {
+    const parts = clean.split(/,|\bet\b/).map(p => p.trim()).filter(Boolean);
+    const formattedParts = parts.map(formatSinglePeriod);
+    if (formattedParts.length === 1) return formattedParts[0];
+    if (formattedParts.length > 1) {
+      return `${formattedParts.slice(0, -1).join(', ')} et ${formattedParts[formattedParts.length - 1]}`;
+    }
+  }
+
+  return formatSinglePeriod(clean);
+}
+
+function formatSinglePeriod(str: string): string {
+  if (!str) return 'Mois en cours';
+  const clean = str.trim();
+
+  // Si contient déjà le nom d'un mois en français (ex: "Octobre 2026")
+  const lower = clean.toLowerCase();
+  for (let i = 0; i < MONTHS_FR.length; i++) {
+    if (lower.includes(MONTHS_FR[i].toLowerCase())) {
+      return clean.charAt(0).toUpperCase() + clean.slice(1);
+    }
+  }
+
+  // Format YYYY-MM-DD ou YYYY-MM
+  const ymdMatch = clean.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/);
+  if (ymdMatch) {
+    const year = ymdMatch[1];
+    const month = parseInt(ymdMatch[2], 10);
+    if (month >= 1 && month <= 12) {
+      return `${MONTHS_FR[month - 1]} ${year}`;
+    }
+  }
+
+  // Format DD/MM/YYYY ou MM/YYYY
+  const dmyMatch = clean.match(/^(?:\d{1,2}\/)?(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    const month = parseInt(dmyMatch[1], 10);
+    const year = dmyMatch[2];
+    if (month >= 1 && month <= 12) {
+      return `${MONTHS_FR[month - 1]} ${year}`;
+    }
+  }
+
+  // Tentative via objet Date
+  const d = new Date(clean);
+  if (!isNaN(d.getTime())) {
+    const lbl = d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    return lbl.charAt(0).toUpperCase() + lbl.slice(1);
+  }
+
+  return clean;
+}
+

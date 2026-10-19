@@ -26,7 +26,7 @@ import {
   Mail,
   PenTool
 } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, formatPeriodCovered } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
@@ -35,6 +35,7 @@ import { SignatureModal } from '@/components/common/SignatureModal';
 import { TableRowsSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
+import { getStoredOwnerSignature, getStoredTenantSignature, persistOwnerSignature } from '@/lib/signatureHelper';
 
 interface TenantReceiptItem {
   id: string;
@@ -204,12 +205,12 @@ export const HistoriqueView: React.FC = () => {
       tenantCni: resolved.tenantCni,
       tenantPhone: tenant.phone || resolved.tenantPhone,
       amount: rcp.amount,
-      periodCovered: rcp.target_month,
+      periodCovered: formatPeriodCovered(rcp.target_month),
       paymentDate: rcp.issued_date,
       paymentMethod: rcp.payment_method,
       transactionReference: rcp.reference,
-      ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl,
-      tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl,
+      ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id),
+      tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl || getStoredTenantSignature(),
     });
   };
 
@@ -660,7 +661,7 @@ export const HistoriqueView: React.FC = () => {
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-black text-slate-900">{rcp.receipt_number}</span>
                           <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-extrabold">
-                            {rcp.target_month}
+                            {formatPeriodCovered(rcp.target_month)}
                           </span>
                         </div>
                         <span className="text-xs text-slate-600 mt-0.5">
@@ -727,8 +728,8 @@ export const HistoriqueView: React.FC = () => {
           },
           user
         );
-        const effectiveOwnerSig = ownerSignatureUrl || resolved.ownerSignatureUrl;
-        const effectiveTenantSig = tenantSignatureUrl || resolved.tenantSignatureUrl;
+        const effectiveOwnerSig = ownerSignatureUrl || previewReceipt.receipt.owner_signature_url || resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id);
+        const effectiveTenantSig = tenantSignatureUrl || previewReceipt.receipt.tenant_signature_url || resolved.tenantSignatureUrl || getStoredTenantSignature();
         const hasBothSignatures = Boolean(effectiveOwnerSig) && Boolean(effectiveTenantSig);
 
         return (
@@ -886,7 +887,7 @@ export const HistoriqueView: React.FC = () => {
                     <tbody className="divide-y divide-slate-100 bg-white">
                       <tr>
                         <td className="p-2.5 font-bold text-slate-900">Loyer mensuel</td>
-                        <td className="p-2.5 text-slate-700">{previewReceipt.receipt.target_month}</td>
+                        <td className="p-2.5 text-slate-700 font-semibold">{formatPeriodCovered(previewReceipt.receipt.target_month || resolved.formattedPeriod || resolved.periodCovered)}</td>
                         <td className="p-2.5 font-medium text-slate-700">{formatFCFA(previewReceipt.receipt.amount)}</td>
                         <td className="p-2.5 text-right font-black text-slate-900">{formatFCFA(previewReceipt.receipt.amount)}</td>
                       </tr>

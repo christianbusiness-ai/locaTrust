@@ -15,7 +15,7 @@ import {
   QrCode,
   Sparkles
 } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, formatPeriodCovered } from '@/lib/utils';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { Lock, Clock, Send, AlertTriangle } from 'lucide-react';
@@ -24,6 +24,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
+import { getStoredOwnerSignature, getStoredTenantSignature } from '@/lib/signatureHelper';
 
 interface OfficialReceiptRow {
   id: string;
@@ -162,12 +163,12 @@ export const ReceiptsQuittancesView: React.FC = () => {
       tenantCni: resolved.tenantCni,
       tenantPhone: resolved.tenantPhone,
       amount: r.amount,
-      periodCovered: r.period_covered,
+      periodCovered: formatPeriodCovered(r.period_covered),
       paymentDate: r.payment_date,
       paymentMethod: r.payment_method,
       transactionReference: r.transaction_ref,
-      ownerSignatureUrl: resolved.ownerSignatureUrl,
-      tenantSignatureUrl: resolved.tenantSignatureUrl
+      ownerSignatureUrl: resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id),
+      tenantSignatureUrl: resolved.tenantSignatureUrl || getStoredTenantSignature()
     });
   };
 
@@ -326,7 +327,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
                   </td>
 
                   {/* Période */}
-                  <td className="p-4 font-semibold text-slate-800">{r.period_covered}</td>
+                  <td className="p-4 font-semibold text-slate-800">{formatPeriodCovered(r.period_covered)}</td>
 
                   {/* Montant */}
                   <td className="p-4 font-black text-slate-900">{formatFCFA(r.amount)}</td>

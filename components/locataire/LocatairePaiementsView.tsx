@@ -25,7 +25,7 @@ import {
   Download,
   PenTool
 } from 'lucide-react';
-import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
+import { formatFCFA, sanitizeNumericInput, formatPeriodCovered } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
 import { getRentPayments, createRentPayment, getContracts } from '@/src/lib/db';
@@ -37,6 +37,8 @@ import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails, getStoredDeposits } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
+import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
+import { getStoredOwnerSignature, persistTenantSignature } from '@/lib/signatureHelper';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getDeviceDate } from '@/lib/dateSystem';
@@ -746,8 +748,14 @@ export const LocatairePaiementsView: React.FC = () => {
     const pmt = signingReceiptPayment;
     try {
       const now = new Date().toISOString();
+      const resolved = resolveRealReceiptData(pmt, user);
+      const effectiveOwnerSig = pmt.owner_signature_url || resolved.ownerSignatureUrl || getStoredOwnerSignature(pmt.owner_id);
+
+      persistTenantSignature(signatureData, user?.id);
+
       const updatedPmt = {
         ...pmt,
+        owner_signature_url: effectiveOwnerSig,
         tenant_signature_url: signatureData,
         status: 'confirme',
         confirmed_at: pmt.confirmed_at || now,
@@ -776,11 +784,12 @@ export const LocatairePaiementsView: React.FC = () => {
           if (Array.isArray(list)) {
             const updatedV2 = list.map((r: any) => {
               if (r.receipt_number === pmt.reference || r.receiptNumber === pmt.reference || r.payment_id === pmt.id) {
-                return { ...r, tenant_signature_url: signatureData, status: 'confirme' };
+                return { ...r, owner_signature_url: effectiveOwnerSig, tenant_signature_url: signatureData, status: 'confirme' };
               }
               return r;
             });
             localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(updatedV2));
+            window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
           }
         }
       } catch {}
@@ -789,7 +798,10 @@ export const LocatairePaiementsView: React.FC = () => {
       try {
         if (isValidUuid(pmt.id)) {
           await supabase.from('rent_payments').update({
-            status: 'confirme'
+            status: 'confirme',
+            tenant_signature_url: signatureData,
+            owner_signature_url: effectiveOwnerSig,
+            confirmed_at: pmt.confirmed_at || now
           }).eq('id', pmt.id);
         }
       } catch {}
@@ -1066,7 +1078,7 @@ export const LocatairePaiementsView: React.FC = () => {
                 Votre quittance officielle de loyer attend votre signature
               </h4>
               <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
-                Le bailleur a validé votre versement de {formatFCFA(pendingReceiptPayment.amount)} pour {pendingReceiptPayment.target_month || 'le loyer'}. Apposez votre signature certifiée pour sceller la quittance officielle avec QR Code.
+                Le bailleur a validé votre versement de {formatFCFA(pendingReceiptPayment.amount)} pour {formatPeriodCovered(pendingReceiptPayment.target_month) || 'le loyer'}. Apposez votre signature certifiée pour sceller la quittance officielle avec QR Code.
               </p>
             </div>
           </div>
@@ -1107,7 +1119,7 @@ export const LocatairePaiementsView: React.FC = () => {
                 Votre quittance officielle de loyer est disponible au téléchargement
               </h4>
               <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
-                Quittance N° {recentlyConfirmedReceiptPayment.reference} de {formatFCFA(recentlyConfirmedReceiptPayment.amount)} ({recentlyConfirmedReceiptPayment.target_month}) certifiée et scellée avec QR Code. Ce raccourci reste affiché pendant 24h (retrouvez-la ensuite de façon permanente dans votre historique ci-dessous et dans l'onglet Reçus).
+                Quittance N° {recentlyConfirmedReceiptPayment.reference} de {formatFCFA(recentlyConfirmedReceiptPayment.amount)} ({formatPeriodCovered(recentlyConfirmedReceiptPayment.target_month)}) certifiée et scellée avec QR Code. Ce raccourci reste affiché pendant 24h (retrouvez-la ensuite de façon permanente dans votre historique ci-dessous et dans l'onglet Reçus).
               </p>
             </div>
           </div>
@@ -1280,7 +1292,7 @@ export const LocatairePaiementsView: React.FC = () => {
                         Loyer mensuel
                       </span>
                     </td>
-                    <td className="p-4 font-bold text-slate-900 dark:text-white">{pmt.target_month}</td>
+                    <td className="p-4 font-bold text-slate-900 dark:text-white">{formatPeriodCovered(pmt.target_month)}</td>
                     <td className="p-4 font-black text-emerald-600 text-sm">{formatFCFA(pmt.amount)}</td>
                     <td className="p-4">
                       <span className="font-mono text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-[11px]">

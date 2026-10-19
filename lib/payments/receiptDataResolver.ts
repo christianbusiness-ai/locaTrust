@@ -8,6 +8,8 @@
 import { generateScannableQrCodeDataUrl } from '@/lib/qr/qrGenerator';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { parseAnyDate } from '@/lib/dateSystem';
+import { formatPeriodCovered } from '@/lib/utils';
+import { getStoredOwnerSignature, getStoredTenantSignature } from '@/lib/contractPartyResolver';
 
 export interface ResolvedReceiptDetails {
   ownerName: string;
@@ -25,6 +27,7 @@ export interface ResolvedReceiptDetails {
   leaseStartDate: string;
   leaseEndDate: string;
   periodText: string;
+  formattedPeriod: string;
   qrDataUrl: string;
   verificationUrl: string;
   ownerSignatureUrl: string | null;
@@ -235,6 +238,7 @@ export function resolveRealReceiptData(
   const leaseStartDate = startDateObj.toLocaleDateString('fr-FR');
   const leaseEndDate = endDateObj.toLocaleDateString('fr-FR');
   const periodText = `${leaseStartDate} au ${leaseEndDate}`;
+  const formattedPeriod = formatPeriodCovered(item?.target_month || item?.period_covered || item?.periods_covered_text);
 
   // --- Signatures Manuscrites ---
   const ownerSignatureUrl =
@@ -243,7 +247,16 @@ export function resolveRealReceiptData(
     item?.ownerSignatureUrl ||
     matchedContract?.owner_signature ||
     matchedContract?.owner_signature_url ||
-    null;
+    matchedContract?.ownerSignatureUrl ||
+    matchedApplication?.owner_signature ||
+    matchedApplication?.owner_signature_url ||
+    getStoredOwnerSignature(matchedContract?.owner_id || item?.owner_id) ||
+    getStoredOwnerSignature() ||
+    (typeof window !== 'undefined'
+      ? (localStorage.getItem('locatrust_owner_signature') ||
+         localStorage.getItem('locatrust_user_signature') ||
+         localStorage.getItem('locatrust_signature_url'))
+      : null);
 
   const tenantSignatureUrl =
     item?.tenant_signature ||
@@ -251,7 +264,14 @@ export function resolveRealReceiptData(
     item?.tenantSignatureUrl ||
     matchedContract?.tenant_signature ||
     matchedContract?.tenant_signature_url ||
-    null;
+    matchedContract?.tenantSignatureUrl ||
+    matchedApplication?.applicant_signature ||
+    matchedApplication?.tenant_signature ||
+    getStoredTenantSignature(matchedContract?.tenant_id || item?.tenant_id) ||
+    getStoredTenantSignature() ||
+    (typeof window !== 'undefined'
+      ? (localStorage.getItem('locatrust_tenant_signature'))
+      : null);
 
   // --- QR Code Dynamique Scannable ---
   const receiptReference = item?.reference || item?.receiptNumber || item?.receipt_number || 'REC-2026-0001';
@@ -279,6 +299,7 @@ export function resolveRealReceiptData(
     leaseStartDate,
     leaseEndDate,
     periodText,
+    formattedPeriod,
     qrDataUrl,
     verificationUrl,
     ownerSignatureUrl,

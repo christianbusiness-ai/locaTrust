@@ -1,12 +1,13 @@
 'use client';
 
 import jsPDF from 'jspdf';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA, formatPeriodCovered } from '@/lib/utils';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { registerReceiptInVerificationRegistry } from '@/lib/verificationRegistry';
 import { LOCATRUST_OFFICIAL_LOGO_BASE64 } from '@/lib/officialLogoBase64';
 import { generateScannableQrCodeDataUrl } from '@/lib/qr/qrGenerator';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
+import { getStoredOwnerSignature, getStoredTenantSignature } from '@/lib/contractPartyResolver';
 import { triggerCelebration } from '@/lib/celebration';
 
 export interface OfficialReceiptData {
@@ -439,7 +440,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFontSize(7);
     doc.setTextColor(15, 23, 42); // High-contrast dark text
     doc.text(isCaution ? 'Dépôt de garantie (Caution légale)' : 'Loyer mensuel', 18, tableY + 12);
-    doc.text(isCaution ? 'Garantie contractuelle' : (data.periodCovered || 'Août 2026'), 70, tableY + 12);
+    doc.text(isCaution ? 'Garantie contractuelle' : formatPeriodCovered(data.periodCovered || 'Août 2026'), 70, tableY + 12);
     doc.text(formatFCFA(data.amount), 130, tableY + 12);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(isCaution ? 217 : 2, isCaution ? 119 : 132, isCaution ? 6 : 199);
@@ -480,7 +481,12 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setTextColor(15, 23, 42);
     doc.text('Date du paiement', 105, summaryY + 6.5);
     doc.setFont('helvetica', 'normal');
-    doc.text(`:  ${cleanPdf(data.paymentDate, new Date().toLocaleDateString('fr-FR'))}`, 140, summaryY + 6.5);
+    let safePaymentDate = cleanPdf(data.paymentDate, new Date().toLocaleDateString('fr-FR'));
+    if (/^\d{4}-\d{2}-\d{2}$/.test(safePaymentDate)) {
+      const [y, m, d] = safePaymentDate.split('-');
+      safePaymentDate = `${d}/${m}/${y}`;
+    }
+    doc.text(`:  ${safePaymentDate}`, 140, summaryY + 6.5);
 
     doc.setFont('helvetica', 'bold');
     doc.text('Mode de paiement', 105, summaryY + 12);
@@ -500,18 +506,34 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     // 7. SIGNATURES & QR CODE SECTION
     const sigY = 170;
 
+    const rawOwnerSig =
+      data.ownerSignatureUrl ||
+      getStoredOwnerSignature() ||
+      (typeof window !== 'undefined'
+        ? (localStorage.getItem('locatrust_owner_signature') ||
+           localStorage.getItem('locatrust_user_signature') ||
+           localStorage.getItem('locatrust_signature_url'))
+        : null);
+
     const resolvedOwnerSig = getCertifiedSignatureDataUrl(
       data.ownerName,
       'bailleur',
-      data.ownerSignatureUrl,
-      `${data.paymentDate || '05/09/2026'} à 14:20`
+      rawOwnerSig,
+      `${safePaymentDate} à 14:20`
     );
+
+    const rawTenantSig =
+      data.tenantSignatureUrl ||
+      getStoredTenantSignature() ||
+      (typeof window !== 'undefined'
+        ? (localStorage.getItem('locatrust_tenant_signature'))
+        : null);
 
     const resolvedTenantSig = getCertifiedSignatureDataUrl(
       data.tenantName,
       'locataire',
-      data.tenantSignatureUrl,
-      `${data.paymentDate || '05/09/2026'} à 14:15`
+      rawTenantSig,
+      `${safePaymentDate} à 14:15`
     );
 
     // Signature Propriétaire Box
@@ -524,16 +546,16 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
         doc.addImage(resolvedOwnerSig, 'PNG', 18, sigY + 2, 46, 15);
       } catch (err) {
         console.warn('Could not add owner signature to receipt PDF:', err);
-        doc.setFont('times', 'italic');
-        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bolditalic');
+        doc.setFontSize(8);
         doc.setTextColor(15, 39, 90);
-        doc.text(data.ownerName, 20, sigY + 11);
+        doc.text(data.ownerName?.length <= 3 ? 'K. Kouamé' : data.ownerName, 20, sigY + 11);
       }
     } else {
-      doc.setFont('times', 'italic');
-      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bolditalic');
+      doc.setFontSize(8);
       doc.setTextColor(15, 39, 90);
-      doc.text(data.ownerName, 20, sigY + 11);
+      doc.text(data.ownerName?.length <= 3 ? 'K. Kouamé' : data.ownerName, 20, sigY + 11);
     }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);

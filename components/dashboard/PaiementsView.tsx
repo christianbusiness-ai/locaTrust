@@ -28,7 +28,7 @@ import {
   Banknote,
   Lock
 } from 'lucide-react';
-import { formatFCFA, sanitizeNumericInput } from '@/lib/utils';
+import { formatFCFA, sanitizeNumericInput, formatPeriodCovered } from '@/lib/utils';
 import confetti from 'canvas-confetti';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
@@ -46,6 +46,7 @@ import { sendQuittanceToTenant } from '@/lib/messagingStore';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
+import { getStoredOwnerSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
 
 interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
@@ -268,12 +269,23 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       ? 'Espèces'
       : (pmt as any).payment_method || (pmt as any).method || (sampleRef.startsWith('OM') ? 'Orange Money CI' : sampleRef.startsWith('WAVE') ? 'Wave Mobile Money' : sampleRef.startsWith('MTN') ? 'MTN Mobile Money' : 'Mobile Money');
 
+    const existingSig =
+      ownerSignatureUrl ||
+      (pmt as any).owner_signature_url ||
+      (pmt as any).owner_signature ||
+      getStoredOwnerSignature(user?.id) ||
+      getStoredOwnerSignature();
+
+    if (existingSig && !ownerSignatureUrl) {
+      setOwnerSignatureUrl(existingSig);
+    }
+
     setExtractedOcrData({
       reference: sampleRef,
       amount: Number(pmt.amount || 0),
       payment_method: resolvedMethod,
       sender_phone: pmt.tenant?.phone || '+225 07 08 09 10 11',
-      detected_month: pmt.target_month || 'Mois en cours',
+      detected_month: formatPeriodCovered(pmt.target_month || 'Mois en cours'),
     });
     setValidatingPayment(pmt);
   };
@@ -330,13 +342,20 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // 2. Update payment status to en_attente_signature_locataire with owner signature
       const resolvedContract = resolveRealReceiptData(validatingPayment, user);
+      const effectiveOwnerSig = ownerSignatureUrl || resolvedContract.ownerSignatureUrl || getStoredOwnerSignature(user?.id) || undefined;
+      if (effectiveOwnerSig) {
+        persistOwnerSignature(effectiveOwnerSig, user?.id);
+      }
+      const rawTargetPeriod = result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month || 'Période en cours';
+      const targetPeriodFormatted = formatPeriodCovered(rawTargetPeriod);
+
       const confirmedPmt: RentPayment = {
         ...validatingPayment,
         status: 'en_attente_signature_locataire',
         amount: extractedOcrData.amount,
         reference: extractedOcrData.reference,
-        owner_signature_url: ownerSignatureUrl || undefined,
-        target_month: result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month || 'Période en cours',
+        owner_signature_url: effectiveOwnerSig,
+        target_month: targetPeriodFormatted,
         confirmed_at: new Date().toISOString(),
       };
 
@@ -369,13 +388,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             propertyTitle: validatingPayment.contract?.property?.title || 'Logement LocaTrust',
             propertyAddress: (validatingPayment.contract?.property as any)?.address || [validatingPayment.contract?.property?.quartier, validatingPayment.contract?.property?.commune, validatingPayment.contract?.property?.city].filter(Boolean).join(', ') || 'Abidjan - Côte d\'Ivoire',
             amount: extractedOcrData.amount,
-            periodCovered: result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month || 'Période en cours',
+            periodCovered: targetPeriodFormatted,
             paymentDate: new Date().toLocaleDateString('fr-FR'),
             paymentMethod: extractedOcrData.payment_method,
             transactionReference: extractedOcrData.reference,
             ownerName: resolvedContract.ownerName || 'KK',
             tenantName: validatingPayment.tenant?.full_name || 'Locataire',
-            ownerSignatureUrl: ownerSignatureUrl,
+            ownerSignatureUrl: effectiveOwnerSig,
             tenantSignatureUrl: tenantSignatureUrl,
           },
           ownerId,
@@ -400,11 +419,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             tenant_id: tenantId,
             owner_id: ownerId,
             amount: extractedOcrData.amount,
-            period_covered: result?.generatedReceipt?.periods_covered_text || validatingPayment.target_month,
+            period_covered: targetPeriodFormatted,
             payment_date: new Date().toISOString(),
             payment_method: extractedOcrData.payment_method,
             created_at: new Date().toISOString(),
-            owner_signature_url: ownerSignatureUrl,
+            owner_signature_url: effectiveOwnerSig,
             status: 'en_attente_signature_locataire'
           });
           localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(receiptsV2));
@@ -469,7 +488,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         if (isValidUuid(validatingPayment.id)) {
           await supabase.from('rent_payments').update({
             status: 'en_attente_signature_locataire',
-            confirmed_at: new Date().toISOString()
+            confirmed_at: new Date().toISOString(),
+            owner_signature_url: effectiveOwnerSig,
+            target_month: targetPeriodFormatted
           }).eq('id', validatingPayment.id);
         }
 
@@ -910,7 +931,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   </td>
                   <td className="p-4">
                     <span className="px-2.5 py-1 rounded bg-blue-50 text-blue-800 font-extrabold text-[11px] border border-blue-100">
-                      {pmt.target_month}
+                      {formatPeriodCovered(pmt.target_month)}
                     </span>
                   </td>
                   <td className="p-4 font-black text-slate-900 text-sm">
@@ -1265,8 +1286,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       {/* MODAL 2: VISUALISATION OFFICIELLE DU REÇU / QUITTANCE PAR LE PROPRIÉTAIRE (100% TEMPLATE LOCATRUST) */}
       {previewingReceipt && (() => {
         const resolved = resolveRealReceiptData(previewingReceipt, user);
-        const effectiveOwnerSig = ownerSignatureUrl || resolved.ownerSignatureUrl;
-        const effectiveTenantSig = tenantSignatureUrl || resolved.tenantSignatureUrl;
+        const effectiveOwnerSig = ownerSignatureUrl || previewingReceipt.owner_signature_url || resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id);
+        const effectiveTenantSig = tenantSignatureUrl || previewingReceipt.tenant_signature_url || resolved.tenantSignatureUrl || getStoredTenantSignature();
         const hasBothSignatures = Boolean(effectiveOwnerSig) && Boolean(effectiveTenantSig);
 
         return (
@@ -1434,7 +1455,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     <tbody className="divide-y divide-slate-100 bg-white">
                       <tr>
                         <td className="p-2.5 font-bold text-slate-900">Loyer mensuel</td>
-                        <td className="p-2.5 text-slate-700">{previewingReceipt.target_month}</td>
+                        <td className="p-2.5 text-slate-700 font-semibold">{formatPeriodCovered(previewingReceipt.target_month || resolved.formattedPeriod || resolved.periodCovered)}</td>
                         <td className="p-2.5 font-medium text-slate-700">{formatFCFA(previewingReceipt.amount)}</td>
                         <td className="p-2.5 text-right font-black text-slate-900">{formatFCFA(previewingReceipt.amount)}</td>
                       </tr>
@@ -1562,7 +1583,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                           propertyTitle: resolved.propertyTitle,
                           propertyAddress: resolved.propertyAddress,
                           amount: previewingReceipt.amount,
-                          periodCovered: previewingReceipt.target_month,
+                          periodCovered: formatPeriodCovered(previewingReceipt.target_month || resolved.formattedPeriod || resolved.periodCovered),
                           paymentDate: new Date(previewingReceipt.confirmed_at || previewingReceipt.created_at).toLocaleDateString('fr-FR'),
                           paymentMethod: previewingReceipt.reference.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
                           transactionReference: previewingReceipt.reference,
@@ -1633,14 +1654,39 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
-              try {
-                if (typeof window !== 'undefined') {
-                  localStorage.setItem('locatrust_owner_signature', signatureUrl);
-                  localStorage.setItem('locatrust_user_signature', signatureUrl);
-                }
-              } catch {}
+              persistOwnerSignature(signatureUrl, user?.id);
+              if (previewingReceipt) {
+                const updated = { ...previewingReceipt, owner_signature_url: signatureUrl };
+                setPreviewingReceipt(updated);
+                setPayments((prev) => prev.map((p) => (p.id === updated.id || p.reference === updated.reference ? updated : p)));
+                try {
+                  const cached = localStorage.getItem('locatrust_rent_payments');
+                  if (cached) {
+                    const list = JSON.parse(cached);
+                    if (Array.isArray(list)) {
+                      const nList = list.map((p: any) => (p.id === updated.id || p.reference === updated.reference ? { ...p, owner_signature_url: signatureUrl } : p));
+                      localStorage.setItem('locatrust_rent_payments', JSON.stringify(nList));
+                    }
+                  }
+                } catch {}
+              }
             } else {
               setTenantSignatureUrl(signatureUrl);
+              if (previewingReceipt) {
+                const updated = { ...previewingReceipt, tenant_signature_url: signatureUrl };
+                setPreviewingReceipt(updated);
+                setPayments((prev) => prev.map((p) => (p.id === updated.id || p.reference === updated.reference ? updated : p)));
+                try {
+                  const cached = localStorage.getItem('locatrust_rent_payments');
+                  if (cached) {
+                    const list = JSON.parse(cached);
+                    if (Array.isArray(list)) {
+                      const nList = list.map((p: any) => (p.id === updated.id || p.reference === updated.reference ? { ...p, tenant_signature_url: signatureUrl } : p));
+                      localStorage.setItem('locatrust_rent_payments', JSON.stringify(nList));
+                    }
+                  }
+                } catch {}
+              }
             }
             setActiveSigningParty(null);
           }}
