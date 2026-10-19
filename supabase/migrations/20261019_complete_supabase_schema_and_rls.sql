@@ -434,175 +434,221 @@ CREATE POLICY "messages_send_own" ON public.messages
 -- 3. INSERTION DES DONNÉES MÉTIER VÉRIFIÉES DE PRODUCTION (TESTS MULTI-APPAREILS)
 -- -----------------------------------------------------------------------------
 
--- A. Bien Immobilier : Maison 4 pièce (Yamoussoukro) lié à l'Agence KK
-INSERT INTO public.properties (
-  id, owner_id, agency_id, type, title, description,
-  country, city, commune, quartier, rent, caution, charges,
-  surface, rooms, bedrooms, bathrooms, status, photos, videos
-) VALUES (
-  'b1111111-2222-3333-4444-555555555555',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK Agence
-  'maison',
-  'Maison 4 pièce',
-  'Superbe maison 4 pièces lumineuse et spacieuse avec cour et parking.',
-  'Côte d''Ivoire',
-  'Yamoussoukro',
-  'Yamoussoukro',
-  '100 villard',
-  30000,
-  60000,
-  0,
-  120,
-  4,
-  3,
-  2,
-  'loue',
-  ARRAY['https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=800&q=80'],
-  '{}'::text[]
-) ON CONFLICT (id) DO UPDATE SET
-  title = EXCLUDED.title,
-  rent = EXCLUDED.rent,
-  caution = EXCLUDED.caution,
-  status = EXCLUDED.status,
-  owner_id = EXCLUDED.owner_id,
-  agency_id = EXCLUDED.agency_id;
+DO $$
+DECLARE
+    v_contract_id UUID;
+    v_prop_id UUID := 'b1111111-2222-3333-4444-555555555555';
+    v_kk_id UUID := 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
+    v_christian_id UUID := 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+BEGIN
+    -- A. Bien Immobilier : Maison 4 pièce (Yamoussoukro)
+    INSERT INTO public.properties (
+      id, owner_id, agency_id, type, title, description,
+      country, city, commune, quartier, rent, caution, charges,
+      surface, rooms, bedrooms, bathrooms, status, photos, videos
+    ) VALUES (
+      v_prop_id, v_kk_id, v_kk_id, 'maison', 'Maison 4 pièce',
+      'Superbe maison 4 pièces lumineuse et spacieuse avec cour et parking.',
+      'Côte d''Ivoire', 'Yamoussoukro', 'Yamoussoukro', '100 villard',
+      30000, 60000, 0, 120, 4, 3, 2, 'loue',
+      ARRAY['https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=800&q=80'],
+      '{}'::text[]
+    ) ON CONFLICT (id) DO UPDATE SET
+      title = EXCLUDED.title,
+      rent = EXCLUDED.rent,
+      caution = EXCLUDED.caution,
+      status = EXCLUDED.status,
+      owner_id = EXCLUDED.owner_id,
+      agency_id = EXCLUDED.agency_id;
 
--- B. Contrat de Bail Certifié : LT-2026-CI-000492 entre KK et Christian
-INSERT INTO public.contracts (
-  id, contract_number, property_id, owner_id, tenant_id, agency_id,
-  monthly_rent, caution_amount, deposit_amount, charges_amount, duration_months,
-  start_date, status, owner_signed, tenant_signed, token, verification_token
-) VALUES (
-  'c2222222-3333-4444-5555-666666666666',
-  'LT-2026-CI-000492',
-  'b1111111-2222-3333-4444-555555555555',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK
-  'a939eff5-c93d-4e6e-9f1f-b61c39986a46', -- Christian
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK Agence
-  30000,
-  60000,
-  60000,
-  0,
-  12,
-  '2026-10-01',
-  'actif',
-  true,
-  true,
-  'tok_cnt_ci2026_000492',
-  'tok_cnt_ci2026_000492'
-) ON CONFLICT (id) DO UPDATE SET
-  status = EXCLUDED.status,
-  owner_signed = true,
-  tenant_signed = true;
+    -- B. Contrat de Bail Certifié : LT-2026-CI-000492
+    SELECT id INTO v_contract_id FROM public.contracts WHERE contract_number = 'LT-2026-CI-000492' LIMIT 1;
 
--- C. Caution Consignée (60 000 FCFA, 2 mois max Art. 414)
-INSERT INTO public.cautions (
-  id, contract_id, contract_number, tenant_id, owner_id, agency_id,
-  amount_requested, amount_paid, status, receipt_number, token, payment_method, declared_reference
-) VALUES (
-  'd3333333-4444-5555-6666-777777777777',
-  'c2222222-3333-4444-5555-666666666666',
-  'LT-2026-CI-000492',
-  'a939eff5-c93d-4e6e-9f1f-b61c39986a46', -- Christian
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK Agence
-  60000,
-  60000,
-  'paye_complet',
-  'REC-CAUTION-000492',
-  'tok_rec_caution_000492',
-  'Wave CI / Mobile Money',
-  'CAUT-000492-CONF'
-) ON CONFLICT (id) DO NOTHING;
+    IF v_contract_id IS NOT NULL THEN
+      UPDATE public.contracts SET
+        status = 'actif',
+        owner_signed = true,
+        tenant_signed = true,
+        property_id = v_prop_id,
+        owner_id = v_kk_id,
+        tenant_id = v_christian_id,
+        agency_id = v_kk_id,
+        monthly_rent = 30000,
+        caution_amount = 60000,
+        deposit_amount = 60000,
+        charges_amount = 0,
+        duration_months = 12,
+        start_date = '2026-10-01',
+        token = 'tok_cnt_ci2026_000492',
+        verification_token = 'tok_cnt_ci2026_000492'
+      WHERE id = v_contract_id;
+    ELSE
+      INSERT INTO public.contracts (
+        id, contract_number, property_id, owner_id, tenant_id, agency_id,
+        monthly_rent, caution_amount, deposit_amount, charges_amount, duration_months,
+        start_date, status, owner_signed, tenant_signed, token, verification_token
+      ) VALUES (
+        'c2222222-3333-4444-5555-666666666666',
+        'LT-2026-CI-000492',
+        v_prop_id, v_kk_id, v_christian_id, v_kk_id,
+        30000, 60000, 60000, 0, 12, '2026-10-01', 'actif',
+        true, true, 'tok_cnt_ci2026_000492', 'tok_cnt_ci2026_000492'
+      ) RETURNING id INTO v_contract_id;
+    END IF;
 
--- D. Paiement Validé d'Octobre 2026 (ESP-135945, 30 000 FCFA)
-INSERT INTO public.rent_payments (
-  id, contract_id, tenant_id, owner_id, agency_id,
-  amount, payment_date, payment_method, reference, receipt_number,
-  status, target_month
-) VALUES (
-  'e4444444-5555-6666-7777-888888888888',
-  'c2222222-3333-4444-5555-666666666666',
-  'a939eff5-c93d-4e6e-9f1f-b61c39986a46', -- Christian
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK Agence
-  30000,
-  '2026-10-17',
-  'Espèces',
-  'ESP-135945',
-  'ESP-135945',
-  'confirme',
-  'Octobre 2026'
-) ON CONFLICT (id) DO NOTHING;
+    -- C. Caution Consignée (60 000 FCFA, 2 mois max Art. 414)
+    -- C. Caution Consignée (60 000 FCFA, 2 mois max Art. 414)
+    IF EXISTS (SELECT 1 FROM public.cautions WHERE receipt_number = 'REC-CAUTION-000492' OR contract_id = v_contract_id) THEN
+      UPDATE public.cautions SET
+        contract_id = v_contract_id,
+        contract_number = 'LT-2026-CI-000492',
+        tenant_id = v_christian_id,
+        owner_id = v_kk_id,
+        agency_id = v_kk_id,
+        amount_requested = 60000,
+        amount_paid = 60000,
+        status = 'paye_complet',
+        token = 'tok_rec_caution_000492',
+        payment_method = 'Wave CI / Mobile Money',
+        declared_reference = 'CAUT-000492-CONF'
+      WHERE receipt_number = 'REC-CAUTION-000492' OR contract_id = v_contract_id;
+    ELSE
+      INSERT INTO public.cautions (
+        id, contract_id, contract_number, tenant_id, owner_id, agency_id,
+        amount_requested, amount_paid, status, receipt_number, token, payment_method, declared_reference
+      ) VALUES (
+        'd3333333-4444-5555-6666-777777777777',
+        v_contract_id,
+        'LT-2026-CI-000492',
+        v_christian_id, v_kk_id, v_kk_id,
+        60000, 60000, 'paye_complet',
+        'REC-CAUTION-000492', 'tok_rec_caution_000492',
+        'Wave CI / Mobile Money', 'CAUT-000492-CONF'
+      );
+    END IF;
 
--- E. Déclaration en Attente de Novembre 2026 (WAV-2026-NOV-781920, 30 000 FCFA)
-INSERT INTO public.rent_payments (
-  id, contract_id, tenant_id, owner_id, agency_id,
-  amount, payment_date, payment_method, reference,
-  status, target_month
-) VALUES (
-  'f5555555-6666-7777-8888-999999999999',
-  'c2222222-3333-4444-5555-666666666666',
-  'a939eff5-c93d-4e6e-9f1f-b61c39986a46', -- Christian
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK Agence
-  30000,
-  '2026-10-19',
-  'Wave',
-  'WAV-2026-NOV-781920',
-  'declare',
-  'Novembre 2026'
-) ON CONFLICT (id) DO NOTHING;
+    -- D. Paiement Validé d'Octobre 2026 (ESP-135945, 30 000 FCFA)
+    IF EXISTS (SELECT 1 FROM public.rent_payments WHERE reference = 'ESP-135945') THEN
+      UPDATE public.rent_payments SET
+        contract_id = v_contract_id,
+        tenant_id = v_christian_id,
+        owner_id = v_kk_id,
+        agency_id = v_kk_id,
+        amount = 30000,
+        payment_date = '2026-10-17',
+        payment_method = 'Espèces',
+        receipt_number = 'ESP-135945',
+        status = 'confirme',
+        target_month = 'Octobre 2026'
+      WHERE reference = 'ESP-135945';
+    ELSE
+      INSERT INTO public.rent_payments (
+        id, contract_id, tenant_id, owner_id, agency_id,
+        amount, payment_date, payment_method, reference, receipt_number,
+        status, target_month
+      ) VALUES (
+        'e4444444-5555-6666-7777-888888888888',
+        v_contract_id,
+        v_christian_id, v_kk_id, v_kk_id,
+        30000, '2026-10-17', 'Espèces', 'ESP-135945', 'ESP-135945',
+        'confirme', 'Octobre 2026'
+      );
+    END IF;
 
--- F. Reçus Officiels avec Tokens QR Code Scannables
-INSERT INTO public.receipts (
-  id, receipt_number, type, tenant_id, owner_id, agency_id,
-  contract_id, amount, token, verification_token, period_covered, status
-) VALUES 
-(
-  'a1111111-aaaa-bbbb-cccc-111111111111',
-  'ESP-135945',
-  'loyer',
-  'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-  'c2222222-3333-4444-5555-666666666666',
-  30000,
-  'tok_rec_ci2026_ljy8knh31z579ov2',
-  'tok_rec_ci2026_ljy8knh31z579ov2',
-  'Octobre 2026',
-  'certifie'
-),
-(
-  'a2222222-aaaa-bbbb-cccc-222222222222',
-  'REC-CAUTION-000492',
-  'caution',
-  'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-  'c2222222-3333-4444-5555-666666666666',
-  60000,
-  'tok_rec_caution_000492',
-  'tok_rec_caution_000492',
-  'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-  'certifie'
-) ON CONFLICT (id) DO NOTHING;
+    -- E. Déclaration en Attente de Novembre 2026 (WAV-2026-NOV-781920, 30 000 FCFA)
+    IF EXISTS (SELECT 1 FROM public.rent_payments WHERE reference = 'WAV-2026-NOV-781920') THEN
+      UPDATE public.rent_payments SET
+        contract_id = v_contract_id,
+        tenant_id = v_christian_id,
+        owner_id = v_kk_id,
+        agency_id = v_kk_id,
+        amount = 30000,
+        payment_date = '2026-10-19',
+        payment_method = 'Wave',
+        status = 'declare',
+        target_month = 'Novembre 2026'
+      WHERE reference = 'WAV-2026-NOV-781920';
+    ELSE
+      INSERT INTO public.rent_payments (
+        id, contract_id, tenant_id, owner_id, agency_id,
+        amount, payment_date, payment_method, reference,
+        status, target_month
+      ) VALUES (
+        'f5555555-6666-7777-8888-999999999999',
+        v_contract_id,
+        v_christian_id, v_kk_id, v_kk_id,
+        30000, '2026-10-19', 'Wave', 'WAV-2026-NOV-781920',
+        'declare', 'Novembre 2026'
+      );
+    END IF;
 
--- G. Notifications Persistantes pour l'Agence KK
-INSERT INTO public.notifications (
-  id, user_id, title, type, category, target_role,
-  message, description, read, is_read, payload
-) VALUES (
-  'b9999999-8888-7777-6666-555555555555',
-  'd3a42346-c227-4c67-b4a3-52bd09b98ad9', -- KK Agence
-  '💳 Nouveau paiement de loyer déclaré',
-  'paiement',
-  'paiement',
-  'agence',
-  'Christian a déclaré le loyer de Novembre 2026 (30 000 FCFA).',
-  'Christian a déclaré le paiement du loyer de Novembre 2026 (30 000 FCFA • Wave - Réf: WAV-2026-NOV-781920). Cliquez pour vérifier et valider la quittance.',
-  false,
-  false,
-  '{"paymentId": "f5555555-6666-7777-8888-999999999999", "amount": 30000, "month": "Novembre 2026", "reference": "WAV-2026-NOV-781920"}'::jsonb
-) ON CONFLICT (id) DO NOTHING;
+    -- F. Reçus Officiels
+    IF EXISTS (SELECT 1 FROM public.receipts WHERE receipt_number = 'ESP-135945') THEN
+      UPDATE public.receipts SET
+        contract_id = v_contract_id,
+        tenant_id = v_christian_id,
+        owner_id = v_kk_id,
+        agency_id = v_kk_id,
+        amount = 30000,
+        status = 'certifie',
+        token = 'tok_rec_ci2026_ljy8knh31z579ov2',
+        verification_token = 'tok_rec_ci2026_ljy8knh31z579ov2',
+        period_covered = 'Octobre 2026'
+      WHERE receipt_number = 'ESP-135945';
+    ELSE
+      INSERT INTO public.receipts (
+        id, receipt_number, type, tenant_id, owner_id, agency_id,
+        contract_id, amount, token, verification_token, period_covered, status
+      ) VALUES (
+        'a1111111-aaaa-bbbb-cccc-111111111111',
+        'ESP-135945', 'loyer',
+        v_christian_id, v_kk_id, v_kk_id,
+        v_contract_id, 30000,
+        'tok_rec_ci2026_ljy8knh31z579ov2', 'tok_rec_ci2026_ljy8knh31z579ov2',
+        'Octobre 2026', 'certifie'
+      );
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM public.receipts WHERE receipt_number = 'REC-CAUTION-000492') THEN
+      UPDATE public.receipts SET
+        contract_id = v_contract_id,
+        tenant_id = v_christian_id,
+        owner_id = v_kk_id,
+        agency_id = v_kk_id,
+        amount = 60000,
+        status = 'certifie',
+        token = 'tok_rec_caution_000492',
+        verification_token = 'tok_rec_caution_000492',
+        period_covered = 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)'
+      WHERE receipt_number = 'REC-CAUTION-000492';
+    ELSE
+      INSERT INTO public.receipts (
+        id, receipt_number, type, tenant_id, owner_id, agency_id,
+        contract_id, amount, token, verification_token, period_covered, status
+      ) VALUES (
+        'a2222222-aaaa-bbbb-cccc-222222222222',
+        'REC-CAUTION-000492', 'caution',
+        v_christian_id, v_kk_id, v_kk_id,
+        v_contract_id, 60000,
+        'tok_rec_caution_000492', 'tok_rec_caution_000492',
+        'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)', 'certifie'
+      );
+    END IF;
+
+    -- G. Notifications Persistantes pour l'Agence KK
+    IF NOT EXISTS (SELECT 1 FROM public.notifications WHERE id = 'b9999999-8888-7777-6666-555555555555') THEN
+      INSERT INTO public.notifications (
+        id, user_id, title, type, category, target_role,
+        message, description, read, is_read, payload
+      ) VALUES (
+        'b9999999-8888-7777-6666-555555555555',
+        v_kk_id,
+        '💳 Nouveau paiement de loyer déclaré',
+        'paiement', 'paiement', 'agence',
+        'Christian a déclaré le loyer de Novembre 2026 (30 000 FCFA).',
+        'Christian a déclaré le paiement du loyer de Novembre 2026 (30 000 FCFA • Wave - Réf: WAV-2026-NOV-781920). Cliquez pour vérifier et valider la quittance.',
+        false, false,
+        '{"paymentId": "f5555555-6666-7777-8888-999999999999", "amount": 30000, "month": "Novembre 2026", "reference": "WAV-2026-NOV-781920"}'::jsonb
+      );
+    END IF;
+END $$;
