@@ -278,6 +278,24 @@ export const Header: React.FC<HeaderProps> = ({
           } catch {}
         }
 
+        // Récupérer également les notifications du serveur central /api/sync
+        try {
+          const syncRes = await fetch('/api/sync');
+          if (syncRes.ok) {
+            const syncJson = await syncRes.json();
+            if (syncJson?.success && Array.isArray(syncJson.data?.notifications)) {
+              const existingIds = new Set(parsed.map((n) => n.id));
+              syncJson.data.notifications.forEach((sn: any) => {
+                if (!existingIds.has(sn.id)) {
+                  parsed.unshift(sn);
+                }
+              });
+            }
+          }
+        } catch (syncErr) {
+          console.warn('API /api/sync notifs notice:', syncErr);
+        }
+
         // Récupérer également les notifications persistantes en base Supabase
         const userId = currentUser.id || '';
         if (userId && isValidUuid(userId)) {

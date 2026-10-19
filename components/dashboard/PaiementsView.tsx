@@ -88,26 +88,43 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     setIsLoading(true);
     setLoadError(null);
     try {
-      const { data, error } = await supabase
-        .from('rent_payments')
-        .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
-        .order('payment_date', { ascending: false });
-
       let loaded: RentPayment[] = [];
-      if (!error && data && data.length > 0) {
-        loaded = data;
-      } else {
-        const { data: simpleData } = await supabase
-          .from('rent_payments')
-          .select('*')
-          .order('payment_date', { ascending: false });
 
-        if (simpleData && simpleData.length > 0) {
-          loaded = simpleData;
+      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
+      try {
+        const syncRes = await fetch('/api/sync');
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
+            loaded = [...syncJson.data.payments];
+          }
         }
+      } catch (syncErr) {
+        console.warn('API /api/sync loadPayments notice:', syncErr);
       }
 
-      // Toujours fusionner avec les déclarations locales pour disponibilité immédiate
+      // 1. Supabase rent_payments
+      try {
+        const { data, error } = await supabase
+          .from('rent_payments')
+          .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
+          .order('payment_date', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          for (const sp of data) {
+            const idx = loaded.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
+            if (idx === -1) {
+              loaded.push(sp);
+            } else {
+              loaded[idx] = { ...loaded[idx], ...sp };
+            }
+          }
+        }
+      } catch (sbErr) {
+        console.warn('Supabase rent_payments query notice:', sbErr);
+      }
+
+      // 2. Toujours fusionner avec les déclarations locales pour disponibilité immédiate
       if (typeof window !== 'undefined') {
         const cached = localStorage.getItem('locatrust_rent_payments');
         if (cached) {
@@ -119,7 +136,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 if (idx === -1) {
                   loaded.unshift(loc);
                 } else {
-                  // Merge local state if local is more advanced (e.g. en_attente_signature_locataire, confirme, or has signatures)
                   const existing = loaded[idx];
                   const localIsAdvanced =
                     loc.status === 'en_attente_signature_locataire' ||
@@ -241,14 +257,21 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     });
   };
 
-  // Stats
+  // Helpers de détection de statut résilients
+  const isDeclaredStatus = (status?: string) =>
+    status === 'declare' || status === 'en_attente' || status === 'a_valider';
+
+  const isConfirmedStatus = (status?: string) =>
+    status === 'confirme' || status === 'valide' || status === 'en_attente_signature_locataire';
+
+  // Stats dynamiques
   const totalConfirmed = payments
-    .filter((p) => p.status === 'confirme')
-    .reduce((sum, p) => sum + p.amount, 0);
+    .filter((p) => isConfirmedStatus(p.status))
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
   const totalDeclared = payments
-    .filter((p) => p.status === 'declare')
-    .reduce((sum, p) => sum + p.amount, 0);
+    .filter((p) => isDeclaredStatus(p.status))
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
   // State for OCR Receipt Confirmation & Generation Modal
   const [validatingPayment, setValidatingPayment] = useState<RentPayment | null>(null);
@@ -413,6 +436,20 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           }
           localStorage.setItem('locatrust_rent_payments', JSON.stringify(list));
         }
+      } catch {}
+
+      // Synchroniser avec le serveur central /api/sync
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'confirm_payment',
+            paymentId: validatingPayment.id,
+            reference: extractedOcrData.reference,
+            ownerSignatureUrl: effectiveOwnerSig
+          })
+        }).catch(() => {});
       } catch {}
 
       const ownerId = user?.id || 'usr_owner';
@@ -765,9 +802,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   };
 
   const filteredPayments = payments.filter((p) => {
-    if (activeTab === 'declares' && p.status !== 'declare') return false;
-    if (activeTab === 'confirmes' && p.status !== 'confirme') return false;
-    if (activeTab === 'refuses' && p.status !== 'refuse') return false;
+    if (activeTab === 'declares' && !isDeclaredStatus(p.status)) return false;
+    if (activeTab === 'confirmes' && !isConfirmedStatus(p.status)) return false;
+    if (activeTab === 'refuses' && p.status !== 'refuse' && p.status !== 'rejete') return false;
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -876,7 +913,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               activeTab === 'declares' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            À Valider / Déclarés ({payments.filter((p) => p.status === 'declare').length})
+            À Valider / Déclarés ({payments.filter((p) => isDeclaredStatus(p.status)).length})
           </button>
           <button
             onClick={() => setActiveTab('confirmes')}
@@ -884,7 +921,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               activeTab === 'confirmes' ? 'bg-emerald-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            Confirmés ({payments.filter((p) => p.status === 'confirme').length})
+            Confirmés ({payments.filter((p) => isConfirmedStatus(p.status)).length})
           </button>
           <button
             onClick={() => setActiveTab('refuses')}
@@ -992,7 +1029,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     </div>
                   </td>
                   <td className="p-4">
-                    {pmt.status === 'declare' && (
+                    {isDeclaredStatus(pmt.status) && (
                       <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 font-extrabold text-[10px]">
                         Déclaré (Attente validation)
                       </span>
@@ -1015,7 +1052,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     )}
                   </td>
                   <td className="p-4 text-center">
-                    {pmt.status === 'declare' ? (
+                    {isDeclaredStatus(pmt.status) ? (
                       <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => handleStartValidation(pmt)}

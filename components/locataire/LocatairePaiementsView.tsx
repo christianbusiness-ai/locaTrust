@@ -146,12 +146,30 @@ export const LocatairePaiementsView: React.FC = () => {
     try {
       // 1. Paiements de loyers
       let rentList: any[] = [];
+
+      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
+      try {
+        const syncRes = await fetch('/api/sync');
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
+            rentList = [...syncJson.data.payments];
+          }
+        }
+      } catch (syncErr) {
+        console.warn('API /api/sync tenant load notice:', syncErr);
+      }
+
       try {
         const { data: pmtData, error: pmtErr } = await getRentPayments(user.id);
         if (pmtErr) {
           console.warn('Notice getRentPayments:', pmtErr);
-        } else if (pmtData) {
-          rentList = pmtData;
+        } else if (pmtData && pmtData.length > 0) {
+          for (const sp of pmtData) {
+            const idx = rentList.findIndex(r => r.id === sp.id || (sp.reference && r.reference === sp.reference));
+            if (idx === -1) rentList.push(sp);
+            else rentList[idx] = { ...rentList[idx], ...sp };
+          }
         }
       } catch (pmtCatch) {
         console.warn('Catch getRentPayments:', pmtCatch);
@@ -489,6 +507,25 @@ export const LocatairePaiementsView: React.FC = () => {
         const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
         localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
       } catch { }
+
+      // Enregistrement direct sur le serveur central /api/sync
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'declare_payment',
+            payment: {
+              ...savedPayment,
+              tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Christian',
+              owner_id: targetOwnerId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+              agency_id: targetOwnerId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+              contract_id: chosenContract?.contract_number || chosenContract?.id || 'LT-2026-CI-000492',
+              property_title: chosenContract?.property?.title || 'Maison 4 pièce'
+            }
+          })
+        }).catch(() => {});
+      } catch {}
 
       // Send real notification to owner/agency in Supabase
       if (ownerUuid) {

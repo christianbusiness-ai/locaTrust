@@ -34,6 +34,80 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
   lastSyncTimestamp = now;
 
   try {
+    // 0. SYNCHRONISATION SERVEUR CENTRAL (/api/sync) — MULTI-APPAREILS
+    try {
+      const syncRes = await fetch('/api/sync');
+      if (syncRes.ok) {
+        const syncJson = await syncRes.json();
+        if (syncJson?.success && syncJson?.data) {
+          if (typeof window !== 'undefined') {
+            // A. Paiements
+            if (Array.isArray(syncJson.data.payments)) {
+              try {
+                const rawP = localStorage.getItem('locatrust_rent_payments');
+                const localP = rawP ? JSON.parse(rawP) : [];
+                const srvIds = new Set(syncJson.data.payments.map((p: any) => p.id || p.reference));
+                const mergedP = [
+                  ...syncJson.data.payments,
+                  ...localP.filter((lp: any) => !srvIds.has(lp.id) && !srvIds.has(lp.reference))
+                ];
+                localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedP));
+                window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedP } }));
+              } catch {}
+            }
+
+            // B. Cautions
+            if (Array.isArray(syncJson.data.cautions)) {
+              try {
+                const rawC = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_caution_deposits');
+                const localC = rawC ? JSON.parse(rawC) : [];
+                const srvCIds = new Set(syncJson.data.cautions.map((c: any) => c.id || c.contract_number));
+                const mergedC = [
+                  ...syncJson.data.cautions,
+                  ...localC.filter((lc: any) => !srvCIds.has(lc.id) && !srvCIds.has(lc.contract_number))
+                ];
+                localStorage.setItem('locatrust_deposits_v1', JSON.stringify(mergedC));
+                localStorage.setItem('locatrust_caution_deposits', JSON.stringify(mergedC));
+                window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: { cautions: mergedC } }));
+              } catch {}
+            }
+
+            // C. Quittances
+            if (Array.isArray(syncJson.data.receipts)) {
+              try {
+                const rawR = localStorage.getItem('locatrust_receipts');
+                const localR = rawR ? JSON.parse(rawR) : [];
+                const srvRNums = new Set(syncJson.data.receipts.map((r: any) => r.receipt_number));
+                const mergedR = [
+                  ...syncJson.data.receipts,
+                  ...localR.filter((lr: any) => !srvRNums.has(lr.receipt_number || lr.receiptNumber))
+                ];
+                localStorage.setItem('locatrust_receipts', JSON.stringify(mergedR));
+                window.dispatchEvent(new CustomEvent('locatrust:receipts-updated', { detail: { receipts: mergedR } }));
+              } catch {}
+            }
+
+            // D. Notifications
+            if (Array.isArray(syncJson.data.notifications)) {
+              try {
+                const rawN = localStorage.getItem('locatrust_notifications');
+                const localN = rawN ? JSON.parse(rawN) : [];
+                const srvNIds = new Set(syncJson.data.notifications.map((n: any) => n.id));
+                const mergedN = [
+                  ...syncJson.data.notifications,
+                  ...localN.filter((ln: any) => !srvNIds.has(ln.id))
+                ];
+                localStorage.setItem('locatrust_notifications', JSON.stringify(mergedN));
+                window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedN } }));
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch (syncErr) {
+      console.warn('API /api/sync fetch error in unifiedSyncEngine:', syncErr);
+    }
+
     // 1. SYNCHRONISATION DES LOGEMENTS (PROPERTIES)
     const { data: serverProps, error: propErr } = await supabase
       .from('properties')
