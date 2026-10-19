@@ -110,8 +110,28 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             const localList: RentPayment[] = JSON.parse(cached);
             if (Array.isArray(localList)) {
               for (const loc of localList) {
-                if (!loaded.some(p => p.id === loc.id || (loc.reference && p.reference === loc.reference))) {
+                const idx = loaded.findIndex(p => p.id === loc.id || (loc.reference && p.reference === loc.reference));
+                if (idx === -1) {
                   loaded.unshift(loc);
+                } else {
+                  // Merge local state if local is more advanced (e.g. en_attente_signature_locataire, confirme, or has signatures)
+                  const existing = loaded[idx];
+                  const localIsAdvanced =
+                    loc.status === 'en_attente_signature_locataire' ||
+                    loc.status === 'confirme' ||
+                    (loc.owner_signature_url && !existing.owner_signature_url) ||
+                    (loc.tenant_signature_url && !existing.tenant_signature_url);
+
+                  if (localIsAdvanced) {
+                    loaded[idx] = {
+                      ...existing,
+                      ...loc,
+                      status: loc.status || existing.status,
+                      owner_signature_url: loc.owner_signature_url || existing.owner_signature_url,
+                      tenant_signature_url: loc.tenant_signature_url || existing.tenant_signature_url,
+                      confirmed_at: loc.confirmed_at || existing.confirmed_at
+                    };
+                  }
                 }
               }
             }
@@ -237,8 +257,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const [previewingReceipt, setPreviewingReceipt] = useState<RentPayment | null>(null);
 
   const handleStartValidation = (pmt: RentPayment) => {
-    if (pmt.status === 'confirme') {
-      alert('Ce paiement a déjà été vérifié et validé.');
+    if (pmt.status === 'confirme' || pmt.status === 'en_attente_signature_locataire') {
+      alert('Ce paiement a déjà été validé et est en attente de signature du locataire.');
       return;
     }
     const rawRef = pmt.reference || '';
@@ -448,7 +468,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       try {
         if (isValidUuid(validatingPayment.id)) {
           await supabase.from('rent_payments').update({
-            status: 'confirme',
+            status: 'en_attente_signature_locataire',
             confirmed_at: new Date().toISOString()
           }).eq('id', validatingPayment.id);
         }

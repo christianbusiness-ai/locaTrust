@@ -50,6 +50,11 @@ export const LocatairePaiementsView: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const paymentsRef = useRef<any[]>(payments);
+  useEffect(() => {
+    paymentsRef.current = payments;
+  }, [payments]);
+
   // Modal States
   const [showDeclareModal, setShowDeclareModal] = useState<boolean>(false);
   const [showCautionModal, setShowCautionModal] = useState<boolean>(false);
@@ -126,13 +131,26 @@ export const LocatairePaiementsView: React.FC = () => {
           const parsed = JSON.parse(localRaw);
           if (Array.isArray(parsed)) {
             const userLocalPmts = parsed.filter((p: any) =>
+              !p.tenant_id ||
               p.tenant_id === user.id ||
               p.tenant?.id === user.id ||
+              p.tenant_id === 'usr_tenant' ||
+              (user.email && (p.tenant?.email?.toLowerCase() === user.email.toLowerCase() || p.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
               (p.reference && rentList.some(r => r.reference === p.reference))
             );
             userLocalPmts.forEach(lp => {
-              if (!rentList.some(r => (r.reference && r.reference === lp.reference) || (r.id && r.id === lp.id))) {
+              const existingIdx = rentList.findIndex(r => (r.reference && r.reference === lp.reference) || (r.id && r.id === lp.id));
+              if (existingIdx === -1) {
                 rentList.push(lp);
+              } else {
+                rentList[existingIdx] = {
+                  ...rentList[existingIdx],
+                  ...lp,
+                  status: lp.status || rentList[existingIdx].status,
+                  tenant_signature_url: lp.tenant_signature_url || rentList[existingIdx].tenant_signature_url,
+                  owner_signature_url: lp.owner_signature_url || rentList[existingIdx].owner_signature_url,
+                  confirmed_at: lp.confirmed_at || rentList[existingIdx].confirmed_at
+                };
               }
             });
           }
@@ -268,7 +286,7 @@ export const LocatairePaiementsView: React.FC = () => {
       const rNum = e.detail?.receiptNumber || e.detail?.receipt_number;
       if (pId || rNum) {
         // Chercher dans payments ou dans localStorage
-        let target = payments.find((p: any) => (pId && p.id === pId) || (rNum && p.reference === rNum));
+        let target = paymentsRef.current.find((p: any) => (pId && p.id === pId) || (rNum && p.reference === rNum));
         if (!target) {
           try {
             const raw = localStorage.getItem('locatrust_rent_payments');
@@ -295,7 +313,7 @@ export const LocatairePaiementsView: React.FC = () => {
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
       window.removeEventListener('locatrust:open_sign_receipt', handleOpenSignReceipt);
     };
-  }, [user, payments]);
+  }, [user?.id]);
 
   // Résolution multi-sources de l'identifiant réel du propriétaire ou de l'agence
   const resolveTargetOwnerId = async (chosenContract: any): Promise<string | null> => {
@@ -875,6 +893,57 @@ export const LocatairePaiementsView: React.FC = () => {
     }
   };
 
+  const handleDownloadRentReceipt = async (pmt: any) => {
+    try {
+      const { generateOfficialReceiptPDF } = await import('@/lib/payments/officialReceiptPdfGenerator');
+      const { resolveRealReceiptData } = await import('@/lib/payments/receiptDataResolver');
+      const resolved = resolveRealReceiptData(pmt, user);
+      await generateOfficialReceiptPDF({
+        receiptNumber: pmt.reference,
+        contractNumber: resolved.contractNumber,
+        contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+        propertyTitle: resolved.propertyTitle,
+        propertyAddress: resolved.propertyAddress,
+        propertyReference: resolved.propertyReference,
+        propertyType: resolved.propertyType,
+        durationMonths: resolved.durationMonths,
+        leaseStartDate: resolved.leaseStartDate,
+        leaseEndDate: resolved.leaseEndDate,
+        ownerName: resolved.ownerName,
+        ownerCni: resolved.ownerCni,
+        ownerPhone: resolved.ownerPhone,
+        tenantName: resolved.tenantName,
+        tenantCni: resolved.tenantCni,
+        tenantPhone: resolved.tenantPhone,
+        amount: pmt.amount,
+        periodCovered: pmt.target_month,
+        paymentDate: pmt.payment_date,
+        paymentMethod: pmt.payment_method || 'Mobile Money',
+        transactionReference: pmt.reference,
+        ownerSignatureUrl: pmt.owner_signature_url || resolved.ownerSignatureUrl,
+        tenantSignatureUrl: pmt.tenant_signature_url || resolved.tenantSignatureUrl
+      });
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
+    } catch (pdfErr) {
+      console.error('Erreur téléchargement quittance loyer:', pdfErr);
+    }
+  };
+
+  const pendingReceiptPayment = React.useMemo(() => {
+    return payments.find(p => p.status === 'en_attente_signature_locataire');
+  }, [payments]);
+
+  const recentlyConfirmedReceiptPayment = React.useMemo(() => {
+    return payments.find(p => {
+      if (p.status !== 'confirme') return false;
+      const timeStr = p.confirmed_at || p.payment_date || p.created_at;
+      const time = timeStr ? new Date(timeStr).getTime() : 0;
+      if (!time) return true; // Si pas de date précise, considérer actif
+      const elapsed = Date.now() - time;
+      return elapsed >= 0 && elapsed <= 24 * 60 * 60 * 1000;
+    });
+  }, [payments]);
+
   const myDeposit = deposits[0];
 
   // 24H RETENTION LOGIC POUR LA NOTIFICATION DU REÇU DE CAUTION (Instruction audio utilisateur)
@@ -975,6 +1044,86 @@ export const LocatairePaiementsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* BANNIÈRE DE NOTIFICATION DE LA QUITTANCE DE LOYER */}
+      {pendingReceiptPayment && (
+        <div className="p-5 rounded-3xl border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all bg-gradient-to-r from-amber-50 via-orange-50 to-white dark:from-amber-950/20 dark:via-slate-900 dark:to-slate-900 border-amber-200 dark:border-amber-800 animate-fadeIn">
+          <div className="flex items-start gap-3.5">
+            <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-sm bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+              <PenTool className="w-5 h-5 animate-bounce" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300">
+                  Action requise : Signature
+                </span>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  <span>Quittance de loyer en attente</span>
+                </span>
+              </div>
+              <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                Votre quittance officielle de loyer attend votre signature
+              </h4>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
+                Le bailleur a validé votre versement de {formatFCFA(pendingReceiptPayment.amount)} pour {pendingReceiptPayment.target_month || 'le loyer'}. Apposez votre signature certifiée pour sceller la quittance officielle avec QR Code.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+            <button
+              type="button"
+              onClick={() => {
+                setSigningReceiptPayment(pendingReceiptPayment);
+                setIsSigningReceiptModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md shadow-amber-600/20 transition-all active:scale-95 animate-pulse cursor-pointer"
+            >
+              <PenTool className="w-4 h-4" />
+              <span>Signer ma quittance</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!pendingReceiptPayment && recentlyConfirmedReceiptPayment && (
+        <div className="p-5 rounded-3xl border shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all bg-gradient-to-r from-emerald-50 via-teal-50 to-white dark:from-emerald-950/20 dark:via-slate-900 dark:to-slate-900 border-emerald-200 dark:border-emerald-800 animate-fadeIn">
+          <div className="flex items-start gap-3.5">
+            <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-sm bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+              <FileCheck className="w-6 h-6" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200 border border-emerald-300">
+                  ✓ Quittance de loyer certifiée
+                </span>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  <span>Disponible ici pendant 24h</span>
+                </span>
+              </div>
+              <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                Votre quittance officielle de loyer est disponible au téléchargement
+              </h4>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
+                Quittance N° {recentlyConfirmedReceiptPayment.reference} de {formatFCFA(recentlyConfirmedReceiptPayment.amount)} ({recentlyConfirmedReceiptPayment.target_month}) certifiée et scellée avec QR Code. Ce raccourci reste affiché pendant 24h (retrouvez-la ensuite de façon permanente dans votre historique ci-dessous et dans l'onglet Reçus).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+            <button
+              type="button"
+              onClick={() => handleDownloadRentReceipt(recentlyConfirmedReceiptPayment)}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition-all active:scale-95 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>Télécharger la quittance (PDF)</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* BANNIÈRE DE NOTIFICATION DU REÇU DE CAUTION (RÈGLE DES 24H) */}
       {showCautionBanner && myDeposit && (
@@ -1163,37 +1312,8 @@ export const LocatairePaiementsView: React.FC = () => {
                       ) : pmt.status === 'confirme' ? (
                         <button
                           type="button"
-                          onClick={async () => {
-                            const { generateOfficialReceiptPDF } = await import('@/lib/payments/officialReceiptPdfGenerator');
-                            const { resolveRealReceiptData } = await import('@/lib/payments/receiptDataResolver');
-                            const resolved = resolveRealReceiptData(pmt, user);
-                            await generateOfficialReceiptPDF({
-                              receiptNumber: pmt.reference,
-                              contractNumber: resolved.contractNumber,
-                              contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
-                              propertyTitle: resolved.propertyTitle,
-                              propertyAddress: resolved.propertyAddress,
-                              propertyReference: resolved.propertyReference,
-                              propertyType: resolved.propertyType,
-                              durationMonths: resolved.durationMonths,
-                              leaseStartDate: resolved.leaseStartDate,
-                              leaseEndDate: resolved.leaseEndDate,
-                              ownerName: resolved.ownerName,
-                              ownerCni: resolved.ownerCni,
-                              ownerPhone: resolved.ownerPhone,
-                              tenantName: resolved.tenantName,
-                              tenantCni: resolved.tenantCni,
-                              tenantPhone: resolved.tenantPhone,
-                              amount: pmt.amount,
-                              periodCovered: pmt.target_month,
-                              paymentDate: pmt.payment_date,
-                              paymentMethod: pmt.payment_method || 'Mobile Money',
-                              transactionReference: pmt.reference,
-                              ownerSignatureUrl: pmt.owner_signature_url || resolved.ownerSignatureUrl,
-                              tenantSignatureUrl: pmt.tenant_signature_url || resolved.tenantSignatureUrl
-                            });
-                          }}
-                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-500 text-xs font-black inline-flex items-center gap-1 shadow-sm transition-all active:scale-95"
+                          onClick={() => handleDownloadRentReceipt(pmt)}
+                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-500 text-xs font-black inline-flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
                         >
                           <Receipt className="w-3.5 h-3.5" />
                           <span>Télécharger Quittance</span>
