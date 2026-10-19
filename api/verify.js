@@ -216,6 +216,10 @@ export default async function handler(req, res) {
       statusLabel: doc.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
       statusDescription: doc.statusDescription,
       [doc.type]: doc,
+      receipt: doc.type === 'recu' ? doc : undefined,
+      contract: doc.type === 'contrat' ? doc : undefined,
+      recu: doc.type === 'recu' ? doc : undefined,
+      contrat: doc.type === 'contrat' ? doc : undefined,
       diagnostics: {
         tokenSearched: queryToken,
         source: 'official_verified_registry',
@@ -239,6 +243,10 @@ export default async function handler(req, res) {
         statusLabel: doc.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
         statusDescription: doc.statusDescription,
         [doc.type]: doc,
+        receipt: doc.type === 'recu' ? doc : undefined,
+        contract: doc.type === 'contrat' ? doc : undefined,
+        recu: doc.type === 'recu' ? doc : undefined,
+        contrat: doc.type === 'contrat' ? doc : undefined,
         diagnostics: {
           tokenSearched: queryToken,
           source: 'official_verified_registry',

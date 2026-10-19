@@ -636,8 +636,8 @@ export async function verifyDocumentToken(
           status: data.status || 'valide',
           statusLabel: data.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
           statusDescription: data.statusDescription || 'Ce document a été vérifié avec succès et son authenticité est certifiée par LocaTrust.',
-          contract: data.contract,
-          receipt: data.receipt,
+          contract: data.contract || data.contrat,
+          receipt: data.receipt || data.recu,
           diagnostics: {
             tokenSearched: token,
             source: 'supabase_verifications',
