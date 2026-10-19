@@ -466,24 +466,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                   </div>
                 </div>
 
-                {/* Empreinte Cryptographique SHA-256 */}
-                <div className="p-4 rounded-2xl bg-slate-900 text-white flex flex-col gap-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <ShieldCheck className="w-7 h-7 text-amber-400 shrink-0" />
-                      <div className="flex flex-col">
-                        <span className="font-black text-xs">Empreinte Cryptographique SHA-256</span>
-                        <span className="text-[10px] text-slate-400">Scellé d'intégrité anti-falsification • Conforme Loi n° 2019-576</span>
-                      </div>
-                    </div>
-                    <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-black text-[11px]">
-                      ✓ Scellé
-                    </span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-950 font-mono text-[10px] text-slate-300 break-all select-all border border-slate-800 flex items-center justify-between">
-                    <span>{contractData.sha256Hash || 'f4b1e9c7d0a23845b1948201fa67cb1209348571029384756192837465019283'}</span>
-                  </div>
-                </div>
+
               </div>
             )}
 
@@ -736,22 +719,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
               </div>
             </div>
 
-            {/* Empreinte SHA-256 */}
-            <div className="p-4 rounded-2xl bg-slate-900 text-white flex flex-col gap-2 text-xs">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-5 h-5 text-amber-400" />
-                  <span className="font-bold">Empreinte Cryptographique SHA-256</span>
-                </div>
-                <span className="text-[10px] text-emerald-400 font-black">✓ Document Scellé</span>
-              </div>
-              <div className="p-2 rounded-xl bg-slate-950 font-mono text-[10px] text-slate-300 break-all select-all border border-slate-800">
-                {receiptData.sha256Hash || 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e'}
-              </div>
-              <span className="text-[9px] text-slate-400">
-                Token certifié : <code className="font-mono text-slate-300">{receiptData.token}</code>
-              </span>
-            </div>
+
 
             <div className="p-3 bg-slate-100 rounded-xl text-[10px] text-slate-500 text-center leading-relaxed">
               <strong>LocaTrust — Sécurisation Juridique & Traçabilité des Règlements</strong><br />

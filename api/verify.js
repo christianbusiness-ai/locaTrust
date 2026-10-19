@@ -11,6 +11,9 @@ export const config = {
 function maskName(fullName) {
   if (!fullName) return 'Partie Certifiée';
   const clean = fullName.trim();
+  if (clean.toLowerCase().startsWith('christian')) {
+    return 'Christian';
+  }
   if (clean.length <= 3) return clean;
   const parts = clean.split(/\s+/);
   if (parts.length === 1) return parts[0];
@@ -41,7 +44,7 @@ const OFFICIAL_KNOWN_DOCUMENTS = {
     sha256Hash: 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e',
     parties: {
       ownerName: 'KK',
-      tenantName: 'Christian Y.'
+      tenantName: 'Christian'
     },
     property: {
       type: 'Logement LocaTrust',
@@ -70,7 +73,7 @@ const OFFICIAL_KNOWN_DOCUMENTS = {
     sha256Hash: 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e',
     parties: {
       ownerName: 'KK',
-      tenantName: 'Christian Y.'
+      tenantName: 'Christian'
     },
     property: {
       type: 'Logement LocaTrust',
@@ -96,7 +99,7 @@ const OFFICIAL_KNOWN_DOCUMENTS = {
     isRegisteredLocaTrust: true,
     parties: {
       ownerName: 'KK',
-      tenantName: 'Christian Y.',
+      tenantName: 'Christian',
       isOwnerSigned: true,
       isTenantSigned: true,
       ownerSignedAt: '16/10/2026 15:30',
@@ -142,7 +145,7 @@ const OFFICIAL_KNOWN_DOCUMENTS = {
     sha256Hash: 'c8273b1849102837461928374650192837465019283746501928374650192837',
     parties: {
       ownerName: 'KK',
-      tenantName: 'Christian Y.'
+      tenantName: 'Christian'
     },
     property: {
       type: 'Logement LocaTrust',
@@ -171,7 +174,7 @@ const OFFICIAL_KNOWN_DOCUMENTS = {
     sha256Hash: 'e928374650192837461928374650192837465019283746501928374650192837',
     parties: {
       ownerName: 'KK',
-      tenantName: 'Christian Y.'
+      tenantName: 'Christian'
     },
     property: {
       type: 'Logement LocaTrust',
@@ -373,7 +376,7 @@ export default async function handler(req, res) {
           transactionReference: rData.receipt_number || queryToken,
           parties: {
             ownerName: 'KK',
-            tenantName: 'Christian Y.'
+            tenantName: 'Christian'
           },
           property: {
             type: 'Logement LocaTrust',
@@ -423,7 +426,7 @@ export default async function handler(req, res) {
           isRegisteredLocaTrust: true,
           parties: {
             ownerName: 'KK',
-            tenantName: 'Christian Y.',
+            tenantName: 'Christian',
             isOwnerSigned: Boolean(cData.owner_signed || cData.owner_signature),
             isTenantSigned: Boolean(cData.tenant_signed || cData.tenant_signature)
           },

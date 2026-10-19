@@ -125,7 +125,7 @@ BEGIN
       'currency', 'FCFA',
       'paymentDate', to_char(r.created_at, 'DD/MM/YYYY'),
       'ownerName', 'KK',
-      'tenantName', 'Christian Y.'
+      'tenantName', 'Christian'
     )
   ) INTO v_result
   FROM public.receipts r
@@ -149,7 +149,7 @@ BEGIN
       'rentAmount', c.monthly_rent,
       'cautionAmount', c.caution_amount,
       'ownerName', 'KK',
-      'tenantName', 'Christian Y.',
+      'tenantName', 'Christian',
       'isOwnerSigned', COALESCE(c.owner_signed, true),
       'isTenantSigned', COALESCE(c.tenant_signed, true)
     )
@@ -196,7 +196,7 @@ INSERT INTO public.document_verifications (
   'Espèces (Règlement direct)',
   'ESP-135945',
   'KK',
-  'Christian Y.',
+  'Christian',
   'Logement LocaTrust',
   '100 villard, yamoussoukro - Côte d''Ivoire',
   true,
@@ -216,7 +216,7 @@ INSERT INTO public.document_verifications (
   'Espèces (Règlement direct)',
   'ESP-135945',
   'KK',
-  'Christian Y.',
+  'Christian',
   'Logement LocaTrust',
   '100 villard, yamoussoukro - Côte d''Ivoire',
   true,
@@ -236,7 +236,7 @@ INSERT INTO public.document_verifications (
   'Bail Résidentiel',
   'LT-2026-CI-000492',
   'KK',
-  'Christian Y.',
+  'Christian',
   'Logement LocaTrust',
   '100 villard, yamoussoukro - Côte d''Ivoire',
   true,
@@ -256,7 +256,7 @@ INSERT INTO public.document_verifications (
   'Wave CI / Mobile Money',
   'CAUT-000492-CONF',
   'KK',
-  'Christian Y.',
+  'Christian',
   'Logement LocaTrust',
   '100 villard, yamoussoukro - Côte d''Ivoire',
   true,
@@ -276,7 +276,7 @@ INSERT INTO public.document_verifications (
   'Mobile Money / Virement',
   'REST-000492-CONF',
   'KK',
-  'Christian Y.',
+  'Christian',
   'Logement LocaTrust',
   '100 villard, yamoussoukro - Côte d''Ivoire',
   true,

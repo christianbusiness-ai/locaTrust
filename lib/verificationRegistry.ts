@@ -100,6 +100,9 @@ export type UnifiedVerificationResult = {
 export function maskPersonName(fullName: string): string {
   if (!fullName) return 'Partie Certifiée';
   const clean = fullName.trim();
+  if (clean.toLowerCase().startsWith('christian')) {
+    return 'Christian';
+  }
   if (clean.length <= 3) return clean; // ex: "KK"
   const parts = clean.split(/\s+/);
   if (parts.length === 1) return parts[0];
@@ -178,7 +181,7 @@ export const MOCK_VERIFICATION_REGISTRY: {
       isRegisteredLocaTrust: true,
       parties: {
         ownerName: 'KK',
-        tenantName: 'Christian Y.',
+        tenantName: 'Christian',
         isOwnerSigned: true,
         isTenantSigned: true,
         ownerSignedAt: '16/10/2026 15:30',
@@ -224,7 +227,7 @@ export const MOCK_VERIFICATION_REGISTRY: {
       sha256Hash: 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e',
       parties: {
         ownerName: 'KK',
-        tenantName: 'Christian Y.'
+        tenantName: 'Christian'
       },
       property: {
         type: 'Logement LocaTrust',
@@ -251,7 +254,7 @@ export const MOCK_VERIFICATION_REGISTRY: {
       sha256Hash: 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e',
       parties: {
         ownerName: 'KK',
-        tenantName: 'Christian Y.'
+        tenantName: 'Christian'
       },
       property: {
         type: 'Logement LocaTrust',
@@ -278,7 +281,7 @@ export const MOCK_VERIFICATION_REGISTRY: {
       sha256Hash: 'c8273b1849102837461928374650192837465019283746501928374650192837',
       parties: {
         ownerName: 'KK',
-        tenantName: 'Christian Y.'
+        tenantName: 'Christian'
       },
       property: {
         type: 'Logement LocaTrust',
@@ -305,7 +308,7 @@ export const MOCK_VERIFICATION_REGISTRY: {
       sha256Hash: 'e928374650192837461928374650192837465019283746501928374650192837',
       parties: {
         ownerName: 'KK',
-        tenantName: 'Christian Y.'
+        tenantName: 'Christian'
       },
       property: {
         type: 'Logement LocaTrust',
@@ -975,7 +978,7 @@ export async function verifyDocumentToken(
         transactionReference: rData.receipt_number || token,
         parties: {
           ownerName: maskPersonName(rData.owner?.full_name || 'KK'),
-          tenantName: maskPersonName(rData.tenant?.full_name || 'Christian Y.')
+          tenantName: maskPersonName(rData.tenant?.full_name || 'Christian')
         },
         property: {
           type: rData.contract?.property?.title || 'Logement certifié',
@@ -1032,7 +1035,7 @@ export async function verifyDocumentToken(
         isRegisteredLocaTrust: true,
         parties: {
           ownerName: maskPersonName(cData.owner?.full_name || 'KK'),
-          tenantName: maskPersonName(cData.tenant?.full_name || 'Christian Y.'),
+          tenantName: maskPersonName(cData.tenant?.full_name || 'Christian'),
           isOwnerSigned: Boolean(cData.owner_signed || cData.owner_signature),
           isTenantSigned: Boolean(cData.tenant_signed || cData.tenant_signature),
           ownerSignedAt: cData.owner_signed_at,
