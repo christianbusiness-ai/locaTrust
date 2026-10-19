@@ -539,7 +539,7 @@ BEGIN
         payment_method = 'Espèces',
         receipt_number = 'ESP-135945',
         status = 'confirme',
-        target_month = 'Octobre 2026'
+        target_month = '2026-10-01'
       WHERE reference = 'ESP-135945';
     ELSE
       INSERT INTO public.rent_payments (
@@ -551,7 +551,7 @@ BEGIN
         v_contract_id,
         v_christian_id, v_kk_id, v_kk_id,
         30000, '2026-10-17', 'Espèces', 'ESP-135945', 'ESP-135945',
-        'confirme', 'Octobre 2026'
+        'confirme', '2026-10-01'
       );
     END IF;
 
@@ -566,7 +566,7 @@ BEGIN
         payment_date = '2026-10-19',
         payment_method = 'Wave',
         status = 'declare',
-        target_month = 'Novembre 2026'
+        target_month = '2026-11-01'
       WHERE reference = 'WAV-2026-NOV-781920';
     ELSE
       INSERT INTO public.rent_payments (
@@ -578,7 +578,7 @@ BEGIN
         v_contract_id,
         v_christian_id, v_kk_id, v_kk_id,
         30000, '2026-10-19', 'Wave', 'WAV-2026-NOV-781920',
-        'declare', 'Novembre 2026'
+        'declare', '2026-11-01'
       );
     END IF;
 
