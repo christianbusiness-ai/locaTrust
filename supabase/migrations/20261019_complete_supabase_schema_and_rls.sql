@@ -200,8 +200,23 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
--- 2. POLITIQUES RLS ÉTENDUES MULTI-ROLES (PROPRIETAIRE, AGENCE, LOCATAIRE, ADMIN)
+-- 2. FONCTION DE SÉCURITÉ is_admin() & POLITIQUES RLS ÉTENDUES MULTI-ROLES
 -- -----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND (role = 'admin' OR account_type = 'admin')
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated, anon;
 
 -- PROPERTIES
 ALTER TABLE IF EXISTS public.properties ENABLE ROW LEVEL SECURITY;
