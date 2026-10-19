@@ -389,11 +389,15 @@ export const Header: React.FC<HeaderProps> = ({
               n.targetUserId === userId ||
               (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
               (userRole === 'locataire' && (n.targetRole === 'locataire' || n.targetUserId === 'usr_tenant' || n.targetUserId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46' || !userId || userId === 'usr_tenant' || userId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46')) ||
-              (userRole === 'proprietaire' && (n.targetRole === 'proprietaire' || n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId || n.targetUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9')) ||
-              (userRole === 'agence' && (n.targetRole === 'agence' || n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId));
+              (userRole === 'proprietaire' && (n.targetRole === 'proprietaire' || n.targetRole === 'agence' || n.targetUserId === 'usr_owner' || n.targetUserId === 'usr_agency' || n.targetUserId === userId || n.targetUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9')) ||
+              (userRole === 'agence' && (n.targetRole === 'agence' || n.targetRole === 'proprietaire' || n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner' || n.targetUserId === userId || n.targetUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'));
             if (!matchesMe) return false;
-          } else if (n.targetRole && n.targetRole !== userRole) {
-            return false;
+          } else if (n.targetRole) {
+            const matchesRole =
+              n.targetRole === userRole ||
+              (userRole === 'agence' && n.targetRole === 'proprietaire') ||
+              (userRole === 'proprietaire' && n.targetRole === 'agence');
+            if (!matchesRole) return false;
           }
 
           return true;

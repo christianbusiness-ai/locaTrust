@@ -163,34 +163,113 @@ export async function getRentPayments(userId: string) {
   }
 }
 
+export function parseMonthToIsoDate(input?: string): string {
+  if (!input) return new Date().toISOString().split('T')[0];
+  const str = String(input).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  if (/^\d{4}-\d{2}$/.test(str)) return `${str}-01`;
+
+  const monthsMap: Record<string, string> = {
+    janvier: '01', fevrier: '02', 'février': '02', mars: '03', avril: '04',
+    mai: '05', juin: '06', juillet: '07', aout: '08', 'août': '08',
+    septembre: '09', octobre: '10', novembre: '11', decembre: '12', 'décembre': '12'
+  };
+
+  const lower = str.toLowerCase();
+  for (const [mName, mNum] of Object.entries(monthsMap)) {
+    if (lower.includes(mName)) {
+      const yearMatch = str.match(/\b(202\d|203\d)\b/);
+      const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+      return `${year}-${mNum}-01`;
+    }
+  }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().split('T')[0];
+  }
+
+  return new Date().toISOString().split('T')[0];
+}
+
+export function normalizePaymentMethod(method?: string): string {
+  if (!method) return 'wave';
+  const m = String(method).toLowerCase();
+  if (m.includes('orange')) return 'orange_money';
+  if (m.includes('wave')) return 'wave';
+  if (m.includes('mtn')) return 'mtn_momo';
+  if (m.includes('moov')) return 'moov_money';
+  if (m.includes('espece') || m.includes('espèces') || m.includes('cash')) return 'especes';
+  if (m.includes('virement')) return 'virement';
+  return 'wave';
+}
+
 export async function createRentPayment(payment: any) {
   try {
-    const { data, error } = await supabase
-      .from('rent_payments')
-      .insert(payment)
-      .select()
-      .single();
+    const isoTargetMonth = parseMonthToIsoDate(payment.target_month || payment.month || payment.payment_date);
+    const normalizedMethod = normalizePaymentMethod(payment.payment_method || payment.method);
 
-    if (!error && data) {
-      return { data, error: null };
+    // 1. Résolution de l'owner_id (ex: KK ou propriétaire assigné)
+    let validOwnerId = payment.owner_id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(payment.owner_id) ? payment.owner_id : null;
+    if (!validOwnerId) {
+      try {
+        const { data: ownerProf } = await supabase
+          .from('profiles')
+          .select('id')
+          .in('account_type', ['agence', 'proprietaire'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (ownerProf?.id) validOwnerId = ownerProf.id;
+      } catch {}
     }
 
-    // Si Supabase signale une colonne inconnue (ex: allocations ou periods_covered)
-    if (error && (error.message?.includes('column') || error.code === 'PGRST204' || error.code === '42703')) {
-      const sanitized: any = {
-        contract_id: payment.contract_id,
-        tenant_id: payment.tenant_id,
-        owner_id: payment.owner_id,
-        target_month: payment.target_month,
-        amount: payment.amount,
-        payment_date: payment.payment_date,
-        reference: payment.reference,
-        proof_url: payment.proof_url,
-        status: payment.status
-      };
-      const retry = await supabase.from('rent_payments').insert(sanitized).select().single();
+    // 2. Résolution du contract_id valide dans Supabase
+    let validContractId = payment.contract_id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(payment.contract_id) ? payment.contract_id : null;
+    if (!validContractId) {
+      try {
+        const { data: dbCnt } = await supabase
+          .from('contracts')
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        if (dbCnt?.id) validContractId = dbCnt.id;
+      } catch {}
+    }
+
+    // 3. Construction du payload strict respectant le schéma PostgreSQL de Supabase
+    const cleanPayload: any = {
+      tenant_id: payment.tenant_id,
+      amount: Number(payment.amount) || 0,
+      target_month: isoTargetMonth,
+      payment_date: payment.payment_date || new Date().toISOString().split('T')[0],
+      payment_method: normalizedMethod,
+      reference: payment.reference || `REF-${Date.now().toString().slice(-6)}`,
+      status: 'en_attente'
+    };
+
+    if (validOwnerId) cleanPayload.owner_id = validOwnerId;
+    if (validContractId) cleanPayload.contract_id = validContractId;
+    if (payment.proof_url) cleanPayload.proof_url = payment.proof_url;
+
+    // Tentative d'insertion principale
+    const { data, error } = await supabase
+      .from('rent_payments')
+      .insert(cleanPayload)
+      .select()
+      .maybeSingle();
+
+    if (!error && data) {
+      return { data: { ...payment, ...data, id: data.id, status: 'en_attente' }, error: null };
+    }
+
+    // Si erreur liée à une clé étrangère manquante sur contract_id
+    if (error && (error.message?.includes('foreign key') || error.code === '23503')) {
+      const fallbackPayload = { ...cleanPayload };
+      delete fallbackPayload.contract_id;
+      const retry = await supabase.from('rent_payments').insert(fallbackPayload).select().maybeSingle();
       if (!retry.error && retry.data) {
-        return { data: { ...payment, ...retry.data }, error: null };
+        return { data: { ...payment, ...retry.data, id: retry.data.id, status: 'en_attente' }, error: null };
       }
     }
 

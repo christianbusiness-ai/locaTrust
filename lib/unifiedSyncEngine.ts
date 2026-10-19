@@ -394,6 +394,71 @@ async function pushPendingLocalDataToServer(userId: string) {
         }
       }
     }
+
+    // C. Règlements de loyers locaux non encore inscrits dans Supabase
+    const rawPayments = localStorage.getItem('locatrust_rent_payments');
+    if (rawPayments) {
+      try {
+        const localPmts = JSON.parse(rawPayments);
+        if (Array.isArray(localPmts)) {
+          const { createRentPayment } = await import('@/src/lib/db');
+          let modified = false;
+          for (const p of localPmts) {
+            if (p.reference) {
+              const { data: existing } = await supabase
+                .from('rent_payments')
+                .select('id')
+                .eq('reference', p.reference)
+                .maybeSingle();
+
+              if (!existing) {
+                const res = await createRentPayment(p);
+                if (res?.data?.id) {
+                  p.id = res.data.id;
+                  modified = true;
+                }
+              }
+            }
+          }
+          if (modified) {
+            localStorage.setItem('locatrust_rent_payments', JSON.stringify(localPmts));
+          }
+        }
+      } catch (pmtErr) {
+        console.warn('pushPendingLocalDataToServer payments notice:', pmtErr);
+      }
+    }
+
+    // D. Quittances locales non encore inscrites dans Supabase
+    const rawReceipts = localStorage.getItem('locatrust_receipts') || localStorage.getItem('locatrust_tenant_receipts_v2');
+    if (rawReceipts) {
+      try {
+        const localRcps = JSON.parse(rawReceipts);
+        if (Array.isArray(localRcps)) {
+          for (const r of localRcps) {
+            const rNum = r.receipt_number || r.receiptNumber;
+            if (rNum) {
+              const { data: existing } = await supabase
+                .from('receipts')
+                .select('id')
+                .eq('receipt_number', rNum)
+                .maybeSingle();
+
+              if (!existing) {
+                await supabase.from('receipts').insert({
+                  receipt_number: rNum,
+                  type: r.type || 'loyer',
+                  amount: Number(r.amount || r.amount_paid || 0),
+                  token: r.token || `tok_rec_${Date.now()}`
+                });
+              }
+            }
+          }
+        }
+      } catch (rcpErr) {
+        console.warn('pushPendingLocalDataToServer receipts notice:', rcpErr);
+      }
+    }
   } catch (err) {
     console.warn('pushPendingLocalDataToServer notice:', err);
   }

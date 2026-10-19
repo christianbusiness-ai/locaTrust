@@ -35,6 +35,7 @@ import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { RentPayment } from '@/types/database.types';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
+import { parseMonthToIsoDate } from '@/src/lib/db';
 import {
   MonthlyScheduleItem,
   processChronologicalRentPayment,
@@ -524,11 +525,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       // Synchroniser avec Supabase & notifier le locataire
       try {
         if (isValidUuid(validatingPayment.id)) {
+          const isoTarget = parseMonthToIsoDate(targetPeriodFormatted);
           await supabase.from('rent_payments').update({
-            status: 'en_attente_signature_locataire',
+            status: 'valide',
             confirmed_at: new Date().toISOString(),
-            owner_signature_url: effectiveOwnerSig,
-            target_month: targetPeriodFormatted
+            target_month: isoTarget
           }).eq('id', validatingPayment.id);
         }
 
@@ -539,7 +540,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           token: `tok_rec_${Date.now()}`
         };
         if (isValidUuid(validatingPayment.contract_id)) receiptPayload.contract_id = validatingPayment.contract_id;
-        if (isValidUuid(validatingPayment.id)) receiptPayload.rent_payment_id = validatingPayment.id;
         if (isValidUuid(tenantId)) receiptPayload.tenant_id = tenantId;
         if (isValidUuid(ownerId)) receiptPayload.owner_id = ownerId;
 

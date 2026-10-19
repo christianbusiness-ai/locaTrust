@@ -57,14 +57,29 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           const receiverId = payload?.targetUserId || 'usr_owner';
           const amount = payload?.data?.amount;
           const ref = payload?.data?.reference || payload?.data?.transactionRef;
-          
+          const paymentObj = payload?.data?.payment;
+
+          // 1. Ingestion directe dans locatrust_rent_payments pour disponibilité immédiate sur téléphone/tablette
+          if (paymentObj) {
+            try {
+              const curPmtsRaw = localStorage.getItem('locatrust_rent_payments');
+              const curPmts = curPmtsRaw ? JSON.parse(curPmtsRaw) : [];
+              const exists = curPmts.some((p: any) => p.id === paymentObj.id || (paymentObj.reference && p.reference === paymentObj.reference));
+              if (!exists) {
+                const updatedPmts = [paymentObj, ...curPmts];
+                localStorage.setItem('locatrust_rent_payments', JSON.stringify(updatedPmts));
+              }
+            } catch {}
+          }
+
+          // 2. Notification in-app pour propriétaire ET agence (ex: compte KK)
           try {
             const notifsRaw = localStorage.getItem('locatrust_notifications');
             const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
             const notifId = `notif_pmt_dec_${payload?.paymentId || Date.now()}`;
             const exists = curNotifs.some((n: any) => n.id === notifId);
             if (!exists) {
-              const newNotif = {
+              const baseNotif = {
                 id: notifId,
                 title: '💳 Nouveau paiement de loyer déclaré',
                 description: `Paiement déclaré${amount ? ` de ${Number(amount).toLocaleString('fr-FR')} FCFA` : ''}${ref ? ` (Réf: ${ref})` : ''}. Cliquez pour vérifier et valider la quittance.`,
@@ -73,13 +88,15 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                 type: 'paiement',
                 category: 'paiement',
                 targetTab: 'payments',
-                targetRole: 'proprietaire',
                 targetUserId: receiverId,
                 senderUserId: senderId,
                 payload: { paymentId: payload?.paymentId, amount }
               };
-              localStorage.setItem('locatrust_notifications', JSON.stringify([newNotif, ...curNotifs]));
-              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [newNotif, ...curNotifs] } }));
+              const notifProp = { ...baseNotif, targetRole: 'proprietaire' };
+              const notifAgency = { ...baseNotif, id: `${notifId}_agency`, targetRole: 'agence' };
+              const merged = [notifProp, notifAgency, ...curNotifs];
+              localStorage.setItem('locatrust_notifications', JSON.stringify(merged));
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: merged } }));
             }
           } catch {}
 
@@ -194,13 +211,30 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           const senderId = payload?.actorId || 'usr_tenant';
           const receiverId = payload?.targetUserId || 'usr_owner';
           const amount = payload?.data?.amount;
+          const cautionObj = payload?.data?.caution;
+
+          // 1. Ingestion directe dans locatrust_caution_deposits & locatrust_deposits_v1
+          if (cautionObj) {
+            try {
+              const curDepsRaw = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_caution_deposits');
+              const curDeps = curDepsRaw ? JSON.parse(curDepsRaw) : [];
+              const exists = curDeps.some((d: any) => d.id === cautionObj.id || (cautionObj.reference && d.reference === cautionObj.reference));
+              if (!exists) {
+                const updatedDeps = [cautionObj, ...curDeps];
+                localStorage.setItem('locatrust_deposits_v1', JSON.stringify(updatedDeps));
+                localStorage.setItem('locatrust_caution_deposits', JSON.stringify(updatedDeps));
+              }
+            } catch {}
+          }
+
+          // 2. Notification in-app pour propriétaire ET agence (ex: compte KK)
           try {
             const notifsRaw = localStorage.getItem('locatrust_notifications');
             const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
             const notifId = `notif_caut_dec_${payload?.depositId || Date.now()}`;
             const exists = curNotifs.some((n: any) => n.id === notifId);
             if (!exists) {
-              const newNotif = {
+              const baseNotif = {
                 id: notifId,
                 title: '🛡️ Règlement de caution déclaré',
                 description: `Paiement de caution soumis${amount ? ` (${Number(amount).toLocaleString('fr-FR')} FCFA)` : ''}. Cliquez pour vérifier et émettre le reçu officiel.`,
@@ -209,13 +243,15 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                 type: 'caution',
                 category: 'caution',
                 targetTab: 'cautions',
-                targetRole: 'proprietaire',
                 targetUserId: receiverId,
                 senderUserId: senderId,
                 payload: { depositId: payload?.depositId, amount }
               };
-              localStorage.setItem('locatrust_notifications', JSON.stringify([newNotif, ...curNotifs]));
-              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [newNotif, ...curNotifs] } }));
+              const notifProp = { ...baseNotif, targetRole: 'proprietaire' };
+              const notifAgency = { ...baseNotif, id: `${notifId}_agency`, targetRole: 'agence' };
+              const merged = [notifProp, notifAgency, ...curNotifs];
+              localStorage.setItem('locatrust_notifications', JSON.stringify(merged));
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: merged } }));
             }
           } catch {}
           window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: payload }));

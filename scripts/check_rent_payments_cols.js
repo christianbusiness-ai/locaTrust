@@ -8,9 +8,7 @@ const s = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 async function checkRentPaymentsCols() {
   const candidateCols = [
-    'id', 'contract_id', 'tenant_id', 'owner_id', 'amount', 'target_month',
-    'payment_date', 'payment_method', 'reference', 'status', 'token',
-    'owner_signature_url', 'tenant_signature_url', 'confirmed_at', 'created_at', 'proof_url'
+    'notes', 'period_start', 'period_end', 'periods_covered', 'allocations', 'remaining_credit'
   ];
 
   for (const c of candidateCols) {
