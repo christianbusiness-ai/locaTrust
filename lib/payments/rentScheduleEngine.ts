@@ -132,6 +132,27 @@ export function parseDateSafe(input?: any): Date {
 
 /**
  * Génère l'échéancier mensuel complet d'un contrat de bail
+/**
+ * Extrait de façon dynamique et robuste le loyer mensuel réel prévu au contrat ou au bien depuis la base de données
+ */
+export function extractContractMonthlyRent(contract: any): number {
+  if (!contract) return 0;
+  const raw =
+    contract.monthly_rent ??
+    contract.rent ??
+    contract.rent_amount ??
+    contract.property?.rent ??
+    contract.property?.monthly_rent ??
+    contract.property?.price ??
+    contract.pricing?.rent ??
+    contract.amount ??
+    0;
+  const num = Number(raw);
+  return !isNaN(num) && num > 0 ? num : 0;
+}
+
+/**
+ * Génère l'échéancier mensuel prévisionnel pour un contrat de bail donné,
  * depuis la date de début jusqu'à un horizon futur suffisant
  */
 export function generateContractSchedule(
@@ -139,12 +160,7 @@ export function generateContractSchedule(
   referenceDate: Date = new Date(),
   horizonMonths: number = 24
 ): MonthlyScheduleItem[] {
-  const monthlyRent = Number(
-    contract?.monthly_rent ||
-    contract?.rent ||
-    contract?.rent_amount ||
-    30000
-  );
+  const monthlyRent = extractContractMonthlyRent(contract);
 
   const rawStart =
     contract?.start_date ||
@@ -571,7 +587,7 @@ export function processChronologicalRentPayment(
 ): AllocationResult {
   const dummyContract = {
     contract_number: contractNumber,
-    monthly_rent: currentSchedule[0]?.amount_due || 30000,
+    monthly_rent: currentSchedule[0]?.amount_due || (paymentAmount > 0 ? paymentAmount : 0),
     due_day: 5
   };
 

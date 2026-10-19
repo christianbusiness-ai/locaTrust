@@ -39,6 +39,7 @@ import {
   MonthlyScheduleItem,
   processChronologicalRentPayment,
   calculateRentPaymentAllocation,
+  extractContractMonthlyRent,
   RentAllocationResult,
   AllocationResult
 } from '@/lib/payments/rentScheduleEngine';
@@ -309,7 +310,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     const contract = validatingPayment.contract || {
       id: validatingPayment.contract_id || 'LT-2026-CI-000492',
       contract_number: validatingPayment.contract_id || 'LT-2026-CI-000492',
-      monthly_rent: Number(validatingPayment.amount || 30000),
+      monthly_rent: extractContractMonthlyRent(validatingPayment.contract) || Number(validatingPayment.amount || 0),
       due_day: 5
     };
 

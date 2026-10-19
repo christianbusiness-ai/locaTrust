@@ -190,7 +190,9 @@ export function calculateContractDueDetails(
     contract.monthly_rent ||
     contract.rent ||
     contract.rent_amount ||
-    30000
+    contract.property?.rent ||
+    contract.property?.monthly_rent ||
+    0
   );
 
   const contractNumber =
@@ -369,8 +371,8 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
                   contract_number: a.contract_number || `LT-2026-CI-000492`,
                   property_title: a.property_title,
                   property_address: a.property_address,
-                  rent: Number(a.rent_amount || 30000),
-                  monthly_rent: Number(a.rent_amount || 30000),
+                  rent: Number(a.rent_amount || a.property?.rent || a.rent || 0),
+                  monthly_rent: Number(a.rent_amount || a.property?.rent || a.monthly_rent || 0),
                   signed_date: effectiveSigned,
                   tenant_id: a.tenant_id,
                   tenant_name: a.applicant_name || a.tenant_name || 'Christian',
@@ -552,8 +554,8 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
                   contract_number: a.contract_number || `LT-2026-CI-000492`,
                   property_title: a.property_title,
                   property_address: a.property_address,
-                  rent: Number(a.rent_amount || 30000),
-                  monthly_rent: Number(a.rent_amount || 30000),
+                  rent: Number(a.rent_amount || a.property?.rent || a.rent || 0),
+                  monthly_rent: Number(a.rent_amount || a.property?.rent || a.monthly_rent || 0),
                   signed_date: effectiveSigned,
                   tenant_id: a.tenant_id,
                   tenant_name: a.applicant_name || a.tenant_name || 'Christian',

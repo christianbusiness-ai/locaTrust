@@ -43,7 +43,7 @@ import { getStoredOwnerSignature, persistTenantSignature } from '@/lib/signature
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getDeviceDate } from '@/lib/dateSystem';
-import { calculateRentPaymentAllocation, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
+import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
 
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
@@ -77,7 +77,7 @@ export const LocatairePaiementsView: React.FC = () => {
     return lbl.charAt(0).toUpperCase() + lbl.slice(1);
   });
   const [paymentType, setPaymentType] = useState<'loyer' | 'partiel' | 'autre'>('loyer');
-  const [amount, setAmount] = useState<number>(30000);
+  const [amount, setAmount] = useState<number>(0);
   const [method, setMethod] = useState('Wave CI');
   const [reference, setReference] = useState('');
   const [proofUrl, setProofUrl] = useState('');
@@ -101,13 +101,25 @@ export const LocatairePaiementsView: React.FC = () => {
 
   // Caution Form State
   const [cautionContractId, setCautionContractId] = useState('');
-  const [cautionAmount, setCautionAmount] = useState<number>(300000);
+  const [cautionAmount, setCautionAmount] = useState<number>(0);
   const [cautionMethod, setCautionMethod] = useState('Wave CI');
   const [cautionReference, setCautionReference] = useState('');
   const [cautionProofUrl, setCautionProofUrl] = useState<string | null>(null);
   const [cautionProofFileName, setCautionProofFileName] = useState<string | null>(null);
   const [cautionProofFileSize, setCautionProofFileSize] = useState<string | null>(null);
   const cautionProofFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Handler pour ouvrir le modal de déclaration avec préremplissage automatique du loyer réel depuis la base
+  const handleOpenDeclareModal = () => {
+    const contractToUse = currentRentContract || userContracts[0];
+    if (contractToUse) {
+      const realRent = extractContractMonthlyRent(contractToUse);
+      if (realRent > 0 && (amount <= 0 || amount === 30000)) {
+        setAmount(realRent);
+      }
+    }
+    setShowDeclareModal(true);
+  };
 
   const handleCautionProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -273,13 +285,24 @@ export const LocatairePaiementsView: React.FC = () => {
 
       if (allContracts.length > 0) {
         setUserContracts(allContracts);
-        if (!selectedContractId || !allContracts.some(c => c.id === selectedContractId)) {
-          setSelectedContractId(allContracts[0].id);
-          if (allContracts[0].rent) setAmount(Number(allContracts[0].rent));
+        const targetContract = (!selectedContractId || !allContracts.some(c => c.id === selectedContractId))
+          ? allContracts[0]
+          : (allContracts.find(c => c.id === selectedContractId) || allContracts[0]);
+
+        setSelectedContractId(targetContract.id);
+        const realRent = extractContractMonthlyRent(targetContract);
+        if (realRent > 0) {
+          setAmount(realRent);
         }
+
         if (!cautionContractId || !allContracts.some(c => c.id === cautionContractId)) {
           setCautionContractId(allContracts[0].id);
-          const cAmount = Number(allContracts[0].caution_amount || allContracts[0].caution || (Number(allContracts[0].rent || 0) * 2));
+          const cRent = extractContractMonthlyRent(allContracts[0]);
+          const cAmount = Number(
+            allContracts[0].caution_amount ||
+            allContracts[0].caution ||
+            (cRent > 0 ? cRent * 2 : 0)
+          );
           if (cAmount > 0) setCautionAmount(cAmount);
         }
       }
@@ -1077,7 +1100,7 @@ export const LocatairePaiementsView: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setShowDeclareModal(true)}
+            onClick={handleOpenDeclareModal}
             className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md shadow-blue-600/20 transition-all active:scale-95"
           >
             <Plus className="w-4 h-4" />
@@ -1302,7 +1325,7 @@ export const LocatairePaiementsView: React.FC = () => {
                       {!searchQuery && (
                         <button
                           type="button"
-                          onClick={() => setShowDeclareModal(true)}
+                          onClick={handleOpenDeclareModal}
                           className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition"
                         >
                           Déclarer un loyer
@@ -1417,7 +1440,12 @@ export const LocatairePaiementsView: React.FC = () => {
                       setCautionContractId(selectedId);
                       const targetContract = userContracts.find(c => c.id === selectedId);
                       if (targetContract) {
-                        const cAmount = Number(targetContract.caution_amount || targetContract.caution || (Number(targetContract.rent || 0) * 2));
+                        const cRent = extractContractMonthlyRent(targetContract);
+                        const cAmount = Number(
+                          targetContract.caution_amount ||
+                          targetContract.caution ||
+                          (cRent > 0 ? cRent * 2 : 0)
+                        );
                         if (cAmount > 0) setCautionAmount(cAmount);
                       }
                     }}
@@ -1641,17 +1669,24 @@ export const LocatairePaiementsView: React.FC = () => {
                   <select
                     value={selectedContractId}
                     onChange={(e) => {
-                      setSelectedContractId(e.target.value);
-                      const found = userContracts.find(c => c.id === e.target.value);
-                      if (found?.rent) setAmount(Number(found.rent));
+                      const newId = e.target.value;
+                      setSelectedContractId(newId);
+                      const found = userContracts.find(c => c.id === newId);
+                      if (found) {
+                        const rentVal = extractContractMonthlyRent(found);
+                        if (rentVal > 0) setAmount(rentVal);
+                      }
                     }}
                     className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
                   >
-                    {userContracts.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.property?.title || 'Logement'} — Contrat N° {c.contract_number || c.id.slice(0, 8)}
-                      </option>
-                    ))}
+                    {userContracts.map(c => {
+                      const rentVal = extractContractMonthlyRent(c);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.property?.title || 'Logement'} {rentVal > 0 ? `(${formatFCFA(rentVal)}/mois)` : ''} — Contrat N° {c.contract_number || c.id.slice(0, 8)}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
               </div>
