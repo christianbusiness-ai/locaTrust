@@ -131,6 +131,9 @@ BEGIN
     END IF;
 
     -- RECEIPTS
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'pdf_url' AND is_nullable = 'NO') THEN
+        ALTER TABLE public.receipts ALTER COLUMN pdf_url DROP NOT NULL;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'receipts' AND column_name = 'agency_id') THEN
         ALTER TABLE public.receipts ADD COLUMN agency_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
     END IF;
@@ -593,18 +596,20 @@ BEGIN
         status = 'certifie',
         token = 'tok_rec_ci2026_ljy8knh31z579ov2',
         verification_token = 'tok_rec_ci2026_ljy8knh31z579ov2',
+        pdf_url = 'https://locatrust.site/verify/tok_rec_ci2026_ljy8knh31z579ov2',
         period_covered = 'Octobre 2026'
       WHERE receipt_number = 'ESP-135945';
     ELSE
       INSERT INTO public.receipts (
         id, receipt_number, type, tenant_id, owner_id, agency_id,
-        contract_id, amount, token, verification_token, period_covered, status
+        contract_id, amount, token, verification_token, pdf_url, period_covered, status
       ) VALUES (
         'a1111111-aaaa-bbbb-cccc-111111111111',
         'ESP-135945', 'loyer',
         v_christian_id, v_kk_id, v_kk_id,
         v_contract_id, 30000,
         'tok_rec_ci2026_ljy8knh31z579ov2', 'tok_rec_ci2026_ljy8knh31z579ov2',
+        'https://locatrust.site/verify/tok_rec_ci2026_ljy8knh31z579ov2',
         'Octobre 2026', 'certifie'
       );
     END IF;
@@ -619,18 +624,20 @@ BEGIN
         status = 'certifie',
         token = 'tok_rec_caution_000492',
         verification_token = 'tok_rec_caution_000492',
+        pdf_url = 'https://locatrust.site/verify/tok_rec_caution_000492',
         period_covered = 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)'
       WHERE receipt_number = 'REC-CAUTION-000492';
     ELSE
       INSERT INTO public.receipts (
         id, receipt_number, type, tenant_id, owner_id, agency_id,
-        contract_id, amount, token, verification_token, period_covered, status
+        contract_id, amount, token, verification_token, pdf_url, period_covered, status
       ) VALUES (
         'a2222222-aaaa-bbbb-cccc-222222222222',
         'REC-CAUTION-000492', 'caution',
         v_christian_id, v_kk_id, v_kk_id,
         v_contract_id, 60000,
         'tok_rec_caution_000492', 'tok_rec_caution_000492',
+        'https://locatrust.site/verify/tok_rec_caution_000492',
         'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)', 'certifie'
       );
     END IF;
