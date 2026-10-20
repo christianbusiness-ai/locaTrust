@@ -70,19 +70,19 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     try {
       // 1. Biens immobiliers
       let pQuery = supabase.from('properties').select('*').is('deleted_at', null);
-      if (user?.id) pQuery = pQuery.eq('owner_id', user.id);
+      if (user?.id) pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       const { data: propsData } = await pQuery;
       setRealProps(propsData || []);
 
       // 2. Contrats actifs
       let cQuery = supabase.from('contracts').select('*');
-      if (user?.id) cQuery = cQuery.eq('owner_id', user.id);
+      if (user?.id) cQuery = cQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       const { data: contractsData } = await cQuery;
       setRealContracts(contractsData || []);
 
       // 3. Règlements de loyers
       let pmQuery = supabase.from('rent_payments').select('*');
-      if (user?.id) pmQuery = pmQuery.eq('owner_id', user.id);
+      if (user?.id) pmQuery = pmQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       const { data: paymentsData } = await pmQuery;
       setRealPayments(paymentsData || []);
 
@@ -112,6 +112,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     window.addEventListener('locatrust:applications-updated', handleLiveUpdate);
     window.addEventListener('locatrust:contracts-updated', handleLiveUpdate);
     window.addEventListener('locatrust:payments-updated', handleLiveUpdate);
+    window.addEventListener('locatrust:receipts_updated', handleLiveUpdate);
     window.addEventListener('locatrust:cautions_updated', handleLiveUpdate);
     window.addEventListener('locatrust:year_changed', handleYearChanged);
 
@@ -120,6 +121,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       window.removeEventListener('locatrust:applications-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:contracts-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:payments-updated', handleLiveUpdate);
+      window.removeEventListener('locatrust:receipts_updated', handleLiveUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleLiveUpdate);
       window.removeEventListener('locatrust:year_changed', handleYearChanged);
     };
@@ -137,12 +139,21 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const activeProps = isDemo ? 10 : realProps.filter(p => p.status === 'disponible' || p.status === 'loue').length;
   const inactiveProps = isDemo ? 2 : realProps.filter(p => p.status === 'desactive').length;
 
-  const totalTenants = isDemo ? 7 : realContracts.filter(c => c.status === 'actif' || c.status === 'contrat_actif').length;
+  const activeContracts = realContracts.filter(c => c.status === 'actif' || c.status === 'contrat_actif');
+  const rentedProps = realProps.filter(p => p.status === 'loue' || activeContracts.some(c => c.property_id === p.id || c.property?.id === p.id));
+  const totalTenants = isDemo ? 7 : activeContracts.length;
 
-  // Calculs financiers réels
-  const realExpectedRent = realProps.reduce((sum, p) => sum + (Number(p.rent_amount || p.rent) || 0), 0);
-  const realCollectedRent = realPayments.filter(p => p.status === 'confirme').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-  const realLateRent = realPayments.filter(p => p.status === 'declare').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  // Calculs financiers réels : SEULS les logements sous contrat actif produisent un loyer attendu et une caution
+  const realExpectedRent = activeContracts.length > 0
+    ? activeContracts.reduce((sum, c) => sum + (Number(c.monthly_rent || c.rent) || 0), 0)
+    : rentedProps.reduce((sum, p) => sum + (Number(p.rent_amount || p.rent) || 0), 0);
+
+  const realCollectedRent = realPayments
+    .filter(p => p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye')
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  // Le retard ne concerne que les baux actifs si l'attendu excède les encaissements réels
+  const realLateRent = Math.max(0, realExpectedRent - realCollectedRent);
 
   const rentMetrics = isDemo ? {
     expected: 2800000,
@@ -158,8 +169,10 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     expected: 5600000,
     held: 4900000
   } : {
-    expected: realProps.reduce((sum, p) => sum + (Number(p.deposit_amount || p.caution) || 0), 0),
-    held: realContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 0), 0)
+    expected: activeContracts.length > 0
+      ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 0), 0)
+      : rentedProps.reduce((sum, p) => sum + (Number(p.deposit_amount || p.caution) || 0), 0),
+    held: activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 0), 0)
   };
 
   const maintenanceMetrics = isDemo ? {

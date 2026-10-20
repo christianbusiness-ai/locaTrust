@@ -278,17 +278,17 @@ export default async function handler(req, res) {
         });
       }
 
-      // 2. Validation / Confirmation du paiement par le bailleur ou l'agence
+      // 2. Validation / Confirmation du paiement par le bailleur ou l'agence (Émission du reçu en attente de contre-signature)
       if (action === 'confirm_payment' || action === 'validate_payment') {
         const { paymentId, reference, ownerSignatureUrl } = body;
         const targetPayment = SERVER_STORE.payments.find(p => p.id === paymentId || p.reference === reference);
 
         if (targetPayment) {
-          targetPayment.status = 'confirme';
+          targetPayment.status = 'en_attente_signature_locataire';
           targetPayment.confirmed_at = new Date().toISOString();
           if (ownerSignatureUrl) targetPayment.owner_signature_url = ownerSignatureUrl;
 
-          // Création de la quittance certifiée
+          // Création du reçu officiel en attente de signature du locataire
           const recRef = targetPayment.reference || `REC-LOY-${Date.now().toString().slice(-6)}`;
           const recToken = `tok_rec_${recRef.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
           
@@ -305,9 +305,10 @@ export default async function handler(req, res) {
             payment_method: targetPayment.payment_method || 'Mobile Money',
             payment_date: new Date().toLocaleDateString('fr-FR'),
             token: recToken,
-            status: 'certifie',
+            status: 'en_attente_signature_locataire',
             owner_signed: true,
-            tenant_signed: true
+            tenant_signed: false,
+            owner_signature_url: ownerSignatureUrl
           };
 
           SERVER_STORE.receipts = [
@@ -315,20 +316,25 @@ export default async function handler(req, res) {
             ...SERVER_STORE.receipts.filter(r => r.receipt_number !== recRef)
           ];
 
-          // Notification pour le locataire
+          // Notification d'invitation à signer pour le locataire
           const tenantNotif = {
-            id: `notif_quittance_${Date.now()}`,
-            title: '📜 Quittance de loyer certifiée émise',
-            description: `Votre quittance N° ${recRef} (${Number(targetPayment.amount).toLocaleString('fr-FR')} FCFA) a été validée et scellée avec QR Code officiel.`,
-            time: 'À l\'instant',
+            id: `notif_sign_quittance_${Date.now()}`,
+            title: '🛡️ Quittance de loyer reçue pour signature',
+            description: `Votre quittance N° ${recRef} (${Number(targetPayment.amount).toLocaleString('fr-FR')} FCFA) a été validée par le bailleur. Veuillez y apposer votre signature manuscrite pour la sceller.`,
+            time: "À l'instant",
             unread: true,
             category: 'paiement',
-            type: 'quittance',
-            targetTab: 'receipts',
+            type: 'quittance_signature_requise',
+            targetTab: 'payments',
             targetRole: 'locataire',
             targetUserId: targetPayment.tenant_id,
             payload: {
+              action: 'sign_receipt',
+              paymentId: targetPayment.id,
               receiptNumber: recRef,
+              reference: recRef,
+              amount: targetPayment.amount,
+              month: targetPayment.target_month,
               token: recToken
             }
           };
@@ -339,6 +345,65 @@ export default async function handler(req, res) {
             success: true,
             payment: targetPayment,
             receipt: newReceipt,
+            payments: SERVER_STORE.payments,
+            receipts: SERVER_STORE.receipts
+          });
+        }
+
+        return res.status(404).json({ success: false, error: 'Paiement non trouvé.' });
+      }
+
+      // 2b. Signature de la quittance par le locataire (Scellement définitif)
+      if (action === 'sign_receipt') {
+        const { paymentId, reference, tenantSignatureUrl } = body;
+        const targetPayment = SERVER_STORE.payments.find(p => p.id === paymentId || p.reference === reference);
+
+        if (targetPayment) {
+          targetPayment.status = 'confirme';
+          targetPayment.confirmed_at = new Date().toISOString();
+          if (tenantSignatureUrl) targetPayment.tenant_signature_url = tenantSignatureUrl;
+
+          const recRef = targetPayment.reference || reference;
+          const targetReceipt = SERVER_STORE.receipts.find(r => r.receipt_number === recRef);
+          if (targetReceipt) {
+            targetReceipt.status = 'certifie';
+            targetReceipt.tenant_signed = true;
+            if (tenantSignatureUrl) targetReceipt.tenant_signature_url = tenantSignatureUrl;
+          }
+
+          // Marquer la notification de demande de signature comme traitée
+          SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
+            if ((n.type === 'quittance_signature_requise' || n.payload?.action === 'sign_receipt') &&
+                (n.payload?.paymentId === targetPayment.id || n.payload?.receiptNumber === recRef || n.payload?.reference === recRef)) {
+              return { ...n, unread: false, read: true, processed: true };
+            }
+            return n;
+          });
+
+          // Notifier le bailleur et l'agence du scellement
+          const sealedNotif = {
+            id: `notif_sealed_${Date.now()}`,
+            title: '✅ Quittance scellée et signée par le locataire',
+            description: `Le locataire a apposé sa signature certifiée sur la quittance N° ${recRef}. Le document officiel est désormais scellé et téléchargeable.`,
+            time: "À l'instant",
+            unread: true,
+            category: 'paiement',
+            type: 'paiement',
+            targetTab: 'receipts',
+            targetRole: 'agence',
+            targetUserId: targetPayment.owner_id || targetPayment.agency_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+            payload: {
+              paymentId: targetPayment.id,
+              receiptNumber: recRef
+            }
+          };
+
+          SERVER_STORE.notifications = [sealedNotif, { ...sealedNotif, id: `${sealedNotif.id}_owner`, targetRole: 'proprietaire' }, ...SERVER_STORE.notifications];
+
+          return res.status(200).json({
+            success: true,
+            payment: targetPayment,
+            receipt: targetReceipt,
             payments: SERVER_STORE.payments,
             receipts: SERVER_STORE.receipts
           });

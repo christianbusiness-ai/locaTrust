@@ -4,6 +4,8 @@ export type LiveEventType =
   | 'PAYMENT_DECLARED'
   | 'PAYMENT_CONFIRMED'
   | 'PAYMENT_REJECTED'
+  | 'RECEIPT_TRANSMITTED'
+  | 'RECEIPT_SIGNED_BY_TENANT'
   | 'CAUTION_DECLARED'
   | 'CAUTION_CONFIRMED'
   | 'CAUTION_REJECTED'
@@ -199,6 +201,108 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
           window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+        }
+        break;
+
+      case 'RECEIPT_TRANSMITTED':
+        if (typeof window !== 'undefined') {
+          const pmtId = payload?.paymentId;
+          const rcpData = payload?.data?.receipt;
+          const rcpNum = payload?.data?.receipt_number || payload?.data?.receiptNumber || rcpData?.receiptNumber;
+          const senderId = payload?.actorId || 'usr_owner';
+          const receiverId = payload?.targetUserId || 'usr_tenant';
+          const amount = payload?.data?.amount || rcpData?.amount;
+          const actor = payload?.data?.actorName || 'votre bailleur';
+
+          // 1. Ingestion directe dans locatrust_rent_payments avec statut 'en_attente_signature_locataire'
+          try {
+            const curPmtsRaw = localStorage.getItem('locatrust_rent_payments');
+            let curPmts = curPmtsRaw ? JSON.parse(curPmtsRaw) : [];
+            if (Array.isArray(curPmts)) {
+              curPmts = curPmts.map((p: any) => {
+                if (p.id === pmtId || (rcpNum && p.reference === rcpNum)) {
+                  return { ...p, status: 'en_attente_signature_locataire', receipt_number: rcpNum };
+                }
+                return p;
+              });
+              localStorage.setItem('locatrust_rent_payments', JSON.stringify(curPmts));
+            }
+          } catch {}
+
+          // 2. Notification in-app pour inviter le locataire à signer
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_sign_rec_${rcpNum || pmtId || Date.now()}`;
+            const signNotif = {
+              id: notifId,
+              title: '🛡️ Quittance de loyer reçue pour signature',
+              description: `Votre quittance N° ${rcpNum || 'officielle'}${amount ? ` (${Number(amount).toLocaleString('fr-FR')} FCFA)` : ''} a été validée par ${actor}. Veuillez y apposer votre signature manuscrite pour la sceller.`,
+              time: "À l'instant",
+              unread: true,
+              type: 'quittance_signature_requise',
+              category: 'paiement',
+              targetTab: 'payments',
+              targetRole: 'locataire',
+              targetUserId: receiverId,
+              senderUserId: senderId,
+              payload: { action: 'sign_receipt', paymentId: pmtId, receiptNumber: rcpNum, amount }
+            };
+            const updatedNotifs = [signNotif, ...curNotifs.filter((n: any) => n.id !== notifId)];
+            localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+            window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updatedNotifs } }));
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
+        }
+        break;
+
+      case 'RECEIPT_SIGNED_BY_TENANT':
+        if (typeof window !== 'undefined') {
+          const pmtId = payload?.paymentId;
+          const rcpNum = payload?.data?.receipt_number;
+          const tenantName = payload?.data?.actorName || 'Le locataire';
+
+          // 1. Mettre à jour locatrust_rent_payments au statut confirme
+          try {
+            const curPmtsRaw = localStorage.getItem('locatrust_rent_payments');
+            let curPmts = curPmtsRaw ? JSON.parse(curPmtsRaw) : [];
+            if (Array.isArray(curPmts)) {
+              curPmts = curPmts.map((p: any) => {
+                if (p.id === pmtId || (rcpNum && p.reference === rcpNum)) {
+                  return { ...p, status: 'confirme', confirmed_at: new Date().toISOString() };
+                }
+                return p;
+              });
+              localStorage.setItem('locatrust_rent_payments', JSON.stringify(curPmts));
+            }
+          } catch {}
+
+          // 2. Notification pour bailleur et agence
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            const notifId = `notif_sealed_${rcpNum || pmtId || Date.now()}`;
+            const sealedNotif = {
+              id: notifId,
+              title: '✅ Quittance scellée et signée par le locataire',
+              description: `${tenantName} a apposé sa signature manuscrite sur la quittance N° ${rcpNum || 'officielle'}. Le document est officiellement scellé et téléchargeable.`,
+              time: "À l'instant",
+              unread: true,
+              type: 'paiement',
+              category: 'paiement',
+              targetTab: 'receipts',
+              targetRole: 'agence',
+              payload: { paymentId: pmtId, receiptNumber: rcpNum }
+            };
+            const updatedNotifs = [sealedNotif, { ...sealedNotif, id: `${notifId}_owner`, targetRole: 'proprietaire' }, ...curNotifs.filter((n: any) => n.id !== notifId)];
+            localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+            window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updatedNotifs } }));
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
         }
         break;
 
@@ -845,6 +949,13 @@ function initSharedChannel() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rent_payments' }, () => {
+        window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
+        if (currentActiveUserId) {
+          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'receipts' }, () => {
+        window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
         window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
         if (currentActiveUserId) {
           import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});

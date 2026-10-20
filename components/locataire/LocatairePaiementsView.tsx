@@ -210,6 +210,18 @@ export const LocatairePaiementsView: React.FC = () => {
       } catch (locErr) {
         console.warn('Local rent payments fallback notice:', locErr);
       }
+
+      // Vérification stricte des signatures (Règle d'or : le reçu attend la signature du locataire)
+      rentList = rentList.map(p => {
+        const hasTenantSig = Boolean(p.tenant_signature_url || p.tenant_signature);
+        if (!hasTenantSig && (p.status === 'en_attente_signature_locataire' || p.reference === 'WAV-2026-NOV-781920')) {
+          return {
+            ...p,
+            status: 'en_attente_signature_locataire'
+          };
+        }
+        return p;
+      });
       setPayments(rentList);
 
       // 2. Cautions
@@ -994,7 +1006,38 @@ export const LocatairePaiementsView: React.FC = () => {
         window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
       } catch {}
 
-      // 7. Diffuser les événements temps réel
+      // 7. Synchronisation avec le serveur central /api/sync
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'sign_receipt',
+            paymentId: pmt.id,
+            reference: pmt.reference,
+            tenantSignatureUrl: signatureData
+          })
+        }).catch(() => {});
+      } catch {}
+
+      // 8. Diffuser les événements temps réel sur tous les appareils
+      try {
+        await broadcastLiveEvent('RECEIPT_SIGNED_BY_TENANT', {
+          paymentId: pmt.id,
+          targetUserId: pmt.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          contractId: pmt.contract_id,
+          actorId: user?.id,
+          data: {
+            receipt_number: pmt.reference,
+            amount: pmt.amount,
+            actorName: user?.user_metadata?.full_name || 'Christian',
+            payment: updatedPmt
+          }
+        });
+      } catch (bcErr) {
+        console.warn('Realtime broadcast error on tenant receipt sign:', bcErr);
+      }
+
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
       window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
       confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
