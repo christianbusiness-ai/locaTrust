@@ -23,13 +23,14 @@ export interface AccountingPeriodOption {
 
 export const ACCOUNTING_PERIODS: AccountingPeriodOption[] = [
   { id: 'annee_en_cours', label: 'Année 2026 (Exercice complet)' },
-  { id: 't1_2026', label: '1er Trimestre 2026 (Jan - Mar)' },
-  { id: 't2_2026', label: '2ème Trimestre 2026 (Avr - Jun)' },
+  { id: 'mois_en_cours', label: 'Mois en cours (Octobre 2026)' },
+  { id: 'mois_precedent', label: 'Mois précédent (Septembre 2026)' },
+  { id: 't4_2026', label: '4ème Trimestre 2026 (Oct - Déc)' },
   { id: 't3_2026', label: '3ème Trimestre 2026 (Jul - Sep)' },
-  { id: 't4_2026', label: '4ème Trimestre 2026 (Oct - Déc - Prévisionnel)' },
+  { id: 't2_2026', label: '2ème Trimestre 2026 (Avr - Jun)' },
+  { id: 't1_2026', label: '1er Trimestre 2026 (Jan - Mar)' },
   { id: 'semestre_1', label: '1er Semestre 2026 (Jan - Jun)' },
   { id: 'semestre_2', label: '2ème Semestre 2026 (Jul - Déc)' },
-  { id: 'mois_septembre', label: 'Mois en cours (Septembre 2026)' },
 ];
 
 // DEFAULT ZERO ACCOUNTING DATA SET (Fallback if no real database data is loaded)

@@ -56,6 +56,11 @@ interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
 }
 
+const isValidUuid = (id?: string | null): boolean => {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
+};
+
 export const PaiementsView: React.FC<PaiementsViewProps> = ({
   onOpenConfirmPaymentModal,
 }) => {
@@ -68,6 +73,16 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   // Live Rent Schedule State for the active tenant
   const [rentSchedule, setRentSchedule] = useState<MonthlyScheduleItem[]>([]);
   const [lastAllocationResult, setLastAllocationResult] = useState<AllocationResult | null>(null);
+
+  // Signatures d'état partagées (Bailleur & Locataire)
+  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('locatrust_owner_signature') || localStorage.getItem('locatrust_user_signature') || null;
+    }
+    return null;
+  });
+  const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
+  const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
   // Modern Centered Confirmation Modal State (Point 14)
   const [confirmationModal, setConfirmationModal] = useState<{
@@ -440,12 +455,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       try {
         const updatePayload: any = {
           status: 'en_attente_signature_locataire',
-          owner_signature: effectiveOwnerSig,
-          owner_signature_url: effectiveOwnerSig,
-          owner_signed_at: now,
-          transmitted_at: now,
-          target_month: targetPeriodFormatted
+          target_month: targetPeriodFormatted,
+          receipt_number: extractedOcrData.reference
         };
+        if (proposedAllocations?.allocations) {
+          updatePayload.allocations = proposedAllocations.allocations;
+        }
         if (pmtUuid) {
           await supabase.from('rent_payments').update(updatePayload).eq('id', pmtUuid);
         } else if (validatingPayment.reference) {
@@ -469,11 +484,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           verification_token: verificationToken,
           period_covered: targetPeriodFormatted,
           status: 'EN_ATTENTE_SIGNATURE_LOCATAIRE',
-          owner_signature: effectiveOwnerSig,
-          owner_signed_at: now,
-          transmitted_at: now,
-          signer_identity: user?.user_metadata?.full_name || 'Propriétaire',
-          signer_role: (user as any)?.account_type === 'agence' ? 'agence' : 'proprietaire'
+          pdf_url: `https://locatrust.site/verify/recu/${verificationToken}`
         }, { onConflict: 'receipt_number' });
       } catch (sbReceiptErr) {
         console.warn('Notice Supabase insert receipts:', sbReceiptErr);
@@ -637,7 +648,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       try {
         // Diffuser l'événement en temps réel sur tous les appareils
-        await broadcastLiveEvent('RECEIPT_TRANSMITTED', {
+        await broadcastLiveEvent('PAYMENT_CONFIRMED', {
           paymentId: validatingPayment.id,
           targetUserId: validatingPayment.tenant_id,
           contractId: validatingPayment.contract_id,
@@ -668,7 +679,15 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       });
     } catch (err: any) {
       console.error('Erreur validation paiement:', err);
-      alert('La quittance a été validée localement.');
+      setConfirmationModal({
+        isOpen: true,
+        type: 'payment_validated',
+        title: 'Opération réussie !',
+        message: `La quittance N° ${extractedOcrData?.reference || 'N/A'} a été validée avec succès. Elle est transmise au locataire ${validatingPayment.tenant?.full_name || 'Locataire'} en attente de sa contre-signature.`,
+        details: `Montant : ${formatFCFA(extractedOcrData?.amount || validatingPayment.amount)}`,
+        confirmText: "J'ai compris",
+        withCelebration: true
+      });
     } finally {
       setValidatingPayment(null);
       setExtractedOcrData(null);
@@ -795,15 +814,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       alert(`Erreur lors de la transmission : ${err?.message || 'Vérifiez la connexion réseau.'}`);
     }
   };
-
-  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('locatrust_owner_signature') || localStorage.getItem('locatrust_user_signature') || null;
-    }
-    return null;
-  });
-  const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
-  const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
   const handleDownloadReceiptPDF = async (pmt: RentPayment) => {
     const resolved = resolveRealReceiptData(pmt, user);

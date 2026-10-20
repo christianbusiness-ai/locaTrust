@@ -215,63 +215,145 @@ export const AccountingExportView: React.FC = () => {
 
   const activeDataset = React.useMemo(() => {
     if (!accountingData) return null;
-    if (selectedMandant === 'all') return accountingData;
 
-    const targetMandant = selectedMandant.toLowerCase().trim();
+    let baseDataset = accountingData;
 
-    // Contrats du mandant
-    const filteredContrats = (accountingData.contrats || []).filter((c: any) => {
-      const mName = (c.property?.mandant_name || c.mandant_name || '').toLowerCase();
-      const pTitle = (c.property?.title || '').toLowerCase();
-      return mName.includes(targetMandant) || pTitle.includes(targetMandant) || targetMandant.includes('badjou');
-    });
+    // 1. Filtrage optionnel par propriétaire mandant pour les agences
+    if (selectedMandant !== 'all') {
+      const targetMandant = selectedMandant.toLowerCase().trim();
 
-    const targetPropertyIds = new Set(filteredContrats.map((c: any) => c.property_id || c.property?.id).filter(Boolean));
+      const filteredContrats = (accountingData.contrats || []).filter((c: any) => {
+        const mName = (c.property?.mandant_name || c.mandant_name || '').toLowerCase();
+        const pTitle = (c.property?.title || '').toLowerCase();
+        return mName.includes(targetMandant) || pTitle.includes(targetMandant);
+      });
 
-    const filteredLoyers = (accountingData.loyers || []).filter((l: any) => {
-      return targetPropertyIds.size === 0 || targetPropertyIds.has(l.property_id || l.property?.id);
-    });
+      const targetPropertyIds = new Set(filteredContrats.map((c: any) => c.property_id || c.property?.id).filter(Boolean));
 
-    const filteredEncaissements = (accountingData.encaissements || []).filter((e: any) => {
-      return targetPropertyIds.size === 0 || targetPropertyIds.has(e.property_id || e.property?.id);
-    });
+      const filteredLoyers = (accountingData.loyers || []).filter((l: any) => {
+        return targetPropertyIds.size === 0 || targetPropertyIds.has(l.property_id || l.property?.id);
+      });
 
-    const filteredCautions = (accountingData.cautions || []).filter((cau: any) => {
-      return targetPropertyIds.size === 0 || targetPropertyIds.has(cau.property_id || cau.property?.id);
-    });
+      const filteredEncaissements = (accountingData.encaissements || []).filter((e: any) => {
+        return targetPropertyIds.size === 0 || targetPropertyIds.has(e.property_id || e.property?.id);
+      });
 
-    const filteredMaintenance = (accountingData.maintenance || []).filter((m: any) => {
-      return targetPropertyIds.size === 0 || targetPropertyIds.has(m.property_id || m.property?.id);
-    });
+      const filteredCautions = (accountingData.cautions || []).filter((cau: any) => {
+        return targetPropertyIds.size === 0 || targetPropertyIds.has(cau.property_id || cau.property?.id);
+      });
 
-    const loyersEncaisses = filteredLoyers.reduce((s: number, l: any) => s + (Number(l.amount || l.amount_paid) || 0), 0) || (accountingData.synthesis.loyersEncaisses > 0 ? Math.round(accountingData.synthesis.loyersEncaisses * 0.45) : 1850000);
-    const fraisMaintenance = filteredMaintenance.reduce((s: number, m: any) => s + (Number(m.cost || m.amount) || 0), 0);
-    const commissionAgence = Math.round(loyersEncaisses * 0.10); // 10% honoraires agence
-    const soldeNetReverser = Math.max(0, loyersEncaisses - commissionAgence - fraisMaintenance);
+      const filteredMaintenance = (accountingData.maintenance || []).filter((m: any) => {
+        return targetPropertyIds.size === 0 || targetPropertyIds.has(m.property_id || m.property?.id);
+      });
 
-    const mandantSynthesis: RealAccountingSynthesis = {
-      ...accountingData.synthesis,
-      loyersEncaisses,
-      loyersAttendus: loyersEncaisses,
-      totalEncaisse: loyersEncaisses,
-      depensesMaintenance: fraisMaintenance,
-      totalDepense: fraisMaintenance + commissionAgence,
-      resultatNet: soldeNetReverser,
-      tauxRecouvrement: 98
+      const loyersEncaisses = filteredEncaissements
+        .filter((e: any) => e.status === 'Validé' || e.status === 'confirme' || e.status === 'certifie')
+        .reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+      const fraisMaintenance = filteredMaintenance.reduce((s: number, m: any) => s + (Number(m.amount) || 0), 0);
+      const commissionAgence = Math.round(loyersEncaisses * 0.10); // 10% honoraires agence
+      const soldeNetReverser = Math.max(0, loyersEncaisses - commissionAgence - fraisMaintenance);
+
+      baseDataset = {
+        ...accountingData,
+        ownerName: `Agence Immobilière — Reddition de Compte Mandant : ${selectedMandant}`,
+        synthesis: {
+          ...accountingData.synthesis,
+          loyersEncaisses,
+          loyersAttendus: loyersEncaisses,
+          totalEncaisse: loyersEncaisses,
+          depensesMaintenance: fraisMaintenance,
+          totalDepense: fraisMaintenance + commissionAgence,
+          resultatNet: soldeNetReverser,
+          tauxRecouvrement: loyersEncaisses > 0 ? 100 : 0
+        },
+        encaissements: filteredEncaissements,
+        loyers: filteredLoyers,
+        cautions: filteredCautions,
+        maintenance: filteredMaintenance,
+        contrats: filteredContrats,
+        activePropertiesCount: Math.max(1, filteredContrats.length)
+      };
+    }
+
+    // 2. Filtrage temporel selon la période comptable choisie (Section 8 du prompt)
+    if (selectedPeriod === 'annee_en_cours') {
+      return baseDataset;
+    }
+
+    const getValidMonthNums = (periodId: string): string[] => {
+      if (periodId === 'mois_en_cours') return ['10']; // Mois en cours d'exercice
+      if (periodId === 'mois_precedent') return ['09'];
+      if (periodId.startsWith('t1')) return ['01', '02', '03'];
+      if (periodId.startsWith('t2')) return ['04', '05', '06'];
+      if (periodId.startsWith('t3')) return ['07', '08', '09'];
+      if (periodId.startsWith('t4')) return ['10', '11', '12'];
+      if (periodId === 'semestre_1') return ['01', '02', '03', '04', '05', '06'];
+      if (periodId === 'semestre_2') return ['07', '08', '09', '10', '11', '12'];
+      return ['10'];
+    };
+
+    const validMonths = getValidMonthNums(selectedPeriod);
+    const isDateInPeriod = (dateStr?: string, periodText?: string): boolean => {
+      if (periodText) {
+        const pt = String(periodText).toLowerCase();
+        if (validMonths.includes('10') && pt.includes('octobre')) return true;
+        if (validMonths.includes('11') && pt.includes('novembre')) return true;
+        if (validMonths.includes('12') && pt.includes('décembre')) return true;
+        if (validMonths.includes('09') && pt.includes('septembre')) return true;
+      }
+      if (dateStr) {
+        for (const vm of validMonths) {
+          if (dateStr.includes(`-${vm}-`) || dateStr.includes(`/${vm}/`) || dateStr.startsWith(`${activeYear}-${vm}`)) return true;
+        }
+      }
+      return false;
+    };
+
+    const periodEncaissements = (baseDataset.encaissements || []).filter((e: any) =>
+      isDateInPeriod(e.date, e.period)
+    );
+
+    const periodCautions = (baseDataset.cautions || []).filter((c: any) =>
+      isDateInPeriod(c.refundDate, c.reason) || validMonths.includes('10') // Caution active en garantie
+    );
+
+    const periodMaintenance = (baseDataset.maintenance || []).filter((m: any) =>
+      isDateInPeriod(m.date)
+    );
+
+    const periodLoyersEncaisses = periodEncaissements
+      .filter((e: any) => e.status === 'Validé' || e.status === 'confirme' || e.status === 'certifie')
+      .reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+
+    const periodMaintenanceCost = periodMaintenance.reduce((s: number, m: any) => s + (Number(m.amount) || 0), 0);
+    const periodCautionRefunded = periodCautions.reduce((s: number, c: any) => s + (Number(c.refunded) || 0), 0);
+    const periodCautionDeposited = periodCautions.reduce((s: number, c: any) => s + (Number(c.deposited) || 0), 0);
+
+    const monthlyExpected = (baseDataset.contrats || []).reduce((s: number, c: any) => s + (Number(c.rent) || 0), 0) || 30000;
+    const periodExpectedRent = monthlyExpected * validMonths.length;
+
+    const periodSynthesis: RealAccountingSynthesis = {
+      ...baseDataset.synthesis,
+      loyersAttendus: periodExpectedRent,
+      loyersEncaisses: periodLoyersEncaisses,
+      totalEncaisse: periodLoyersEncaisses,
+      depensesMaintenance: periodMaintenanceCost,
+      cautionsRecues: periodCautionDeposited,
+      cautionsRemboursees: periodCautionRefunded,
+      cautionsRestantes: Math.max(0, periodCautionDeposited - periodCautionRefunded),
+      totalDepense: periodMaintenanceCost + periodCautionRefunded,
+      resultatNet: periodLoyersEncaisses - (periodMaintenanceCost + periodCautionRefunded),
+      tauxRecouvrement: periodExpectedRent > 0 ? Math.round((periodLoyersEncaisses / periodExpectedRent) * 100) : (periodLoyersEncaisses > 0 ? 100 : 0)
     };
 
     return {
-      ...accountingData,
-      ownerName: `Agence Immobilière — Reddition de Compte Mandant : ${selectedMandant}`,
-      synthesis: mandantSynthesis,
-      encaissements: filteredEncaissements.length > 0 ? filteredEncaissements : accountingData.encaissements,
-      loyers: filteredLoyers.length > 0 ? filteredLoyers : accountingData.loyers,
-      cautions: filteredCautions,
-      maintenance: filteredMaintenance,
-      contrats: filteredContrats.length > 0 ? filteredContrats : accountingData.contrats,
-      activePropertiesCount: Math.max(1, filteredContrats.length)
+      ...baseDataset,
+      synthesis: periodSynthesis,
+      encaissements: periodEncaissements,
+      cautions: periodCautions,
+      maintenance: periodMaintenance
     };
-  }, [accountingData, selectedMandant]);
+  }, [accountingData, selectedMandant, selectedPeriod, activeYear]);
 
   const synthesis = activeDataset?.synthesis || accountingData?.synthesis || ACCOUNTING_DATA.synthesis;
   const encaissements = activeDataset?.encaissements || accountingData?.encaissements || [];

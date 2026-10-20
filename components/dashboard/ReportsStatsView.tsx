@@ -173,7 +173,9 @@ export const ReportsStatsView: React.FC = () => {
     }
 
     const expectedRent = filteredMonths.reduce((s, m) => s + (m.expectedRent || 0), 0);
-    const collectedRent = filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0);
+    const collectedRent = period === 'annee'
+      ? Math.max(realDataset.synthesis.loyersEncaisses, filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0))
+      : filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0);
     const lateRent = filteredMonths.reduce((s, m) => s + (m.lateRent || 0), 0);
     const unpaidRent = filteredMonths.reduce((s, m) => s + (m.unpaidRent || 0), 0);
     const otherIncome = filteredMonths.reduce((s, m) => s + (m.otherIncome || 0), 0);
@@ -459,9 +461,16 @@ export const ReportsStatsView: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-1">
           <span className="text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Loyers Encaissés</span>
           <span className="text-xl font-black text-emerald-700 dark:text-emerald-400">{formatFCFA(currentPeriodSummary.collectedRent)}</span>
-          <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Taux de recouvrement : {currentPeriodSummary.recoveryRate}%
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" /> Taux de recouvrement : {currentPeriodSummary.recoveryRate}%
+            </span>
+            {realDataset?.synthesis?.loyersEnAttente && realDataset.synthesis.loyersEnAttente > 0 ? (
+              <span className="text-[9.5px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                <Clock className="w-2.5 h-2.5" /> En attente validation : {formatFCFA(realDataset.synthesis.loyersEnAttente)}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-1">
           <span className="text-[10.5px] font-bold text-rose-700 dark:text-rose-400 uppercase tracking-wider">Loyers en Retard</span>
@@ -728,14 +737,18 @@ export const ReportsStatsView: React.FC = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border flex flex-col gap-1">
               <span className="text-[11px] text-slate-500 font-bold uppercase">Loyers Attendus Période</span>
               <span className="text-lg font-black text-slate-900 dark:text-white">{formatFCFA(currentPeriodSummary.expectedRent)}</span>
             </div>
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 flex flex-col gap-1">
-              <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold uppercase">Loyers Encaissés</span>
+              <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold uppercase">Loyers Encaissés (Confirmés)</span>
               <span className="text-lg font-black text-emerald-700 dark:text-emerald-400">{formatFCFA(currentPeriodSummary.collectedRent)}</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 flex flex-col gap-1">
+              <span className="text-[11px] text-amber-800 dark:text-amber-300 font-bold uppercase">Paiements Déclarés (En attente)</span>
+              <span className="text-lg font-black text-amber-700 dark:text-amber-400">{formatFCFA(realDataset?.synthesis?.loyersEnAttente || 0)}</span>
             </div>
             <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 flex flex-col gap-1">
               <span className="text-[11px] text-rose-800 dark:text-rose-300 font-bold uppercase">Loyers en Retard</span>
