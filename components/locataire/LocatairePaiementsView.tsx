@@ -1015,7 +1015,8 @@ export const LocatairePaiementsView: React.FC = () => {
             action: 'sign_receipt',
             paymentId: pmt.id,
             reference: pmt.reference,
-            tenantSignatureUrl: signatureData
+            tenantSignatureUrl: signatureData,
+            ownerSignatureUrl: effectiveOwnerSig
           })
         }).catch(() => {});
       } catch {}

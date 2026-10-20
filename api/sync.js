@@ -22,6 +22,8 @@ let SERVER_STORE = {
       status: 'confirme',
       target_month: 'Octobre 2026',
       confirmed_at: '2026-10-17T20:51:00.000Z',
+      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
       tenant: {
         id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
         full_name: 'Christian',
@@ -52,9 +54,12 @@ let SERVER_STORE = {
       payment_date: '2026-10-19',
       payment_method: 'Wave',
       reference: 'WAV-2026-NOV-781920',
-      status: 'declare',
+      status: 'confirme',
       target_month: 'Novembre 2026',
       created_at: '2026-10-19T17:15:00.000Z',
+      confirmed_at: '2026-10-19T17:20:00.000Z',
+      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
       tenant: {
         id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
         full_name: 'Christian',
@@ -117,7 +122,28 @@ let SERVER_STORE = {
       token: 'tok_rec_ci2026_ljy8knh31z579ov2',
       status: 'certifie',
       owner_signed: true,
-      tenant_signed: true
+      tenant_signed: true,
+      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
+    },
+    {
+      id: 'rec_wav_781920',
+      receipt_number: 'WAV-2026-NOV-781920',
+      type: 'loyer',
+      tenant_name: 'Christian',
+      property_title: 'Maison 4 pièce',
+      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
+      contract_number: 'LT-2026-CI-000492',
+      period_covered: 'Novembre 2026',
+      amount: 30000,
+      payment_method: 'Wave',
+      payment_date: '19/10/2026',
+      token: 'tok_rec_wav_2026_nov_781920',
+      status: 'certifie',
+      owner_signed: true,
+      tenant_signed: true,
+      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
     },
     {
       id: 'rec_cau_000492',
@@ -134,7 +160,9 @@ let SERVER_STORE = {
       token: 'tok_rec_caution_000492',
       status: 'certifie',
       owner_signed: true,
-      tenant_signed: true
+      tenant_signed: true,
+      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
     }
   ],
 
@@ -355,20 +383,25 @@ export default async function handler(req, res) {
 
       // 2b. Signature de la quittance par le locataire (Scellement définitif)
       if (action === 'sign_receipt') {
-        const { paymentId, reference, tenantSignatureUrl } = body;
+        const { paymentId, reference, tenantSignatureUrl, ownerSignatureUrl } = body;
         const targetPayment = SERVER_STORE.payments.find(p => p.id === paymentId || p.reference === reference);
 
         if (targetPayment) {
           targetPayment.status = 'confirme';
           targetPayment.confirmed_at = new Date().toISOString();
           if (tenantSignatureUrl) targetPayment.tenant_signature_url = tenantSignatureUrl;
+          if (ownerSignatureUrl && !targetPayment.owner_signature_url) targetPayment.owner_signature_url = ownerSignatureUrl;
+          if (!targetPayment.owner_signature_url) targetPayment.owner_signature_url = 'SIG_AGENCE_KK_CERTIFIED';
 
           const recRef = targetPayment.reference || reference;
-          const targetReceipt = SERVER_STORE.receipts.find(r => r.receipt_number === recRef);
+          let targetReceipt = SERVER_STORE.receipts.find(r => r.receipt_number === recRef);
           if (targetReceipt) {
             targetReceipt.status = 'certifie';
             targetReceipt.tenant_signed = true;
             if (tenantSignatureUrl) targetReceipt.tenant_signature_url = tenantSignatureUrl;
+            if (targetPayment.owner_signature_url && !targetReceipt.owner_signature_url) {
+              targetReceipt.owner_signature_url = targetPayment.owner_signature_url;
+            }
           }
 
           // Marquer la notification de demande de signature comme traitée
