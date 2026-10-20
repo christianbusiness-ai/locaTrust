@@ -45,8 +45,8 @@ export const ReportsStatsView: React.FC = () => {
   const { user } = useAuth();
   const [period, setPeriod] = useState<ReportPeriod>('ce_mois');
   const [selectedYear, setSelectedYearState] = useState<string>('2026');
-  const [selectedHistoricalMonth, setSelectedHistoricalMonth] = useState<string>('2026-08');
-  const [selectedQuarter, setSelectedQuarter] = useState<'T1' | 'T2' | 'T3' | 'T4'>('T3');
+  const [selectedHistoricalMonth, setSelectedHistoricalMonth] = useState<string>('2026-10');
+  const [selectedQuarter, setSelectedQuarter] = useState<'T1' | 'T2' | 'T3' | 'T4'>('T4');
   const [realDataset, setRealDataset] = useState<RealAccountingDataset | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -308,8 +308,9 @@ export const ReportsStatsView: React.FC = () => {
     });
   };
 
-  // Max value for bar chart heights
-  const maxRentInYear = Math.max(...yearRecords.map((r) => Math.max(r.expectedRent, r.collectedRent)), 3000000);
+  // Échelle dynamique proportionnelle pour le graphique des barres (adaptée au loyer réel)
+  const actualMax = Math.max(...yearRecords.map((r) => Math.max(r.expectedRent || 0, r.collectedRent || 0)), 0);
+  const maxRentInYear = Math.max(actualMax, 30000);
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
