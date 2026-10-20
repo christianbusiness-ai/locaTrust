@@ -168,11 +168,12 @@ let SERVER_STORE = {
 
   notifications: [
     {
-      id: 'notif_pmt_dec_nov2026_agency',
-      title: '💳 Nouveau paiement de loyer déclaré',
-      description: 'Christian a déclaré le paiement du loyer de Novembre 2026 (30 000 FCFA • Wave - Réf: WAV-2026-NOV-781920). Cliquez pour vérifier et valider la quittance.',
+      id: 'notif_pmt_dec_nov2026_finalized',
+      title: '✅ Reçu de paiement finalisé',
+      description: 'Le locataire Christian a signé le reçu N° WAV-2026-NOV-781920. Le document est officiellement scellé et téléchargeable par les deux parties.',
       time: 'À l\'instant',
-      unread: true,
+      unread: false,
+      read: true,
       category: 'paiement',
       type: 'paiement',
       targetTab: 'payments',
@@ -187,15 +188,17 @@ let SERVER_STORE = {
       }
     },
     {
-      id: 'notif_pmt_dec_nov2026_owner',
+      id: 'notif_pmt_dec_nov2026_agency',
       title: '💳 Nouveau paiement de loyer déclaré',
-      description: 'Christian a déclaré le paiement du loyer de Novembre 2026 (30 000 FCFA • Wave - Réf: WAV-2026-NOV-781920). Cliquez pour vérifier et valider la quittance.',
-      time: 'À l\'instant',
-      unread: true,
+      description: 'Christian a déclaré le paiement du loyer de Novembre 2026 (30 000 FCFA • Wave - Réf: WAV-2026-NOV-781920). Reçu vérifié et validé.',
+      time: '19/10/2026',
+      unread: false,
+      read: true,
+      processed: true,
       category: 'paiement',
       type: 'paiement',
       targetTab: 'payments',
-      targetRole: 'proprietaire',
+      targetRole: 'agence',
       targetUserId: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
       senderUserId: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
       payload: {

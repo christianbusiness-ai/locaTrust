@@ -159,6 +159,10 @@ export function resolveRealReceiptData(
     matchedApplication?.applicant_name ||
     'Christian';
 
+  if (/christian/i.test(tenantName)) {
+    tenantName = 'Christian';
+  }
+
   let tenantPhone =
     item?.tenant?.phone ||
     matchedContract?.tenant?.phone ||

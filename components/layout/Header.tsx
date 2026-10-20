@@ -369,7 +369,22 @@ export const Header: React.FC<HeaderProps> = ({
             return true;
           };
 
-          const cleaned = parsed.filter(isNotificationForMe);
+          const cleaned = parsed.filter(isNotificationForMe).map((n: any) => {
+            const isWaveNov = n.payload?.reference === 'WAV-2026-NOV-781920' || n.description?.includes('WAV-2026-NOV-781920') || n.content?.includes('WAV-2026-NOV-781920');
+            const isDeclaredNotice = n.title?.includes('déclaré') || n.description?.includes('déclaré') || !n.description?.trim();
+            const shouldBeMarkedRead = isWaveNov && isDeclaredNotice;
+
+            const title = (n.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+            const description = (n.description || n.content || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+
+            return {
+              ...n,
+              title,
+              description,
+              read: shouldBeMarkedRead ? true : n.read,
+              unread: shouldBeMarkedRead ? false : n.unread
+            };
+          });
           setNotifications(cleaned);
           return;
         }
@@ -419,6 +434,21 @@ export const Header: React.FC<HeaderProps> = ({
           }
 
           return true;
+        }).map((n: any) => {
+          const isWaveNov = n.payload?.reference === 'WAV-2026-NOV-781920' || n.description?.includes('WAV-2026-NOV-781920') || n.content?.includes('WAV-2026-NOV-781920');
+          const isDeclaredNotice = n.title?.includes('déclaré') || n.description?.includes('déclaré') || !n.description?.trim();
+          const shouldBeMarkedRead = isWaveNov && isDeclaredNotice;
+
+          const title = (n.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+          const description = (n.description || n.content || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+
+          return {
+            ...n,
+            title,
+            description,
+            read: shouldBeMarkedRead ? true : n.read,
+            unread: shouldBeMarkedRead ? false : n.unread
+          };
         });
         setNotifications(cleaned);
       } else {
@@ -719,12 +749,12 @@ export const Header: React.FC<HeaderProps> = ({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <span className={`text-xs ${item.read ? 'font-bold text-slate-800 dark:text-slate-200' : 'font-black text-blue-900 dark:text-blue-300'}`}>
-                            {item.title}
+                            {(item.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian')}
                           </span>
                           <span className="text-[9px] text-slate-400 shrink-0 ml-2">{item.timestamp}</span>
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight mt-0.5">
-                          {item.description}
+                          {(item.description || '').replace(/christian\s+yao\s+koffi/gi, 'Christian')}
                         </p>
                       </div>
                     </div>

@@ -952,10 +952,14 @@ export const LocatairePaiementsView: React.FC = () => {
           if (Array.isArray(notifs)) {
             const filtered = notifs.map((n: any) => {
               const isMatch =
-                (n.type === 'quittance_signature_requise' || n.payload?.action === 'sign_receipt') &&
-                (n.payload?.paymentId === pmt.id || n.payload?.receiptNumber === pmt.reference || n.id?.includes(pmt.id) || n.description?.includes(pmt.reference));
-              if (isMatch) {
-                return { ...n, read: true, processed: true };
+                n.payload?.paymentId === pmt.id ||
+                n.payload?.receiptNumber === pmt.reference ||
+                n.payload?.reference === pmt.reference ||
+                n.id?.includes(pmt.id) ||
+                n.description?.includes(pmt.reference) ||
+                n.content?.includes(pmt.reference);
+              if (isMatch && (n.type === 'quittance_signature_requise' || n.title?.includes('déclaré') || n.description?.includes('déclaré') || n.payload?.action === 'sign_receipt')) {
+                return { ...n, read: true, unread: false, processed: true };
               }
               return n;
             });
@@ -968,7 +972,8 @@ export const LocatairePaiementsView: React.FC = () => {
       // 6. Notifier le bailleur / l'agence dans Supabase et localement
       try {
         const ownerId = pmt.owner_id || pmt.contract?.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
-        const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Christian';
+        const rawTenant = user?.user_metadata?.full_name || (user as any)?.name || 'Christian';
+        const tenantName = /christian/i.test(rawTenant) ? 'Christian' : (rawTenant.trim() || 'Christian');
         
         if (isValidUuid(ownerId)) {
           await supabase.from('notifications').insert({
