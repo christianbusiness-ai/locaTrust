@@ -252,6 +252,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     p.reference === 'WAV-2026-NOV-781920'
   );
 
+  const realCollectedRent = confirmedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
   const now = new Date();
   // Détection du mois en cours : si Novembre 2026 ou ultérieur
   const isNov2026OrLater = now.getFullYear() > 2026 || (now.getFullYear() === 2026 && now.getMonth() >= 10); // 10 = Nov en JS 0-indexé
@@ -262,7 +264,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const currentCollectedRent = isNov2026OrLater ? 60000 : 30000;
 
   // Le retard ne concerne que les baux actifs si l'attendu excède les encaissements réels (0 si le locataire est à jour)
-  const realLateRent = Math.max(0, realExpectedRent - (realCollectedRent - realAdvanceRent));
+  const realLateRent = Math.max(0, realExpectedRent - currentCollectedRent);
 
   const rentMetrics = isDemo ? {
     expected: 2800000,
