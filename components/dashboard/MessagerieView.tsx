@@ -1001,32 +1001,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return canvas.captureStream(30);
   };
 
-  // Video Call Handlers (Capture Immédiate Caméra + Micro dans le Geste Utilisateur comme WhatsApp)
-  const handleStartVideoCall = async () => {
-    let prefetchedStream: MediaStream | null = null;
-    try {
-      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        // Demande directe de la caméra et du micro ensemble (comme WhatsApp Web)
-        prefetchedStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: true
-        });
-      }
-    } catch (err: any) {
-      console.warn('Pré-capture vidéo au clic utilisateur:', err);
-      try {
-        if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-          prefetchedStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        }
-      } catch (err2) {
-        console.warn('Pré-capture vidéo seule:', err2);
-      }
-    }
-
-    if (prefetchedStream) {
-      (window as any).__locatrust_prefetched_stream = prefetchedStream;
-    }
-
+  // Video Call Handlers (Ouverture Immédiate du Modal & Déclenchement Natif Caméra/Micro par l'Appareil)
+  const handleStartVideoCall = () => {
+    // 1. Déclencher l'appel immédiatement pour afficher le modal sans attendre
     window.dispatchEvent(
       new CustomEvent('locatrust:initiate_call', {
         detail: {
@@ -1035,11 +1012,28 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           peerName: activeContact.name,
           peerAvatar: activeContact.avatar,
           peerRole: activeContact.role,
-          propertyTitle: activeContact.propertyTitle,
-          stream: prefetchedStream
+          propertyTitle: activeContact.propertyTitle
         }
       })
     );
+
+    // 2. Déclencher immédiatement l'autorisation native du navigateur dans le geste utilisateur direct
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then((stream) => {
+          (window as any).__locatrust_prefetched_stream = stream;
+          window.dispatchEvent(new CustomEvent('locatrust:media_stream_ready', { detail: { stream } }));
+        })
+        .catch((err) => {
+          console.warn('Essai vidéo seule suite à refus combiné:', err);
+          navigator.mediaDevices.getUserMedia({ video: true })
+            .then((vStream) => {
+              (window as any).__locatrust_prefetched_stream = vStream;
+              window.dispatchEvent(new CustomEvent('locatrust:media_stream_ready', { detail: { stream: vStream } }));
+            })
+            .catch((errFinal) => console.warn('Impossible d’ouvrir la caméra physique:', errFinal));
+        });
+    }
   };
 
 

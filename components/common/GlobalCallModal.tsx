@@ -218,6 +218,9 @@ export const GlobalCallModal: React.FC = () => {
       try { remoteStreamRef.current.getTracks().forEach((t) => t.stop()); } catch {}
       remoteStreamRef.current = null;
     }
+    if (typeof window !== 'undefined') {
+      try { delete (window as any).__locatrust_prefetched_stream; } catch {}
+    }
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     setHasRealCameraTrack(false);
@@ -580,6 +583,60 @@ export const GlobalCallModal: React.FC = () => {
   // Synchronisation continue des flux vidéo lors de l'apparition du modal ou permutation PiP
   useEffect(() => {
     if (activeCall && activeCall.callType === 'video') {
+      const prefetched = (window as any).__locatrust_prefetched_stream as MediaStream | undefined;
+      if (!localStreamRef.current && prefetched && prefetched.active && prefetched.getVideoTracks().length > 0) {
+        localStreamRef.current = prefetched;
+        setHasRealCameraTrack(true);
+        setCameraPermissionStatus('granted');
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = prefetched;
+          localVideoRef.current.play().catch(() => {});
+        }
+        if (peerConnectionRef.current) {
+          addTracksToPeerConnection(peerConnectionRef.current, prefetched);
+        }
+        setupAudioVolumeAnalysis(prefetched);
+        syncVideoElements();
+      } else if (!localStreamRef.current && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        // Déclencher automatiquement la caméra physique dès que l'appel vidéo s'affiche
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+          .then((stream) => {
+            localStreamRef.current = stream;
+            setHasRealCameraTrack(stream.getVideoTracks().length > 0);
+            setCameraPermissionStatus('granted');
+            if (localVideoRef.current) {
+              localVideoRef.current.srcObject = stream;
+              localVideoRef.current.play().catch(() => {});
+            }
+            if (peerConnectionRef.current) {
+              addTracksToPeerConnection(peerConnectionRef.current, stream);
+            }
+            setupAudioVolumeAnalysis(stream);
+            syncVideoElements();
+          })
+          .catch(() => {
+            navigator.mediaDevices.getUserMedia({ video: true })
+              .then((vStream) => {
+                localStreamRef.current = vStream;
+                setHasRealCameraTrack(true);
+                setCameraPermissionStatus('granted');
+                if (localVideoRef.current) {
+                  localVideoRef.current.srcObject = vStream;
+                  localVideoRef.current.play().catch(() => {});
+                }
+                syncVideoElements();
+              })
+              .catch((err) => console.warn('Caméra automatique non disponible:', err));
+          });
+      }
+
+      if (localVideoRef.current && localStreamRef.current) {
+        if (localVideoRef.current.srcObject !== localStreamRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+        }
+        localVideoRef.current.play().catch(() => {});
+      }
+
       syncVideoElements();
       const t1 = setTimeout(syncVideoElements, 60);
       const t2 = setTimeout(syncVideoElements, 250);
@@ -590,7 +647,7 @@ export const GlobalCallModal: React.FC = () => {
         clearTimeout(t3);
       };
     }
-  }, [activeCall?.callType, activeCall?.status, isVideoSwapped]);
+  }, [activeCall?.callType, activeCall?.status, isVideoSwapped, hasRealCameraTrack]);
 
   // Listen to locatrust:call_event from Supabase Realtime & locatrust:initiate_call locally
   useEffect(() => {
@@ -893,12 +950,32 @@ export const GlobalCallModal: React.FC = () => {
       });
     };
 
+    const handleMediaStreamReady = (e: any) => {
+      const stream = e.detail?.stream;
+      if (stream && stream.active) {
+        localStreamRef.current = stream;
+        setHasRealCameraTrack(stream.getVideoTracks().length > 0);
+        setCameraPermissionStatus('granted');
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+          localVideoRef.current.play().catch(() => {});
+        }
+        if (peerConnectionRef.current) {
+          addTracksToPeerConnection(peerConnectionRef.current, stream);
+        }
+        setupAudioVolumeAnalysis(stream);
+        syncVideoElements();
+      }
+    };
+
     window.addEventListener('locatrust:call_event' as any, handleCallEvent);
     window.addEventListener('locatrust:initiate_call' as any, handleInitiateCall);
+    window.addEventListener('locatrust:media_stream_ready' as any, handleMediaStreamReady);
 
     return () => {
       window.removeEventListener('locatrust:call_event' as any, handleCallEvent);
       window.removeEventListener('locatrust:initiate_call' as any, handleInitiateCall);
+      window.removeEventListener('locatrust:media_stream_ready' as any, handleMediaStreamReady);
       try {
         broadcastChannelRef.current?.close();
       } catch {}
@@ -1366,67 +1443,43 @@ export const GlobalCallModal: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Cadre vidéo central : Caméra réelle de l'utilisateur (comme WhatsApp Image 1) */}
+                {/* Cadre vidéo central : Caméra réelle de l'utilisateur (comme WhatsApp) */}
                 <div className="relative w-full max-w-md aspect-[4/3] sm:aspect-video rounded-3xl overflow-hidden bg-slate-950 border border-slate-700/70 shadow-2xl flex items-center justify-center shrink-0">
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    onLoadedMetadata={(e) => {
+                      (e.target as HTMLVideoElement).play().catch(() => {});
+                    }}
+                    className={`w-full h-full object-cover transition-opacity duration-300 ${activeCall.isFrontCam ? 'scale-x-[-1]' : ''} ${hasRealCameraTrack ? 'opacity-100' : 'opacity-0'}`}
+                  />
+
                   {hasRealCameraTrack ? (
-                    <>
-                      <video
-                        ref={localVideoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        onLoadedMetadata={(e) => {
-                          (e.target as HTMLVideoElement).play().catch(() => {});
-                        }}
-                        className={`w-full h-full object-cover ${activeCall.isFrontCam ? 'scale-x-[-1]' : ''}`}
-                      />
-                      <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur border border-white/10 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5 shadow">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                        Votre caméra HD
-                      </div>
-                    </>
+                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur border border-white/10 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5 shadow">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Votre caméra HD
+                    </div>
                   ) : (
-                    /* Modal d'autorisation Caméra & Micro (Conforme WhatsApp Image 3) */
-                    <div className="p-4 sm:p-6 text-center flex flex-col items-center justify-center max-w-sm w-full">
-                      <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-2.5 text-blue-400 shadow-inner">
-                        <Video className="w-6 h-6" />
-                      </div>
-                      <h4 className="text-sm sm:text-base font-black text-white mb-1.5">
-                        Autoriser l'accès à la caméra et au micro
-                      </h4>
-                      <p className="text-[11px] sm:text-xs text-slate-300 leading-relaxed mb-3">
-                        Pour afficher votre vidéo en direct, cliquez sur le bouton ci-dessous pour activer votre caméra.
-                      </p>
-
-                      {/* Message d'erreur précis (si bloqué dans Chrome ou occupé par WhatsApp) */}
-                      {mediaErrorMessage && (
-                        <div className="w-full mb-3 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] leading-relaxed text-left flex items-start gap-2">
-                          <span className="text-amber-400 font-bold shrink-0 text-xs">⚠️</span>
-                          <span>{mediaErrorMessage}</span>
+                    /* En attente d'activation par l'appareil (sans aucun bouton in-app parasite) */
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center gap-3 bg-gradient-to-b from-slate-900/90 to-slate-950/95">
+                      <div className="relative">
+                        <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
+                          <Camera className="w-8 h-8 animate-pulse" />
                         </div>
-                      )}
-
-                      <div className="flex flex-col w-full gap-2">
-                        <button
-                          type="button"
-                          disabled={isRequestingMedia}
-                          onClick={() => requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment')}
-                          className="w-full px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
-                        >
-                          <Camera className="w-4 h-4" />
-                          {isRequestingMedia ? 'Activation en cours...' : 'Autoriser la caméra et le micro'}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveCall((prev) => (prev ? { ...prev, callType: 'audio' } : null));
-                          }}
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Phone className="w-3.5 h-3.5 text-emerald-400" />
-                          Continuer en appel vocal (micro seul)
-                        </button>
+                        <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500"></span>
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-center gap-1">
+                        <p className="text-sm sm:text-base font-black text-white tracking-wide">
+                          Connexion à la caméra de votre appareil...
+                        </p>
+                        <p className="text-xs text-slate-300 max-w-xs">
+                          {mediaErrorMessage || "L'appareil prépare votre caméra. Autorisez l'accès dans le navigateur si demandé."}
+                        </p>
                       </div>
                     </div>
                   )}
