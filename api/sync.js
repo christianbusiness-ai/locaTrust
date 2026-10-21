@@ -208,6 +208,102 @@ let SERVER_STORE = {
         reference: 'WAV-2026-NOV-781920'
       }
     }
+  ],
+
+  contracts: [
+    {
+      id: 'LT-2026-CI-000492',
+      contract_number: 'LT-2026-CI-000492',
+      contractNumber: 'LT-2026-CI-000492',
+      property_id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
+      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      rent: 30000,
+      monthly_rent: 30000,
+      caution: 60000,
+      caution_amount: 60000,
+      charges: 10000,
+      charges_amount: 10000,
+      duration_months: 12,
+      start_date: '2026-10-15',
+      end_date: '2027-10-14',
+      status: 'actif',
+      owner_signed: true,
+      tenant_signed: true,
+      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
+      owner: {
+        id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+        full_name: 'kk',
+        phone: '0584269885',
+        email: 'ny8667496@gmail.com',
+        account_type: 'agence'
+      },
+      tenant: {
+        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        full_name: 'Christian',
+        phone: '0500552141',
+        email: 'christianyaokoffi88@gmail.com',
+        account_type: 'locataire'
+      },
+      property: {
+        id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
+        title: 'Maison 4 pièce',
+        address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
+        city: 'Yamoussoukro'
+      }
+    }
+  ],
+
+  maintenance: [
+    {
+      id: 'tck_2026_maint_01',
+      ticketNumber: 'TCK-2026-PLMB',
+      tenantId: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      ownerId: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      tenantName: 'Christian',
+      tenantPhone: '0500552141',
+      propertyTitle: 'Maison 4 pièce',
+      propertyAddress: '100 villard, Yamoussoukro - Côte d\'Ivoire',
+      category: 'Plomberie',
+      priority: 'normale',
+      status: 'En cours',
+      createdAt: '18/10/2026',
+      scheduledDate: '24/10/2026',
+      cost: 15000,
+      description: 'Fuite robinet salle de bain et contrôle pression arrivée d\'eau.',
+      photos: [],
+      notes: [
+        {
+          id: 'note_1',
+          author: 'Agence KK',
+          content: 'Plombier contacté. Intervention calée pour le 24 octobre à 10h.',
+          date: '18/10/2026 14:30',
+          isInternal: false
+        }
+      ]
+    }
+  ],
+
+  properties: [
+    {
+      id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
+      title: 'Maison 4 pièce',
+      type: 'villa',
+      address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
+      city: 'Yamoussoukro',
+      commune: 'Centre',
+      quartier: '100 villard',
+      rent: 30000,
+      caution: 60000,
+      charges: 10000,
+      status: 'loue',
+      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      owner_name: 'KK',
+      created_at: '2026-10-15T10:00:00.000Z'
+    }
   ]
 };
 
@@ -236,6 +332,9 @@ export default async function handler(req, res) {
           cautions: SERVER_STORE.cautions,
           receipts: SERVER_STORE.receipts,
           notifications: SERVER_STORE.notifications,
+          contracts: SERVER_STORE.contracts,
+          maintenance: SERVER_STORE.maintenance,
+          properties: SERVER_STORE.properties,
           timestamp: new Date().toISOString()
         }
       });
@@ -466,9 +565,137 @@ export default async function handler(req, res) {
         }
       }
 
-      // 4. Synchronisation bidirectionnelle globale
+      // 4. Inscription / signalement d'un ticket de maintenance
+      if (action === 'create_maintenance_ticket') {
+        const ticket = body.ticket;
+        if (!ticket) return res.status(400).json({ success: false, error: 'Données de maintenance manquantes.' });
+        const tid = ticket.id || `tck_${Date.now()}`;
+        const newTicket = {
+          ...ticket,
+          id: tid,
+          ticketNumber: ticket.ticketNumber || `TCK-2026-${tid.slice(-4).toUpperCase()}`,
+          status: ticket.status || 'Nouveau',
+          createdAt: ticket.createdAt || new Date().toLocaleDateString('fr-FR'),
+          notes: Array.isArray(ticket.notes) ? ticket.notes : []
+        };
+        SERVER_STORE.maintenance = [
+          newTicket,
+          ...SERVER_STORE.maintenance.filter(t => t.id !== tid)
+        ];
+        // Notifier le propriétaire et l'agence
+        const notif = {
+          id: `notif_maint_${Date.now()}`,
+          title: '⚠️ Incident de maintenance signalé',
+          description: `${newTicket.tenantName || 'Le locataire'} a signalé un problème (${newTicket.category || 'Général'}) pour « ${newTicket.propertyTitle || 'le bien'} » : ${(newTicket.description || '').slice(0, 50)}...`,
+          time: "À l'instant",
+          unread: true,
+          read: false,
+          category: 'maintenance',
+          type: 'maintenance',
+          targetTab: 'maintenance',
+          targetRole: 'proprietaire',
+          targetUserId: newTicket.ownerId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'
+        };
+        SERVER_STORE.notifications = [
+          notif,
+          { ...notif, id: `${notif.id}_agence`, targetRole: 'agence' },
+          ...SERVER_STORE.notifications
+        ];
+        return res.status(200).json({
+          success: true,
+          ticket: newTicket,
+          maintenance: SERVER_STORE.maintenance,
+          notifications: SERVER_STORE.notifications
+        });
+      }
+
+      // 5. Mise à jour d'un ticket de maintenance (statut, devis/coût, programmation, notes)
+      if (action === 'update_maintenance_ticket') {
+        const { ticketId, status, notes, scheduledDate, cost, description, rentDeductionRequest } = body;
+        const target = SERVER_STORE.maintenance.find(t => t.id === ticketId);
+        if (target) {
+          if (status) target.status = status;
+          if (notes) target.notes = notes;
+          if (scheduledDate !== undefined) target.scheduledDate = scheduledDate;
+          if (cost !== undefined) target.cost = cost;
+          if (description) target.description = description;
+          if (rentDeductionRequest) target.rentDeductionRequest = rentDeductionRequest;
+
+          // Si intervention programmée ou résolue, notifier le locataire
+          if (status === 'Résolu' || scheduledDate) {
+            const notifLoc = {
+              id: `notif_maint_upd_${Date.now()}`,
+              title: status === 'Résolu' ? '✅ Incident de maintenance résolu' : '📅 Intervention programmée',
+              description: status === 'Résolu'
+                ? `Votre signalement (${target.category}) pour « ${target.propertyTitle} » a été marqué comme résolu.`
+                : `Une intervention est programmée le ${scheduledDate} pour votre incident (${target.category}).`,
+              time: "À l'instant",
+              unread: true,
+              read: false,
+              category: 'maintenance',
+              type: 'maintenance',
+              targetTab: 'maintenance',
+              targetRole: 'locataire',
+              targetUserId: target.tenantId || target.tenant_id
+            };
+            SERVER_STORE.notifications = [notifLoc, ...SERVER_STORE.notifications];
+          }
+          return res.status(200).json({ success: true, ticket: target, maintenance: SERVER_STORE.maintenance });
+        }
+        return res.status(404).json({ success: false, error: 'Ticket de maintenance non trouvé.' });
+      }
+
+      // 6. Enregistrement ou signature d'un contrat de bail
+      if (action === 'save_contract' || action === 'sign_contract') {
+        const contract = body.contract;
+        if (contract) {
+          const cid = contract.id || `cnt_${Date.now()}`;
+          const normalized = {
+            ...contract,
+            id: cid,
+            contract_number: contract.contract_number || contract.contractNumber || `LT-2026-CI-000${Date.now().toString().slice(-3)}`,
+            contractNumber: contract.contract_number || contract.contractNumber,
+            status: action === 'sign_contract' ? 'actif' : (contract.status || 'actif')
+          };
+          SERVER_STORE.contracts = [
+            normalized,
+            ...SERVER_STORE.contracts.filter(c => c.id !== cid && c.contract_number !== normalized.contract_number)
+          ];
+          return res.status(200).json({ success: true, contract: normalized, contracts: SERVER_STORE.contracts });
+        }
+      }
+
+      // 6bis. Ajout d'une notification globale
+      if (action === 'push_notification') {
+        const notif = body.notification;
+        if (notif) {
+          const nid = notif.id || `notif_${Date.now()}`;
+          const normalized = { ...notif, id: nid };
+          SERVER_STORE.notifications = [
+            normalized,
+            ...SERVER_STORE.notifications.filter(n => n.id !== nid)
+          ];
+          return res.status(200).json({ success: true, notification: normalized, notifications: SERVER_STORE.notifications });
+        }
+      }
+
+      // 6ter. Enregistrement d'un bien immobilier
+      if (action === 'save_property') {
+        const property = body.property;
+        if (property) {
+          const pid = property.id || `prop_${Date.now()}`;
+          const normalized = { ...property, id: pid };
+          SERVER_STORE.properties = [
+            normalized,
+            ...SERVER_STORE.properties.filter(p => p.id !== pid)
+          ];
+          return res.status(200).json({ success: true, property: normalized, properties: SERVER_STORE.properties });
+        }
+      }
+
+      // 7. Synchronisation bidirectionnelle globale
       if (action === 'sync_all') {
-        const { clientPayments, clientCautions, clientReceipts } = body;
+        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties } = body;
         if (Array.isArray(clientPayments)) {
           for (const cp of clientPayments) {
             if (cp && cp.reference && !SERVER_STORE.payments.some(p => p.reference === cp.reference)) {
@@ -483,13 +710,37 @@ export default async function handler(req, res) {
             }
           }
         }
+        if (Array.isArray(clientContracts)) {
+          for (const c of clientContracts) {
+            if (c && c.contract_number && !SERVER_STORE.contracts.some(sc => sc.contract_number === c.contract_number)) {
+              SERVER_STORE.contracts.unshift(c);
+            }
+          }
+        }
+        if (Array.isArray(clientMaintenance)) {
+          for (const m of clientMaintenance) {
+            if (m && m.id && !SERVER_STORE.maintenance.some(sm => sm.id === m.id)) {
+              SERVER_STORE.maintenance.unshift(m);
+            }
+          }
+        }
+        if (Array.isArray(clientProperties)) {
+          for (const p of clientProperties) {
+            if (p && p.id && !SERVER_STORE.properties.some(sp => sp.id === p.id)) {
+              SERVER_STORE.properties.unshift(p);
+            }
+          }
+        }
         return res.status(200).json({
           success: true,
           data: {
             payments: SERVER_STORE.payments,
             cautions: SERVER_STORE.cautions,
             receipts: SERVER_STORE.receipts,
-            notifications: SERVER_STORE.notifications
+            notifications: SERVER_STORE.notifications,
+            contracts: SERVER_STORE.contracts,
+            maintenance: SERVER_STORE.maintenance,
+            properties: SERVER_STORE.properties
           }
         });
       }

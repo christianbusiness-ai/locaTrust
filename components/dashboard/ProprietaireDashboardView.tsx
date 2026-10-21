@@ -29,6 +29,8 @@ import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { Link } from 'react-router-dom';
 import { getActiveReferenceYear, getAvailableYears } from '@/lib/reports/accountingHistoryStore';
+import { computePortfolioRentMetrics } from '@/lib/payments/rentScheduleEngine';
+import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
 
 interface ProprietaireDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -63,6 +65,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const [realContracts, setRealContracts] = useState<any[]>([]);
   const [realPayments, setRealPayments] = useState<any[]>([]);
   const [realApplications, setRealApplications] = useState<any[]>([]);
+  const [realAccountingDataset, setRealAccountingDataset] = useState<RealAccountingDataset | null>(null);
 
   const fetchDashboardData = async () => {
     if (isDemo) return;
@@ -177,6 +180,14 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       // 4. Candidatures de location
       const { data: appsData } = await supabase.from('rental_applications').select('*');
       setRealApplications(appsData || []);
+
+      // 5. Synthèse comptable unifiée (Supabase)
+      try {
+        const dataset = await fetchRealAccountingData(user?.id, selectedYear);
+        setRealAccountingDataset(dataset);
+      } catch (accErr) {
+        console.warn('Dashboard accounting dataset notice:', accErr);
+      }
     } catch (err) {
       console.warn('Dashboard live fetch notice:', err);
     } finally {
@@ -228,43 +239,15 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     }
   }, [profile?.accounting_year]);
 
-  // Calculs dynamiques basés sur les données réelles
+  // Calculs dynamiques unifiés basés sur computePortfolioRentMetrics (Règles 1 à 10)
+  const portfolioMetrics = computePortfolioRentMetrics(realProps, realContracts, realPayments, new Date());
+
   const totalProps = isDemo ? 12 : realProps.length;
   const activeProps = isDemo ? 10 : realProps.filter(p => p.status === 'disponible' || p.status === 'loue').length;
   const inactiveProps = isDemo ? 2 : realProps.filter(p => p.status === 'desactive').length;
 
   const activeContracts = realContracts.filter(c => c.status === 'actif' || c.status === 'contrat_actif' || c.status === 'signe');
-  const rentedProps = realProps.filter(p => p.status === 'loue' || activeContracts.some(c => c.property_id === p.id || c.property?.id === p.id));
-  const totalTenants = isDemo ? 7 : (activeContracts.length > 0 ? activeContracts.length : 1);
-
-  // Calculs financiers réels : SEULS les logements sous contrat actif produisent un loyer attendu et une caution.
-  // Un logement vacant/disponible ne produit aucun loyer attendu ni aucun retard.
-  const realExpectedRent = activeContracts.length > 0
-    ? activeContracts.reduce((sum, c) => sum + (Number(c.monthly_rent || c.rent) || 0), 0)
-    : 30000;
-
-  const confirmedPayments = realPayments.filter(p =>
-    p.status === 'confirme' ||
-    p.status === 'valide' ||
-    p.status === 'certifie' ||
-    p.status === 'paye' ||
-    p.reference === 'ESP-135945' ||
-    p.reference === 'WAV-2026-NOV-781920'
-  );
-
-  const realCollectedRent = confirmedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-  const now = new Date();
-  // Détection du mois en cours : si Novembre 2026 ou ultérieur
-  const isNov2026OrLater = now.getFullYear() > 2026 || (now.getFullYear() === 2026 && now.getMonth() >= 10); // 10 = Nov en JS 0-indexé
-
-  // En Octobre 2026 : Le loyer attendu et encaissé d'Octobre est de 30 000 FCFA, et Novembre (30 000 FCFA) constitue une avance
-  // En Novembre 2026 : Le loyer de Novembre devient effectif, le montant encaissé total passe à 60 000 FCFA et l'avance retombe à 0 FCFA
-  const realAdvanceRent = isNov2026OrLater ? 0 : 30000;
-  const currentCollectedRent = isNov2026OrLater ? 60000 : 30000;
-
-  // Le retard ne concerne que les baux actifs si l'attendu excède les encaissements réels (0 si le locataire est à jour)
-  const realLateRent = Math.max(0, realExpectedRent - currentCollectedRent);
+  const totalTenants = isDemo ? 7 : portfolioMetrics.totalTenantsCount;
 
   const rentMetrics = isDemo ? {
     expected: 2800000,
@@ -272,10 +255,10 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     advance: 0,
     late: 350000
   } : {
-    expected: realExpectedRent,
-    collected: currentCollectedRent,
-    advance: realAdvanceRent,
-    late: realLateRent
+    expected: portfolioMetrics.totalExpectedRentCurrentMonth,
+    collected: portfolioMetrics.totalCollectedRentCurrentMonth,
+    advance: portfolioMetrics.totalAdvanceRent,
+    late: portfolioMetrics.totalLateRent
   };
 
   const cautionMetrics = isDemo ? {
@@ -284,21 +267,21 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   } : {
     expected: activeContracts.length > 0
       ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 60000), 0)
-      : 60000,
+      : 0,
     held: activeContracts.length > 0
       ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 60000), 0)
-      : 60000
+      : 0
   };
 
   const maintenanceMetrics = isDemo ? {
     month: 45000,
     year: 285000
   } : {
-    month: 0,
-    year: 0
+    month: realAccountingDataset?.synthesis?.depensesMaintenance || 0,
+    year: realAccountingDataset?.synthesis?.depensesMaintenance || 0
   };
 
-  // DONNÉES ANNUELLES 2026
+  // DONNÉES ANNUELLES DE L'EXERCICE (Tableau comptable mensuel unifié)
   const annualData2026 = isDemo ? [
     { month: 'Janvier', expected: 2800000, collected: 2800000, late: 0, maintenance: 35000, cautionRefunded: 0, otherExpenses: 0 },
     { month: 'Février', expected: 2800000, collected: 2800000, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
@@ -309,10 +292,18 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     { month: 'Juillet', expected: 2800000, collected: 2800000, late: 0, maintenance: 90000, cautionRefunded: 0, otherExpenses: 0 },
     { month: 'Août', expected: 2800000, collected: 2450000, late: 350000, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
     { month: 'Septembre', expected: 2800000, collected: 2450000, late: 350000, maintenance: 45000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Octobre (prev.)', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Novembre (prev.)', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Décembre (prev.)', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-  ] : [];
+    { month: 'Octobre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+    { month: 'Novembre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+    { month: 'Décembre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+  ] : (realAccountingDataset?.monthlyBreakdown?.map(m => ({
+    month: m.monthName,
+    expected: m.expectedRent,
+    collected: m.collectedRent,
+    late: m.lateRent,
+    maintenance: m.maintenanceExpense,
+    cautionRefunded: m.cautionRefunded,
+    otherExpenses: m.otherExpenses
+  })) || []);
 
   // Calculs totaux annuels
   const annualTotals = annualData2026.reduce(
@@ -338,8 +329,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     month: 2405000,
     year: annualTotals.net
   } : {
-    month: 0,
-    year: 0
+    month: rentMetrics.collected - maintenanceMetrics.month,
+    year: annualTotals.net
   };
 
   const isVerified = profile?.verification_status === 'verifie';

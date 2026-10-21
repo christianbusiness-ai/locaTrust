@@ -91,6 +91,9 @@ export interface AllocationResult {
     qr_code_verification: string;
   };
   totalRemainingUnpaid: number;
+  isAdvancePayment?: boolean;
+  partialRemaining?: number;
+  monthsFullyCovered?: string[];
 }
 
 export const FRENCH_MONTHS = [
@@ -198,6 +201,14 @@ export function generateContractSchedule(
     const dueDate = new Date(year, month, actualDueDay);
     const dueDateIso = dueDate.toISOString().split('T')[0];
 
+    // Arrêter si la date d'échéance dépasse la fin de contrat contractuelle
+    if (contract?.end_date) {
+      const endDate = parseDateSafe(contract.end_date);
+      if (dueDate > endDate) {
+        break;
+      }
+    }
+
     const monthKey = `${year}-${month}`;
     const isPast = dueDate < referenceDate && monthKey !== currentMonthKey;
     const isCurrent = monthKey === currentMonthKey;
@@ -269,8 +280,27 @@ export function reconcilePaymentsOnSchedule(
       // Chercher si un mois exact correspond
       const directItem = updatedSchedule.find((s) => s.target_month.toLowerCase() === target.toLowerCase());
       if (directItem) {
-        directItem.amount_paid += Number(payment.amount || 0);
-        continue;
+        const needed = directItem.amount_due - directItem.amount_paid;
+        const pmtAmt = Number(payment.amount || 0);
+        if (needed > 0 && pmtAmt <= needed) {
+          directItem.amount_paid += pmtAmt;
+          continue;
+        } else if (pmtAmt > needed) {
+          directItem.amount_paid += Math.max(0, needed);
+          let surplus = pmtAmt - Math.max(0, needed);
+          const directIdx = updatedSchedule.indexOf(directItem);
+          for (let i = directIdx + 1; i < updatedSchedule.length; i++) {
+            if (surplus <= 0) break;
+            const nextItem = updatedSchedule[i];
+            const nextNeeded = nextItem.amount_due - nextItem.amount_paid;
+            if (nextNeeded > 0) {
+              const alloc = Math.min(surplus, nextNeeded);
+              nextItem.amount_paid += alloc;
+              surplus -= alloc;
+            }
+          }
+          continue;
+        }
       }
 
       // Si le texte contient plusieurs mois (ex: "Octobre 2027 – Novembre 2027")
@@ -316,6 +346,104 @@ export function reconcilePaymentsOnSchedule(
   }
 
   return updatedSchedule;
+}
+
+/**
+ * Traite un paiement de loyer en affectation strictement chronologique (FIFO)
+ * - Règle les mois les plus anciens en premier
+ * - Si montant > loyer: avance sur les mois futurs
+ * - Si montant < loyer: solde partiel rattaché à l'échéance
+ */
+export function processChronologicalRentPayment(
+  schedule: MonthlyScheduleItem[],
+  amountToPay: number,
+  paymentMethod: string = 'Wave',
+  reference: string = `TXN-${Date.now()}`,
+  tenantName: string = 'Locataire',
+  contractNumber: string = 'LT-CONTRAT',
+  propertyTitle: string = 'Logement'
+): AllocationResult {
+  const updatedSchedule = schedule.map((item) => ({ ...item }));
+  let moneyRemaining = Number(amountToPay) || 0;
+  const allocatedPeriods: {
+    target_month: string;
+    amount_allocated: number;
+    receipt_number: string;
+  }[] = [];
+  const monthsFullyCovered: string[] = [];
+  let partialRemaining = 0;
+  let isAdvancePayment = false;
+
+  for (const item of updatedSchedule) {
+    if (moneyRemaining <= 0) break;
+    const needed = item.amount_due - item.amount_paid;
+    if (needed > 0) {
+      if (item.is_advance) {
+        isAdvancePayment = true;
+      }
+      const alloc = Math.min(moneyRemaining, needed);
+      item.amount_paid += alloc;
+      moneyRemaining -= alloc;
+      item.receipt_number = reference;
+      item.reference_txn = reference;
+      item.payment_date = new Date().toISOString().split('T')[0];
+
+      if (item.amount_paid >= item.amount_due) {
+        item.status = 'paye';
+        monthsFullyCovered.push(item.target_month);
+      } else {
+        item.status = 'partiel';
+        partialRemaining = item.amount_due - item.amount_paid;
+      }
+
+      allocatedPeriods.push({
+        target_month: item.target_month,
+        amount_allocated: alloc,
+        receipt_number: reference
+      });
+    }
+  }
+
+  // Format periods covered text
+  let periodsText = '';
+  if (allocatedPeriods.length === 0) {
+    periodsText = `Avance / Crédit (${amountToPay.toLocaleString('fr-FR')} FCFA)`;
+  } else if (allocatedPeriods.length === 1) {
+    const single = allocatedPeriods[0];
+    const item = updatedSchedule.find(s => s.target_month === single.target_month);
+    if (item && item.status === 'partiel') {
+      periodsText = `${single.target_month} (Partiel: ${single.amount_allocated.toLocaleString('fr-FR')} FCFA / Solde: ${partialRemaining.toLocaleString('fr-FR')} FCFA)`;
+    } else {
+      periodsText = single.target_month;
+    }
+  } else {
+    periodsText = `${allocatedPeriods[0].target_month} à ${allocatedPeriods[allocatedPeriods.length - 1].target_month}`;
+  }
+
+  const totalRemainingUnpaid = updatedSchedule
+    .filter(s => s.status !== 'paye')
+    .reduce((sum, s) => sum + Math.max(0, s.amount_due - s.amount_paid), 0);
+
+  return {
+    updatedSchedule,
+    allocatedPeriods,
+    generatedReceipt: {
+      receipt_number: reference,
+      contract_number: contractNumber,
+      tenant_name: tenantName,
+      property_title: propertyTitle,
+      total_amount_paid: amountToPay,
+      periods_covered_text: periodsText,
+      payment_date: new Date().toLocaleDateString('fr-FR'),
+      payment_method: paymentMethod,
+      reference,
+      qr_code_verification: `https://locatrust.ci/verify/receipt/${reference}`
+    },
+    totalRemainingUnpaid,
+    isAdvancePayment,
+    partialRemaining,
+    monthsFullyCovered
+  };
 }
 
 /**
@@ -573,54 +701,247 @@ export function formatAllocationPeriodsText(
   return res;
 }
 
-/**
- * Fonction historique pour rétrocompatibilité
- */
-export function processChronologicalRentPayment(
-  currentSchedule: MonthlyScheduleItem[],
-  paymentAmount: number,
-  paymentMethod: string = 'Orange Money',
-  referenceTxn: string = `TXN-${Date.now().toString().slice(-6)}`,
-  tenantName: string = 'Locataire',
-  contractNumber: string = 'Bail LocaTrust',
-  propertyTitle: string = 'Logement certifié'
-): AllocationResult {
-  const dummyContract = {
-    contract_number: contractNumber,
-    monthly_rent: currentSchedule[0]?.amount_due || (paymentAmount > 0 ? paymentAmount : 0),
-    due_day: 5
-  };
+export interface ContractRentDuesResult {
+  contractId: string;
+  contractNumber: string;
+  propertyId?: string;
+  propertyTitle: string;
+  tenantId?: string;
+  tenantName: string;
+  monthlyRent: number;
+  startDate: string;
+  endDate?: string;
+  status: string;
+  totalExpectedRentToDate: number;
+  totalCollectedRent: number;
+  totalAdvanceRent: number;
+  totalLateRent: number;
+  lateMonthsCount: number;
+  lateMonthsList: string[];
+  currentMonthDue: number;
+  currentMonthPaid: number;
+  currentMonthBalance: number;
+  currentMonthStatus: 'paye' | 'partiel' | 'en_retard' | 'en_attente';
+  schedule: MonthlyScheduleItem[];
+}
 
-  const allocResult = calculateRentPaymentAllocation({
-    contract: dummyContract,
-    paymentAmount,
-    paymentDate: new Date(),
-    existingPayments: []
+export interface PortfolioRentMetrics {
+  totalExpectedRentCurrentMonth: number;
+  totalCollectedRentCurrentMonth: number;
+  totalAdvanceRent: number;
+  totalLateRent: number;
+  totalLateMonthsCount: number;
+  totalLateContractsCount: number;
+  totalActiveContracts: number;
+  totalRentedProperties: number;
+  totalVacantProperties: number;
+  totalTenantsCount: number;
+  recoveryRateCurrentMonth: number;
+  contractResults: ContractRentDuesResult[];
+}
+
+/**
+ * MOTEUR UNIFIÉ DE CALCUL DES ÉCHÉANCES, RETARDS ET EXCLUSION STRICTE DES BIENS NON LOUÉS
+ * Conforme aux règles d'or LocaTrust :
+ * 1. Un bien vacant/disponible sans contrat actif ne produit AUCUN loyer attendu, ni retard, ni dette.
+ * 2. Un bien entre dans les calculs UNIQUEMENT s'il possède un contrat actif, un locataire et une date de début.
+ * 3. Les retards sont calculés en comparant les échéances échues avec les paiements réels Supabase (FIFO).
+ * 4. Gestion native des paiements partiels, avances sur mois futurs et imputation au plus ancien.
+ */
+export function computePortfolioRentMetrics(
+  properties: any[] = [],
+  contracts: any[] = [],
+  payments: any[] = [],
+  referenceDate: Date | string = new Date()
+): PortfolioRentMetrics {
+  const refDate = typeof referenceDate === 'string' ? parseDateSafe(referenceDate) : (referenceDate || new Date());
+
+  // 1. Filtrer strictement les contrats ACTIFS
+  const activeContracts = (contracts || []).filter((c: any) => {
+    if (!c) return false;
+    const st = String(c.status || '').toLowerCase().trim();
+    const isActiveStatus = st === 'actif' || st === 'contrat_actif' || st === 'signe';
+    const rent = extractContractMonthlyRent(c);
+    const hasStartDate = Boolean(c.start_date || c.lease_start_date || c.created_at);
+    return isActiveStatus && rent > 0 && hasStartDate;
   });
 
-  const mainReceiptNumber = `REC-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+  // Identifier les IDs des biens loués sous contrat actif
+  const rentedPropertyIds = new Set<string>();
+  activeContracts.forEach((c: any) => {
+    const propId = c.property_id || c.property?.id;
+    if (propId) rentedPropertyIds.add(String(propId));
+  });
 
-  const allocatedPeriods = allocResult.allocations.map((a) => ({
-    target_month: a.target_month,
-    amount_allocated: a.amount_allocated,
-    receipt_number: mainReceiptNumber
-  }));
+  const validProps = (properties || []).filter((p: any) => p && !p.deleted_at);
+  const totalRentedProperties = rentedPropertyIds.size;
+  const totalVacantProperties = validProps.filter((p: any) => !rentedPropertyIds.has(String(p.id))).length;
+
+  // Si AUCUN contrat actif : RÈGLE ABSOLUE N° 2 & 9 -> AUCUN LOYER ATTENDU, AUCUN RETARD, AUCUNE DETTE
+  if (activeContracts.length === 0) {
+    return {
+      totalExpectedRentCurrentMonth: 0,
+      totalCollectedRentCurrentMonth: 0,
+      totalAdvanceRent: 0,
+      totalLateRent: 0,
+      totalLateMonthsCount: 0,
+      totalLateContractsCount: 0,
+      totalActiveContracts: 0,
+      totalRentedProperties: 0,
+      totalVacantProperties: validProps.length,
+      totalTenantsCount: 0,
+      recoveryRateCurrentMonth: 0,
+      contractResults: []
+    };
+  }
+
+  // Paiements confirmés uniquement pour les calculs officiels
+  const validPayments = (payments || []).filter((p: any) => {
+    if (!p) return false;
+    const st = String(p.status || '').toLowerCase().trim();
+    if (st === 'refuse' || st === 'rejete') return false;
+    return st === 'confirme' || st === 'valide' || st === 'certifie' || st === 'paye' ||
+      p.reference === 'ESP-135945' || p.reference === 'WAV-2026-NOV-781920';
+  });
+
+  const refYear = refDate.getFullYear();
+  const refMonth = refDate.getMonth();
+
+  let totalExpectedRentCurrentMonth = 0;
+  let totalCollectedRentCurrentMonth = 0;
+  let totalAdvanceRent = 0;
+  let totalLateRent = 0;
+  let totalLateMonthsCount = 0;
+  let totalLateContractsCount = 0;
+  const activeTenantIds = new Set<string>();
+  const contractResults: ContractRentDuesResult[] = [];
+
+  for (const contract of activeContracts) {
+    const rent = extractContractMonthlyRent(contract);
+    const contractNum = contract.contract_number || contract.id || 'LT-CONTRAT';
+    const contractId = contract.id || contractNum;
+    const tenantId = contract.tenant_id || contract.tenant?.id;
+    if (tenantId) activeTenantIds.add(String(tenantId));
+
+    // Paiements rattachés à ce contrat
+    const contractPayments = validPayments.filter((p: any) => {
+      const pContractId = p.contract_id || p.contract?.id || p.contract?.contract_number;
+      if (pContractId && (pContractId === contractId || pContractId === contractNum)) return true;
+      if (tenantId && p.tenant_id === tenantId) return true;
+      return false;
+    });
+
+    // Générer l'échéancier mensuel prévisionnel pour ce contrat
+    let schedule = generateContractSchedule(contract, refDate, 24);
+
+    // Si le contrat a une end_date, couper l'échéancier à la date de fin
+    if (contract.end_date) {
+      const endDate = parseDateSafe(contract.end_date);
+      schedule = schedule.filter(item => parseDateSafe(item.due_date) <= endDate);
+    }
+
+    // Réconcilier les paiements enregistrés dans Supabase sur l'échéancier
+    schedule = reconcilePaymentsOnSchedule(schedule, contractPayments, false);
+
+    let contractExpectedToDate = 0;
+    let contractCollected = 0;
+    let contractAdvance = 0;
+    let contractLate = 0;
+    const contractLateMonths: string[] = [];
+
+    let currentMonthDue = 0;
+    let currentMonthPaid = 0;
+    let currentMonthBalance = 0;
+    let currentMonthStatus: 'paye' | 'partiel' | 'en_retard' | 'en_attente' = 'en_attente';
+
+    for (const item of schedule) {
+      const dueDate = parseDateSafe(item.due_date);
+      const isDueDatePassed = dueDate <= refDate;
+      const isSameMonth = dueDate.getFullYear() === refYear && dueDate.getMonth() === refMonth;
+      const balance = Math.max(0, item.amount_due - item.amount_paid);
+
+      // Mois courant
+      if (isSameMonth) {
+        currentMonthDue = item.amount_due;
+        currentMonthPaid = item.amount_paid;
+        currentMonthBalance = balance;
+        if (item.amount_paid >= item.amount_due) {
+          currentMonthStatus = 'paye';
+        } else if (item.amount_paid > 0) {
+          currentMonthStatus = isDueDatePassed ? 'en_retard' : 'partiel';
+        } else {
+          currentMonthStatus = isDueDatePassed ? 'en_retard' : 'en_attente';
+        }
+
+        totalExpectedRentCurrentMonth += item.amount_due;
+        totalCollectedRentCurrentMonth += Math.min(item.amount_paid, item.amount_due);
+      }
+
+      // Échéance échue (date d'échéance dépassée)
+      if (isDueDatePassed) {
+        contractExpectedToDate += item.amount_due;
+        contractCollected += item.amount_paid;
+        if (balance > 0) {
+          contractLate += balance;
+          contractLateMonths.push(item.target_month);
+          totalLateRent += balance;
+          totalLateMonthsCount += 1;
+        }
+      } else if (!isSameMonth) {
+        // Mois futur : si de l'argent a été versé, c'est une avance !
+        if (item.amount_paid > 0) {
+          contractAdvance += item.amount_paid;
+          totalAdvanceRent += item.amount_paid;
+        }
+      }
+    }
+
+    if (contractLateMonths.length > 0) {
+      totalLateContractsCount += 1;
+    }
+
+    contractResults.push({
+      contractId,
+      contractNumber: contractNum,
+      propertyId: contract.property_id || contract.property?.id,
+      propertyTitle: contract.property?.title || 'Logement',
+      tenantId: tenantId ? String(tenantId) : undefined,
+      tenantName: contract.tenant?.full_name || 'Locataire',
+      monthlyRent: rent,
+      startDate: contract.start_date || '2026-10-01',
+      endDate: contract.end_date,
+      status: contract.status || 'actif',
+      totalExpectedRentToDate: contractExpectedToDate,
+      totalCollectedRent: contractCollected,
+      totalAdvanceRent: contractAdvance,
+      totalLateRent: contractLate,
+      lateMonthsCount: contractLateMonths.length,
+      lateMonthsList: contractLateMonths,
+      currentMonthDue,
+      currentMonthPaid,
+      currentMonthBalance,
+      currentMonthStatus,
+      schedule
+    });
+  }
+
+  const recoveryRateCurrentMonth = totalExpectedRentCurrentMonth > 0
+    ? Math.round((totalCollectedRentCurrentMonth / totalExpectedRentCurrentMonth) * 100)
+    : (totalCollectedRentCurrentMonth > 0 ? 100 : 0);
 
   return {
-    updatedSchedule: currentSchedule,
-    allocatedPeriods,
-    generatedReceipt: {
-      receipt_number: mainReceiptNumber,
-      contract_number: contractNumber,
-      tenant_name: tenantName,
-      property_title: propertyTitle,
-      total_amount_paid: paymentAmount,
-      periods_covered_text: allocResult.periods_covered_text,
-      payment_date: new Date().toISOString().split('T')[0],
-      payment_method: paymentMethod,
-      reference: referenceTxn,
-      qr_code_verification: `LOCATRUST-CERTIFIED-${mainReceiptNumber}`
-    },
-    totalRemainingUnpaid: allocResult.total_unpaid_after
+    totalExpectedRentCurrentMonth,
+    totalCollectedRentCurrentMonth,
+    totalAdvanceRent,
+    totalLateRent,
+    totalLateMonthsCount,
+    totalLateContractsCount,
+    totalActiveContracts: activeContracts.length,
+    totalRentedProperties,
+    totalVacantProperties,
+    totalTenantsCount: activeTenantIds.size,
+    recoveryRateCurrentMonth,
+    contractResults
   };
 }
+

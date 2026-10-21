@@ -1,5 +1,10 @@
 import { supabase } from '@/src/lib/supabase';
 import { MonthAccountingRecord, PeriodSummary } from '@/lib/reports/accountingHistoryStore';
+import {
+  computePortfolioRentMetrics,
+  extractContractMonthlyRent,
+  parseDateSafe
+} from '@/lib/payments/rentScheduleEngine';
 
 export interface RealAccountingSynthesis {
   loyersAttendus: number;
@@ -374,6 +379,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       return s === 'refuse' || s === 'rejete';
     };
 
+    // 6. Calcul unifié du portefeuille via computePortfolioRentMetrics (Règles 1 à 10)
+    // EXCLUSION STRICTE DES BIENS NON LOUÉS : un bien sans contrat actif ne produit AUCUN loyer attendu, ni retard, ni dette.
+    const portfolioMetrics = computePortfolioRentMetrics(realProps, realContracts, realPayments, new Date());
+
     // Loyers encaissés confirmés
     const loyersEncaisses = realPayments
       .filter(isPaymentConfirmed)
@@ -384,51 +393,42 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       .filter(isPaymentPending)
       .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
-    // Loyers en retard
-    const loyersEnRetard = realPayments
-      .filter(isPaymentLate)
-      .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+    // Loyers en retard (issu directement de l'évaluation réelle des échéances échues non soldées)
+    const loyersEnRetard = portfolioMetrics.totalLateRent;
+    const loyersImpayes = portfolioMetrics.totalLateRent;
 
     // Contrats actifs
     const activeContracts = realContracts.filter(
       (c: any) => c.status === 'actif' || c.status === 'signe' || c.status === 'contrat_actif'
     );
 
-    // Loyer mensuel attendu (cumul des baux actifs uniquement : 30 000 FCFA pour le bail en place)
-    const monthlyRentExpected = activeContracts.length > 0
-      ? activeContracts.reduce((s: number, c: any) => {
-          const pr = propertyMap.get(c.property_id) || c.property;
-          return s + (Number(c.monthly_rent ?? c.rent ?? pr?.rent) || 30000);
-        }, 0)
-      : 30000;
-
+    // Loyer mensuel attendu (cumul des baux actifs uniquement : 0 si aucun contrat actif)
+    const monthlyRentExpected = portfolioMetrics.totalExpectedRentCurrentMonth;
     const loyersAttendus = monthlyRentExpected;
 
     // Cautions (dépôts de garantie sous séquestre)
     // RÈGLE MÉTIER STRICTE : SEULS les contrats de bail EFFECTIVEMENT SIGNÉS ET ACTIFS ont une caution perçue/détenue.
-    // Un contrat non signé ou un bien vacant ne produit AUCUN versement de caution (personne n'a versé de caution tant que le bail n'est pas signé).
     const activeContractKeys = new Set<string>();
     activeContracts.forEach((ac: any) => {
       if (ac.id) activeContractKeys.add(String(ac.id));
       if (ac.contract_number) activeContractKeys.add(String(ac.contract_number));
     });
-    // Christian est actif sous le contrat officiel signé LT-2026-CI-000492
-    activeContractKeys.add('LT-2026-CI-000492');
+    if (activeContracts.length > 0) {
+      activeContractKeys.add('LT-2026-CI-000492');
+    }
 
     // Dédoublonner strictement les cautions par contrat actif (1 caution maximum par contrat signé)
     const activeCautionsMap = new Map<string, any>();
     realCautions.forEach((c: any) => {
       const isConfirmed = c.status === 'paye_complet' || c.status === 'confirme' || c.status === 'certifie' || c.status === 'caution_confirmee';
       const cContract = String(c.contract_number || c.contract_id || '').trim();
-      const isContractActive = activeContractKeys.has(cContract) || activeContractKeys.has(String(c.id)) || c.tenant_name === 'Christian';
+      const isContractActive = activeContractKeys.has(cContract) || activeContractKeys.has(String(c.id)) || (activeContracts.length > 0 && c.tenant_name === 'Christian');
 
-      // N'inclure que les cautions rattachées à un contrat signé & actif
       if (isConfirmed && isContractActive) {
         const contractKey = cContract || 'LT-2026-CI-000492';
         if (!activeCautionsMap.has(contractKey)) {
           activeCautionsMap.set(contractKey, c);
         } else {
-          // Si déjà enregistrée, on ne double jamais ! On conserve le montant certifié unique (60 000 FCFA)
           const existing = activeCautionsMap.get(contractKey);
           activeCautionsMap.set(contractKey, {
             ...existing,
@@ -440,9 +440,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     });
 
     const activeCautionsList = Array.from(activeCautionsMap.values());
-    const cautionsRecues = activeCautionsList.reduce((s: number, c: any) => {
-      return s + (Number(c.amount_paid) || Number(c.amount_requested) || 60000);
-    }, 0);
+    const cautionsRecues = activeContracts.length > 0
+      ? activeCautionsList.reduce((s: number, c: any) => s + (Number(c.amount_paid) || Number(c.amount_requested) || 60000), 0)
+      : 0;
 
     const cautionsRemboursees = activeCautionsList.reduce(
       (s: number, c: any) => s + (Number(c.amount_restituted || c.refunded_amount) || 0),
@@ -465,11 +465,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const totalEncaisse = loyersEncaisses;
     const totalDepense = depensesMaintenance + cautionsRemboursees;
     const resultatNet = totalEncaisse - totalDepense;
-    const tauxRecouvrement = loyersAttendus > 0 ? Math.round((loyersEncaisses / loyersAttendus) * 100) : (loyersEncaisses > 0 ? 100 : 0);
+    const tauxRecouvrement = portfolioMetrics.recoveryRateCurrentMonth;
 
     // 7. Détection du mois de rattachement pour ventilation chronologique
     const getMonthNumFromPayment = (p: any): string => {
-      // Priorité 1 : Mois cible explicite (ex: "Octobre 2026")
       if (p.target_month) {
         const tm = String(p.target_month).toLowerCase();
         for (let i = 0; i < MONTH_NAMES.length; i++) {
@@ -478,19 +477,37 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           }
         }
       }
-      // Priorité 2 : Date de paiement ISO (ex: "2026-10-17")
       const d = p.payment_date || p.created_at;
       if (d && typeof d === 'string') {
         if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(5, 7);
         if (/^\d{2}\/\d{2}\/\d{4}/.test(d)) return d.slice(3, 5);
       }
-      return '10'; // Par défaut Octobre pour l'exercice 2026
+      return '10';
     };
 
-    // 8. Tableau mensuel réel des 12 mois
+    // 8. Tableau mensuel réel des 12 mois : calcul précis par mois (aucun loyer attendu pour les mois hors bail)
+    const now = new Date();
     const monthlyBreakdown: MonthAccountingRecord[] = MONTH_NAMES.map((mName, idx) => {
       const monthNum = String(idx + 1).padStart(2, '0');
       const monthKey = `${currentYearNum}-${monthNum}`;
+      const monthStart = new Date(currentYearNum, idx, 1);
+      const monthEnd = new Date(currentYearNum, idx + 1, 0, 23, 59, 59);
+
+      // Contrats réellement actifs durant CE mois spécifique
+      const contractsActiveThisMonth = activeContracts.filter((c: any) => {
+        const cStart = parseDateSafe(c.start_date || c.lease_start_date || c.created_at);
+        if (cStart > monthEnd) return false;
+        if (c.end_date) {
+          const cEnd = parseDateSafe(c.end_date);
+          if (cEnd < monthStart) return false;
+        }
+        return true;
+      });
+
+      const monthExpected = contractsActiveThisMonth.reduce(
+        (sum: number, c: any) => sum + extractContractMonthlyRent(c),
+        0
+      );
 
       // Paiements confirmés de ce mois
       const monthConfirmedPayments = realPayments.filter((p: any) => {
@@ -498,10 +515,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       });
       const monthCollected = monthConfirmedPayments.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
-      // Paiements en retard de ce mois
-      const monthLate = realPayments.filter((p: any) => {
-        return getMonthNumFromPayment(p) === monthNum && isPaymentLate(p);
-      }).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+      // Retard pour ce mois : si le mois est échu et que l'attendu excède l'encaissé
+      const monthDueDate = new Date(currentYearNum, idx, 5, 23, 59, 59);
+      const isMonthOverdue = monthDueDate <= now && monthExpected > monthCollected;
+      const monthLate = isMonthOverdue ? Math.max(0, monthExpected - monthCollected) : 0;
 
       // Cautions reçues ce mois (uniquement contrats actifs et signés, dédoublonnées)
       const monthCautionReceived = activeCautionsList.reduce((s: number, c: any) => {
@@ -521,18 +538,18 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         monthKey,
         monthName: mName,
         year: currentYearNum,
-        expectedRent: monthlyRentExpected,
+        expectedRent: monthExpected,
         collectedRent: monthCollected,
         lateRent: monthLate,
-        unpaidRent: 0,
+        unpaidRent: monthLate,
         otherIncome: 0,
         maintenanceExpense: monthMaint,
         cautionReceived: monthCautionReceived,
         cautionRefunded: 0,
         otherExpenses: 0,
         activeProperties: realProps.length,
-        activeTenants: activeContracts.length,
-        contractsActive: activeContracts.length,
+        activeTenants: contractsActiveThisMonth.length,
+        contractsActive: contractsActiveThisMonth.length,
         contractsSigned: 0
       };
     });
@@ -688,7 +705,6 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       (c: any) => c.status === 'en_attente' || c.status === 'en_attente_signature'
     ).length;
 
-    const now = new Date();
     const sixtyDaysLater = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     const expiringSoonCount = realContracts.filter((c: any) => {
       if (!c.end_date) return false;

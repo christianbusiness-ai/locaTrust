@@ -1,6 +1,7 @@
 'use client';
 
 import { getStoredMessages, saveStoredMessages, ChatMessage } from '@/lib/messagingStore';
+import { supabase } from '@/src/lib/supabase';
 
 export interface WaitingListCandidateNotification {
   candidateId: string;
@@ -230,6 +231,32 @@ export function pushGlobalNotification(notif: {
         detail: { notifications: combined }
       })
     );
+
+    // Synchronisation multi-appareils via /api/sync
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'push_notification',
+          notification: newNotif
+        })
+      }).catch(() => {});
+    } catch {}
+
+    // Inscription directe dans la table notifications Supabase
+    if (notif.targetUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(notif.targetUserId)) {
+      try {
+        supabase.from('notifications').insert({
+          id: crypto.randomUUID(),
+          user_id: notif.targetUserId,
+          title: notif.title,
+          content: notif.description,
+          type: notif.category,
+          read: false
+        }).then();
+      } catch {}
+    }
   } catch (e) {
     console.warn('Error pushing notification:', e);
   }

@@ -95,12 +95,28 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       try {
         const { data, error } = await supabase
           .from('contracts')
-          .select('*, property:property_id(*), owner:owner_id(*), tenant:tenant_id(*)')
+          .select('*, property:properties(*)')
           .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
           .maybeSingle();
 
         if (data && !error) {
-          setDbContract(data);
+          const ids = [data.owner_id, data.tenant_id, data.agency_id].filter(Boolean);
+          let ownerProf: any = null;
+          let tenantProf: any = null;
+          if (ids.length > 0) {
+            try {
+              const { data: profs } = await supabase.from('profiles').select('*').in('id', ids);
+              if (profs) {
+                ownerProf = profs.find(p => p.id === data.owner_id || p.id === data.agency_id);
+                tenantProf = profs.find(p => p.id === data.tenant_id);
+              }
+            } catch {}
+          }
+          setDbContract({
+            ...data,
+            owner: ownerProf || data.owner,
+            tenant: tenantProf || data.tenant
+          });
         }
       } catch (e) {
         console.warn('Erreur chargement contrat Supabase:', e);
@@ -1190,14 +1206,57 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         <SignatureModal
           isOpen={!!activeSigningParty}
           onClose={() => setActiveSigningParty(null)}
-          onConfirmSignature={(signatureUrl) => {
-            if (activeSigningParty === 'proprietaire') {
+          onConfirmSignature={async (signatureUrl) => {
+            const isOwner = activeSigningParty === 'proprietaire';
+            if (isOwner) {
               setOwnerSignatureUrl(signatureUrl);
               persistOwnerSignature(signatureUrl);
             } else {
               setTenantSignatureUrl(signatureUrl);
               persistTenantSignature(signatureUrl);
             }
+
+            // Inscription directe et persistante dans Supabase PostgreSQL
+            try {
+              const updatePayload: any = {
+                updated_at: new Date().toISOString()
+              };
+              if (isOwner) {
+                updatePayload.owner_signature = signatureUrl;
+                updatePayload.owner_signed = true;
+                updatePayload.owner_signed_at = new Date().toISOString();
+              } else {
+                updatePayload.tenant_signature = signatureUrl;
+                updatePayload.tenant_signed = true;
+                updatePayload.tenant_signed_at = new Date().toISOString();
+                updatePayload.status = 'actif';
+              }
+
+              await supabase
+                .from('contracts')
+                .update(updatePayload)
+                .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+
+              // Si le locataire a signé, marquer le bien comme loué dans Supabase
+              if (!isOwner && (realContract?.property_id || realContract?.property?.id)) {
+                const pId = realContract.property_id || realContract.property?.id;
+                await supabase
+                  .from('properties')
+                  .update({ status: 'loue' })
+                  .eq('id', pId);
+              }
+
+              // Enregistrer la signature sur le profil de l'utilisateur
+              if (user?.id) {
+                await supabase
+                  .from('profiles')
+                  .update({ signature_url: signatureUrl })
+                  .eq('id', user.id);
+              }
+            } catch (dbErr) {
+              console.warn('Notice persistance signature Supabase:', dbErr);
+            }
+
             try {
               const stored = localStorage.getItem('locatrust_contracts');
               if (stored) {
@@ -1207,10 +1266,11 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                     if (c.contract_number === contractNumber || c.id === contractNumber) {
                       return {
                         ...c,
-                        owner_signature_url: activeSigningParty === 'proprietaire' ? signatureUrl : (c.owner_signature_url || c.ownerSignatureUrl),
-                        tenant_signature_url: activeSigningParty === 'locataire' ? signatureUrl : (c.tenant_signature_url || c.tenantSignatureUrl),
-                        owner_signed: activeSigningParty === 'proprietaire' ? true : c.owner_signed,
-                        tenant_signed: activeSigningParty === 'locataire' ? true : c.tenant_signed,
+                        status: isOwner ? c.status : 'actif',
+                        owner_signature_url: isOwner ? signatureUrl : (c.owner_signature_url || c.ownerSignatureUrl),
+                        tenant_signature_url: !isOwner ? signatureUrl : (c.tenant_signature_url || c.tenantSignatureUrl),
+                        owner_signed: isOwner ? true : c.owner_signed,
+                        tenant_signed: !isOwner ? true : c.tenant_signed,
                         signed_date: new Date().toLocaleDateString('fr-FR'),
                         start_date: c.start_date || new Date().toLocaleDateString('fr-FR')
                       };

@@ -327,8 +327,9 @@ export async function createProperty(property: any) {
     const hasBedrooms = property.bedrooms !== undefined && property.bedrooms !== null && property.bedrooms !== '';
     const hasBathrooms = property.bathrooms !== undefined && property.bathrooms !== null && property.bathrooms !== '';
 
-    const payload = {
+    const payload: any = {
       owner_id: ownerId,
+      agency_id: property.agency_id || (property.is_agency ? ownerId : null),
       type: property.type || 'appartement',
       title: property.title || 'Logement',
       description: property.description || '',
@@ -345,7 +346,13 @@ export async function createProperty(property: any) {
       bathrooms: hasBathrooms ? Number(property.bathrooms) : null,
       status: property.status || 'disponible',
       photos: Array.isArray(property.photos) ? property.photos : [],
-      videos: Array.isArray(property.videos) ? property.videos : (property.video_url ? [property.video_url] : [])
+      videos: Array.isArray(property.videos) ? property.videos : (property.video_url ? [property.video_url] : []),
+      mandant_id: property.mandant_id || null,
+      mandant_name: property.mandant_name || null,
+      usage_destination: property.usage_destination || 'habitation',
+      authorized_activity: property.authorized_activity || null,
+      owner_name: property.owner_name || null,
+      owner_phone: property.owner_phone || null
     };
 
     const { data, error } = await supabase

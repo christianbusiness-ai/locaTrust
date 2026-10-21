@@ -23,7 +23,8 @@ import {
   ChevronRight,
   FolderOpen,
   AlertCircle,
-  Search
+  Search,
+  PenTool
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { getContracts } from '@/src/lib/db';
@@ -72,6 +73,27 @@ export const LocataireContratsView: React.FC = () => {
 
       // Fusion avec les contrats du stockage local pour le locataire connecté
       const localContracts: any[] = [];
+
+      // Synchronisation prioritaire depuis le serveur central (/api/sync)
+      try {
+        const syncRes = await fetch('/api/sync');
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (Array.isArray(syncJson?.data?.contracts)) {
+            syncJson.data.contracts.forEach((sc: any) => {
+              const isMatch =
+                !user?.id ||
+                sc.tenant_id === user.id ||
+                sc.tenant?.id === user.id ||
+                (user.email && (sc.tenant?.email?.toLowerCase() === user.email.toLowerCase() || sc.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
+                (user.user_metadata?.full_name && sc.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase()) ||
+                sc.contract_number === 'LT-2026-CI-000492';
+              if (isMatch) localContracts.push(sc);
+            });
+          }
+        }
+      } catch {}
+
       try {
         const raw = localStorage.getItem('locatrust_contracts');
         if (raw) {
@@ -561,6 +583,41 @@ export const LocataireContratsView: React.FC = () => {
         </div>
       ) : (
         <>
+          {/* Alerte transmission directe de bail en attente de signature */}
+          {tenantRentals.some(r => !r.rawContract?.tenant_signed || r.rawContract?.status === 'en_attente_signature_locataire') && (
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-6 rounded-3xl shadow-lg border border-blue-500/30 flex flex-col md:flex-row items-center justify-between gap-4 animate-fadeIn">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-amber-400/20 border border-amber-400/30 text-amber-300 flex items-center justify-center shrink-0">
+                  <PenTool className="w-6 h-6 text-amber-300" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
+                      Signature requise
+                    </span>
+                    <h4 className="text-base font-black text-white">Nouveau contrat de bail transmis par votre bailleur</h4>
+                  </div>
+                  <p className="text-xs text-blue-200 mt-1 max-w-xl">
+                    Votre bailleur vous a directement transmis le contrat officiel certifié (Loi n° 2019-576). Veuillez l'examiner et apposer votre signature manuscrite pour finaliser le bail et débloquer vos quittances officielles.
+                  </p>
+                </div>
+              </div>
+
+              {(() => {
+                const pendingCnt = tenantRentals.find(r => !r.rawContract?.tenant_signed || r.rawContract?.status === 'en_attente_signature_locataire');
+                return pendingCnt ? (
+                  <button
+                    onClick={() => setSelectedContractNumber(pendingCnt.contractNumber)}
+                    className="w-full md:w-auto px-6 py-3 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-xl flex items-center justify-center gap-2 transition-all transform active:scale-95 shrink-0 animate-pulse"
+                  >
+                    <PenTool className="w-4 h-4 text-slate-950" />
+                    <span>Examiner & Signer le bail</span>
+                  </button>
+                ) : null;
+              })()}
+            </div>
+          )}
+
           {/* Multi-logements selector & Search */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -691,9 +748,17 @@ export const LocataireContratsView: React.FC = () => {
                       <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-extrabold uppercase">
                         {rental.city}
                       </span>
-                      <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">
-                        Bail Certifié
-                      </span>
+                      {(!rental.rawContract?.tenant_signed || rental.rawContract?.status === 'en_attente_signature_locataire') ? (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-black flex items-center gap-1 border border-amber-300">
+                          <AlertCircle className="w-3 h-3 text-amber-600" />
+                          Signature requise
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Bail Scellé & Signé
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs text-slate-700 font-bold">{rental.title}</span>
                     <span className="text-xs text-slate-500 font-medium">
@@ -711,21 +776,44 @@ export const LocataireContratsView: React.FC = () => {
                   <span className="text-lg font-black text-blue-600">{formatFCFA(rental.rent)} / mois</span>
                   
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setSelectedContractNumber(rental.contractNumber)}
-                      className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Consulter</span>
-                    </button>
+                    {(!rental.rawContract?.tenant_signed || rental.rawContract?.status === 'en_attente_signature_locataire') ? (
+                      <>
+                        <button
+                          onClick={() => setSelectedContractNumber(rental.contractNumber)}
+                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-md flex items-center gap-1.5 transition-all animate-pulse"
+                        >
+                          <PenTool className="w-3.5 h-3.5 text-slate-950" />
+                          <span>Examiner & Signer</span>
+                        </button>
 
-                    <button
-                      onClick={() => handleDownloadContract(rental.rawContract || rental)}
-                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition-all"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Télécharger PDF</span>
-                    </button>
+                        <button
+                          disabled
+                          title="Veuillez d'abord signer le bail pour pouvoir le télécharger."
+                          className="px-3.5 py-2 rounded-xl bg-slate-100 text-slate-400 text-xs font-bold cursor-not-allowed flex items-center gap-1.5"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>PDF</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => setSelectedContractNumber(rental.contractNumber)}
+                          className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Consulter</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDownloadContract(rental.rawContract || rental)}
+                          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition-all"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Télécharger PDF</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

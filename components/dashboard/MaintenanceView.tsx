@@ -27,6 +27,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
+import { getMaintenanceTickets } from '@/src/lib/db';
 
 export type MaintenanceStatus =
   | 'Nouveau'
@@ -90,30 +91,85 @@ export const MaintenanceView: React.FC = () => {
   const [interventionText, setInterventionText] = useState<string>('');
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
+  const syncTicketUpdateToSupabase = async (updatedTicket: MaintenanceItem) => {
+    try {
+      const dbStatus =
+        updatedTicket.status === 'Résolu' || updatedTicket.status === 'Fermé'
+          ? 'resolu'
+          : updatedTicket.status === 'Nouveau'
+          ? 'ouvert'
+          : 'en_cours';
+
+      const richDescription = JSON.stringify({
+        description: updatedTicket.description,
+        category: updatedTicket.category,
+        notes: updatedTicket.notes || [],
+        scheduledDate: updatedTicket.scheduledDate || '',
+        rentDeductionRequest: updatedTicket.rentDeductionRequest
+      });
+
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updatedTicket.id)) {
+        await supabase
+          .from('maintenance_tickets')
+          .update({
+            status: dbStatus,
+            description: richDescription,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', updatedTicket.id);
+      }
+
+      // Mettre à jour le cache local réactif
+      try {
+        const stored = localStorage.getItem('locatrust_maintenance_tickets');
+        const list = stored ? JSON.parse(stored) : [];
+        const nextList = list.map((x: any) => (x.id === updatedTicket.id ? updatedTicket : x));
+        localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(nextList));
+        window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: updatedTicket }));
+      } catch {}
+
+      // Synchroniser avec le serveur central /api/sync
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_maintenance_ticket',
+            ticketId: updatedTicket.id,
+            status: updatedTicket.status,
+            notes: updatedTicket.notes,
+            scheduledDate: updatedTicket.scheduledDate,
+            description: updatedTicket.description,
+            rentDeductionRequest: updatedTicket.rentDeductionRequest
+          })
+        }).catch(() => {});
+      } catch {}
+    } catch (err) {
+      console.warn('Erreur mise à jour maintenance Supabase:', err);
+    }
+  };
+
   const loadTickets = async () => {
     let list: MaintenanceItem[] = [];
     try {
-      const { data: dbTickets } = await supabase
-        .from('maintenance_tickets')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { data: dbTickets, error } = await getMaintenanceTickets(user?.id || '');
+      if (!error && dbTickets && dbTickets.length > 0) {
+        list = dbTickets as MaintenanceItem[];
+      }
+    } catch {}
 
-      if (dbTickets && dbTickets.length > 0) {
-        list = dbTickets.map((t: any) => ({
-          id: t.id,
-          ticketNumber: `TCK-2026-${(t.id || '999').slice(0, 4).toUpperCase()}`,
-          tenantName: t.tenant_name || 'Christian yao Koffi',
-          tenantPhone: t.tenant_phone || '+225 07 00 00 00 00',
-          propertyTitle: t.property_title || 'Logement LocaTrust',
-          propertyAddress: t.property_address || 'Abidjan',
-          category: t.category || 'Général',
-          priority: (t.priority || 'Normale') as MaintenancePriority,
-          status: (t.status === 'ouvert' ? 'Nouveau' : t.status === 'resolu' ? 'Résolu' : 'En cours') as MaintenanceStatus,
-          createdAt: new Date(t.created_at || Date.now()).toLocaleDateString('fr-FR'),
-          description: t.description || t.title || 'Signalement d\'incident',
-          photos: t.photos || (t.media_url ? [t.media_url] : []),
-          notes: []
-        }));
+    // Synchronisation depuis le serveur central /api/sync
+    try {
+      const syncRes = await fetch('/api/sync');
+      if (syncRes.ok) {
+        const syncJson = await syncRes.json();
+        if (Array.isArray(syncJson?.data?.maintenance)) {
+          syncJson.data.maintenance.forEach((m: any) => {
+            if (!list.some(l => l.id === m.id || l.ticketNumber === m.ticketNumber)) {
+              list.push(m);
+            }
+          });
+        }
       }
     } catch {}
 
@@ -167,26 +223,24 @@ export const MaintenanceView: React.FC = () => {
     const now = new Date();
     const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
 
-    setTickets((prev) =>
-      prev.map((t) => {
-        if (t.id === selectedTicket.id) {
-          return {
-            ...t,
-            notes: [
-              ...t.notes,
-              {
-                id: `n-${Date.now()}`,
-                author: 'Propriétaire (Vous)',
-                content: replyMessage,
-                date: dateStr,
-                isInternal: false
-              }
-            ]
-          };
+    const updatedTicket: MaintenanceItem = {
+      ...selectedTicket,
+      notes: [
+        ...selectedTicket.notes,
+        {
+          id: `n-${Date.now()}`,
+          author: 'Propriétaire (Vous)',
+          content: replyMessage,
+          date: dateStr,
+          isInternal: false
         }
-        return t;
-      })
+      ]
+    };
+
+    setTickets((prev) =>
+      prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
+    syncTicketUpdateToSupabase(updatedTicket);
     setReplyMessage('');
   };
 
@@ -196,64 +250,63 @@ export const MaintenanceView: React.FC = () => {
     const now = new Date();
     const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
 
-    setTickets((prev) =>
-      prev.map((t) => {
-        if (t.id === selectedTicket.id) {
-          return {
-            ...t,
-            notes: [
-              ...t.notes,
-              {
-                id: `int-${Date.now()}`,
-                author: 'Note interne bailleur (privée)',
-                content: internalNoteMessage,
-                date: dateStr,
-                isInternal: true
-              }
-            ]
-          };
+    const updatedTicket: MaintenanceItem = {
+      ...selectedTicket,
+      notes: [
+        ...selectedTicket.notes,
+        {
+          id: `int-${Date.now()}`,
+          author: 'Note interne bailleur (privée)',
+          content: internalNoteMessage,
+          date: dateStr,
+          isInternal: true
         }
-        return t;
-      })
+      ]
+    };
+
+    setTickets((prev) =>
+      prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
+    syncTicketUpdateToSupabase(updatedTicket);
     setInternalNoteMessage('');
   };
 
   // Action: Change Status
   const handleChangeStatus = (newStatus: MaintenanceStatus) => {
     if (!selectedTicket) return;
+    const updatedTicket: MaintenanceItem = { ...selectedTicket, status: newStatus };
     setTickets((prev) =>
-      prev.map((t) => (t.id === selectedTicket.id ? { ...t, status: newStatus } : t))
+      prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
+    syncTicketUpdateToSupabase(updatedTicket);
     setShowStatusModal(false);
   };
 
   // Action: Schedule Intervention
   const handleSaveSchedule = () => {
     if (!interventionText.trim() || !selectedTicket) return;
+    const updatedTicket: MaintenanceItem = {
+      ...selectedTicket,
+      status: 'Intervention programmée',
+      scheduledDate: interventionText
+    };
     setTickets((prev) =>
-      prev.map((t) =>
-        t.id === selectedTicket.id
-          ? {
-              ...t,
-              status: 'Intervention programmée',
-              scheduledDate: interventionText
-            }
-          : t
-      )
+      prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
+    syncTicketUpdateToSupabase(updatedTicket);
     setShowScheduleModal(false);
     setInterventionText('');
   };
 
   // Action: Approve Tenant Rent Deduction for out-of-pocket repair
   const handleApproveDeduction = (ticketId: string) => {
+    let updated: MaintenanceItem | null = null;
     setTickets((prev) =>
       prev.map((t) => {
         if (t.id === ticketId && t.rentDeductionRequest) {
           const req = t.rentDeductionRequest;
           const netRemaining = req.monthlyRent - req.amountSpent;
-          return {
+          updated = {
             ...t,
             rentDeductionRequest: {
               ...req,
@@ -270,17 +323,20 @@ export const MaintenanceView: React.FC = () => {
               }
             ]
           };
+          return updated;
         }
         return t;
       })
     );
+    if (updated) syncTicketUpdateToSupabase(updated);
   };
 
   const handleRejectDeduction = (ticketId: string) => {
+    let updated: MaintenanceItem | null = null;
     setTickets((prev) =>
       prev.map((t) => {
         if (t.id === ticketId && t.rentDeductionRequest) {
-          return {
+          updated = {
             ...t,
             rentDeductionRequest: {
               ...t.rentDeductionRequest,
@@ -297,10 +353,12 @@ export const MaintenanceView: React.FC = () => {
               }
             ]
           };
+          return updated;
         }
         return t;
       })
     );
+    if (updated) syncTicketUpdateToSupabase(updated);
   };
 
   // Priority badge styling

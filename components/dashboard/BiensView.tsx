@@ -99,11 +99,31 @@ export const BiensView: React.FC<BiensViewProps> = ({
     }
     setLoadError(null);
     try {
+      let syncProps: any[] = [];
+      try {
+        const syncRes = await fetch('/api/sync');
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (syncJson?.success && Array.isArray(syncJson.data?.properties)) {
+            syncProps = syncJson.data.properties;
+          }
+        }
+      } catch {}
+
       const { data, error } = await fetchDbProperties(user?.id);
-      if (!error && Array.isArray(data)) {
-        setProperties(data);
+      let combined = Array.isArray(data) ? [...data] : [];
+      if (syncProps.length > 0) {
+        for (const sp of syncProps) {
+          if (!combined.some(c => c.id === sp.id)) {
+            combined.unshift(sp);
+          }
+        }
+      }
+
+      if (combined.length > 0) {
+        setProperties(combined);
         if (typeof window !== 'undefined') {
-          try { localStorage.setItem('locatrust_properties', JSON.stringify(data)); } catch {}
+          try { localStorage.setItem('locatrust_properties', JSON.stringify(combined)); } catch {}
         }
       }
     } catch (err: any) {

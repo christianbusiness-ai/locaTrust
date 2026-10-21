@@ -206,6 +206,15 @@ export function declareCautionPayment(params: {
     } catch {}
   }
 
+  // Synchronisation avec le serveur central /api/sync
+  try {
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'declare_caution', caution: updatedDeposit })
+    }).catch(() => {});
+  } catch {}
+
   // Record audit entry
   recordCautionAudit({
     action: 'declaration_caution',
@@ -250,6 +259,15 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
     } else if (isValidUuid(target.tenant_id)) {
       supabase.from('cautions').update(updatePayload).eq('tenant_id', target.tenant_id).then();
     }
+  } catch {}
+
+  // Synchronisation avec le serveur central /api/sync
+  try {
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'confirm_caution', caution: updatedDeposit })
+    }).catch(() => {});
   } catch {}
 
   try {

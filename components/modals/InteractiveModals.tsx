@@ -459,6 +459,15 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         }
 
         window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: propToSave }));
+
+        // 3. Synchronisation multi-appareils immédiate via le serveur central
+        try {
+          fetch('/api/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save_property', property: propToSave })
+          }).catch(() => {});
+        } catch {}
       }
 
       confetti({
