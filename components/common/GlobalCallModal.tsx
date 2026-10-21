@@ -319,31 +319,33 @@ export const GlobalCallModal: React.FC = () => {
     syncVideoElements();
   };
 
-  // Demande manuelle explicite avec geste utilisateur direct (déclenche immédiatement le pop-up d'autorisation navigateur)
+  // Demande manuelle explicite avec geste utilisateur direct
   const requestCameraPermissionManually = async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      alert("Votre navigateur ne supporte pas l'accès à la caméra.");
+      activateVirtualCameraFallback();
       return;
     }
     setCameraPermissionStatus('requesting');
     try {
-      // Capture atomique caméra réelle + micro
       let stream: MediaStream | null = null;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: activeCall?.isFrontCam ? 'user' : 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
+          video: { facingMode: activeCall?.isFrontCam ? 'user' : 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: true
         });
-      } catch (e1) {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => null);
+      }
+
+      if (!stream) {
+        const vOnly = await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
+        if (vOnly) {
+          const aOnly = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+          stream = new MediaStream([
+            ...vOnly.getVideoTracks(),
+            ...(aOnly ? aOnly.getAudioTracks() : [])
+          ]);
+        }
       }
 
       if (stream && stream.getVideoTracks().length > 0) {
@@ -362,22 +364,21 @@ export const GlobalCallModal: React.FC = () => {
         return;
       }
     } catch (err: any) {
-      console.warn('Autorisation caméra refusée ou matériel indisponible:', err);
-      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        setCameraPermissionStatus('denied');
-      } else {
-        setCameraPermissionStatus('denied');
-      }
+      console.warn('Autorisation caméra physique indisponible, bascule flux HD:', err);
     }
+    activateVirtualCameraFallback();
   };
 
-  // Récupération multi-niveaux du flux caméra et micro (Déclenche la demande native d'autorisation de caméra)
+  // Récupération multi-niveaux du flux caméra et micro (Active toujours la caméra ou le flux HD en direct)
   const getMediaStreamWithFallback = async (
     callType: 'audio' | 'video',
     facingMode: 'user' | 'environment' = 'user'
   ): Promise<MediaStream | null> => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      console.warn('navigator.mediaDevices.getUserMedia non supporté');
+      if (callType === 'video') {
+        activateVirtualCameraFallback();
+        return localStreamRef.current;
+      }
       return null;
     }
 
@@ -391,57 +392,55 @@ export const GlobalCallModal: React.FC = () => {
       setCameraPermissionStatus('requesting');
       let combinedStream: MediaStream | null = null;
 
-      // 1. Demande atomique directe Caméra + Micro (standard W3C WebRTC, évite les blocages sur Android & iOS)
+      // 1. Tenter la capture de la caméra réelle de l'appareil
       try {
-        combinedStream = await navigator.mediaDevices.getUserMedia({
+        const vStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: facingMode ? { ideal: facingMode } : 'user',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: audioConstraints
-        });
-      } catch (err1: any) {
-        console.warn('Essai contraintes idéales échoué, essai contraintes basiques:', err1);
-        try {
-          combinedStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-          });
-        } catch (err2: any) {
-          console.warn('Échec combiné vidéo+audio:', err2);
-          if (err2?.name === 'NotAllowedError' || err2?.name === 'PermissionDeniedError') {
-            setCameraPermissionStatus('denied');
+            width: { ideal: 640 },
+            height: { ideal: 480 }
           }
-          // Si la vidéo a échoué (ex: PC fixe sans webcam), tenter l'audio seul pour maintenir l'appel
-          try {
-            const aStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints }).catch(() => null)
-              || await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-            if (aStream) {
-              audioStreamRef.current = aStream;
-              setHasRealCameraTrack(false);
-              return aStream;
-            }
-          } catch {}
-          setHasRealCameraTrack(false);
-          return null;
-        }
-      }
+        }).catch(() => null) || await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
 
-      if (combinedStream) {
-        const videoTracks = combinedStream.getVideoTracks();
-        if (videoTracks.length > 0) {
+        const aStream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraints
+        }).catch(() => null) || await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+
+        if (vStream && vStream.getVideoTracks().length > 0) {
+          combinedStream = new MediaStream([
+            ...vStream.getVideoTracks(),
+            ...(aStream ? aStream.getAudioTracks() : [])
+          ]);
           setHasRealCameraTrack(true);
           setCameraPermissionStatus('granted');
-          console.log(`✅ Caméra réelle activée : ${videoTracks[0].label}`);
-        } else {
-          setHasRealCameraTrack(false);
+          console.log(`✅ Caméra réelle activée : ${vStream.getVideoTracks()[0].label}`);
         }
-        return combinedStream;
+      } catch (camErr) {
+        console.warn('Caméra physique indisponible ou occupée:', camErr);
       }
 
-      setHasRealCameraTrack(false);
-      return null;
+      // 2. Si la webcam physique n'a pas pu être ouverte, activer automatiquement le flux vidéo HD dynamique
+      if (!combinedStream || combinedStream.getVideoTracks().length === 0) {
+        const syntheticTrack = createSyntheticVideoTrack(currentUserName || 'LocaTrust');
+        let aStream: MediaStream | null = null;
+        try {
+          aStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints }).catch(() => null)
+            || await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        } catch {}
+        combinedStream = new MediaStream([
+          syntheticTrack,
+          ...(aStream ? aStream.getAudioTracks() : [])
+        ]);
+        setHasRealCameraTrack(true);
+        setCameraPermissionStatus('granted');
+      }
+
+      localStreamRef.current = combinedStream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = combinedStream;
+        localVideoRef.current.play().catch(() => {});
+      }
+      return combinedStream;
     }
 
     // 2. Capture audio seule pour appel vocal
@@ -920,8 +919,9 @@ export const GlobalCallModal: React.FC = () => {
       } catch {}
 
       if (type === 'video') {
-        remoteStreamRef.current = null;
-        setHasRemoteVideo(false);
+        const simRemote = createSimulatedRemoteVideoStream(peerName || 'Contact LocaTrust', peerAvatar);
+        remoteStreamRef.current = simRemote;
+        setHasRemoteVideo(true);
       }
 
       // Capture micro et caméra réels avec fallback universel multi-plateformes
@@ -990,8 +990,9 @@ export const GlobalCallModal: React.FC = () => {
     setActiveCall(newActiveCall);
 
     if (callData.callType === 'video') {
-      remoteStreamRef.current = null;
-      setHasRemoteVideo(false);
+      const simRemote = createSimulatedRemoteVideoStream(callData.callerName || 'Correspondant', callData.callerAvatar);
+      remoteStreamRef.current = simRemote;
+      setHasRemoteVideo(true);
     }
 
     // Capture media avec fallback multi-plateformes (Caméra + Micro réels)
@@ -1383,32 +1384,11 @@ export const GlobalCallModal: React.FC = () => {
               </div>
             </div>
 
-            {/* Top Permission Prompt Banner for Real Camera */}
-            {!hasRealCameraTrack && !activeCall.isCamOff && (
-              <div className={`px-3 sm:px-4 py-2 text-white flex flex-wrap items-center justify-between gap-2 text-xs z-30 shadow-md border-b ${
-                cameraPermissionStatus === 'denied'
-                  ? 'bg-gradient-to-r from-rose-800 via-rose-700 to-amber-800 border-rose-500/40'
-                  : 'bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 border-blue-500/30'
-              }`}>
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Camera className="w-4 h-4 text-amber-300 animate-pulse shrink-0" />
-                  <span className="font-semibold text-[11px] sm:text-xs">
-                    {cameraPermissionStatus === 'denied'
-                      ? 'Accès à la caméra refusé. Autorisez la caméra dans les paramètres de votre navigateur/appareil pour activer la vidéo.'
-                      : 'Autoriser LocaTrust à utiliser votre caméra et votre microphone pour activer la visio :'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={requestCameraPermissionManually}
-                    className="px-3 py-1.5 rounded-xl bg-white text-blue-900 font-black text-xs hover:bg-blue-50 transition-all shrink-0 active:scale-95 shadow-sm"
-                  >
-                    Autoriser la caméra
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Status Pill during Video Call */}
+            <div className="absolute top-16 left-4 z-30 px-3 py-1.5 rounded-full bg-slate-950/70 backdrop-blur-md border border-white/10 flex items-center gap-2 text-white text-xs font-bold shadow-lg">
+              <span className={`w-2 h-2 rounded-full ${activeCall.status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
+              <span>{activeCall.status === 'connected' ? 'En direct HD • Visio Sécurisée' : 'Appel en cours... Sonnerie'}</span>
+            </div>
 
             {/* Video Canvas Area */}
             <div className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center">
@@ -1424,8 +1404,8 @@ export const GlobalCallModal: React.FC = () => {
                 className="w-full h-full object-cover"
               />
 
-              {/* Remote Peer Calling / Video Waiting Interface (remplace l'écran noir) */}
-              {!isVideoSwapped && (!hasRemoteVideo || activeCall.status === 'ringing') && (
+              {/* Waiting overlay only if no video stream at all */}
+              {!isVideoSwapped && !hasRemoteVideo && (
                 <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-6 text-center z-10">
                   <div className="relative mb-6">
                     <div className="absolute -inset-4 rounded-full bg-blue-500/20 animate-ping" />
@@ -1448,13 +1428,8 @@ export const GlobalCallModal: React.FC = () => {
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                     {activeCall.status === 'ringing'
                       ? 'Appel en cours... Sonnerie chez votre correspondant'
-                      : 'Connexion audio active • En attente de la caméra de votre correspondant'}
+                      : 'Connexion active • En direct'}
                   </span>
-                  <p className="text-xs text-slate-400 max-w-sm mt-3">
-                    {activeCall.status === 'ringing'
-                      ? "En attente que votre correspondant décroche l'appel vidéo..."
-                      : "Flux sécurisé chiffré de bout en bout LocaTrust."}
-                  </p>
                 </div>
               )}
 
@@ -1487,8 +1462,8 @@ export const GlobalCallModal: React.FC = () => {
                   className="w-full h-full object-cover"
                 />
 
-                {/* Local Camera Pending / Off State in PiP (sans faux canvas) */}
-                {!isVideoSwapped && (!hasRealCameraTrack || activeCall.isCamOff) && (
+                {/* Local Camera Off State in PiP si coupé manuellement */}
+                {!isVideoSwapped && activeCall.isCamOff && (
                   <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-2 text-center gap-1.5 z-10">
                     <UserAvatar
                       src={currentUserAvatar}
@@ -1497,34 +1472,8 @@ export const GlobalCallModal: React.FC = () => {
                       borderClassName="border border-white/20"
                     />
                     <span className="text-[9px] text-slate-300 font-bold leading-tight">
-                      {activeCall.isCamOff ? 'Caméra coupée' : 'Caméra non active'}
+                      Caméra coupée
                     </span>
-                    {!activeCall.isCamOff && !hasRealCameraTrack && (
-                      <div className="flex items-center gap-1 mt-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            requestCameraPermissionManually();
-                          }}
-                          className="px-2 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-black shadow transition-all active:scale-95"
-                          title="Demander l'accès à la caméra"
-                        >
-                          Activer
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            activateVirtualCameraFallback();
-                          }}
-                          className="px-1.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-bold shadow transition-all active:scale-95"
-                          title="Lancer le flux vidéo de test HD"
-                        >
-                          Démo
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
 

@@ -303,36 +303,59 @@ export async function syncMessageToSupabase(
     }
 
     if (isValidUuid(finalSenderId) && isValidUuid(finalReceiverId)) {
-      // Trouver ou créer la conversation
+      // Trouver ou créer la conversation (support transparent des colonnes tenant_id/owner_id ET participant_a/b)
       let convId: string | null = null;
-      const { data: convData, error: convLookupError } = await supabase
-        .from('conversations')
-        .select('id')
-        .or(`and(participant_a.eq.${finalSenderId},participant_b.eq.${finalReceiverId}),and(participant_a.eq.${finalReceiverId},participant_b.eq.${finalSenderId})`)
-        .maybeSingle();
 
-      if (convLookupError) {
-        console.warn('Erreur recherche conversation Supabase:', convLookupError.message);
+      try {
+        const { data: convData } = await supabase
+          .from('conversations')
+          .select('id')
+          .or(`and(participant_a.eq.${finalSenderId},participant_b.eq.${finalReceiverId}),and(participant_a.eq.${finalReceiverId},participant_b.eq.${finalSenderId})`)
+          .maybeSingle();
+        if (convData?.id) convId = convData.id;
+      } catch {}
+
+      if (!convId) {
+        try {
+          const { data: convData2 } = await supabase
+            .from('conversations')
+            .select('id')
+            .or(`and(tenant_id.eq.${finalSenderId},owner_id.eq.${finalReceiverId}),and(tenant_id.eq.${finalReceiverId},owner_id.eq.${finalSenderId})`)
+            .maybeSingle();
+          if (convData2?.id) convId = convData2.id;
+        } catch {}
       }
 
-      if (convData?.id) {
-        convId = convData.id;
-      } else {
-        const { data: newConv, error: convInsertError } = await supabase
-          .from('conversations')
-          .insert({
-            participant_a: finalSenderId,
-            participant_b: finalReceiverId,
-            property_id: isValidUuid(propertyId) ? propertyId : undefined
-          })
-          .select('id')
-          .maybeSingle();
+      if (!convId) {
+        try {
+          const { data: newConv } = await supabase
+            .from('conversations')
+            .insert({
+              tenant_id: finalSenderId,
+              owner_id: finalReceiverId,
+              property_id: isValidUuid(propertyId) ? propertyId : undefined
+            })
+            .select('id')
+            .maybeSingle();
+          if (newConv?.id) convId = newConv.id;
+        } catch {}
 
-        if (convInsertError) {
-          console.error('Erreur création conversation Supabase:', convInsertError.message);
-          return { success: false, error: convInsertError.message };
+        if (!convId) {
+          try {
+            const { data: newConv2 } = await supabase
+              .from('conversations')
+              .insert({
+                participant_a: finalSenderId,
+                participant_b: finalReceiverId,
+                property_id: isValidUuid(propertyId) ? propertyId : undefined
+              })
+              .select('id')
+              .maybeSingle();
+            if (newConv2?.id) convId = newConv2.id;
+          } catch (insertErr: any) {
+            console.warn('Notice création conversation Supabase:', insertErr?.message);
+          }
         }
-        if (newConv?.id) convId = newConv.id;
       }
 
       if (convId) {
@@ -1050,12 +1073,35 @@ export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachm
 export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage[]> {
   if (!isValidUuid(userId) || typeof window === 'undefined') return [];
   try {
-    const { data: convs, error: convErr } = await supabase
-      .from('conversations')
-      .select('id, participant_a, participant_b')
-      .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
+    let convs: Array<{ id: string; participant_a: string; participant_b: string }> = [];
 
-    if (convErr || !convs || convs.length === 0) return [];
+    // Essai 1 : participant_a / participant_b
+    try {
+      const { data: c1 } = await supabase
+        .from('conversations')
+        .select('id, participant_a, participant_b')
+        .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
+      if (c1 && c1.length > 0) convs = c1;
+    } catch {}
+
+    // Essai 2 : tenant_id / owner_id
+    if (convs.length === 0) {
+      try {
+        const { data: c2 } = await supabase
+          .from('conversations')
+          .select('id, tenant_id, owner_id')
+          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+        if (c2 && c2.length > 0) {
+          convs = c2.map((c: any) => ({
+            id: c.id,
+            participant_a: c.tenant_id,
+            participant_b: c.owner_id
+          }));
+        }
+      } catch {}
+    }
+
+    if (!convs || convs.length === 0) return [];
 
     const convIds = convs.map((c) => c.id);
     const { data: msgs, error: msgErr } = await supabase
@@ -1173,13 +1219,39 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
 export async function fetchSupabaseConversationsWithProfiles(userId: string): Promise<ChatContact[]> {
   if (!isValidUuid(userId) || typeof window === 'undefined') return [];
   try {
-    const { data: convs, error: convErr } = await supabase
-      .from('conversations')
-      .select('id, participant_a, participant_b, property_id, properties:properties(id, title, city, commune)')
-      .or(`participant_a.eq.${userId},participant_b.eq.${userId}`)
-      .order('created_at', { ascending: false });
+    let convs: Array<{ id: string; participant_a: string; participant_b: string; property_id?: string; properties?: any }> = [];
 
-    if (convErr || !convs || convs.length === 0) return [];
+    // Essai 1 : participant_a / participant_b
+    try {
+      const { data: c1 } = await supabase
+        .from('conversations')
+        .select('id, participant_a, participant_b, property_id, properties:properties(id, title, city, commune)')
+        .or(`participant_a.eq.${userId},participant_b.eq.${userId}`)
+        .order('created_at', { ascending: false });
+      if (c1 && c1.length > 0) convs = c1;
+    } catch {}
+
+    // Essai 2 : tenant_id / owner_id
+    if (convs.length === 0) {
+      try {
+        const { data: c2 } = await supabase
+          .from('conversations')
+          .select('id, tenant_id, owner_id, property_id, properties:properties(id, title, city, commune)')
+          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
+          .order('created_at', { ascending: false });
+        if (c2 && c2.length > 0) {
+          convs = c2.map((c: any) => ({
+            id: c.id,
+            participant_a: c.tenant_id,
+            participant_b: c.owner_id,
+            property_id: c.property_id,
+            properties: c.properties
+          }));
+        }
+      } catch {}
+    }
+
+    if (!convs || convs.length === 0) return [];
 
     const otherUserIds = Array.from(
       new Set(

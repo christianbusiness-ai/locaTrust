@@ -572,6 +572,22 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     window.addEventListener('locatrust:receipts_updated', handleMessagesUpdated);
     window.addEventListener('storage', handleStorage);
 
+    // Souscription Realtime Supabase aux nouveaux messages instantanés
+    const realtimeChatChannel = supabase
+      .channel(`realtime_chat_${currentUserId || 'global'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages' },
+        () => {
+          if (currentUserId) {
+            fetchSupabaseMessages(currentUserId).then((updated) => {
+              if (updated && updated.length > 0) refreshMessages();
+            }).catch(() => {});
+          }
+        }
+      )
+      .subscribe();
+
     // Polling doux de synchronisation automatique sans perturber le scroll
     const heartbeat = setInterval(() => {
       refreshMessages();
@@ -586,6 +602,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       window.removeEventListener('locatrust:receipts_updated', handleMessagesUpdated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(heartbeat);
+      realtimeChatChannel.unsubscribe();
     };
   }, [currentUserId]);
 
