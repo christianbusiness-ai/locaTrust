@@ -653,11 +653,16 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           };
         });
 
-        // Fusionner avec le local store sans perte
+        // Fusionner avec le local store en dédoublonnant par contrat / ID
         const local = getStoredDeposits() || [];
         const combined = [...enrichedDeposits];
         for (const loc of local) {
-          if (!combined.some(d => d.id === loc.id)) {
+          const isDup = combined.some(d => 
+            d.id === loc.id || 
+            (d.contract_number && loc.contract_number && d.contract_number === loc.contract_number) ||
+            (d.contract_id && loc.contract_id && d.contract_id === loc.contract_id)
+          );
+          if (!isDup) {
             combined.push(loc);
           }
         }

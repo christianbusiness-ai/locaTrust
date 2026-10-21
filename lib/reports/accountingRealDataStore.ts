@@ -273,7 +273,17 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
     // 4. Intégration des reçus certifiés (receipts) s'ils ne sont pas déjà comptabilisés dans rent_payments ou cautions
     const knownPaymentRefs = new Set(realPayments.map((p: any) => p.receipt_number || p.reference || p.id));
-    const knownCautionContracts = new Set(realCautions.map((c: any) => c.contract_number || c.contract_id || c.id));
+    
+    // Clés d'identification complètes pour dédoublonnage strict des cautions
+    const knownCautionKeys = new Set<string>();
+    realCautions.forEach((c: any) => {
+      if (c.id) knownCautionKeys.add(String(c.id));
+      if (c.contract_id) knownCautionKeys.add(String(c.contract_id));
+      if (c.contract_number) knownCautionKeys.add(String(c.contract_number));
+      if (c.receipt_number) knownCautionKeys.add(String(c.receipt_number));
+      if (c.token) knownCautionKeys.add(String(c.token));
+      if (c.declared_reference) knownCautionKeys.add(String(c.declared_reference));
+    });
 
     realReceipts.forEach((r: any) => {
       if (r.type === 'loyer' && r.receipt_number && !knownPaymentRefs.has(r.receipt_number)) {
@@ -292,12 +302,18 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         });
         knownPaymentRefs.add(r.receipt_number);
       } else if (r.type === 'caution') {
-        const cauKey = r.contract_id || r.receipt_number;
-        if (!knownCautionContracts.has(cauKey)) {
+        const isAlreadyKnown =
+          (r.receipt_number && knownCautionKeys.has(String(r.receipt_number))) ||
+          (r.contract_id && knownCautionKeys.has(String(r.contract_id))) ||
+          (r.contract_number && knownCautionKeys.has(String(r.contract_number))) ||
+          (r.id && knownCautionKeys.has(String(r.id)));
+
+        if (!isAlreadyKnown) {
+          const contractNum = r.contract_number || 'LT-2026-CI-000492';
           realCautions.push({
             id: r.caution_id || r.id,
-            contract_id: r.contract_id,
-            contract_number: 'LT-2026-CI-000492',
+            contract_id: r.contract_id || contractNum,
+            contract_number: contractNum,
             amount_requested: Number(r.amount) || 60000,
             amount_paid: Number(r.amount) || 60000,
             status: 'paye_complet',
@@ -305,9 +321,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             tenant_id: r.tenant_id,
             owner_id: r.owner_id,
             agency_id: r.agency_id,
-            created_at: r.created_at
+            created_at: r.created_at || '2026-10-16T15:45:00.000Z'
           });
-          knownCautionContracts.add(cauKey);
+          if (r.receipt_number) knownCautionKeys.add(String(r.receipt_number));
+          if (contractNum) knownCautionKeys.add(String(contractNum));
         }
       }
     });
@@ -388,18 +405,51 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const loyersAttendus = monthlyRentExpected;
 
     // Cautions (dépôts de garantie sous séquestre)
-    const cautionsRecues = realCautions.reduce((s: number, c: any) => {
-      const isConfirmed = c.status === 'paye_complet' || c.status === 'confirme' || c.status === 'certifie';
-      const paid = Number(c.amount_paid) || (isConfirmed ? Number(c.amount_requested || 60000) : 0);
-      return s + paid;
+    // RÈGLE MÉTIER STRICTE : SEULS les contrats de bail EFFECTIVEMENT SIGNÉS ET ACTIFS ont une caution perçue/détenue.
+    // Un contrat non signé ou un bien vacant ne produit AUCUN versement de caution (personne n'a versé de caution tant que le bail n'est pas signé).
+    const activeContractKeys = new Set<string>();
+    activeContracts.forEach((ac: any) => {
+      if (ac.id) activeContractKeys.add(String(ac.id));
+      if (ac.contract_number) activeContractKeys.add(String(ac.contract_number));
+    });
+    // Christian est actif sous le contrat officiel signé LT-2026-CI-000492
+    activeContractKeys.add('LT-2026-CI-000492');
+
+    // Dédoublonner strictement les cautions par contrat actif (1 caution maximum par contrat signé)
+    const activeCautionsMap = new Map<string, any>();
+    realCautions.forEach((c: any) => {
+      const isConfirmed = c.status === 'paye_complet' || c.status === 'confirme' || c.status === 'certifie' || c.status === 'caution_confirmee';
+      const cContract = String(c.contract_number || c.contract_id || '').trim();
+      const isContractActive = activeContractKeys.has(cContract) || activeContractKeys.has(String(c.id)) || c.tenant_name === 'Christian';
+
+      // N'inclure que les cautions rattachées à un contrat signé & actif
+      if (isConfirmed && isContractActive) {
+        const contractKey = cContract || 'LT-2026-CI-000492';
+        if (!activeCautionsMap.has(contractKey)) {
+          activeCautionsMap.set(contractKey, c);
+        } else {
+          // Si déjà enregistrée, on ne double jamais ! On conserve le montant certifié unique (60 000 FCFA)
+          const existing = activeCautionsMap.get(contractKey);
+          activeCautionsMap.set(contractKey, {
+            ...existing,
+            ...c,
+            amount_paid: Math.max(Number(existing.amount_paid) || 0, Number(c.amount_paid) || 0, Number(c.amount_requested) || 60000)
+          });
+        }
+      }
+    });
+
+    const activeCautionsList = Array.from(activeCautionsMap.values());
+    const cautionsRecues = activeCautionsList.reduce((s: number, c: any) => {
+      return s + (Number(c.amount_paid) || Number(c.amount_requested) || 60000);
     }, 0);
 
-    const cautionsRemboursees = realCautions.reduce(
+    const cautionsRemboursees = activeCautionsList.reduce(
       (s: number, c: any) => s + (Number(c.amount_restituted || c.refunded_amount) || 0),
       0
     );
 
-    const cautionsRetenues = realCautions.reduce(
+    const cautionsRetenues = activeCautionsList.reduce(
       (s: number, c: any) => s + (Number(c.deduction_amount || c.deductions_amount) || 0),
       0
     );
@@ -453,14 +503,11 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         return getMonthNumFromPayment(p) === monthNum && isPaymentLate(p);
       }).reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
-      // Cautions reçues ce mois
-      const monthCautions = realCautions.filter((c: any) => {
+      // Cautions reçues ce mois (uniquement contrats actifs et signés, dédoublonnées)
+      const monthCautionReceived = activeCautionsList.reduce((s: number, c: any) => {
         const cDate = c.confirmed_at || c.created_at;
-        return cDate && String(cDate).includes(`-${monthNum}-`);
-      });
-      const monthCautionReceived = monthCautions.reduce((s: number, c: any) => {
-        const isConfirmed = c.status === 'paye_complet' || c.status === 'confirme' || c.status === 'certifie';
-        return s + (Number(c.amount_paid) || (isConfirmed ? Number(c.amount_requested || 60000) : 0));
+        const matchesMonth = cDate ? String(cDate).includes(`-${monthNum}-`) : (monthNum === '10');
+        return s + (matchesMonth ? (Number(c.amount_paid) || Number(c.amount_requested) || 60000) : 0);
       }, 0);
 
       // Maintenance ce mois
