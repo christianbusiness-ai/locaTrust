@@ -34,7 +34,15 @@ import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
-export const LocataireSearchView: React.FC = () => {
+export interface LocataireSearchViewProps {
+  activeTab?: string;
+  onNavigateTab?: (tab: string) => void;
+}
+
+export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
+  activeTab = 'search',
+  onNavigateTab
+}) => {
   const { user, profile } = useAuth();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -46,6 +54,14 @@ export const LocataireSearchView: React.FC = () => {
   const [cityFilter, setCityFilter] = useState<string>('tous');
   const [typeFilter, setTypeFilter] = useState<string>('tous');
   const [favorites, setFavorites] = useState<string[]>([]);
+
+  // Mes Demandes de Location
+  const [tenantApplications, setTenantApplications] = useState<any[]>([]);
+  const [loadingApps, setLoadingApps] = useState<boolean>(false);
+
+  // Mes Visites
+  const [tenantVisits, setTenantVisits] = useState<any[]>([]);
+  const [loadingVisits, setLoadingVisits] = useState<boolean>(false);
   
   // Active Modals State
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
@@ -99,6 +115,113 @@ export const LocataireSearchView: React.FC = () => {
     }
   };
 
+  const fetchTenantApplications = async () => {
+    if (!user) return;
+    setLoadingApps(true);
+    try {
+      let query = supabase
+        .from('rental_applications')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (user.id) {
+        query = query.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
+      }
+
+      const { data, error: appErr } = await query;
+      const appsList: any[] = [];
+      if (data && Array.isArray(data)) {
+        appsList.push(...data);
+      }
+
+      // Compléter avec le cache local synchronisé si besoin
+      try {
+        const raw = localStorage.getItem('locatrust_rental_applications');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((pa: any) => {
+              const isMatch =
+                (user.id && pa.tenant_id === user.id) ||
+                (user.email && pa.tenant_email?.toLowerCase() === user.email.toLowerCase());
+              if (isMatch && !appsList.some((ex) => ex.id === pa.id || (ex.property_id === pa.property_id && ex.tenant_id === pa.tenant_id))) {
+                appsList.push(pa);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      setTenantApplications(appsList);
+    } catch (e) {
+      console.warn('Erreur chargement candidatures locataire:', e);
+    } finally {
+      setLoadingApps(false);
+    }
+  };
+
+  const fetchTenantVisits = async () => {
+    if (!user) return;
+    setLoadingVisits(true);
+    try {
+      const visitsList: any[] = [];
+
+      try {
+        const { data } = await supabase
+          .from('visit_requests')
+          .select('*, property:properties(*)')
+          .eq('tenant_id', user.id)
+          .order('created_at', { ascending: false });
+        if (data && Array.isArray(data)) {
+          data.forEach((v: any) => {
+            visitsList.push({
+              id: v.id,
+              property_title: v.property?.title || 'Logement LocaTrust',
+              property_address: v.property?.address || 'Abidjan',
+              preferred_date: v.preferred_date || v.created_at ? new Date(v.created_at).toLocaleDateString('fr-FR') : 'À convenir',
+              status: v.status || 'en_attente',
+              created_at: v.created_at
+            });
+          });
+        }
+      } catch {}
+
+      try {
+        const raw = localStorage.getItem('locatrust_visit_requests');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((pv: any) => {
+              const isMatch =
+                (user.id && pv.tenant_id === user.id) ||
+                (user.email && pv.tenant_email?.toLowerCase() === user.email.toLowerCase());
+              if (isMatch && !visitsList.some((ex) => ex.id === pv.id)) {
+                visitsList.push(pv);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      setTenantVisits(visitsList);
+    } catch (e) {
+      console.warn('Erreur chargement visites locataire:', e);
+    } finally {
+      setLoadingVisits(false);
+    }
+  };
+
+  // Chargement des favoris propres à l'utilisateur
+  useEffect(() => {
+    try {
+      const favKey = `locatrust_favorites_${user?.id || 'guest'}`;
+      const storedFavs = localStorage.getItem(favKey);
+      if (storedFavs) {
+        setFavorites(JSON.parse(storedFavs));
+      }
+    } catch {}
+  }, [user?.id]);
+
   useEffect(() => {
     fetchProperties();
 
@@ -112,10 +235,23 @@ export const LocataireSearchView: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'applications') {
+      fetchTenantApplications();
+    } else if (activeTab === 'visits') {
+      fetchTenantVisits();
+    }
+  }, [activeTab, user?.id]);
+
   const toggleFavorite = (id: string) => {
-    setFavorites((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
+    setFavorites((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id];
+      try {
+        const favKey = `locatrust_favorites_${user?.id || 'guest'}`;
+        localStorage.setItem(favKey, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   };
 
   const filteredProperties = properties.filter((p) => {
@@ -137,6 +273,8 @@ export const LocataireSearchView: React.FC = () => {
       }
     } catch {}
 
+    if (activeTab === 'favorites' && !favorites.includes(p.id)) return false;
+
     if (typeFilter !== 'tous' && p.type !== typeFilter) return false;
     
     // Filtre Ville
@@ -157,37 +295,94 @@ export const LocataireSearchView: React.FC = () => {
     return true;
   });
 
-  const handleSendVisitRequest = (e: React.FormEvent) => {
+  const handleSendVisitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!visitDate) return;
+    if (!visitDate || !selectedProperty) return;
+    if (isSubmitting) return;
 
-    let formattedDate = visitDate;
     try {
-      const parsed = new Date(visitDate);
-      if (!isNaN(parsed.getTime())) {
-        formattedDate = parsed.toLocaleDateString('fr-FR', {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
-      }
-    } catch (_) {}
+      setIsSubmitting(true);
+      let formattedDate = visitDate;
+      try {
+        const parsed = new Date(visitDate);
+        if (!isNaN(parsed.getTime())) {
+          formattedDate = parsed.toLocaleDateString('fr-FR', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        }
+      } catch (_) {}
 
-    setVisitConfirmation({
-      isOpen: true,
-      propertyTitle: selectedProperty?.title || 'Bien immobilier',
-      date: formattedDate
-    });
-    setShowVisitModal(false);
-    setVisitDate('');
+      const targetOwnerId = selectedProperty.owner_id || (selectedProperty.owner as any)?.id || '';
+      const applicantName = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Locataire');
+
+      // Persistance Supabase
+      try {
+        await supabase.from('visit_requests').insert([{
+          property_id: selectedProperty.id,
+          tenant_id: user?.id,
+          status: 'en_attente'
+        }]);
+      } catch (err) {
+        console.warn('Notice insertion Supabase visit_requests:', err);
+      }
+
+      // Persistance locale
+      const newVisit = {
+        id: `vis_${Date.now()}`,
+        property_id: selectedProperty.id,
+        property_title: selectedProperty.title,
+        property_address: `${selectedProperty.location?.commune || ''}, ${selectedProperty.location?.city || 'Abidjan'}`,
+        tenant_id: user?.id,
+        tenant_name: applicantName,
+        tenant_phone: profile?.phone || '',
+        tenant_email: user?.email || '',
+        preferred_date: formattedDate,
+        request_date: new Date().toLocaleDateString('fr-FR'),
+        owner_id: targetOwnerId,
+        status: 'en_attente' as const
+      };
+
+      try {
+        const raw = localStorage.getItem('locatrust_visit_requests');
+        const list = raw ? JSON.parse(raw) : [];
+        const updated = [newVisit, ...list];
+        localStorage.setItem('locatrust_visit_requests', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:visits-updated', { detail: { visits: updated } }));
+      } catch {}
+
+      // Notification ciblée au propriétaire / agence
+      pushGlobalNotification({
+        title: 'Nouvelle demande de visite',
+        description: `${applicantName} souhaite visiter « ${selectedProperty.title} » le ${formattedDate}.`,
+        category: 'visite',
+        targetTab: 'visits',
+        targetUserId: targetOwnerId,
+        senderUserId: user?.id
+      });
+
+      setVisitConfirmation({
+        isOpen: true,
+        propertyTitle: selectedProperty?.title || 'Bien immobilier',
+        date: formattedDate
+      });
+      setShowVisitModal(false);
+      setVisitDate('');
+      fetchTenantVisits();
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSendRentalApplication = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProperty) return;
+    if (isSubmitting) return;
+
     try {
       setIsSubmitting(true);
       const applicantId = user?.id || profile?.id || `usr_tenant_${Date.now()}`;
@@ -288,6 +483,8 @@ export const LocataireSearchView: React.FC = () => {
       await createRentalApplication({
         property_id: selectedProperty.id,
         tenant_id: applicantId,
+        owner_id: targetOwnerId,
+        agency_id: (selectedProperty as any).agency_id,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
@@ -306,6 +503,7 @@ export const LocataireSearchView: React.FC = () => {
       setActionFeedback(`Votre dossier de candidature pour « ${selectedProperty.title} » a été transmis avec succès au bailleur !`);
       setShowApplyModal(false);
       setApplyMessage('');
+      fetchTenantApplications();
       setTimeout(() => setActionFeedback(null), 5000);
     } catch (err: any) {
       console.error('Erreur envoi candidature:', err);
@@ -313,6 +511,7 @@ export const LocataireSearchView: React.FC = () => {
       setActionFeedback(`Votre candidature pour « ${selectedProperty.title} » a été enregistrée avec succès !`);
       setShowApplyModal(false);
       setApplyMessage('');
+      fetchTenantApplications();
       setTimeout(() => setActionFeedback(null), 5000);
     } finally {
       setIsSubmitting(false);
@@ -329,119 +528,352 @@ export const LocataireSearchView: React.FC = () => {
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
       
-      {/* Search Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-              Fil d'Offres Immobilières Vérifiées
-            </h2>
-            <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-extrabold">
-              {filteredProperties.length} disponible(s)
-            </span>
+      {/* VUE 1 : MES DEMANDES DE LOCATION */}
+      {activeTab === 'applications' && (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                  Mes Demandes de Location
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-extrabold">
+                  {tenantApplications.length} dossier(s)
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Suivez en temps réel l'état d'examen de vos candidatures auprès des bailleurs certifiés.
+              </p>
+            </div>
+            {onNavigateTab && (
+              <button
+                onClick={() => onNavigateTab('search')}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+              >
+                <Search className="w-4 h-4" />
+                <span>Rechercher un autre logement</span>
+              </button>
+            )}
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            Recherchez des logements certifiés avec <strong>photos réelles & vidéo de visite obligatoire</strong>.
-          </p>
-        </div>
-      </div>
 
-      {actionFeedback && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2 shadow-sm animate-fadeIn">
-          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-          <span>{actionFeedback}</span>
-        </div>
-      )}
+          {loadingApps ? (
+            <PropertyGridSkeleton count={3} />
+          ) : tenantApplications.length === 0 ? (
+            <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">
+              <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <Send className="w-8 h-8 text-blue-600" />
+              </div>
+              <h3 className="text-base font-black text-slate-900">Aucune demande de location envoyée</h3>
+              <p className="text-xs text-slate-500 max-w-sm">
+                Vous n'avez soumis aucune candidature pour le moment. Parcourez les annonces disponibles et candidatez en 1 clic.
+              </p>
+              {onNavigateTab && (
+                <button
+                  onClick={() => onNavigateTab('search')}
+                  className="mt-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition-all cursor-pointer"
+                >
+                  Explorer les logements
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {tenantApplications.map((app) => (
+                <div key={app.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400">
+                        {app.date_received || (app.created_at ? new Date(app.created_at).toLocaleDateString('fr-FR') : 'Date récente')}
+                      </span>
+                      {app.status === 'en_attente' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-300">
+                          En attente de réponse
+                        </span>
+                      )}
+                      {app.status === 'validee' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black border border-blue-300">
+                          Candidature Retenue
+                        </span>
+                      )}
+                      {app.status === 'contrat_actif' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-300 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Bail Scellé & Actif
+                        </span>
+                      )}
+                      {app.status === 'refusee' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black border border-slate-300">
+                          Non Retenu (Logement déjà attribué)
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-base font-black text-slate-900">{app.property_title || 'Logement LocaTrust'}</h4>
+                    <p className="text-xs text-slate-500 font-medium">{app.property_address || 'Abidjan'}</p>
+                    <div className="flex items-center gap-3 pt-2 text-xs font-bold text-slate-700">
+                      <span>Loyer : <strong className="text-blue-600">{formatFCFA(Number(app.rent_amount || 0))}</strong>/mois</span>
+                      <span>•</span>
+                      <span>Caution : {formatFCFA(Number(app.caution_amount || 0))}</span>
+                    </div>
+                  </div>
 
-      {/* Multi-Criteria Filters Bar */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
-        
-        {/* Search Input */}
-        <div className="relative w-full md:w-72">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Ville, commune, quartier..."
-            className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none"
-          />
-        </div>
-
-        {/* Country Selector */}
-        <select
-          value={countryFilter}
-          onChange={(e) => setCountryFilter(e.target.value)}
-          className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-800"
-        >
-          <option value="Côte d'Ivoire">🇨🇮 Côte d'Ivoire</option>
-          <option value="Sénégal">🇸🇳 Sénégal</option>
-          <option value="Mali">🇲🇱 Mali</option>
-          <option value="Cameroun">🇨🇲 Cameroun</option>
-        </select>
-
-        {/* Property Type Selector */}
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-800"
-        >
-          <option value="tous">Tous les types de biens</option>
-          <option value="appartement">Appartement</option>
-          <option value="maison">Maison / Villa</option>
-          <option value="studio">Studio</option>
-          <option value="bureau">Bureau</option>
-          <option value="boutique">Boutique / Commercial</option>
-          <option value="terrain">Terrain</option>
-        </select>
-
-      </div>
-
-      {/* STATE 1: LOADER SKELETON */}
-      {loading && (
-        <PropertyGridSkeleton count={6} />
-      )}
-
-      {/* STATE 2: ERROR */}
-      {error && !loading && (
-        <div className="p-6 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0" />
-            <span className="text-xs font-bold">{error}</span>
-          </div>
-          <button
-            onClick={fetchProperties}
-            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>Réessayer</span>
-          </button>
-        </div>
-      )}
-
-      {/* STATE 3: EMPTY STATE */}
-      {!loading && !error && filteredProperties.length === 0 && (
-        <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">
-          <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
-            <Home className="w-8 h-8" />
-          </div>
-          <h3 className="text-base font-black text-slate-900">Aucun bien disponible trouvé</h3>
-          <p className="text-xs text-slate-500 max-w-sm">
-            Aucun logement ne correspond actuellement à vos critères de recherche.
-          </p>
-          {(searchQuery || typeFilter !== 'tous') && (
-            <button
-              onClick={() => {
-                setSearchQuery('');
-                setTypeFilter('tous');
-              }}
-              className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all"
-            >
-              Réinitialiser les filtres
-            </button>
+                  <div className="flex items-center justify-between border-t pt-3">
+                    <span className="text-[11px] text-slate-500 font-semibold">
+                      Bailleur : <strong>{app.owner_name || 'Bailleur certifié'}</strong>
+                    </span>
+                    {(app.status === 'contrat_actif' || app.status === 'validee') ? (
+                      <button
+                        onClick={() => onNavigateTab?.('contracts')}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Consulter mon contrat</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    ) : app.status === 'refusee' ? (
+                      <span className="text-[11px] text-slate-400 italic">
+                        Le logement a été attribué
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-amber-700 font-bold flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        Réponse sous 24-48h
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
+
+      {/* VUE 2 : MES DEMANDES DE VISITES */}
+      {activeTab === 'visits' && (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                  Mes Demandes de Visites
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-extrabold">
+                  {tenantVisits.length} visite(s)
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Gérez vos rendez-vous de visite programmés avec les bailleurs et agences.
+              </p>
+            </div>
+            {onNavigateTab && (
+              <button
+                onClick={() => onNavigateTab('search')}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all shrink-0 cursor-pointer"
+              >
+                <Search className="w-4 h-4" />
+                <span>Programmer une autre visite</span>
+              </button>
+            )}
+          </div>
+
+          {loadingVisits ? (
+            <PropertyGridSkeleton count={3} />
+          ) : tenantVisits.length === 0 ? (
+            <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">
+              <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <Calendar className="w-8 h-8 text-blue-600" />
+              </div>
+              <h3 className="text-base font-black text-slate-900">Aucune visite programmée</h3>
+              <p className="text-xs text-slate-500 max-w-sm">
+                Vous n'avez réservé aucune visite pour l'instant. Choisissez un bien certifié et demandez un créneau de visite en 1 clic.
+              </p>
+              {onNavigateTab && (
+                <button
+                  onClick={() => onNavigateTab('search')}
+                  className="mt-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition-all cursor-pointer"
+                >
+                  Explorer les annonces
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {tenantVisits.map((vis) => (
+                <div key={vis.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400">
+                        {vis.created_at ? new Date(vis.created_at).toLocaleDateString('fr-FR') : 'Visite'}
+                      </span>
+                      {vis.status === 'en_attente' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-300">
+                          En attente de confirmation
+                        </span>
+                      )}
+                      {(vis.status === 'visite_programmee' || vis.status === 'acceptee') && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-300 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Visite Confirmée
+                        </span>
+                      )}
+                      {vis.status === 'visite_effectuee' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black">
+                          Visite Effectuée
+                        </span>
+                      )}
+                      {vis.status === 'refusee' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black">
+                          Créneau Indisponible
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-base font-black text-slate-900">{vis.property_title}</h4>
+                    <p className="text-xs text-slate-500 font-medium">{vis.property_address}</p>
+                    <div className="mt-2 p-3 bg-blue-50/60 rounded-xl border border-blue-100 flex items-center gap-2 text-xs font-bold text-blue-900">
+                      <Calendar className="w-4 h-4 text-blue-600 shrink-0" />
+                      <span>Créneau souhaité : <strong>{vis.preferred_date}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* VUE 3 : SEARCH / FAVORITES */}
+      {activeTab !== 'applications' && activeTab !== 'visits' && (
+        <>
+          {/* Header Banner */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                  {activeTab === 'favorites' ? 'Mes Biens Favoris' : "Fil d'Offres Immobilières Vérifiées"}
+                </h2>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold ${
+                  activeTab === 'favorites' ? 'bg-rose-100 text-rose-800' : 'bg-blue-100 text-blue-800'
+                }`}>
+                  {filteredProperties.length} bien(s) {activeTab === 'favorites' ? 'sauvegardé(s)' : 'disponible(s)'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {activeTab === 'favorites'
+                  ? 'Retrouvez facilement les logements que vous avez ajoutés à vos coups de cœur.'
+                  : 'Recherchez des logements certifiés avec photos réelles & vidéo de visite obligatoire.'}
+              </p>
+            </div>
+          </div>
+
+          {actionFeedback && (
+            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2 shadow-sm animate-fadeIn">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <span>{actionFeedback}</span>
+            </div>
+          )}
+
+          {/* Multi-Criteria Filters Bar */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
+            {/* Search Input */}
+            <div className="relative w-full md:w-72">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Ville, commune, quartier..."
+                className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none"
+              />
+            </div>
+
+            {/* Country Selector */}
+            <select
+              value={countryFilter}
+              onChange={(e) => setCountryFilter(e.target.value)}
+              className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-800"
+            >
+              <option value="Côte d'Ivoire">🇨🇮 Côte d'Ivoire</option>
+              <option value="Sénégal">🇸🇳 Sénégal</option>
+              <option value="Mali">🇲🇱 Mali</option>
+              <option value="Cameroun">🇨🇲 Cameroun</option>
+            </select>
+
+            {/* Property Type Selector */}
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-extrabold text-slate-800"
+            >
+              <option value="tous">Tous les types de biens</option>
+              <option value="appartement">Appartement</option>
+              <option value="maison">Maison / Villa</option>
+              <option value="studio">Studio</option>
+              <option value="bureau">Bureau</option>
+              <option value="boutique">Boutique / Commercial</option>
+              <option value="terrain">Terrain</option>
+            </select>
+          </div>
+
+          {/* STATE 1: LOADER SKELETON */}
+          {loading && (
+            <PropertyGridSkeleton count={6} />
+          )}
+
+          {/* STATE 2: ERROR */}
+          {error && !loading && (
+            <div className="p-6 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0" />
+                <span className="text-xs font-bold">{error}</span>
+              </div>
+              <button
+                onClick={fetchProperties}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>Réessayer</span>
+              </button>
+            </div>
+          )}
+
+          {/* STATE 3: EMPTY STATE */}
+          {!loading && !error && filteredProperties.length === 0 && (
+            <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
+                activeTab === 'favorites' ? 'bg-rose-50 text-rose-500' : 'bg-blue-50 text-blue-600'
+              }`}>
+                {activeTab === 'favorites' ? (
+                  <Heart className="w-8 h-8 text-rose-500" />
+                ) : (
+                  <Home className="w-8 h-8" />
+                )}
+              </div>
+              <h3 className="text-base font-black text-slate-900">
+                {activeTab === 'favorites' ? 'Aucun bien dans vos favoris' : 'Aucun bien disponible trouvé'}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-sm">
+                {activeTab === 'favorites'
+                  ? "Vous n'avez pas encore ajouté de logement à vos favoris. Cliquez sur le cœur d'une annonce pour la sauvegarder."
+                  : 'Aucun logement ne correspond actuellement à vos critères de recherche.'}
+              </p>
+              {activeTab === 'favorites' && onNavigateTab ? (
+                <button
+                  onClick={() => onNavigateTab('search')}
+                  className="mt-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition-all cursor-pointer"
+                >
+                  Explorer les annonces
+                </button>
+              ) : (searchQuery || typeFilter !== 'tous') ? (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setTypeFilter('tous');
+                  }}
+                  className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all"
+                >
+                  Réinitialiser les filtres
+                </button>
+              ) : null}
+            </div>
+          )}
 
       {/* Grid of Listings */}
       {!loading && !error && filteredProperties.length > 0 && (
@@ -561,7 +993,9 @@ export const LocataireSearchView: React.FC = () => {
           );
         })}
       </div>
-      )}
+    )}
+    </>
+  )}
 
       {/* Visit Modal */}
       {showVisitModal && selectedProperty && (
@@ -638,8 +1072,12 @@ export const LocataireSearchView: React.FC = () => {
               <button type="button" onClick={() => setShowVisitModal(false)} className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors">
                 Annuler
               </button>
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white text-xs font-extrabold shadow-md shadow-blue-600/25 transition-all active:scale-95">
-                Confirmer la demande
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white text-xs font-extrabold shadow-md shadow-blue-600/25 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'Transmission en cours...' : 'Confirmer la demande'}
               </button>
             </div>
           </form>
@@ -684,7 +1122,13 @@ export const LocataireSearchView: React.FC = () => {
 
             <div className="flex justify-end gap-3 pt-3 border-t">
               <button type="button" onClick={() => setShowApplyModal(false)} className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-bold">Annuler</button>
-              <button type="submit" className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-extrabold shadow">Envoyer le dossier</button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'Envoi en cours...' : 'Envoyer le dossier'}
+              </button>
             </div>
           </form>
         </div>

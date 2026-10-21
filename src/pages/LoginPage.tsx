@@ -3,7 +3,8 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
 import { Logo } from '@/components/common/Logo';
 import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
-import { Mail, Lock, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
+import { Mail, Lock, AlertCircle, Loader2, ArrowRight, ShieldCheck, LogOut } from 'lucide-react';
+import { isSessionExpired, clearSecuritySession, recordUserActivity } from '@/src/lib/sessionSecurity';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -17,15 +18,19 @@ export const LoginPage: React.FC = () => {
   const [resending, setResending] = useState(false);
   const [resendMsg, setResendMsg] = useState<string | null>(null);
 
-  const { user, loading: authLoading, signIn, resendVerificationEmail } = useAuth();
+  const { user, profile, loading: authLoading, signIn, signOut, resendVerificationEmail } = useAuth();
   const from = (location.state as any)?.from?.pathname || '/dashboard';
+  const isExpiredParam = location.search.includes('session_expired') || location.search.includes('expired');
 
-  // Si l'utilisateur est déjà connecté, le renvoyer directement sur le dashboard
+  // Traitement d'expiration de session & gestion de compte actif
   useEffect(() => {
     if (user && !authLoading) {
-      navigate('/dashboard', { replace: true });
+      if (isSessionExpired()) {
+        clearSecuritySession();
+        signOut().catch(() => {});
+      }
     }
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, signOut]);
 
   // Si l'utilisateur clique sur le lien email de réinitialisation de mot de passe ou validation d'email
   useEffect(() => {
@@ -48,6 +53,11 @@ export const LoginPage: React.FC = () => {
     }
 
     setLoading(true);
+    // Si un ancien compte était ouvert, déconnecter d'abord proprement
+    if (user) {
+      await signOut().catch(() => {});
+    }
+
     const result = await signIn(email, password);
     setLoading(false);
 
@@ -61,7 +71,10 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    // Succès -> redirection directe vers le profil
+    // Réinitialiser le timer d'activité
+    recordUserActivity();
+
+    // Succès -> redirection directe vers le tableau de bord
     navigate(from, { replace: true });
   };
 
@@ -85,6 +98,51 @@ export const LoginPage: React.FC = () => {
         {/* Carte de connexion compacte et centrée */}
         <div className="w-full bg-white p-6 sm:p-8 rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-200/80">
           
+          {isExpiredParam && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold animate-fadeIn flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-extrabold">Session expirée pour votre sécurité</p>
+                <p className="font-medium text-[11px] text-amber-700 mt-0.5">
+                  Votre session s'est clôturée après 24 heures d'inactivité. Veuillez saisir vos identifiants pour continuer.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {user && !isSessionExpired() && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-950 text-xs font-bold animate-fadeIn">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[11px] text-blue-700 font-medium">Session actuellement active :</p>
+                  <p className="font-black text-blue-900 truncate max-w-[200px] sm:max-w-[240px]">
+                    {profile?.full_name || user.email}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/dashboard')}
+                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] shadow-sm transition-all"
+                  >
+                    Tableau de bord
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      clearSecuritySession();
+                      await signOut();
+                    }}
+                    className="p-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 transition-all"
+                    title="Se déconnecter de ce compte"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold animate-fadeIn">
               <div className="flex items-center gap-2.5">

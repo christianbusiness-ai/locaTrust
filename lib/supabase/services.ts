@@ -525,6 +525,12 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
   if (isValidUuid(app.tenant_id)) {
     payload.tenant_id = app.tenant_id;
   }
+  if (isValidUuid(app.owner_id)) {
+    payload.owner_id = app.owner_id;
+  }
+  if (isValidUuid(app.agency_id)) {
+    payload.agency_id = app.agency_id;
+  }
   if (isValidUuid(app.id)) {
     payload.id = app.id;
   }
@@ -537,6 +543,28 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
 
   if (error) {
     console.error('Erreur insertion Supabase rental_applications:', error.message);
+  } else if (payload.owner_id || payload.agency_id) {
+    const targetUserId = payload.owner_id || payload.agency_id;
+    try {
+      await supabase.from('notifications').insert([{
+        id: crypto.randomUUID(),
+        user_id: targetUserId,
+        title: 'Nouvelle demande de location reçue',
+        message: `${payload.tenant_name} a envoyé un dossier pour « ${payload.property_title} ».`,
+        description: `${payload.tenant_name} a envoyé un dossier pour « ${payload.property_title} ».`,
+        category: 'demande',
+        type: 'demande',
+        is_read: false,
+        read: false,
+        data: {
+          application_id: data?.id || payload.id,
+          property_id: payload.property_id,
+          targetTab: 'applications'
+        }
+      }]);
+    } catch (notifErr) {
+      console.warn('Erreur notification Supabase:', notifErr);
+    }
   }
 
   return { data, error, alreadyExists: false };

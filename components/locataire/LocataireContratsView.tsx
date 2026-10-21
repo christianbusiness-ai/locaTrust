@@ -52,13 +52,26 @@ interface TenantPropertyRental {
   rawContract?: any;
 }
 
-export const LocataireContratsView: React.FC = () => {
+export interface LocataireContratsViewProps {
+  initialTab?: 'all' | 'contracts' | 'receipts';
+}
+
+export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
+  initialTab = 'all'
+}) => {
   const { user, profile } = useAuth();
+  const [sectionFilter, setSectionFilter] = useState<'all' | 'contracts' | 'receipts'>(initialTab);
   const [contracts, setContracts] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedContractNumber, setSelectedContractNumber] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialTab) {
+      setSectionFilter(initialTab);
+    }
+  }, [initialTab]);
 
   const fetchTenantData = async () => {
     if (!user) {
@@ -82,12 +95,9 @@ export const LocataireContratsView: React.FC = () => {
           if (Array.isArray(syncJson?.data?.contracts)) {
             syncJson.data.contracts.forEach((sc: any) => {
               const isMatch =
-                !user?.id ||
-                sc.tenant_id === user.id ||
-                sc.tenant?.id === user.id ||
-                (user.email && (sc.tenant?.email?.toLowerCase() === user.email.toLowerCase() || sc.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
-                (user.user_metadata?.full_name && sc.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase()) ||
-                sc.contract_number === 'LT-2026-CI-000492';
+                Boolean(user?.id && (sc.tenant_id === user.id || sc.tenant?.id === user.id)) ||
+                Boolean(user?.email && (sc.tenant?.email?.toLowerCase() === user.email.toLowerCase() || sc.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
+                Boolean(user?.user_metadata?.full_name && sc.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
               if (isMatch) localContracts.push(sc);
             });
           }
@@ -618,6 +628,40 @@ export const LocataireContratsView: React.FC = () => {
             </div>
           )}
 
+          {/* Switcher Contrats vs Quittances */}
+          <div className="flex items-center gap-2 p-1 bg-slate-200/80 rounded-2xl w-fit">
+            <button
+              onClick={() => setSectionFilter('all')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                sectionFilter === 'all'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Vue Complète
+            </button>
+            <button
+              onClick={() => setSectionFilter('contracts')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                sectionFilter === 'contracts'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Baux & Contrats ({tenantRentals.length})
+            </button>
+            <button
+              onClick={() => setSectionFilter('receipts')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                sectionFilter === 'receipts'
+                  ? 'bg-white text-emerald-600 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Quittances & Reçus ({receipts.length})
+            </button>
+          </div>
+
           {/* Multi-logements selector & Search */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -664,7 +708,7 @@ export const LocataireContratsView: React.FC = () => {
           </div>
 
           {/* Historique Réel par Bailleur */}
-          {bailleursList.length > 0 && (
+          {(sectionFilter === 'all' || sectionFilter === 'contracts') && bailleursList.length > 0 && (
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col gap-4">
               <div className="flex items-center justify-between border-b pb-3">
                 <div className="flex items-center gap-2">
@@ -728,6 +772,7 @@ export const LocataireContratsView: React.FC = () => {
           )}
 
           {/* Leases Section */}
+          {(sectionFilter === 'all' || sectionFilter === 'contracts') && (
           <div className="flex flex-col gap-4">
             <h3 className="text-sm font-black text-slate-900">
               Contrats de Location ({filteredRentals.length})
@@ -819,8 +864,10 @@ export const LocataireContratsView: React.FC = () => {
               </div>
             ))}
           </div>
+          )}
 
           {/* Quittances Section */}
+          {(sectionFilter === 'all' || sectionFilter === 'receipts') && (
           <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col gap-4">
             <div className="flex items-center justify-between border-b pb-3">
               <div className="flex items-center gap-2">
@@ -892,6 +939,7 @@ export const LocataireContratsView: React.FC = () => {
               </div>
             )}
           </div>
+          )}
         </>
       )}
 

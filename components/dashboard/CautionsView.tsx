@@ -1165,19 +1165,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           </p>
         </div>
 
-        {/* Bouton Locataire : J'ai payé ma caution (exclusivement Espace Locataire) & Recherche */}
+        {/* Recherche et filtres */}
         <div className="flex items-center gap-3">
-          {isTenant && (
-            <button
-              type="button"
-              onClick={() => setIsDeclareCautionOpen(true)}
-              className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-md transition-all flex items-center gap-2 whitespace-nowrap active:scale-95"
-            >
-              <Upload className="w-4 h-4" />
-              <span>J'ai payé ma caution</span>
-            </button>
-          )}
-
           <div className="relative w-full md:w-64">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input

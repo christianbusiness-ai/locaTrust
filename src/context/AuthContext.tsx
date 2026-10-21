@@ -3,6 +3,7 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
 import { syncUserData } from '@/lib/unifiedSyncEngine';
 import { subscribeToLiveSync } from '@/lib/supabaseRealtime';
+import { clearSecuritySession, recordUserActivity, isSessionExpired } from '@/src/lib/sessionSecurity';
 
 export interface UserProfile {
   id: string;
@@ -131,7 +132,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getUser().then(async ({ data: { user: verifiedUser }, error }) => {
       if (!mounted) return;
       cleanAuthUrlTokens();
-      if (error || !verifiedUser) {
+      if (error || !verifiedUser || isSessionExpired()) {
+        if (isSessionExpired()) {
+          clearSecuritySession();
+          await supabase.auth.signOut().catch(() => {});
+        }
         setUser(null);
         setSession(null);
         setProfile(null);
@@ -139,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      recordUserActivity();
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       setSession(initialSession);
       setUser(verifiedUser);
@@ -263,6 +269,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (data?.user) {
+        recordUserActivity();
         setUser(data.user);
         setSession(data.session);
         const p = await fetchProfile(data.user.id);
@@ -497,6 +504,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await supabase.auth.signOut();
     } finally {
+      clearSecuritySession();
       setUser(null);
       setSession(null);
       setProfile(null);

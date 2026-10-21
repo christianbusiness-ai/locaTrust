@@ -153,14 +153,14 @@ export default function TenantDashboardPage({
             />
           )}
 
-          {/* TAB 2: Search & Marketplace Feed */}
+          {/* TAB 2: Search, Favorites, Applications & Visits */}
           {(activeTab === 'search' || activeTab === 'properties' || activeTab === 'applications' || activeTab === 'visits' || activeTab === 'favorites') && (
-            <LocataireSearchView />
+            <LocataireSearchView activeTab={activeTab} onNavigateTab={setActiveTab} />
           )}
 
           {/* TAB 3: Contracts, Receipts & Bailleur History */}
           {(activeTab === 'contracts' || activeTab === 'receipts' || activeTab === 'documents') && (
-            <LocataireContratsView />
+            <LocataireContratsView initialTab={activeTab === 'receipts' ? 'receipts' : 'contracts'} />
           )}
 
           {/* TAB 4: Payments Declarative */}
