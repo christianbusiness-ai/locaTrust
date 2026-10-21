@@ -247,72 +247,97 @@ export const GlobalCallModal: React.FC = () => {
   const [hasRealCameraTrack, setHasRealCameraTrack] = useState<boolean>(false);
   const [cameraPermissionStatus, setCameraPermissionStatus] = useState<'prompt' | 'granted' | 'denied' | 'requesting'>('prompt');
   const [hasRemoteVideo, setHasRemoteVideo] = useState<boolean>(false);
+  const [isRequestingMedia, setIsRequestingMedia] = useState<boolean>(false);
+  const [mediaErrorMessage, setMediaErrorMessage] = useState<string>('');
 
-  // Demande manuelle et directe d'accès à la caméra et au microphone (Geste utilisateur comme WhatsApp)
+  // Demande manuelle et directe d'accès à la caméra et au microphone (Geste utilisateur direct comme WhatsApp)
   const requestCameraPermissionManually = async (facingMode: 'user' | 'environment' = 'user'): Promise<MediaStream | null> => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      console.warn('getUserMedia non supporté sur ce navigateur');
+      setMediaErrorMessage("Votre navigateur ne supporte pas l'accès caméra (getUserMedia).");
       return null;
     }
+    setIsRequestingMedia(true);
+    setMediaErrorMessage('');
     setCameraPermissionStatus('requesting');
+
+    let stream: MediaStream | null = null;
+    let lastError: any = null;
+
+    // 1. Essai direct vidéo + audio avec contraintes souples (compatibilité maximale Chrome, Edge, Safari)
     try {
-      let stream: MediaStream | null = null;
-      // Demande simultanée de la caméra et du micro en un seul appel (comme WhatsApp Web)
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: facingMode },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
-      } catch (e1) {
-        console.warn('Tentative 1 getUserMedia échouée, essai contraintes standard:', e1);
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-          });
-        } catch (e2) {
-          console.warn('Tentative 2 getUserMedia échouée, essai vidéo seule:', e2);
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        }
-      }
-
-      if (stream && stream.getVideoTracks().length > 0) {
-        localStreamRef.current = stream;
-        setHasRealCameraTrack(true);
-        setCameraPermissionStatus('granted');
-        console.log(`✅ Caméra physique réelle activée: ${stream.getVideoTracks()[0].label}`);
-
-        // Énumération des périphériques disponibles (Integrated Camera, etc.)
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          setAvailableCameras(devices.filter((d) => d.kind === 'videoinput'));
-          setAvailableMics(devices.filter((d) => d.kind === 'audioinput'));
-        } catch {}
-
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-          localVideoRef.current.play().catch(() => {});
-        }
-        if (peerConnectionRef.current) {
-          addTracksToPeerConnection(peerConnectionRef.current, stream);
-        }
-        setupAudioVolumeAnalysis(stream);
-        syncVideoElements();
-        return stream;
-      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true
+      });
     } catch (err: any) {
-      console.error('❌ Accès caméra/micro refusé par le navigateur:', err);
-      setCameraPermissionStatus('denied');
-      setHasRealCameraTrack(false);
+      lastError = err;
+      console.warn("Échec capture combinée vidéo + audio:", err);
+      // 2. Si le micro pose problème ou est absent, tenter vidéo seule
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch (errVideo: any) {
+        lastError = errVideo;
+        console.warn("Échec capture vidéo seule:", errVideo);
+        // 3. Si la webcam est bloquée ou occupée, tenter audio seul
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (errAudio: any) {
+          lastError = errAudio;
+          console.warn("Échec capture audio seule:", errAudio);
+        }
+      }
     }
+
+    setIsRequestingMedia(false);
+
+    if (stream) {
+      const hasVideo = stream.getVideoTracks().length > 0;
+      localStreamRef.current = stream;
+      setHasRealCameraTrack(hasVideo);
+      setCameraPermissionStatus('granted');
+      setMediaErrorMessage('');
+      console.log(`✅ Flux média réel obtenu : vidéo=${hasVideo}, audio=${stream.getAudioTracks().length > 0}`);
+
+      // Énumération des périphériques disponibles (Integrated Camera, Realtek Mic, etc.)
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setAvailableCameras(devices.filter((d) => d.kind === 'videoinput'));
+        setAvailableMics(devices.filter((d) => d.kind === 'audioinput'));
+      } catch {}
+
+      if (localVideoRef.current && hasVideo) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
+      if (peerConnectionRef.current) {
+        addTracksToPeerConnection(peerConnectionRef.current, stream);
+      }
+      setupAudioVolumeAnalysis(stream);
+      syncVideoElements();
+      return stream;
+    }
+
+    // Gestion précise de l'erreur pour informer l'utilisateur
+    setCameraPermissionStatus('denied');
+    setHasRealCameraTrack(false);
+
+    const errName = lastError?.name || '';
+    if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+      setMediaErrorMessage(
+        "L'accès à la caméra est bloqué dans Chrome. Cliquez sur l'icône 🔒 à gauche de 'locatrust.site' dans la barre d'adresse pour autoriser la Caméra et le Micro."
+      );
+    } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+      setMediaErrorMessage(
+        "Votre caméra est déjà utilisée par une autre application (ex: WhatsApp, Zoom ou un autre onglet). Fermez l'autre application pour libérer la caméra."
+      );
+    } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+      setMediaErrorMessage("Aucune caméra physique n'a été détectée sur votre ordinateur.");
+    } else {
+      setMediaErrorMessage(
+        `Impossible d'activer la caméra (${lastError?.message || 'Erreur inconnue'}). Vous pouvez basculer en appel vocal.`
+      );
+    }
+
     return null;
   };
 
@@ -1281,7 +1306,7 @@ export const GlobalCallModal: React.FC = () => {
           <div className="bg-[#0b0f19] border border-slate-800 rounded-3xl max-w-2xl w-full h-[90vh] max-h-[640px] min-h-[460px] shadow-2xl flex flex-col relative overflow-hidden">
             
             {/* Top Bar Overlay */}
-            <div className="p-3 sm:p-4 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent flex items-center justify-between z-30">
+            <div className="p-3 sm:p-4 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent flex items-center justify-between z-30 shrink-0">
               <div className="flex items-center gap-3">
                 <UserAvatar
                   src={activeCall.peerAvatar}
@@ -1296,42 +1321,53 @@ export const GlobalCallModal: React.FC = () => {
                 </div>
               </div>
 
-              {/* Status & Timer */}
-              <div className="px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 backdrop-blur text-xs font-mono font-bold text-white flex items-center gap-2 shadow">
-                <span className={`w-2 h-2 rounded-full ${activeCall.status === 'ringing' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
-                {activeCall.status === 'ringing' ? (
-                  <span className="text-amber-400">Sonnerie...</span>
-                ) : (
-                  <span>
-                    {Math.floor(activeCall.seconds / 60).toString().padStart(2, '0')}:
-                    {(activeCall.seconds % 60).toString().padStart(2, '0')}
-                  </span>
-                )}
+              {/* Status & Timer + Bouton Raccrocher direct en haut */}
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 backdrop-blur text-xs font-mono font-bold text-white flex items-center gap-2 shadow">
+                  <span className={`w-2 h-2 rounded-full ${activeCall.status === 'ringing' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
+                  {activeCall.status === 'ringing' ? (
+                    <span className="text-amber-400">Sonnerie...</span>
+                  ) : (
+                    <span>
+                      {Math.floor(activeCall.seconds / 60).toString().padStart(2, '0')}:
+                      {(activeCall.seconds % 60).toString().padStart(2, '0')}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleEndCall}
+                  className="px-3 py-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow cursor-pointer"
+                  title="Raccrocher l'appel"
+                >
+                  <PhoneOff className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Raccrocher</span>
+                </button>
               </div>
             </div>
 
             {/* CAS 1 : PENDANT LA SONNERIE (Appel en cours... comme WhatsApp Image 1) */}
             {activeCall.status === 'ringing' ? (
-              <div className="flex-1 flex flex-col items-center justify-between px-4 py-2 sm:py-4 z-20">
+              <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center p-3 sm:p-4 z-20">
                 {/* Header contact en cours d'appel */}
-                <div className="flex flex-col items-center text-center mt-1 sm:mt-2">
+                <div className="flex flex-col items-center text-center mb-3 shrink-0">
                   <UserAvatar
                     src={activeCall.peerAvatar}
                     name={activeCall.peerName}
                     sizeClassName="w-14 h-14 sm:w-16 sm:h-16"
-                    borderClassName="border-2 border-white/20 shadow-xl mb-2"
+                    borderClassName="border-2 border-white/20 shadow-xl mb-1.5"
                   />
                   <h3 className="text-lg sm:text-xl font-black text-white tracking-wide">
                     {activeCall.peerName}
                   </h3>
-                  <span className="text-xs text-slate-300 font-semibold mt-1 flex items-center gap-1.5">
+                  <span className="text-xs text-slate-300 font-semibold mt-0.5 flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                     Appel en cours...
                   </span>
                 </div>
 
                 {/* Cadre vidéo central : Caméra réelle de l'utilisateur (comme WhatsApp Image 1) */}
-                <div className="relative w-full max-w-lg aspect-[4/3] sm:aspect-video rounded-3xl overflow-hidden bg-slate-950 border border-slate-700/70 shadow-2xl flex items-center justify-center my-auto">
+                <div className="relative w-full max-w-md aspect-[4/3] sm:aspect-video rounded-3xl overflow-hidden bg-slate-950 border border-slate-700/70 shadow-2xl flex items-center justify-center shrink-0">
                   {hasRealCameraTrack ? (
                     <>
                       <video
@@ -1351,24 +1387,47 @@ export const GlobalCallModal: React.FC = () => {
                     </>
                   ) : (
                     /* Modal d'autorisation Caméra & Micro (Conforme WhatsApp Image 3) */
-                    <div className="p-6 text-center flex flex-col items-center justify-center max-w-sm">
-                      <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-3 text-blue-400 shadow-inner">
-                        <Video className="w-7 h-7" />
+                    <div className="p-4 sm:p-6 text-center flex flex-col items-center justify-center max-w-sm w-full">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-2.5 text-blue-400 shadow-inner">
+                        <Video className="w-6 h-6" />
                       </div>
-                      <h4 className="text-base sm:text-lg font-black text-white mb-2">
+                      <h4 className="text-sm sm:text-base font-black text-white mb-1.5">
                         Autoriser l'accès à la caméra et au micro
                       </h4>
-                      <p className="text-xs text-slate-300 leading-relaxed mb-5">
-                        Pour passer des appels vidéo, cliquez sur « Autoriser » ci-dessous afin de permettre à LocaTrust d'accéder à la caméra et au micro de votre ordinateur.
+                      <p className="text-[11px] sm:text-xs text-slate-300 leading-relaxed mb-3">
+                        Pour afficher votre vidéo en direct, cliquez sur le bouton ci-dessous pour activer votre caméra.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment')}
-                        className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
-                      >
-                        <Camera className="w-4 h-4" />
-                        Autoriser la caméra et le micro
-                      </button>
+
+                      {/* Message d'erreur précis (si bloqué dans Chrome ou occupé par WhatsApp) */}
+                      {mediaErrorMessage && (
+                        <div className="w-full mb-3 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-[11px] leading-relaxed text-left flex items-start gap-2">
+                          <span className="text-amber-400 font-bold shrink-0 text-xs">⚠️</span>
+                          <span>{mediaErrorMessage}</span>
+                        </div>
+                      )}
+
+                      <div className="flex flex-col w-full gap-2">
+                        <button
+                          type="button"
+                          disabled={isRequestingMedia}
+                          onClick={() => requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment')}
+                          className="w-full px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Camera className="w-4 h-4" />
+                          {isRequestingMedia ? 'Activation en cours...' : 'Autoriser la caméra et le micro'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCall((prev) => (prev ? { ...prev, callType: 'audio' } : null));
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                          Continuer en appel vocal (micro seul)
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -1387,7 +1446,7 @@ export const GlobalCallModal: React.FC = () => {
               </div>
             ) : (
               /* CAS 2 : APPEL CONNECTÉ (Vidéo du correspondant + Fenêtre flottante PiP) */
-              <div className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center">
+              <div className="flex-1 min-h-0 relative bg-slate-950 overflow-hidden flex items-center justify-center">
                 {/* Main Video View */}
                 <video
                   ref={isVideoSwapped ? localVideoRef : remoteVideoRef}
@@ -1479,8 +1538,8 @@ export const GlobalCallModal: React.FC = () => {
               </div>
             )}
 
-            {/* Bottom Controls Bar */}
-            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-center gap-4 z-30">
+            {/* Bottom Controls Bar - TOUJOURS VISIBLE, JAMAIS MASQUÉE */}
+            <div className="shrink-0 p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-center gap-4 z-30">
               <button
                 type="button"
                 onClick={() => {
@@ -1491,7 +1550,7 @@ export const GlobalCallModal: React.FC = () => {
                   }
                   setActiveCall({ ...activeCall, isMuted: newMuted });
                 }}
-                className={`p-3.5 rounded-full transition-all active:scale-95 ${
+                className={`p-3 sm:p-3.5 rounded-full transition-all active:scale-95 cursor-pointer ${
                   activeCall.isMuted ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'
                 }`}
                 title={activeCall.isMuted ? 'Réactiver le micro' : 'Couper le micro'}
@@ -1512,7 +1571,7 @@ export const GlobalCallModal: React.FC = () => {
                   }
                   setActiveCall({ ...activeCall, isCamOff: newCamOff });
                 }}
-                className={`p-3.5 rounded-full transition-all active:scale-95 ${
+                className={`p-3 sm:p-3.5 rounded-full transition-all active:scale-95 cursor-pointer ${
                   activeCall.isCamOff ? 'bg-amber-600 text-white' : 'bg-slate-800 text-white hover:bg-slate-700'
                 }`}
                 title={!hasRealCameraTrack ? 'Activer la caméra' : activeCall.isCamOff ? 'Réactiver la caméra' : 'Couper la caméra'}
@@ -1523,7 +1582,7 @@ export const GlobalCallModal: React.FC = () => {
               <button
                 type="button"
                 onClick={handleFlipCamera}
-                className="p-3.5 rounded-full bg-slate-800 text-white hover:bg-slate-700 transition-all active:scale-95"
+                className="p-3 sm:p-3.5 rounded-full bg-slate-800 text-white hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
                 title="Changer de caméra (avant/arrière)"
               >
                 <RotateCcw className="w-5 h-5" />
@@ -1532,7 +1591,7 @@ export const GlobalCallModal: React.FC = () => {
               <button
                 type="button"
                 onClick={handleEndCall}
-                className="p-4 rounded-full bg-rose-600 hover:bg-rose-700 text-white shadow-xl shadow-rose-600/40 transition-all active:scale-95 cursor-pointer"
+                className="p-3.5 sm:p-4 rounded-full bg-rose-600 hover:bg-rose-700 text-white shadow-xl shadow-rose-600/40 transition-all active:scale-95 cursor-pointer flex items-center justify-center"
                 title="Terminer l'appel vidéo"
               >
                 <PhoneOff className="w-6 h-6" />
