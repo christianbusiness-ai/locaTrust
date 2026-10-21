@@ -1222,16 +1222,39 @@ export const LocatairePaiementsView: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Déclarez vos règlements de loyer et consultez vos quittances officielles certifiées.
+            Déclarez vos règlements de loyer et votre caution de garantie, et consultez vos quittances officielles certifiées.
           </p>
         </div>
 
-        {/* Action Button: Loyer */}
+        {/* Action Buttons: Caution & Loyer */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             type="button"
+            onClick={() => {
+              const contractToUse = currentRentContract || userContracts[0];
+              if (contractToUse) {
+                setCautionContractId(contractToUse.id);
+                const cRent = extractContractMonthlyRent(contractToUse);
+                const cAmount = Number(
+                  contractToUse.caution_amount ||
+                  contractToUse.caution ||
+                  (cRent > 0 ? cRent * 2 : 0)
+                );
+                if (cAmount > 0) setCautionAmount(cAmount);
+              }
+              setShowCautionModal(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md shadow-amber-600/20 transition-all active:scale-95 cursor-pointer"
+            title="Déclarer le règlement de votre caution / dépôt de garantie au bailleur"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Déclarer ma caution</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleOpenDeclareModal}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md shadow-blue-600/20 transition-all active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md shadow-blue-600/20 transition-all active:scale-95 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Déclarer un loyer</span>
