@@ -241,117 +241,61 @@ export const GlobalCallModal: React.FC = () => {
     }
   };
 
-  // Générateur de flux vidéo animé HD (Évite l'écran noir si la webcam physique est occupée ou absente)
-  const createSyntheticVideoTrack = (label: string = 'Caméra LocaTrust HD'): MediaStreamTrack => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    let frame = 0;
-
-    const drawFrame = () => {
-      if (!ctx) return;
-      frame++;
-      // Fond dynamique dégradé bleu nuit
-      const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-      grad.addColorStop(0, '#0F172A');
-      grad.addColorStop(0.5, '#1E293B');
-      grad.addColorStop(1, '#0369A1');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Cercles radar pulsants
-      const radius = 70 + Math.sin(frame * 0.08) * 18;
-      ctx.beginPath();
-      ctx.arc(canvas.width / 2, canvas.height / 2 - 20, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
-      ctx.lineWidth = 4;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(canvas.width / 2, canvas.height / 2 - 20, radius * 0.6, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(14, 165, 233, 0.2)';
-      ctx.fill();
-
-      // Texte et badge d'état
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 22px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('LocaTrust Visio Sécurisée', canvas.width / 2, canvas.height / 2 - 20);
-
-      ctx.fillStyle = '#38BDF8';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 15);
-
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText('Flux vidéo temps réel chiffré', canvas.width / 2, canvas.height / 2 + 40);
-
-      requestAnimationFrame(drawFrame);
-    };
-
-    drawFrame();
-    const stream = canvas.captureStream(30);
-    return stream.getVideoTracks()[0];
-  };
-
+  // État des périphériques matériels réels (Caméra physique & Micro comme WhatsApp)
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [availableMics, setAvailableMics] = useState<MediaDeviceInfo[]>([]);
   const [hasRealCameraTrack, setHasRealCameraTrack] = useState<boolean>(false);
   const [cameraPermissionStatus, setCameraPermissionStatus] = useState<'prompt' | 'granted' | 'denied' | 'requesting'>('prompt');
   const [hasRemoteVideo, setHasRemoteVideo] = useState<boolean>(false);
 
-  // Activer un flux vidéo virtuel réaliste HD si la webcam physique est inaccessible ou bloquée
-  const activateVirtualCameraFallback = () => {
-    const syntheticTrack = createSyntheticVideoTrack(currentUserName || 'LocaTrust');
-    const newStream = new MediaStream([syntheticTrack]);
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getAudioTracks().forEach((t) => newStream.addTrack(t));
-    }
-    localStreamRef.current = newStream;
-    setHasRealCameraTrack(true);
-    setCameraPermissionStatus('granted');
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = newStream;
-      localVideoRef.current.play().catch(() => {});
-    }
-    if (peerConnectionRef.current) {
-      addTracksToPeerConnection(peerConnectionRef.current, newStream);
-    }
-    syncVideoElements();
-  };
-
-  // Demande manuelle explicite avec geste utilisateur direct
-  const requestCameraPermissionManually = async () => {
+  // Demande manuelle et directe d'accès à la caméra et au microphone (Geste utilisateur comme WhatsApp)
+  const requestCameraPermissionManually = async (facingMode: 'user' | 'environment' = 'user'): Promise<MediaStream | null> => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      activateVirtualCameraFallback();
-      return;
+      console.warn('getUserMedia non supporté sur ce navigateur');
+      return null;
     }
     setCameraPermissionStatus('requesting');
     try {
       let stream: MediaStream | null = null;
+      // Demande simultanée de la caméra et du micro en un seul appel (comme WhatsApp Web)
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: activeCall?.isFrontCam ? 'user' : 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: true
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
         });
-      } catch {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => null);
-      }
-
-      if (!stream) {
-        const vOnly = await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
-        if (vOnly) {
-          const aOnly = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-          stream = new MediaStream([
-            ...vOnly.getVideoTracks(),
-            ...(aOnly ? aOnly.getAudioTracks() : [])
-          ]);
+      } catch (e1) {
+        console.warn('Tentative 1 getUserMedia échouée, essai contraintes standard:', e1);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+          });
+        } catch (e2) {
+          console.warn('Tentative 2 getUserMedia échouée, essai vidéo seule:', e2);
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
         }
       }
 
       if (stream && stream.getVideoTracks().length > 0) {
+        localStreamRef.current = stream;
         setHasRealCameraTrack(true);
         setCameraPermissionStatus('granted');
-        localStreamRef.current = stream;
+        console.log(`✅ Caméra physique réelle activée: ${stream.getVideoTracks()[0].label}`);
+
+        // Énumération des périphériques disponibles (Integrated Camera, etc.)
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          setAvailableCameras(devices.filter((d) => d.kind === 'videoinput'));
+          setAvailableMics(devices.filter((d) => d.kind === 'audioinput'));
+        } catch {}
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
@@ -360,101 +304,57 @@ export const GlobalCallModal: React.FC = () => {
         if (peerConnectionRef.current) {
           addTracksToPeerConnection(peerConnectionRef.current, stream);
         }
+        setupAudioVolumeAnalysis(stream);
         syncVideoElements();
-        return;
+        return stream;
       }
     } catch (err: any) {
-      console.warn('Autorisation caméra physique indisponible, bascule flux HD:', err);
+      console.error('❌ Accès caméra/micro refusé par le navigateur:', err);
+      setCameraPermissionStatus('denied');
+      setHasRealCameraTrack(false);
     }
-    activateVirtualCameraFallback();
+    return null;
   };
 
-  // Récupération multi-niveaux du flux caméra et micro (Active toujours la caméra ou le flux HD en direct)
+  // Récupération multi-niveaux du flux caméra et micro réels (Pas de canvas synthétique trompeur)
   const getMediaStreamWithFallback = async (
     callType: 'audio' | 'video',
     facingMode: 'user' | 'environment' = 'user'
   ): Promise<MediaStream | null> => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      if (callType === 'video') {
-        activateVirtualCameraFallback();
-        return localStreamRef.current;
-      }
-      return null;
-    }
-
-    const audioConstraints = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    };
-
-    if (callType === 'video') {
-      setCameraPermissionStatus('requesting');
-      let combinedStream: MediaStream | null = null;
-
-      // 1. Tenter la capture de la caméra réelle de l'appareil
-      try {
-        const vStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: facingMode ? { ideal: facingMode } : 'user',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          }
-        }).catch(() => null) || await navigator.mediaDevices.getUserMedia({ video: true }).catch(() => null);
-
-        const aStream = await navigator.mediaDevices.getUserMedia({
-          audio: audioConstraints
-        }).catch(() => null) || await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-
-        if (vStream && vStream.getVideoTracks().length > 0) {
-          combinedStream = new MediaStream([
-            ...vStream.getVideoTracks(),
-            ...(aStream ? aStream.getAudioTracks() : [])
-          ]);
-          setHasRealCameraTrack(true);
-          setCameraPermissionStatus('granted');
-          console.log(`✅ Caméra réelle activée : ${vStream.getVideoTracks()[0].label}`);
-        }
-      } catch (camErr) {
-        console.warn('Caméra physique indisponible ou occupée:', camErr);
-      }
-
-      // 2. Si la webcam physique n'a pas pu être ouverte, activer automatiquement le flux vidéo HD dynamique
-      if (!combinedStream || combinedStream.getVideoTracks().length === 0) {
-        const syntheticTrack = createSyntheticVideoTrack(currentUserName || 'LocaTrust');
-        let aStream: MediaStream | null = null;
-        try {
-          aStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints }).catch(() => null)
-            || await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-        } catch {}
-        combinedStream = new MediaStream([
-          syntheticTrack,
-          ...(aStream ? aStream.getAudioTracks() : [])
-        ]);
-        setHasRealCameraTrack(true);
+    // 1. Vérifier si un flux pré-capturé lors du clic utilisateur existe déjà
+    const prefetched = (window as any).__locatrust_prefetched_stream as MediaStream | undefined;
+    if (prefetched && prefetched.active) {
+      const hasVideo = prefetched.getVideoTracks().length > 0;
+      if (callType === 'audio' || hasVideo) {
+        console.log('✅ Utilisation du flux pré-capturé direct du clic');
+        localStreamRef.current = prefetched;
+        if (callType === 'video') setHasRealCameraTrack(true);
         setCameraPermissionStatus('granted');
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = prefetched;
+          localVideoRef.current.play().catch(() => {});
+        }
+        return prefetched;
       }
-
-      localStreamRef.current = combinedStream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = combinedStream;
-        localVideoRef.current.play().catch(() => {});
-      }
-      return combinedStream;
     }
 
-    // 2. Capture audio seule pour appel vocal
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints
-      }).catch(() => null) || await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+    // 2. Si appel vidéo, demander la caméra et le micro
+    if (callType === 'video') {
+      return await requestCameraPermissionManually(facingMode);
+    }
 
-      if (stream) {
-        console.log('✅ Micro réel capturé avec succès');
-      }
-      return stream;
-    } catch (errFinal) {
-      console.error('❌ Impossible d’accéder au micro:', errFinal);
+    // 3. Audio seul
+    try {
+      const aStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      return aStream;
+    } catch (err) {
+      console.warn('Micro audio direct inaccessible:', err);
       return null;
     }
   };
@@ -919,16 +819,42 @@ export const GlobalCallModal: React.FC = () => {
       } catch {}
 
       if (type === 'video') {
-        const simRemote = createSimulatedRemoteVideoStream(peerName || 'Contact LocaTrust', peerAvatar);
-        remoteStreamRef.current = simRemote;
-        setHasRemoteVideo(true);
+        // En attente du correspondant : la vidéo affichée est la caméra de l'appelant (comme WhatsApp)
+        remoteStreamRef.current = null;
+        setHasRemoteVideo(false);
+
+        // Si le correspondant est le support automatisé, décrocher après un court délai réaliste
+        if (peerName?.toLowerCase().includes('support') || peerId === 'support' || peerId === 'usr_support') {
+          setTimeout(() => {
+            if (activeCallRef.current?.status === 'ringing') {
+              stopRingtoneLoop();
+              playChime('connected');
+              setActiveCall((prev) => (prev ? { ...prev, status: 'connected', seconds: 0 } : null));
+              const simRemote = createSimulatedRemoteVideoStream(peerName || 'Support LocaTrust', peerAvatar);
+              remoteStreamRef.current = simRemote;
+              setHasRemoteVideo(true);
+              syncVideoElements();
+            }
+          }, 3500);
+        }
       }
 
-      // Capture micro et caméra réels avec fallback universel multi-plateformes
-      getMediaStreamWithFallback(type || 'audio', 'user').then((stream) => {
+      // Capture micro et caméra réels (utilisation du flux pré-capturé au clic ou demande directe)
+      const streamSource = data?.stream || (window as any).__locatrust_prefetched_stream;
+      const streamPromise = streamSource
+        ? Promise.resolve(streamSource)
+        : getMediaStreamWithFallback(type || 'audio', 'user');
+
+      streamPromise.then((stream: MediaStream | null) => {
         if (!stream) return;
         if (type === 'video') {
           localStreamRef.current = stream;
+          setHasRealCameraTrack(stream.getVideoTracks().length > 0);
+          setCameraPermissionStatus('granted');
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = stream;
+            localVideoRef.current.play().catch(() => {});
+          }
         } else {
           audioStreamRef.current = stream;
         }
@@ -1349,13 +1275,13 @@ export const GlobalCallModal: React.FC = () => {
         </div>
       )}
 
-      {/* 3. ACTIVE VIDEO CALL MODAL */}
+      {/* 3. ACTIVE VIDEO CALL MODAL (Conforme WhatsApp Web - Images 1 & 3) */}
       {activeCall && activeCall.callType === 'video' && (
-        <div className="fixed inset-0 z-[9999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full h-[88vh] max-h-[620px] min-h-[440px] shadow-2xl flex flex-col relative overflow-hidden">
+        <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
+          <div className="bg-[#0b0f19] border border-slate-800 rounded-3xl max-w-2xl w-full h-[90vh] max-h-[640px] min-h-[460px] shadow-2xl flex flex-col relative overflow-hidden">
             
             {/* Top Bar Overlay */}
-            <div className="absolute top-0 inset-x-0 z-30 p-3 sm:p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent flex items-center justify-between">
+            <div className="p-3 sm:p-4 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent flex items-center justify-between z-30">
               <div className="flex items-center gap-3">
                 <UserAvatar
                   src={activeCall.peerAvatar}
@@ -1365,14 +1291,14 @@ export const GlobalCallModal: React.FC = () => {
                 <div className="flex flex-col text-left">
                   <span className="text-sm font-black text-white">{activeCall.peerName}</span>
                   <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-bold">
-                    <ShieldCheck className="w-3 h-3 text-emerald-400" /> Appel vidéo HD chiffré LocaTrust
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Appel vidéo HD chiffré LocaTrust
                   </span>
                 </div>
               </div>
 
               {/* Status & Timer */}
-              <div className="px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-700 backdrop-blur text-xs font-mono font-bold text-white flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full bg-emerald-400 ${activeCall.status === 'ringing' ? 'animate-ping' : 'animate-pulse'}`} />
+              <div className="px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 backdrop-blur text-xs font-mono font-bold text-white flex items-center gap-2 shadow">
+                <span className={`w-2 h-2 rounded-full ${activeCall.status === 'ringing' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
                 {activeCall.status === 'ringing' ? (
                   <span className="text-amber-400">Sonnerie...</span>
                 ) : (
@@ -1384,107 +1310,177 @@ export const GlobalCallModal: React.FC = () => {
               </div>
             </div>
 
-            {/* Status Pill during Video Call */}
-            <div className="absolute top-16 left-4 z-30 px-3 py-1.5 rounded-full bg-slate-950/70 backdrop-blur-md border border-white/10 flex items-center gap-2 text-white text-xs font-bold shadow-lg">
-              <span className={`w-2 h-2 rounded-full ${activeCall.status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-ping'}`} />
-              <span>{activeCall.status === 'connected' ? 'En direct HD • Visio Sécurisée' : 'Appel en cours... Sonnerie'}</span>
-            </div>
-
-            {/* Video Canvas Area */}
-            <div className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center">
-              {/* Main Video View */}
-              <video
-                ref={isVideoSwapped ? localVideoRef : remoteVideoRef}
-                autoPlay
-                playsInline
-                muted={isVideoSwapped}
-                onLoadedMetadata={(e) => {
-                  (e.target as HTMLVideoElement).play().catch(() => {});
-                }}
-                className="w-full h-full object-cover"
-              />
-
-              {/* Waiting overlay only if no video stream at all */}
-              {!isVideoSwapped && !hasRemoteVideo && (
-                <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-6 text-center z-10">
-                  <div className="relative mb-6">
-                    <div className="absolute -inset-4 rounded-full bg-blue-500/20 animate-ping" />
-                    <div className="absolute -inset-8 rounded-full bg-emerald-500/10 animate-pulse" />
-                    <UserAvatar
-                      src={activeCall.peerAvatar}
-                      name={activeCall.peerName}
-                      sizeClassName="w-28 h-28 sm:w-36 sm:h-36"
-                      borderClassName="border-4 border-emerald-500/60 shadow-2xl"
-                    />
-                    <div className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-emerald-500 border-2 border-slate-950 flex items-center justify-center">
-                      <Video className="w-3.5 h-3.5 text-white" />
-                    </div>
-                  </div>
-
-                  <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+            {/* CAS 1 : PENDANT LA SONNERIE (Appel en cours... comme WhatsApp Image 1) */}
+            {activeCall.status === 'ringing' ? (
+              <div className="flex-1 flex flex-col items-center justify-between px-4 py-2 sm:py-4 z-20">
+                {/* Header contact en cours d'appel */}
+                <div className="flex flex-col items-center text-center mt-1 sm:mt-2">
+                  <UserAvatar
+                    src={activeCall.peerAvatar}
+                    name={activeCall.peerName}
+                    sizeClassName="w-14 h-14 sm:w-16 sm:h-16"
+                    borderClassName="border-2 border-white/20 shadow-xl mb-2"
+                  />
+                  <h3 className="text-lg sm:text-xl font-black text-white tracking-wide">
                     {activeCall.peerName}
                   </h3>
-                  <span className="text-xs font-semibold text-emerald-400 mt-1 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    {activeCall.status === 'ringing'
-                      ? 'Appel en cours... Sonnerie chez votre correspondant'
-                      : 'Connexion active • En direct'}
+                  <span className="text-xs text-slate-300 font-semibold mt-1 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    Appel en cours...
                   </span>
                 </div>
-              )}
 
-              {activeCall.isCamOff && isVideoSwapped && (
-                <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center gap-3 z-10">
-                  <UserAvatar
-                    src={currentUserAvatar}
-                    name={currentUserName}
-                    sizeClassName="w-20 h-20"
-                    borderClassName="border-2 border-emerald-500/40"
-                  />
-                  <span className="text-xs text-slate-300 font-bold">Votre caméra est désactivée</span>
+                {/* Cadre vidéo central : Caméra réelle de l'utilisateur (comme WhatsApp Image 1) */}
+                <div className="relative w-full max-w-lg aspect-[4/3] sm:aspect-video rounded-3xl overflow-hidden bg-slate-950 border border-slate-700/70 shadow-2xl flex items-center justify-center my-auto">
+                  {hasRealCameraTrack ? (
+                    <>
+                      <video
+                        ref={localVideoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        onLoadedMetadata={(e) => {
+                          (e.target as HTMLVideoElement).play().catch(() => {});
+                        }}
+                        className={`w-full h-full object-cover ${activeCall.isFrontCam ? 'scale-x-[-1]' : ''}`}
+                      />
+                      <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur border border-white/10 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5 shadow">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        Votre caméra HD
+                      </div>
+                    </>
+                  ) : (
+                    /* Modal d'autorisation Caméra & Micro (Conforme WhatsApp Image 3) */
+                    <div className="p-6 text-center flex flex-col items-center justify-center max-w-sm">
+                      <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-3 text-blue-400 shadow-inner">
+                        <Video className="w-7 h-7" />
+                      </div>
+                      <h4 className="text-base sm:text-lg font-black text-white mb-2">
+                        Autoriser l'accès à la caméra et au micro
+                      </h4>
+                      <p className="text-xs text-slate-300 leading-relaxed mb-5">
+                        Pour passer des appels vidéo, cliquez sur « Autoriser » ci-dessous afin de permettre à LocaTrust d'accéder à la caméra et au micro de votre ordinateur.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment')}
+                        className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
+                      >
+                        <Camera className="w-4 h-4" />
+                        Autoriser la caméra et le micro
+                      </button>
+                    </div>
+                  )}
+
+                  {activeCall.isCamOff && (
+                    <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center gap-2 z-10">
+                      <UserAvatar
+                        src={currentUserAvatar}
+                        name={currentUserName}
+                        sizeClassName="w-16 h-16"
+                        borderClassName="border-2 border-white/20"
+                      />
+                      <span className="text-xs text-slate-300 font-bold">Votre caméra est coupée</span>
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {/* PiP Floating Window */}
-              <div
-                onClick={() => setIsVideoSwapped(!isVideoSwapped)}
-                className="absolute bottom-20 right-4 w-28 h-36 sm:w-36 sm:h-48 rounded-2xl overflow-hidden border-2 border-white/30 shadow-2xl z-20 cursor-pointer bg-slate-900 transition-all hover:scale-105 active:scale-95 group"
-                title="Cliquez pour permuter la vue"
-              >
+              </div>
+            ) : (
+              /* CAS 2 : APPEL CONNECTÉ (Vidéo du correspondant + Fenêtre flottante PiP) */
+              <div className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center">
+                {/* Main Video View */}
                 <video
-                  ref={isVideoSwapped ? remoteVideoRef : localVideoRef}
+                  ref={isVideoSwapped ? localVideoRef : remoteVideoRef}
                   autoPlay
                   playsInline
-                  muted={!isVideoSwapped}
+                  muted={isVideoSwapped}
                   onLoadedMetadata={(e) => {
                     (e.target as HTMLVideoElement).play().catch(() => {});
                   }}
-                  className="w-full h-full object-cover"
+                  className={`w-full h-full object-cover ${(isVideoSwapped && activeCall.isFrontCam) ? 'scale-x-[-1]' : ''}`}
                 />
 
-                {/* Local Camera Off State in PiP si coupé manuellement */}
-                {!isVideoSwapped && activeCall.isCamOff && (
-                  <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-2 text-center gap-1.5 z-10">
-                    <UserAvatar
-                      src={currentUserAvatar}
-                      name={currentUserName}
-                      sizeClassName="w-10 h-10"
-                      borderClassName="border border-white/20"
-                    />
-                    <span className="text-[9px] text-slate-300 font-bold leading-tight">
-                      Caméra coupée
+                {/* Si le correspondant est en audio seul ou vidéo en cours de connexion */}
+                {!isVideoSwapped && !hasRemoteVideo && (
+                  <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 flex flex-col items-center justify-center p-6 text-center z-10">
+                    <div className="relative mb-6">
+                      <div className="absolute -inset-4 rounded-full bg-blue-500/20 animate-ping" />
+                      <div className="absolute -inset-8 rounded-full bg-emerald-500/10 animate-pulse" />
+                      <UserAvatar
+                        src={activeCall.peerAvatar}
+                        name={activeCall.peerName}
+                        sizeClassName="w-24 h-24 sm:w-32 sm:h-32"
+                        borderClassName="border-4 border-emerald-500/60 shadow-2xl"
+                      />
+                      <div className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-emerald-500 border-2 border-slate-950 flex items-center justify-center">
+                        <Video className="w-3.5 h-3.5 text-white" />
+                      </div>
+                    </div>
+
+                    <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                      {activeCall.peerName}
+                    </h3>
+                    <span className="text-xs font-semibold text-emerald-400 mt-1 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      En direct • Audio chiffré HD
                     </span>
+
+                    {/* Visualiseur de volume audio du correspondant */}
+                    <div className="flex items-center gap-1 mt-4 h-6">
+                      {[1, 2, 3, 4, 5].map((i) => (
+                        <div
+                          key={i}
+                          className="w-1.5 bg-emerald-400 rounded-full transition-all duration-75"
+                          style={{
+                            height: `${Math.max(6, Math.min(24, (audioVolume / 100) * 24 * (i % 2 === 0 ? 1.2 : 0.8)))}px`
+                          }}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
 
-                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
-                  Permuter
+                {/* PiP Floating Window pour la caméra locale */}
+                <div
+                  onClick={() => setIsVideoSwapped(!isVideoSwapped)}
+                  className="absolute bottom-4 right-4 w-28 h-36 sm:w-36 sm:h-48 rounded-2xl overflow-hidden border-2 border-white/30 shadow-2xl z-20 cursor-pointer bg-slate-900 transition-all hover:scale-105 active:scale-95 group"
+                  title="Cliquez pour permuter la vue"
+                >
+                  <video
+                    ref={isVideoSwapped ? remoteVideoRef : localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted={!isVideoSwapped}
+                    onLoadedMetadata={(e) => {
+                      (e.target as HTMLVideoElement).play().catch(() => {});
+                    }}
+                    className={`w-full h-full object-cover ${(!isVideoSwapped && activeCall.isFrontCam) ? 'scale-x-[-1]' : ''}`}
+                  />
+
+                  {/* Local Camera Off State in PiP si coupé manuellement */}
+                  {!isVideoSwapped && activeCall.isCamOff && (
+                    <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-2 text-center gap-1.5 z-10">
+                      <UserAvatar
+                        src={currentUserAvatar}
+                        name={currentUserName}
+                        sizeClassName="w-10 h-10"
+                        borderClassName="border border-white/20"
+                      />
+                      <span className="text-[9px] text-slate-300 font-bold leading-tight">
+                        Caméra coupée
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
+                    Permuter
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Bottom Controls Bar */}
-            <div className="p-4 bg-slate-950/95 border-t border-slate-800 flex items-center justify-center gap-4 z-30">
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-center gap-4 z-30">
               <button
                 type="button"
                 onClick={() => {
@@ -1507,7 +1503,7 @@ export const GlobalCallModal: React.FC = () => {
                 type="button"
                 onClick={() => {
                   if (!hasRealCameraTrack) {
-                    requestCameraPermissionManually();
+                    requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment');
                     return;
                   }
                   const newCamOff = !activeCall.isCamOff;

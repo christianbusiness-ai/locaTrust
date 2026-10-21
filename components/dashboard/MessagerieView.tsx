@@ -835,6 +835,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Audio Call Handlers (Appel Vocal Réel avec Microphone via GlobalCallModal)
   const handleStartAudioCall = async () => {
+    let prefetchedAudio: MediaStream | null = null;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        prefetchedAudio = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    } catch (err) {
+      console.warn('Pré-capture audio au clic utilisateur:', err);
+    }
+    if (prefetchedAudio) {
+      (window as any).__locatrust_prefetched_stream = prefetchedAudio;
+    }
     window.dispatchEvent(
       new CustomEvent('locatrust:initiate_call', {
         detail: {
@@ -843,7 +854,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           peerName: activeContact.name,
           peerAvatar: activeContact.avatar,
           peerRole: activeContact.role,
-          propertyTitle: activeContact.propertyTitle
+          propertyTitle: activeContact.propertyTitle,
+          stream: prefetchedAudio
         }
       })
     );
@@ -989,8 +1001,32 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return canvas.captureStream(30);
   };
 
-  // Video Call Handlers (Activer Réellement la Caméra Physique via GlobalCallModal)
+  // Video Call Handlers (Capture Immédiate Caméra + Micro dans le Geste Utilisateur comme WhatsApp)
   const handleStartVideoCall = async () => {
+    let prefetchedStream: MediaStream | null = null;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        // Demande directe de la caméra et du micro ensemble (comme WhatsApp Web)
+        prefetchedStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: true
+        });
+      }
+    } catch (err: any) {
+      console.warn('Pré-capture vidéo au clic utilisateur:', err);
+      try {
+        if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+          prefetchedStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+      } catch (err2) {
+        console.warn('Pré-capture vidéo seule:', err2);
+      }
+    }
+
+    if (prefetchedStream) {
+      (window as any).__locatrust_prefetched_stream = prefetchedStream;
+    }
+
     window.dispatchEvent(
       new CustomEvent('locatrust:initiate_call', {
         detail: {
@@ -999,7 +1035,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           peerName: activeContact.name,
           peerAvatar: activeContact.avatar,
           peerRole: activeContact.role,
-          propertyTitle: activeContact.propertyTitle
+          propertyTitle: activeContact.propertyTitle,
+          stream: prefetchedStream
         }
       })
     );
