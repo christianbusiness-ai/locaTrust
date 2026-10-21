@@ -248,7 +248,19 @@ export const ReceiptsQuittancesView: React.FC = () => {
             if (raw) {
               const list = JSON.parse(raw);
               if (Array.isArray(list)) {
-                for (const lr of list) {
+                // Purge des faux reçus
+                const cleaned = list.filter((lr: any) => {
+                  const ref = String(lr.receipt_number || lr.receiptNumber || lr.reference || lr.id || '');
+                  const amt = Number(lr.amount || lr.amount_paid || 0);
+                  if (amt <= 0) return false;
+                  if (ref.includes('253306')) return false;
+                  if (ref.startsWith('REC-CAUT-') || ref.includes('42CAB66D')) return false;
+                  return true;
+                });
+                if (cleaned.length !== list.length) {
+                  localStorage.setItem(src, JSON.stringify(cleaned));
+                }
+                for (const lr of cleaned) {
                   const ref = lr.receipt_number || lr.receiptNumber || lr.reference;
                   if (ref && !seenRefs.has(ref)) {
                     seenRefs.add(ref);

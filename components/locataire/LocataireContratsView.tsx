@@ -196,8 +196,43 @@ export const LocataireContratsView: React.FC = () => {
 
       setContracts(Array.from(map.values()));
 
-      // Reçus / quittances réelles (base Supabase + local multi-appareils)
+      // Reçus / quittances réelles : Source de vérité prioritaire /api/sync + Supabase + cache local assaini
       let combinedReceipts: any[] = [];
+      const seenReceiptNums = new Set<string>();
+
+      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
+      try {
+        const syncRes = await fetch('/api/sync');
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (syncJson?.data?.receipts && Array.isArray(syncJson.data.receipts)) {
+            syncJson.data.receipts.forEach((sr: any) => {
+              const num = sr.receipt_number || sr.reference;
+              const amt = Number(sr.amount) || 0;
+              if (num && amt > 0 && !seenReceiptNums.has(num)) {
+                seenReceiptNums.add(num);
+                combinedReceipts.push({
+                  id: sr.id,
+                  receipt_number: num,
+                  period: sr.period_covered || 'Mois en cours',
+                  amount: amt,
+                  token: sr.token,
+                  type: sr.type || 'loyer',
+                  owner_name: sr.owner_name || 'KK',
+                  property_title: sr.property_title || 'Maison 4 pièce',
+                  property_address: sr.property_address,
+                  contract_number: sr.contract_number || 'LT-2026-CI-000492',
+                  rawReceipt: sr
+                });
+              }
+            });
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Sync receipts warning:', syncErr);
+      }
+
+      // 1. Quittances directes Supabase
       try {
         const { data: rcpData } = await supabase
           .from('receipts')
@@ -205,24 +240,49 @@ export const LocataireContratsView: React.FC = () => {
           .eq('tenant_id', user.id)
           .order('created_at', { ascending: false });
         if (rcpData && Array.isArray(rcpData)) {
-          combinedReceipts = [...rcpData];
+          rcpData.forEach((r: any) => {
+            const num = r.receipt_number || r.id;
+            const amt = Number(r.amount) || 0;
+            // Rejeter les faux reçus (montant 0 ou hash temporaire)
+            if (amt <= 0 || num === 'REC-2026-253306' || num.includes('253306') || num.startsWith('REC-CAUT-') || num.includes('42CAB66D')) {
+              // Suppression asynchrone du faux reçu en base
+              try { supabase.from('receipts').delete().eq('id', r.id).then(); } catch {}
+              return;
+            }
+            if (!seenReceiptNums.has(num)) {
+              seenReceiptNums.add(num);
+              combinedReceipts.push(r);
+            }
+          });
         }
       } catch {}
 
-      // Fusionner avec locatrust_tenant_receipts_v2
+      // 2. Nettoyage et fusion avec locatrust_tenant_receipts_v2
       try {
         const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
         if (rawV2) {
           const listV2 = JSON.parse(rawV2);
           if (Array.isArray(listV2)) {
-            listV2.forEach((item: any) => {
+            const cleanedV2 = listV2.filter((item: any) => {
+              const num = String(item.receiptNumber || item.receipt_number || item.id || '');
+              const amt = Number(item.amount) || 0;
+              if (amt <= 0) return false;
+              if (num.includes('253306')) return false;
+              if (num.startsWith('REC-CAUT-') || num.includes('42CAB66D')) return false;
+              return true;
+            });
+            if (cleanedV2.length !== listV2.length) {
+              localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(cleanedV2));
+            }
+            cleanedV2.forEach((item: any) => {
               const num = item.receiptNumber || item.receipt_number || item.id;
-              if (!combinedReceipts.some(r => r.receipt_number === num || r.id === num)) {
+              if (num && !seenReceiptNums.has(num)) {
+                seenReceiptNums.add(num);
                 combinedReceipts.push({
                   id: item.id || `rcp_${num}`,
                   receipt_number: num,
                   period: item.periodsCovered || item.period || 'Mois en cours',
-                  amount: item.amount || 0,
+                  amount: Number(item.amount) || 0,
                   token: item.token || `tok_${num}`,
                   type: item.type || 'loyer',
                   owner_name: item.ownerName === 'Nat Yao' || (item.ownerName && item.ownerName.toLowerCase() === 'kk') ? 'KK' : (item.ownerName || 'KK'),
@@ -235,15 +295,27 @@ export const LocataireContratsView: React.FC = () => {
         }
       } catch {}
 
-      // Fusionner avec locatrust_receipts
+      // 3. Nettoyage et fusion avec locatrust_receipts
       try {
         const rawRcps = localStorage.getItem('locatrust_receipts');
         if (rawRcps) {
           const listRcps = JSON.parse(rawRcps);
           if (Array.isArray(listRcps)) {
-            listRcps.forEach((item: any) => {
+            const cleanedRcps = listRcps.filter((item: any) => {
+              const num = String(item.receipt_number || item.id || '');
+              const amt = Number(item.amount) || 0;
+              if (amt <= 0) return false;
+              if (num.includes('253306')) return false;
+              if (num.startsWith('REC-CAUT-') || num.includes('42CAB66D')) return false;
+              return true;
+            });
+            if (cleanedRcps.length !== listRcps.length) {
+              localStorage.setItem('locatrust_receipts', JSON.stringify(cleanedRcps));
+            }
+            cleanedRcps.forEach((item: any) => {
               const num = item.receipt_number || item.id;
-              if (!combinedReceipts.some(r => r.receipt_number === num || r.id === num)) {
+              if (num && !seenReceiptNums.has(num)) {
+                seenReceiptNums.add(num);
                 combinedReceipts.push(item);
               }
             });
@@ -251,7 +323,17 @@ export const LocataireContratsView: React.FC = () => {
         }
       } catch {}
 
-      setReceipts(combinedReceipts);
+      // Filtrage strict : Aucune quittance de montant 0, aucun faux hash
+      const sanitizedReceipts = combinedReceipts.filter((r: any) => {
+        const num = String(r.receipt_number || r.id || '');
+        const amt = Number(r.amount) || 0;
+        if (amt <= 0) return false;
+        if (num.includes('253306')) return false;
+        if (num.startsWith('REC-CAUT-') || num.includes('42CAB66D')) return false;
+        return true;
+      });
+
+      setReceipts(sanitizedReceipts);
     } catch (err: any) {
       setLoadError("Erreur réseau lors du chargement de vos baux.");
     } finally {
