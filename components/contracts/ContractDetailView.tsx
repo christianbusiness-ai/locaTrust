@@ -28,7 +28,9 @@ import {
   Lock,
   Scale,
   RotateCcw,
-  PenTool
+  PenTool,
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { Logo } from '@/components/common/Logo';
 import jsPDF from 'jspdf';
@@ -52,6 +54,7 @@ import {
   persistTenantSignature
 } from '@/lib/contractPartyResolver';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
+import { acceptContractRenewal, refuseContractRenewal } from '@/lib/contractRenewalManager';
 
 interface ContractDetailViewProps {
   onBack?: () => void;
@@ -349,6 +352,53 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       withCelebration: true,
       confirmText: 'Parfait'
     });
+  };
+
+  const handleAcceptRenewal = async () => {
+    if (!window.confirm(`Accepter formellement la demande de renouvellement du contrat N° ${contractNumber} pour une durée additionnelle de 12 mois ?`)) {
+      return;
+    }
+    try {
+      await acceptContractRenewal({
+        contract: realContract || { contract_number: contractNumber },
+        durationMonths: 12
+      });
+      triggerCelebration();
+      setConfirmationModal({
+        isOpen: true,
+        type: 'success',
+        title: 'Bail renouvelé avec succès !',
+        message: `La reconduction du contrat N° ${contractNumber} (+12 mois) a été validée. Le preneur a été immédiatement notifié.`,
+        details: 'Le bail poursuit son cours légal jusqu\'au nouveau terme convenu sans interruption.',
+        withCelebration: true
+      });
+    } catch (err: any) {
+      alert('Erreur lors de l\'acceptation du renouvellement : ' + (err?.message || 'Erreur'));
+    }
+  };
+
+  const handleRefuseRenewal = async () => {
+    const reason = window.prompt(
+      "Indiquez le motif de non-reconduction du contrat de bail :",
+      "Terme normal convenu du bail sans reconduction."
+    );
+    if (!reason) return;
+    try {
+      await refuseContractRenewal({
+        contract: realContract || { contract_number: contractNumber },
+        reason
+      });
+      setConfirmationModal({
+        isOpen: true,
+        type: 'success',
+        title: 'Non-reconduction enregistrée',
+        message: `Le refus de renouvellement pour le contrat N° ${contractNumber} a été notifié au preneur.`,
+        details: 'Le bail prendra fin à son terme convenu. Les démarches de clôture et de restitution s\'appliqueront à cette échéance.',
+        confirmText: 'Compris'
+      });
+    } catch (err: any) {
+      alert('Erreur lors du refus de renouvellement : ' + (err?.message || 'Erreur'));
+    }
   };
 
   // PDF Generator with mandatory 2-party signature rule (Point 10)
@@ -691,6 +741,50 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* BANNIÈRE DE DEMANDE DE RENOUVELLEMENT DE BAIL */}
+      {realContract?.renewal_status === 'demande' && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-2 border-indigo-300 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fadeIn">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-900 bg-indigo-200/80 px-2.5 py-0.5 rounded-full">
+                  🔄 Demande de renouvellement de bail
+                </span>
+                <span className="text-[11px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
+                  {tenantData.name} sollicite +{realContract?.renewal_duration_requested || 12} mois
+                </span>
+              </div>
+              <h4 className="text-base font-extrabold text-slate-900 mt-1">
+                Le preneur sollicite formellement la reconduction du bail N° {contractNumber}
+              </h4>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Vous pouvez accepter cette reconduction (le bail sera prolongé de 12 mois) ou la refuser (le bail prendra fin à sa date d'échéance convenue).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleAcceptRenewal}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md flex items-center gap-1.5 transition-all"
+            >
+              <Check className="w-4 h-4" />
+              <span>Accepter (+12 mois)</span>
+            </button>
+            <button
+              onClick={handleRefuseRenewal}
+              className="px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-bold transition-all"
+            >
+              <X className="w-4 h-4" />
+              <span>Refuser la reconduction</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* BANNIÈRE D'ALERTE : En attente signature du locataire */}
       {isAwaitingTenant && (

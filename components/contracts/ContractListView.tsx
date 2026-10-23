@@ -32,6 +32,11 @@ import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { formatFCFA } from '@/lib/utils';
+import {
+  getContractExpiryDetails,
+  acceptContractRenewal,
+  refuseContractRenewal
+} from '@/lib/contractRenewalManager';
 
 interface ContractListViewProps {
   onSelectContract?: (contractNumber: string) => void;
@@ -48,6 +53,15 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   const [isLocalCreateOpen, setIsLocalCreateOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [generatingDossierId, setGeneratingDossierId] = useState<string | null>(null);
+
+  // Modal « Action Renouvellement » (Accepter / Refuser)
+  const [renewalActionModal, setRenewalActionModal] = useState<{
+    isOpen: boolean;
+    type: 'accept' | 'refuse';
+    contract: any;
+    durationMonths?: number;
+    reason?: string;
+  } | null>(null);
 
   // Modal « Votre dossier de preuve est prêt »
   const [proofReadyModal, setProofReadyModal] = useState<{
@@ -306,6 +320,49 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
       message: `Le logement "${propTitle}" est conservé comme non disponible / en entretien.`,
       details: `L'ancien contrat N° ${c?.id || ''} reste archivé et scellé. Vous pourrez republier ce bien à tout moment depuis la rubrique Mes Biens.`
     });
+  };
+
+  // Action Propriétaire : Accepter le renouvellement du bail (+12 mois)
+  const confirmAcceptRenewal = async () => {
+    if (!renewalActionModal?.contract) return;
+    const c = renewalActionModal.contract;
+    const duration = renewalActionModal.durationMonths || 12;
+
+    const res = await acceptContractRenewal({
+      contract: c.raw || c,
+      durationMonths: duration
+    });
+
+    setRenewalActionModal(null);
+    setConfirmationModal({
+      isOpen: true,
+      title: 'Renouvellement validé avec succès',
+      message: `Le contrat N° ${c.id} a été prolongé jusqu'au ${res.newEndDateStr}.`,
+      details: `Le contrat poursuit son cours normalement jusqu'à sa nouvelle date de fin. Une notification officielle a été transmise au locataire.`,
+      withCelebration: true
+    });
+    loadContracts();
+  };
+
+  // Action Propriétaire : Refuser le renouvellement du bail
+  const confirmRefuseRenewal = async () => {
+    if (!renewalActionModal?.contract) return;
+    const c = renewalActionModal.contract;
+    const reason = renewalActionModal.reason || "Non-reconduction du bail à son terme convenu";
+
+    await refuseContractRenewal({
+      contract: c.raw || c,
+      reason
+    });
+
+    setRenewalActionModal(null);
+    setConfirmationModal({
+      isOpen: true,
+      title: 'Non-renouvellement enregistré',
+      message: `Le refus de renouvellement pour le contrat N° ${c.id} a été notifié au preneur.`,
+      details: `Le contrat prendra fin à sa date d'échéance. À terme, le dossier de preuve officiel et les options de republication seront activés.`
+    });
+    loadContracts();
   };
 
   React.useEffect(() => {
@@ -641,6 +698,26 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                               <CheckCircle2 className="w-2.5 h-2.5" /> Bailleur a signé
                             </span>
                           </div>
+                        ) : c.raw?.renewal_status === 'demande' ? (
+                          <div className="flex flex-col items-start gap-1">
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                              <RefreshCw className="w-3 h-3 text-amber-700 animate-spin" />
+                              Renouvellement demandé
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-semibold">
+                              Durée : {c.raw?.renewal_duration_requested || 12} mois
+                            </span>
+                          </div>
+                        ) : c.raw?.renewal_status === 'accepte' ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-300">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Bail renouvelé (+12 mois)
+                          </span>
+                        ) : c.raw?.renewal_status === 'refuse' ? (
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-300">
+                            <X className="w-3 h-3 text-rose-600" />
+                            Non renouvelé (Fin proche)
+                          </span>
                         ) : (
                           <span
                             className={`px-3 py-1 rounded-full text-[11px] font-extrabold inline-block ${
@@ -712,6 +789,44 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                                 title="Consulter les détails du contrat clos"
                               >
                                 <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : c.raw?.renewal_status === 'demande' ? (
+                            <>
+                              {/* BOUTON ACCEPTER LE RENOUVELLEMENT (Audio utilisateur) */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenewalActionModal({
+                                    isOpen: true,
+                                    type: 'accept',
+                                    contract: c,
+                                    durationMonths: Number(c.raw?.renewal_duration_requested || 12)
+                                  });
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1 shadow-sm transition-all active:scale-95 shrink-0"
+                                title="Accepter le renouvellement du bail (+12 mois)"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Accepter</span>
+                              </button>
+
+                              {/* BOUTON REFUSER LE RENOUVELLEMENT (Audio utilisateur) */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenewalActionModal({
+                                    isOpen: true,
+                                    type: 'refuse',
+                                    contract: c,
+                                    reason: 'Non-reconduction du bail à son terme convenu'
+                                  });
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-bold flex items-center gap-1 shadow-sm transition-all active:scale-95 shrink-0"
+                                title="Refuser le renouvellement (le bail prendra fin à sa date d'échéance)"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Refuser</span>
                               </button>
                             </>
                           ) : c.statut === 'En attente signature locataire' ? (
@@ -916,6 +1031,117 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
 
               <button
                 onClick={() => setRepublishModal(null)}
+                className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL « TRAITER LE RENOUVELLEMENT DE BAIL » (Audio utilisateur) */}
+      {renewalActionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 flex flex-col gap-5">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+              <div
+                className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
+                  renewalActionModal.type === 'accept'
+                    ? 'bg-emerald-100 text-emerald-600'
+                    : 'bg-rose-100 text-rose-600'
+                }`}
+              >
+                {renewalActionModal.type === 'accept' ? (
+                  <CheckCircle2 className="w-6 h-6" />
+                ) : (
+                  <X className="w-6 h-6" />
+                )}
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  {renewalActionModal.type === 'accept'
+                    ? 'Valider le renouvellement du bail'
+                    : 'Refuser le renouvellement du bail'}
+                </h3>
+                <p className="text-xs text-slate-500">Contrat N° {renewalActionModal.contract?.id}</p>
+              </div>
+            </div>
+
+            {renewalActionModal.type === 'accept' ? (
+              <div className="flex flex-col gap-3 text-xs">
+                <p className="text-slate-600 leading-relaxed">
+                  En acceptant, le contrat poursuit son chemin normalement jusqu'à la nouvelle date de fin. Le bailleur et le preneur recevront une confirmation officielle.
+                </p>
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2">
+                  <label className="text-slate-500 font-bold text-[11px]">Durée de prolongation :</label>
+                  <select
+                    value={renewalActionModal.durationMonths || 12}
+                    onChange={(e) =>
+                      setRenewalActionModal({
+                        ...renewalActionModal,
+                        durationMonths: Number(e.target.value)
+                      })
+                    }
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800"
+                  >
+                    <option value={12}>+ 12 mois (1 an supplémentaire)</option>
+                    <option value={24}>+ 24 mois (2 ans supplémentaires)</option>
+                    <option value={36}>+ 36 mois (3 ans supplémentaires)</option>
+                    <option value={6}>+ 6 mois (Période courte)</option>
+                  </select>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 text-xs">
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-950 text-xs leading-relaxed">
+                  <strong>Conséquence :</strong> Le contrat ne sera pas reconduit et prendra fin définitivement à sa date d'échéance. À terme, le dossier de preuve officiel sera disponible et vous pourrez choisir de republier ou non le logement.
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-slate-500 font-bold text-[11px]">Motif du non-renouvellement :</label>
+                  <input
+                    type="text"
+                    value={renewalActionModal.reason || ''}
+                    onChange={(e) =>
+                      setRenewalActionModal({
+                        ...renewalActionModal,
+                        reason: e.target.value
+                      })
+                    }
+                    placeholder="Ex: Reprise pour convenance personnelle, vente, travaux..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:bg-white"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                onClick={
+                  renewalActionModal.type === 'accept'
+                    ? confirmAcceptRenewal
+                    : confirmRefuseRenewal
+                }
+                className={`w-full py-3 px-4 rounded-2xl text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 ${
+                  renewalActionModal.type === 'accept'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                {renewalActionModal.type === 'accept' ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Confirmer le renouvellement (+{renewalActionModal.durationMonths || 12} mois)</span>
+                  </>
+                ) : (
+                  <>
+                    <X className="w-4 h-4" />
+                    <span>Confirmer le non-renouvellement</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => setRenewalActionModal(null)}
                 className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold"
               >
                 Annuler

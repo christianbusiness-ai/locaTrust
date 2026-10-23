@@ -397,10 +397,16 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const loyersEnRetard = portfolioMetrics.totalLateRent;
     const loyersImpayes = portfolioMetrics.totalLateRent;
 
-    // Contrats actifs
-    const activeContracts = realContracts.filter(
-      (c: any) => c.status === 'actif' || c.status === 'signe' || c.status === 'contrat_actif'
-    );
+    // Contrats actifs (Exclusion stricte des contrats terminés/clos)
+    const activeContracts = realContracts.filter((c: any) => {
+      const st = String(c?.status || '').toLowerCase().trim();
+      return (
+        (st === 'actif' || st === 'signe' || st === 'contrat_actif') &&
+        st !== 'termine' &&
+        st !== 'cloture' &&
+        st !== 'resilie'
+      );
+    });
 
     // Loyer mensuel attendu (cumul des baux actifs uniquement : 0 si aucun contrat actif)
     const monthlyRentExpected = portfolioMetrics.totalExpectedRentCurrentMonth;

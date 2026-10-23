@@ -7,6 +7,7 @@
 import { formatFCFA } from '@/lib/utils';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { supabase } from '@/src/lib/supabase';
+import { checkAndSendContractExpiryNotifications } from '@/lib/contractRenewalManager';
 
 let memoryTimeOffsetMs = 0;
 
@@ -505,6 +506,11 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
     await syncDatabaseServerTime();
   } catch {}
 
+  // Vérification automatique et silencieuse des échéances de contrat à 1 mois (J-30)
+  try {
+    await checkAndSendContractExpiryNotifications(userId);
+  } catch {}
+
   const now = getTrustedDate();
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const referenceMonth = now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
@@ -532,6 +538,9 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
         const parsed = JSON.parse(storedContracts);
         if (Array.isArray(parsed)) {
           parsed.forEach((c) => {
+            const st = String(c.status || '').toLowerCase().trim();
+            // Exclusion stricte des contrats terminés : aucun loyer futur attendu
+            if (st === 'termine' || st === 'cloture' || st === 'resilie') return;
             if (!contracts.some((x) => x.id === c.id || x.contract_number === c.contract_number)) {
               contracts.push(c);
             }
