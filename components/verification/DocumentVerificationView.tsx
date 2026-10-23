@@ -25,6 +25,7 @@ import {
   MOCK_VERIFICATION_REGISTRY,
   ContractVerificationRecord,
   ReceiptVerificationRecord,
+  ProofDossierVerificationRecord,
   DocumentVerificationStatus,
   UnifiedVerificationResult,
   verifyDocumentToken,
@@ -33,10 +34,10 @@ import {
 import { formatFCFA } from '@/lib/utils';
 
 interface DocumentVerificationViewProps {
-  type: 'contrat' | 'recu';
+  type?: 'contrat' | 'recu' | 'dossier';
   token: string;
   onNavigateBack?: () => void;
-  onNavigateToDocument?: (type: 'contrat' | 'recu', token: string) => void;
+  onNavigateToDocument?: (type: 'contrat' | 'recu' | 'dossier', token: string) => void;
 }
 
 export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> = ({
@@ -50,15 +51,20 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
   const [loadError, setLoadError] = useState<string | null>(null);
   const [contractData, setContractData] = useState<ContractVerificationRecord | undefined>(undefined);
   const [receiptData, setReceiptData] = useState<ReceiptVerificationRecord | undefined>(undefined);
+  const [proofData, setProofData] = useState<ProofDossierVerificationRecord | undefined>(undefined);
   const [verificationResult, setVerificationResult] = useState<UnifiedVerificationResult | null>(null);
 
   const fetchDocument = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const detectedType = type || (token.startsWith('tok_rec_') || token.startsWith('ESP-') || token.startsWith('REC-') ? 'recu' : 'contrat');
+      const detectedType = type || (
+        token.startsWith('tok_prf_') || token.startsWith('PROOF-') ? 'dossier' :
+        (token.startsWith('tok_rec_') || token.startsWith('ESP-') || token.startsWith('REC-') ? 'recu' : 'contrat')
+      );
       const res = await verifyDocumentToken(token, detectedType);
       setVerificationResult(res);
+      if (res.proofDossier) setProofData(res.proofDossier);
       if (res.contract) setContractData(res.contract);
       if (res.receipt) setReceiptData(res.receipt);
     } catch (err: any) {
@@ -73,9 +79,9 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
     fetchDocument();
   }, [fetchDocument]);
 
-  const isFound = Boolean(verificationResult?.isFound && (contractData || receiptData));
-  const currentStatus: DocumentVerificationStatus = verificationResult?.status || (isFound ? (contractData?.status || receiptData?.status || 'valide') : 'introuvable');
-  const activeDocumentType = contractData ? 'contrat' : 'recu';
+  const isFound = Boolean(verificationResult?.isFound && (contractData || receiptData || proofData));
+  const currentStatus: DocumentVerificationStatus = verificationResult?.status || (isFound ? (proofData?.status || contractData?.status || receiptData?.status || 'valide') : 'introuvable');
+  const activeDocumentType = proofData ? 'dossier' : (contractData ? 'contrat' : 'recu');
 
   // 1. ÉTAT DE CHARGEMENT (LOADER)
   if (isLoading) {
@@ -208,6 +214,179 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
               <RefreshCw className="w-4 h-4" />
               <span>Réessayer la vérification</span>
             </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // CAS 1 : DOSSIER DE PREUVE OFFICIEL (CONTRAT TERMINÉ)
+  if (proofData) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 pb-16">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-40 px-4 py-3 sm:px-8">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <Logo size="md" variant="light" showSubtitle={true} />
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full">
+                DOSSIER DE PREUVE CERTIFIÉ
+              </span>
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-2xl mx-auto px-4 py-8 flex flex-col gap-6 w-full animate-fadeIn">
+          {onNavigateBack && (
+            <button
+              onClick={onNavigateBack}
+              className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 w-fit"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Retour à LocaTrust</span>
+            </button>
+          )}
+
+          {/* Carte Principale du Dossier de Preuve */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-xl flex flex-col gap-6">
+            
+            {/* Header Badge */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-6">
+              <div className="flex items-center gap-3.5">
+                <div className="w-14 h-14 rounded-2xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-lg shadow-inner">
+                  <FileCheck className="w-7 h-7 text-purple-600" />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-purple-700">
+                    Dossier de preuve LocaTrust
+                  </span>
+                  <h1 className="text-xl sm:text-2xl font-black text-slate-900">
+                    {proofData.proofId}
+                  </h1>
+                  <span className="text-xs text-slate-500 font-semibold mt-0.5">
+                    Contrat lié : <strong>{proofData.contractNumber}</strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:items-end gap-1">
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 border border-rose-200 w-fit">
+                  Contrat Terminé (Archive Scellée)
+                </span>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Généré le {proofData.generatedAt}
+                </span>
+              </div>
+            </div>
+
+            {/* Note d'intégrité */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="flex flex-col gap-1 text-xs">
+                <span className="font-extrabold text-slate-900">
+                  Authenticité du dossier de location garantie par LocaTrust
+                </span>
+                <p className="text-slate-600 leading-relaxed text-[11px]">
+                  Ce document est une photographie documentaire officielle des données réelles enregistrées dans le registre de LocaTrust. L'ensemble des stipulations, quittances, cautions et états des lieux ont été définitivement clôturés sans possibilité de modification rétroactive.
+                </p>
+              </div>
+            </div>
+
+            {/* Section 1 : Parties au contrat (Protection de la vie privée conforme RGPD/Loi 2019-576) */}
+            <div className="flex flex-col gap-3">
+              <span className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
+                Parties Certifiées au Contrat
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-500">Propriétaire / Bailleur</span>
+                  <span className="text-sm font-black text-slate-900">{proofData.parties.ownerName}</span>
+                  <span className="text-[10px] font-extrabold text-emerald-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    Identité Vérifiée LocaTrust
+                  </span>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-500">Preneur / Locataire</span>
+                  <span className="text-sm font-black text-slate-900">{proofData.parties.tenantName}</span>
+                  <span className="text-[10px] font-extrabold text-emerald-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    Identité Vérifiée LocaTrust
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 2 : Logement concerné */}
+            <div className="flex flex-col gap-3">
+              <span className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
+                Logement
+              </span>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-start gap-3">
+                <Building2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                <div className="flex flex-col gap-1 text-xs">
+                  <span className="font-black text-slate-900 text-sm">{proofData.property.type}</span>
+                  <span className="text-slate-600">{proofData.property.location}</span>
+                  <span className="text-[10px] text-slate-400 font-semibold">Réf. bien : {proofData.property.propertyRef}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 3 : Synthèse de clôture & Finances */}
+            <div className="flex flex-col gap-3">
+              <span className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
+                Synthèse de Fin de Bail
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-center">
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col gap-1">
+                  <span className="text-[10px] font-bold text-emerald-800">Total Loyers Réglés</span>
+                  <span className="text-xs font-black text-emerald-900">
+                    {formatFCFA(proofData.financials.totalPaid)}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col gap-1">
+                  <span className="text-[10px] font-bold text-emerald-800">Caution Restituée</span>
+                  <span className="text-xs font-black text-emerald-900">
+                    {formatFCFA(proofData.financials.cautionRestitutedAmount)}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-slate-100 border border-slate-200 flex flex-col gap-1">
+                  <span className="text-[10px] font-bold text-slate-600">Restitution des clés</span>
+                  <span className="text-xs font-black text-emerald-700">
+                    ✔ Confirmée
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-slate-100 border border-slate-200 flex flex-col gap-1">
+                  <span className="text-[10px] font-bold text-slate-600">État des lieux</span>
+                  <span className="text-xs font-black text-emerald-700">
+                    ✔ Validé
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Sceau Cryptographique SHA-256 */}
+            <div className="p-4 rounded-2xl bg-slate-900 text-slate-300 font-mono text-[11px] flex flex-col gap-2">
+              <div className="flex items-center justify-between text-slate-400 text-[10px] uppercase font-bold tracking-wider">
+                <span>Empreinte d'intégrité SHA-256</span>
+                <span className="text-emerald-400">Scellé & Inaltérable</span>
+              </div>
+              <div className="break-all font-bold text-white text-xs">
+                {proofData.sha256Hash}
+              </div>
+              <span className="text-[10px] text-slate-500">
+                Token sécurisé : {proofData.token}
+              </span>
+            </div>
+
+            <div className="p-3 bg-slate-100 rounded-xl text-[10px] text-slate-500 text-center leading-relaxed">
+              <strong>LocaTrust — Registre Public de Vérification Sécurisée</strong><br />
+              Ce service confirme l'authenticité et l'intégrité du dossier de preuve sans exposer les données privées sensibles (numéros complets, emails, pièces d'identité ou coordonnées bancaires).
+            </div>
+
           </div>
         </main>
       </div>

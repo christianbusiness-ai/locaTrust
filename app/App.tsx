@@ -60,11 +60,11 @@ import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 import { PwaInstallPrompt } from '@/components/common/PwaInstallPrompt';
 
 // Composant de vérification publique QR Code
-const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' }> = ({ forcedType }) => {
+const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' | 'dossier' }> = ({ forcedType }) => {
   const navigate = useNavigate();
   const params = useParams();
   const token = params.token || '';
-  const typeParam = (params.type || forcedType || 'contrat') as 'contrat' | 'recu';
+  const typeParam = (params.type || forcedType || 'contrat') as 'contrat' | 'recu' | 'dossier';
 
   return (
     <Suspense fallback={<DashboardPageSkeleton />}>
@@ -259,6 +259,8 @@ export default function App() {
               <Route path="/verify/:token" element={<QrVerificationWrapper />} />
               <Route path="/verify/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
               <Route path="/verify/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
+              <Route path="/verify/dossier/:token" element={<QrVerificationWrapper forcedType="dossier" />} />
+              <Route path="/verification/dossier/:token" element={<QrVerificationWrapper forcedType="dossier" />} />
               <Route path="/verification/:type/:token" element={<QrVerificationWrapper />} />
 
               {/* Page d'accueil / Vitrine */}

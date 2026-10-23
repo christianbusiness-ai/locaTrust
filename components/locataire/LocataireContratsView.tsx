@@ -34,6 +34,7 @@ import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { resolveContractParties } from '@/lib/contractPartyResolver';
 import { ContractCardSkeleton } from '@/components/common/SkeletonLoader';
+import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 
 interface TenantPropertyRental {
   id: string;
@@ -66,6 +67,21 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedContractNumber, setSelectedContractNumber] = useState<string | null>(null);
+  const [generatingProofId, setGeneratingProofId] = useState<string | null>(null);
+
+  const handleGetTenantProofDossier = async (rawContract: any) => {
+    const cid = rawContract?.contract_number || rawContract?.id || 'CT-2026';
+    setGeneratingProofId(cid);
+    try {
+      const data = await collectProofDossierData(rawContract);
+      await generateOfficialProofDossierPdf(data);
+    } catch (err: any) {
+      console.error('Error generating proof dossier for tenant:', err);
+      alert('Impossible de générer le dossier de preuve : ' + (err?.message || 'Erreur inconnue'));
+    } finally {
+      setGeneratingProofId(null);
+    }
+  };
 
   useEffect(() => {
     if (initialTab) {
@@ -842,6 +858,22 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                       </>
                     ) : (
                       <>
+                        {/* Dossier de preuve officiel pour le locataire si contrat terminé (Section 1, 18, 19) */}
+                        {(rental.rawContract?.status === 'termine' ||
+                          rental.rawContract?.status === 'cloture' ||
+                          rental.rawContract?.status === 'resilie' ||
+                          rental.status === 'termine') && (
+                          <button
+                            onClick={() => handleGetTenantProofDossier(rental.rawContract || rental)}
+                            disabled={generatingProofId === (rental.rawContract?.contract_number || rental.contractNumber)}
+                            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md flex items-center gap-1.5 transition-all disabled:opacity-60"
+                            title="Obtenir mon dossier de preuve officiel certifié conforme avec QR Code"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-blue-200" />
+                            <span>📄 Obtenir mon dossier de preuve</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => setSelectedContractNumber(rental.contractNumber)}
                           className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
@@ -852,7 +884,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
                         <button
                           onClick={() => handleDownloadContract(rental.rawContract || rental)}
-                          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition-all"
+                          className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition-all"
                         >
                           <Download className="w-3.5 h-3.5" />
                           <span>Télécharger PDF</span>

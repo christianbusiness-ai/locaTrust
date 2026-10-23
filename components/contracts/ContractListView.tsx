@@ -1,6 +1,5 @@
 'use client';
 
-import React, { useState } from 'react';
 import {
   FileText,
   Clock,
@@ -13,7 +12,15 @@ import {
   AlertTriangle,
   Send,
   MessageCircle,
-  Bell
+  Bell,
+  Download,
+  RefreshCw,
+  FileCheck,
+  Eye,
+  Loader2,
+  ShieldCheck,
+  ExternalLink,
+  X
 } from 'lucide-react';
 
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
@@ -22,6 +29,9 @@ import { sendContractReminderToTenant } from '@/lib/messagingStore';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
+import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
+import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
+import { formatFCFA } from '@/lib/utils';
 
 interface ContractListViewProps {
   onSelectContract?: (contractNumber: string) => void;
@@ -37,6 +47,25 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [isLocalCreateOpen, setIsLocalCreateOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [generatingDossierId, setGeneratingDossierId] = useState<string | null>(null);
+
+  // Modal « Votre dossier de preuve est prêt »
+  const [proofReadyModal, setProofReadyModal] = useState<{
+    isOpen: boolean;
+    proofId: string;
+    contractNumber: string;
+    token: string;
+    sha256Hash: string;
+    data: any;
+  } | null>(null);
+
+  // Modal « Republier le logement »
+  const [republishModal, setRepublishModal] = useState<{
+    isOpen: boolean;
+    contract: any;
+    propertyTitle: string;
+  } | null>(null);
+
   const [confirmationModal, setConfirmationModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -95,7 +124,16 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
           bien: c.property?.title || c.property_title || 'Bien immobilier',
           quartier: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`,
           periode: c.periode || `${new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
-          statut: c.status === 'actif' || c.status === 'signe' ? 'Actif' : c.status === 'en_attente' ? 'En attente signature locataire' : c.status === 'termine' ? 'Terminé' : 'Actif',
+          statut:
+            c.status === 'actif' || c.status === 'signe'
+              ? 'Actif'
+              : c.status === 'en_attente'
+              ? 'En attente signature locataire'
+              : c.status === 'termine' || c.status === 'cloture' || c.status === 'resilie'
+              ? 'Terminé'
+              : c.status === 'fin_contrat'
+              ? 'Fin bientôt'
+              : 'Actif',
           dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
           bailleurSigne: Boolean(c.owner_signed ?? c.owner_signature ?? true),
           locataireSigne: Boolean(c.tenant_signed ?? c.tenant_signature),
@@ -121,7 +159,16 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
               bien: c.property_title || 'Bien immobilier',
               quartier: c.property_address || c.property_city || 'Abidjan',
               periode: c.periode || `${new Date().toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
-              statut: c.status === 'actif' || c.status === 'signe' ? 'Actif' : c.status === 'en_attente' ? 'En attente signature locataire' : 'Actif',
+              statut:
+                c.status === 'actif' || c.status === 'signe'
+                  ? 'Actif'
+                  : c.status === 'en_attente'
+                  ? 'En attente signature locataire'
+                  : c.status === 'termine' || c.status === 'cloture' || c.status === 'resilie'
+                  ? 'Terminé'
+                  : c.status === 'fin_contrat'
+                  ? 'Fin bientôt'
+                  : 'Actif',
               dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
               bailleurSigne: Boolean(c.owner_signature || true),
               locataireSigne: Boolean(c.tenant_signature),
@@ -139,6 +186,126 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
     }
     setContracts([]);
     setLoading(false);
+  };
+
+  // Génération officielle du Dossier de preuve pour les contrats terminés (Section 4 & 5)
+  const handleGenerateProofDossier = async (c: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setGeneratingDossierId(c.id);
+
+    try {
+      const rawContract = c.raw || {
+        contract_number: c.id,
+        id: c.id,
+        tenant_name: c.locataire,
+        property_title: c.bien,
+        property_address: c.quartier,
+        status: 'termine'
+      };
+
+      const dossierData = await collectProofDossierData(rawContract);
+      await generateOfficialProofDossierPdf(dossierData);
+
+      setProofReadyModal({
+        isOpen: true,
+        proofId: dossierData.proofId,
+        contractNumber: dossierData.contractNumber,
+        token: dossierData.token,
+        sha256Hash: dossierData.sha256Hash,
+        data: dossierData
+      });
+    } catch (err: any) {
+      console.error('Error generating proof dossier:', err);
+      alert('Impossible de générer le dossier de preuve : ' + (err?.message || 'Erreur inconnue'));
+    } finally {
+      setGeneratingDossierId(null);
+    }
+  };
+
+  // Téléchargement copie du contrat terminé
+  const handleDownloadTerminatedContract = async (c: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const rawContract = c.raw || {};
+      const leaseType = (rawContract.usage_destination || 'habitation') as 'habitation' | 'professionnel';
+      await generateOfficialContractPdf({
+        contractNumber: c.id,
+        isAgency: false,
+        ownerName: user?.user_metadata?.full_name || 'Propriétaire Bailleur',
+        ownerPhone: user?.phone || '+225 07 00 00 00 00',
+        ownerEmail: user?.email || 'bailleur@locatrust.ci',
+        tenantName: c.locataire,
+        tenantPhone: c.telephone,
+        tenantEmail: rawContract.tenant_email || 'locataire@locatrust.ci',
+        propertyTitle: c.bien,
+        propertyAddress: c.quartier,
+        rent: Number(rawContract.monthly_rent || rawContract.rent || 30000),
+        durationMonths: Number(rawContract.duration_months || 12),
+        startDate: rawContract.start_date || '01/01/2026',
+        dueDay: 5,
+        leaseType,
+        usageDestination: leaseType
+      });
+    } catch (e) {
+      console.error('Download contract error:', e);
+    }
+  };
+
+  // Confirmation Option A — Republier le logement
+  const confirmRepublishProperty = async () => {
+    if (!republishModal?.contract) return;
+    const c = republishModal.contract;
+    const propId = c.raw?.property_id || c.raw?.property?.id;
+    const propTitle = c.bien || c.raw?.property_title;
+
+    try {
+      if (propId) {
+        await supabase.from('properties').update({ status: 'disponible' }).eq('id', propId);
+      }
+
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('locatrust_properties');
+        if (stored) {
+          const list = JSON.parse(stored);
+          if (Array.isArray(list)) {
+            const updated = list.map((p: any) => {
+              if (
+                (propId && (p.id === propId || p._id === propId)) ||
+                (propTitle && p.title && p.title.toLowerCase().includes(propTitle.toLowerCase()))
+              ) {
+                return { ...p, status: 'disponible', is_published: true };
+              }
+              return p;
+            });
+            localStorage.setItem('locatrust_properties', JSON.stringify(updated));
+          }
+        }
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+      }
+
+      setRepublishModal(null);
+      setConfirmationModal({
+        isOpen: true,
+        title: 'Logement republié avec succès',
+        message: `Le logement "${propTitle}" est désormais disponible pour de futures candidatures.`,
+        details: `L'ancien contrat N° ${c.id} reste scellé et archivé définitivement dans votre historique. Une nouvelle période de location est créée.`
+      });
+    } catch (err) {
+      console.error('Error republishing property:', err);
+    }
+  };
+
+  // Option B — Conserver non publié
+  const confirmKeepUnpublished = () => {
+    const c = republishModal?.contract;
+    const propTitle = republishModal?.propertyTitle || 'Logement';
+    setRepublishModal(null);
+    setConfirmationModal({
+      isOpen: true,
+      title: 'Logement conservé non publié',
+      message: `Le logement "${propTitle}" est conservé comme non disponible / en entretien.`,
+      details: `L'ancien contrat N° ${c?.id || ''} reste archivé et scellé. Vous pourrez republier ce bien à tout moment depuis la rubrique Mes Biens.`
+    });
   };
 
   React.useEffect(() => {
@@ -394,98 +561,181 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                paginatedContracts.map((c) => (
-                  <tr
-                    key={c.id}
-                    onClick={() => onSelectContract?.(c.id)}
-                    className={`hover:bg-slate-50/80 cursor-pointer transition-colors group ${
-                      c.statut === 'En attente signature locataire' ? 'bg-amber-50/20' : ''
-                    }`}
-                  >
-                  <td className="py-4 px-5">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                paginatedContracts.map((c) => {
+                  const isTermine =
+                    c.statut === 'Terminé' ||
+                    c.raw?.status === 'termine' ||
+                    c.raw?.status === 'cloture' ||
+                    c.raw?.status === 'resilie';
+
+                  return (
+                    <tr
+                      key={c.id}
+                      onClick={() => onSelectContract?.(c.id)}
+                      className={`hover:bg-slate-50/80 cursor-pointer transition-colors group ${
                         c.statut === 'En attente signature locataire'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-blue-100/70 text-blue-600'
-                      }`}>
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors text-xs">
-                          {c.id}
-                        </span>
-                        <span className="text-[10px] text-slate-400 mt-0.5">{c.dateSignature}</span>
-                      </div>
-                    </div>
-                  </td>
+                          ? 'bg-amber-50/20'
+                          : isTermine
+                          ? 'bg-slate-50/50 hover:bg-slate-100/70'
+                          : ''
+                      }`}
+                    >
+                      <td className="py-4 px-5">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                              c.statut === 'En attente signature locataire'
+                                ? 'bg-amber-100 text-amber-700'
+                                : isTermine
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-blue-100/70 text-blue-600'
+                            }`}
+                          >
+                            {isTermine ? <FileCheck className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors text-xs">
+                              {c.id}
+                            </span>
+                            <span className="text-[10px] text-slate-400 mt-0.5">{c.dateSignature}</span>
+                          </div>
+                        </div>
+                      </td>
 
-                  <td className="py-4 px-5">
-                    <div className="flex items-center gap-3">
-                      <img src={c.avatar} alt={c.locataire} className="w-8 h-8 rounded-full object-cover border border-slate-200" />
-                      <div className="flex flex-col">
-                        <span className="font-extrabold text-slate-900 text-xs">{c.locataire}</span>
-                        <span className="text-[10px] text-slate-400">{c.role}</span>
-                      </div>
-                    </div>
-                  </td>
+                      <td className="py-4 px-5">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={c.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80'}
+                            alt={c.locataire}
+                            className="w-8 h-8 rounded-full object-cover border border-slate-200"
+                          />
+                          <div className="flex flex-col">
+                            <span className="font-extrabold text-slate-900 text-xs">{c.locataire}</span>
+                            <span className="text-[10px] text-slate-400">{c.role}</span>
+                          </div>
+                        </div>
+                      </td>
 
-                  <td className="py-4 px-5">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-slate-900 text-xs">{c.bien}</span>
-                      <span className="text-[10px] text-slate-400 mt-0.5">{c.quartier}</span>
-                    </div>
-                  </td>
+                      <td className="py-4 px-5">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-900 text-xs">{c.bien}</span>
+                          <span className="text-[10px] text-slate-400 mt-0.5">{c.quartier}</span>
+                        </div>
+                      </td>
 
-                  <td className="py-4 px-5 font-semibold text-slate-600 text-xs">
-                    {c.periode}
-                  </td>
+                      <td className="py-4 px-5 font-semibold text-slate-600 text-xs">{c.periode}</td>
 
-                  <td className="py-4 px-5">
-                    {c.statut === 'En attente signature locataire' ? (
-                      <div className="flex flex-col items-start gap-1">
-                        <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-amber-100 text-amber-900 border border-amber-300">
-                          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                          Attente sign. locataire
-                        </span>
-                        <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5">
-                          <CheckCircle2 className="w-2.5 h-2.5" /> Bailleur a signé
-                        </span>
-                      </div>
-                    ) : (
-                      <span
-                        className={`px-3 py-1 rounded-full text-[11px] font-extrabold inline-block ${
-                          c.statut === 'Actif'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : c.statut === 'Fin bientôt'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        {c.statut}
-                      </span>
-                    )}
-                  </td>
+                      <td className="py-4 px-5">
+                        {isTermine ? (
+                          <span className="px-3 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-300">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                            Contrat terminé
+                          </span>
+                        ) : c.statut === 'En attente signature locataire' ? (
+                          <div className="flex flex-col items-start gap-1">
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold inline-flex items-center gap-1 bg-amber-100 text-amber-900 border border-amber-300">
+                              <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                              Attente sign. locataire
+                            </span>
+                            <span className="text-[10px] text-emerald-700 font-bold flex items-center gap-0.5">
+                              <CheckCircle2 className="w-2.5 h-2.5" /> Bailleur a signé
+                            </span>
+                          </div>
+                        ) : (
+                          <span
+                            className={`px-3 py-1 rounded-full text-[11px] font-extrabold inline-block ${
+                              c.statut === 'Actif'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : c.statut === 'Fin bientôt'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {c.statut}
+                          </span>
+                        )}
+                      </td>
 
-                  <td className="py-4 px-5 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {c.statut === 'En attente signature locataire' && (
-                        <button
-                          onClick={(e) => handleRelance(c.id, c.locataire, c.telephone, c.bien, e)}
-                          className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-black flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
-                          title="Relancer le locataire directement dans sa messagerie interne LocaTrust"
-                        >
-                          <Send className="w-3 h-3 text-blue-600" />
-                          <span>Relancer le locataire</span>
-                        </button>
-                      )}
-                      <button className="p-1 rounded-full text-slate-400 group-hover:text-blue-600 transition-all">
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )))}
+                      <td className="py-4 px-5 text-right">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {isTermine ? (
+                            <>
+                              {/* 1. BOUTON OBLIGATOIRE DU DOSSIER DE PREUVE (Exigence 1, 4, 23) */}
+                              <button
+                                onClick={(e) => handleGenerateProofDossier(c, e)}
+                                disabled={generatingDossierId === c.id}
+                                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-60 shrink-0"
+                                title="Obtenir le dossier de preuve officiel récapitulatif certifié avec QR Code"
+                              >
+                                {generatingDossierId === c.id ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    <span>Génération...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <FileText className="w-3.5 h-3.5 text-blue-200" />
+                                    <span>📄 Obtenir mon dossier de preuve</span>
+                                  </>
+                                )}
+                              </button>
+
+                              {/* 2. REPUBLIER LE LOGEMENT (Exigence 3) */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRepublishModal({ isOpen: true, contract: c, propertyTitle: c.bien });
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center gap-1 transition-all shadow-sm active:scale-95 shrink-0"
+                                title="Republier le logement pour une nouvelle période locative indépendante"
+                              >
+                                <RefreshCw className="w-3 h-3 text-emerald-600" />
+                                <span className="hidden lg:inline">Republier</span>
+                              </button>
+
+                              {/* 3. TÉLÉCHARGER LE CONTRAT SCELLÉ */}
+                              <button
+                                onClick={(e) => handleDownloadTerminatedContract(c, e)}
+                                className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-600 transition-colors shrink-0"
+                                title="Télécharger la copie scellée du contrat"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* 4. VOIR DÉTAILS */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectContract?.(c.id);
+                                }}
+                                className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-500 transition-colors shrink-0"
+                                title="Consulter les détails du contrat clos"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          ) : c.statut === 'En attente signature locataire' ? (
+                            <button
+                              onClick={(e) => handleRelance(c.id, c.locataire, c.telephone, c.bien, e)}
+                              className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-black flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                              title="Relancer le locataire directement dans sa messagerie interne LocaTrust"
+                            >
+                              <Send className="w-3 h-3 text-blue-600" />
+                              <span>Relancer le locataire</span>
+                            </button>
+                          ) : null}
+
+                          {!isTermine && (
+                            <button className="p-1 rounded-full text-slate-400 group-hover:text-blue-600 transition-all">
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -540,6 +790,140 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* MODAL « VOTRE DOSSIER DE PREUVE EST PRÊT » (Section 17 & 18) */}
+      {proofReadyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 flex flex-col gap-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Votre dossier de preuve est prêt</h3>
+                  <p className="text-xs text-slate-500">Document certifié conforme à la clôture du bail</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setProofReadyModal(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Numéro de dossier :</span>
+                <span className="font-mono font-black text-blue-600">{proofReadyModal.proofId}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Contrat associé :</span>
+                <span className="font-bold text-slate-800">{proofReadyModal.contractNumber}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Statut :</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold text-[10px]">
+                  CONTRAT TERMINÉ & SCELLÉ
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Empreinte SHA-256 :</span>
+                <span className="font-mono text-[10px] text-slate-600 truncate max-w-[200px]" title={proofReadyModal.sha256Hash}>
+                  {proofReadyModal.sha256Hash}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-blue-50/60 border border-blue-200 text-blue-900 text-[11px] leading-relaxed">
+              <strong>Notice légale :</strong> Ce document est un dossier récapitulatif généré à partir des données enregistrées dans LocaTrust. Il ne remplace pas le contrat de bail signé.
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+              <button
+                onClick={async () => {
+                  if (proofReadyModal.data) {
+                    await generateOfficialProofDossierPdf(proofReadyModal.data);
+                  }
+                }}
+                className="w-full sm:flex-1 py-3 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95"
+              >
+                <Download className="w-4 h-4" />
+                <span>Télécharger le dossier PDF</span>
+              </button>
+
+              <a
+                href={`/verify/dossier/${proofReadyModal.token}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full sm:w-auto py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Tester QR</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL « REPUBLIER LE LOGEMENT » (Section 3) */}
+      {republishModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 flex flex-col gap-5">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <RefreshCw className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">Gestion du logement après la fin du bail</h3>
+                <p className="text-xs text-slate-500">Bien : {republishModal.propertyTitle}</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 text-emerald-950 text-xs leading-relaxed space-y-2">
+              <p>
+                <strong>La fin du contrat ne supprime pas le logement.</strong> Vous pouvez décider du sort de ce bien immobilier :
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-slate-700">
+                <li>
+                  <strong>Option A — Republier le logement :</strong> Le logement redevient disponible pour de futurs candidats et ouvre une <em>nouvelle période de location indépendante</em>.
+                </li>
+                <li>
+                  <strong>Option B — Conserver non publié :</strong> Le logement est maintenu hors ligne (travaux, rénovations ou convenance personnelle).
+                </li>
+              </ul>
+              <p className="text-[11px] text-slate-500 pt-1">
+                ⚠️ L'ancien contrat N° {republishModal.contract?.id} reste définitivement archivé et scellé dans l'historique sans modification rétroactive.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2.5 pt-2">
+              <button
+                onClick={confirmRepublishProperty}
+                className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>Option A — Republier le logement (Disponible)</span>
+              </button>
+
+              <button
+                onClick={confirmKeepUnpublished}
+                className="w-full py-2.5 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+              >
+                Option B — Conserver non publié (Non disponible)
+              </button>
+
+              <button
+                onClick={() => setRepublishModal(null)}
+                className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ACTION CONFIRMATION MODAL (Point 4) */}
       {confirmationModal && (

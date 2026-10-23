@@ -51,6 +51,7 @@ import {
   persistOwnerSignature,
   persistTenantSignature
 } from '@/lib/contractPartyResolver';
+import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 
 interface ContractDetailViewProps {
   onBack?: () => void;
@@ -496,7 +497,12 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     });
   };
 
-  const handleConfirmTermination = () => {
+  const isContractTerminated =
+    realContract?.status === 'termine' ||
+    realContract?.status === 'cloture' ||
+    realContract?.status === 'resilie';
+
+  const handleConfirmTermination = async () => {
     setIsTerminationFormOpen(false);
     
     if (endOfContractMode === 'renouvellement') {
@@ -515,6 +521,74 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     const availabilityMessage = makePropertyAvailableAfterTermination
       ? " Le logement a été automatiquement remis disponible dans le fil d'annonces de location."
       : " Le logement reste en maintenance avant relocation.";
+
+    // 1. Mettre à jour le statut du contrat à 'termine' (figeant l'historique de façon immuable)
+    try {
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('locatrust_contracts');
+        if (stored) {
+          const list = JSON.parse(stored);
+          if (Array.isArray(list)) {
+            const updated = list.map((c: any) => {
+              if (c.contract_number === contractNumber || c.id === contractNumber) {
+                return {
+                  ...c,
+                  status: 'termine',
+                  closed_at: new Date().toISOString(),
+                  caution_restituted_amount: restitutionAmount,
+                  termination_effective_date: terminationData.effectiveDate,
+                  termination_reason: terminationData.reason,
+                  deductions_amount: terminationData.deductions
+                };
+              }
+              return c;
+            });
+            localStorage.setItem('locatrust_contracts', JSON.stringify(updated));
+          }
+        }
+      }
+
+      await supabase
+        .from('contracts')
+        .update({
+          status: 'termine',
+          caution_status: restitutionAmount > 0 ? 'restitue' : 'retenu'
+        })
+        .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+
+      // 2. Gestion du logement (Option A — Republier vs Option B — Conserver non publié)
+      const propId = realContract?.property_id || (realContract?.property as any)?.id;
+      const propTitle = tenantData.propertyTitle;
+
+      if (makePropertyAvailableAfterTermination) {
+        if (propId) {
+          await supabase.from('properties').update({ status: 'disponible' }).eq('id', propId);
+        }
+        if (typeof window !== 'undefined') {
+          const storedProps = localStorage.getItem('locatrust_properties');
+          if (storedProps) {
+            const parsed = JSON.parse(storedProps);
+            if (Array.isArray(parsed)) {
+              const updatedProps = parsed.map((p: any) => {
+                if (
+                  (propId && (p.id === propId || p._id === propId)) ||
+                  (propTitle && p.title && p.title.toLowerCase().includes(propTitle.toLowerCase()))
+                ) {
+                  return { ...p, status: 'disponible', is_published: true };
+                }
+                return p;
+              });
+              localStorage.setItem('locatrust_properties', JSON.stringify(updatedProps));
+            }
+          }
+          window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+        }
+      }
+
+      window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
+    } catch (err) {
+      console.warn('Error saving contract termination:', err);
+    }
 
     setConfirmationModal({
       isOpen: true,
@@ -539,7 +613,22 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           <span>Détails du contrat</span>
         </button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* BOUTON OBLIGATOIRE DU DOSSIER DE PREUVE SI CONTRAT TERMINÉ (Section 1 & 4) */}
+          {isContractTerminated && (
+            <button
+              onClick={async () => {
+                const data = await collectProofDossierData(realContract || contractNumber);
+                await generateOfficialProofDossierPdf(data);
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all active:scale-95"
+              title="Obtenir le dossier de preuve officiel récapitulatif certifié avec QR Code"
+            >
+              <FileText className="w-4 h-4 text-blue-200" />
+              <span>📄 Obtenir mon dossier de preuve</span>
+            </button>
+          )}
+
           {isBothSigned ? (
             <button
               onClick={handleDownloadPDF}
@@ -581,21 +670,25 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             <span>🔍 Analyser le contrat</span>
           </button>
 
-          <button
-            onClick={() => setIsAvenantInitiatedOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-bold border border-slate-200 transition-all"
-          >
-            <FileText className="w-4 h-4 text-slate-600" />
-            <span>Avenant</span>
-          </button>
+          {!isContractTerminated && (
+            <>
+              <button
+                onClick={() => setIsAvenantInitiatedOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-bold border border-slate-200 transition-all"
+              >
+                <FileText className="w-4 h-4 text-slate-600" />
+                <span>Avenant</span>
+              </button>
 
-          <button
-            onClick={() => setIsTerminationFormOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-all"
-          >
-            <Clock className="w-4 h-4 text-rose-600" />
-            <span>Fin du contrat</span>
-          </button>
+              <button
+                onClick={() => setIsTerminationFormOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-all"
+              >
+                <Clock className="w-4 h-4 text-rose-600" />
+                <span>Fin du contrat</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 

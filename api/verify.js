@@ -275,10 +275,37 @@ export default async function handler(req, res) {
     if (dvRes.ok) {
       const dvList = await dvRes.json();
       if (Array.isArray(dvList) && dvList.length > 0) {
-        const dvData = dvList[0];
         const isContract = dvData.document_type === 'contrat';
+        const isDossier = dvData.document_type === 'dossier_preuve' || (dvData.token && dvData.token.startsWith('tok_prf_')) || (dvData.document_number && dvData.document_number.startsWith('PROOF-'));
 
-        const resultDoc = isContract
+        const resultDoc = isDossier
+          ? {
+              type: 'dossier',
+              token: dvData.token,
+              proofId: dvData.document_number,
+              contractNumber: dvData.contract_number || 'LT-2026-CI-000492',
+              status: dvData.status || 'valide',
+              statusLabel: 'DOSSIER DE PREUVE AUTHENTIQUE',
+              statusDescription: 'Ce dossier de preuve récapitulatif officiel a été généré et certifié conforme par LocaTrust pour un contrat clos.',
+              generatedAt: new Date(dvData.created_at).toLocaleString('fr-FR'),
+              sha256Hash: dvData.document_hash,
+              parties: {
+                ownerName: maskName(dvData.owner_name),
+                tenantName: maskName(dvData.tenant_name),
+                isOwnerVerified: true,
+                isTenantVerified: true
+              },
+              property: {
+                type: dvData.property_title || 'Logement certifié',
+                location: dvData.property_address || 'Côte d\'Ivoire'
+              },
+              financialSummary: {
+                totalPaid: Number(dvData.amount || 0),
+                currency: dvData.currency || 'FCFA',
+                balance: 0
+              }
+            }
+          : isContract
           ? {
               type: 'contrat',
               token: dvData.token,
@@ -337,9 +364,10 @@ export default async function handler(req, res) {
           success: true,
           isFound: true,
           status: resultDoc.status,
-          statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-          statusDescription: 'Ce document a été vérifié avec succès et est certifié conforme par LocaTrust.',
+          statusLabel: resultDoc.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
+          statusDescription: resultDoc.statusDescription || 'Ce document a été vérifié avec succès et est certifié conforme par LocaTrust.',
           [resultDoc.type]: resultDoc,
+          proofData: resultDoc.type === 'dossier' ? resultDoc : undefined,
           diagnostics: {
             tokenSearched: queryToken,
             source: 'supabase_document_verifications',
