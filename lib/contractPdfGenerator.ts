@@ -63,6 +63,7 @@ export interface ContractPdfData {
   durationMonths?: number;
   startDate?: string;
   rent: number;
+  cautionAmount?: number;
   cautionMonths?: number;
   advanceMonths?: number;
   chargesAmount?: number;
@@ -115,11 +116,16 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       durationMonths = isProfessional ? 24 : 12,
       startDate = data.startDate || new Date().toLocaleDateString('fr-FR'),
       rent = data.rent || 0,
-      cautionMonths = data.cautionMonths ?? (isProfessional ? 3 : 2),
+      cautionAmount: rawCautionAmount,
+      cautionMonths = data.cautionMonths ?? (rent > 0 && rawCautionAmount ? Number((rawCautionAmount / rent).toFixed(1)) : (isProfessional ? 3 : 2)),
       chargesAmount = Number(data.chargesAmount ?? (data as any)?.charges ?? 0),
       dueDay = data.dueDay || 5,
       authorizedActivity = isProfessional ? (data.authorizedActivity || 'Activités commerciales et professionnelles') : undefined
     } = data;
+
+    const effectiveCautionAmount = rawCautionAmount !== undefined && rawCautionAmount !== null
+      ? Number(rawCautionAmount)
+      : (rent * cautionMonths);
 
     const rawEquipments = equipments || amenities || [];
     const equipmentsList = Array.isArray(rawEquipments)
@@ -178,7 +184,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       propertyTitle,
       propertyAddress,
       rentAmount: rent,
-      cautionAmount: rent * cautionMonths
+      cautionAmount: effectiveCautionAmount
     });
 
     // QR Code officiel scannable calibré en haut à droite avec quiet zone et AUCUN chevauchement
@@ -343,18 +349,18 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE COMMERCIAL (ART. 116 AUDCG)', 18, 122);
+      doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE COMMERCIAL', 18, 122);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Garantie commerciale fixée par accord des parties (${cautionMonths} mois) en couverture des dégradations et charges.`, 18, 126);
+      doc.text(`Garantie commerciale convenue entre les parties (${cautionMonths} mois) en couverture des obligations locatives.`, 18, 126);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
       doc.roundedRect(145, 118.5, 42, 7.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(180, 83, 9);
-      doc.text(formatFCFA(rent * cautionMonths), 149, 123.5);
+      doc.text(formatFCFA(effectiveCautionAmount), 149, 123.5);
 
       // Article 5 : Charges d'exploitation
       doc.setDrawColor(226, 232, 240);
@@ -523,7 +529,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(180, 83, 9);
-      doc.text(formatFCFA(rent * cautionMonths), 149, 123.5);
+      doc.text(formatFCFA(effectiveCautionAmount), 149, 123.5);
 
       // Article 5 : Charges
       doc.setDrawColor(226, 232, 240);

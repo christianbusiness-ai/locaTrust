@@ -57,6 +57,14 @@ import {
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import {
+  normalizeLeaseType,
+  validateDepositRule,
+  formatOfficialDepositClause,
+  DepositConfigMode,
+  NormalizedLeaseType,
+  getLeaseTypeLabel
+} from '@/lib/leaseCautionManager';
 
 interface LegalContractGeneratorModalProps {
   isOpen: boolean;
@@ -202,7 +210,17 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   // Financials
   const [rent, setRent] = useState<number>(initialData?.rentAmount || 150000);
   const [advanceMonths, setAdvanceMonths] = useState<number>(2);
-  const [cautionMonths, setCautionMonths] = useState<number>(2);
+  const [cautionMonths, setCautionMonths] = useState<number>(() => {
+    const isPro = initialData?.leaseType === 'professionnel' || initialData?.usageDestination === 'professionnel';
+    return isPro ? 3 : 2;
+  });
+  const [depositMode, setDepositMode] = useState<DepositConfigMode>('MONTHS');
+  const [customDepositAmount, setCustomDepositAmount] = useState<number>(() => {
+    if (initialData?.cautionAmount) return initialData.cautionAmount;
+    const baseRent = initialData?.rentAmount || 150000;
+    const isPro = initialData?.leaseType === 'professionnel' || initialData?.usageDestination === 'professionnel';
+    return isPro ? baseRent * 3 : baseRent * 2;
+  });
   const [chargesAmount, setChargesAmount] = useState<number>(
     initialData?.chargesAmount ?? (initialData as any)?.charges ?? 0
   );
@@ -213,6 +231,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [leaseType, setLeaseType] = useState<LeaseType>(
     initialData?.leaseType || initialData?.usageDestination || 'habitation'
   );
+
+  const effectiveCautionAmount = depositMode === 'MONTHS' ? Math.round(rent * cautionMonths) : customDepositAmount;
+  const effectiveCautionMonths = rent > 0 ? Number((effectiveCautionAmount / rent).toFixed(2)) : cautionMonths;
+  const normalizedLegalLeaseType: NormalizedLeaseType = leaseType === 'professionnel' ? 'PROFESSIONAL' : 'RESIDENTIAL';
+
+  const depositValidation = validateDepositRule({
+    leaseType: normalizedLegalLeaseType,
+    monthlyRent: rent,
+    depositAmount: effectiveCautionAmount,
+    depositMonths: effectiveCautionMonths,
+    configMode: depositMode
+  });
   const [propertyType, setPropertyType] = useState<string>(initialData?.propertyType || '');
   const [authorizedActivity, setAuthorizedActivity] = useState<string>(initialData?.authorizedActivity || '');
   const [ownerDestinationAuthorized, setOwnerDestinationAuthorized] = useState<boolean>(
@@ -671,7 +701,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
   if (!isOpen) return null;
 
-  const totalCautionRequired = rent * cautionMonths;
+  const totalCautionRequired = effectiveCautionAmount;
   const isCautionFullyPaid = cautionPaidAmount >= totalCautionRequired;
 
   // --------------------------------------------------------------------------
@@ -685,7 +715,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       tenantRequestsText: tenantCustomRequests,
       propertyRulesText: propertySpecificRules,
       advanceMonths,
-      cautionMonths,
+      cautionMonths: effectiveCautionMonths,
       rent,
       city: propertyCity,
       commune: propertyCommune,
@@ -700,7 +730,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     tenantCustomRequests,
     propertySpecificRules,
     advanceMonths,
-    cautionMonths,
+    effectiveCautionMonths,
     rent,
     propertyCity,
     propertyCommune,
@@ -804,6 +834,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   // Vérification de compatibilité globale pour la continuation
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!depositValidation.valid) {
+      alert(`⛔ ${depositValidation.error}`);
+      return;
+    }
     if (!analysisReport.isGlobalCompliant) {
       alert(
         `⛔ ALERTE LOCATRUST CONFORMITÉ : ${analysisReport.blockingCount} clause(s) sont incompatibles avec les dispositions impératives du droit applicable. Veuillez les corriger ou les supprimer avant de poursuivre.`
@@ -853,7 +887,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         propertyTitle,
         propertyAddress,
         rentAmount: rent,
-        cautionAmount: rent * cautionMonths
+        cautionAmount: effectiveCautionAmount
       });
       setActiveVerificationToken(reg.token);
     } catch (err) {
@@ -867,7 +901,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         propertyTitle,
         propertyAddress,
         rentAmount: rent,
-        cautionAmount: rent * cautionMonths,
+        cautionAmount: effectiveCautionAmount,
         durationMonths,
         startDate,
         ownerName,
@@ -988,7 +1022,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           tenant_id: finalTenantId,
           property_id: finalPropId,
           monthly_rent: Number(rent || 0),
-          caution_amount: Number(rent * cautionMonths || 0),
+          caution_amount: Number(effectiveCautionAmount || 0),
+          deposit_amount: Number(effectiveCautionAmount || 0),
           charges_amount: Number(chargesAmount || 0),
           duration_months: Number(durationMonths || 12),
           start_date: startDate || new Date().toISOString().split('T')[0],
@@ -1009,8 +1044,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               contract_id: generatedContractUuid,
               tenant_id: finalTenantId,
               owner_id: finalOwnerId,
-              amount_requested: Number(rent * cautionMonths || 0),
-              amount_paid: Number(rent * cautionMonths || 0),
+              amount_requested: Number(effectiveCautionAmount || 0),
+              amount_paid: Number(effectiveCautionAmount || 0),
               status: 'caution_a_confirmer'
             });
           } catch {}
@@ -1021,7 +1056,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               actorId: finalOwnerId,
               targetUserId: finalTenantId,
               propertyId: finalPropId,
-              data: { contractNumber, rent, caution: rent * cautionMonths }
+              data: { contractNumber, rent, caution: effectiveCautionAmount }
             });
           } catch {}
         }
@@ -1040,13 +1075,21 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           property_id: finalPropId || (initialData as any)?.propertyId || (initialData as any)?.property_id,
           tenant_id: finalTenantId || targetTenantId,
           owner_id: finalOwnerId || targetOwnerId,
+          lease_type: normalizedLegalLeaseType,
+          usage_destination: leaseType,
+          deposit_amount: effectiveCautionAmount,
+          deposit_months: effectiveCautionMonths,
+          deposit_configuration_mode: depositMode,
+          deposit_currency: 'FCFA',
+          deposit_rules_version: '2019-576-v1',
         property: {
           id: (initialData as any)?.propertyId || (initialData as any)?.property_id || `prop_${Date.now()}`,
           title: propertyTitle,
           city: propertyCity,
           commune: propertyCommune,
           rent: rent,
-          caution: rent * cautionMonths,
+          caution: effectiveCautionAmount,
+          deposit_amount: effectiveCautionAmount,
           usage_destination: leaseType,
           surface: propertySurface,
           rooms: propertyRooms,
@@ -1066,8 +1109,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           phone: tenantPhone
         },
         rent,
-        caution: rent * cautionMonths,
-        caution_amount: rent * cautionMonths,
+        caution: effectiveCautionAmount,
+        caution_amount: effectiveCautionAmount,
         charges: chargesAmount,
         duration_months: durationMonths,
         start_date: startDate,
@@ -1193,7 +1236,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       durationMonths,
       startDate,
       rent,
-      cautionMonths,
+      cautionAmount: effectiveCautionAmount,
+      cautionMonths: effectiveCautionMonths,
+      advanceMonths,
       chargesAmount,
       dueDay,
       ownerSignatureUrl,
@@ -1519,17 +1564,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 </div>
               </div>
 
-              {/* Grille financière 5 colonnes avec Charges Mensuelles personnalisables */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 sm:gap-3 items-end">
+              {/* Grille financière principale : Loyer, Charges, Avance & Échéance */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 items-end">
                 <div className="flex flex-col">
                   <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Loyer Mensuel HC (FCFA)">
-                    Loyer HC (FCFA)
+                    Loyer HC (FCFA) *
                   </label>
                   <input
                     type="number"
                     required
+                    min="1"
                     value={rent}
-                    onChange={(e) => setRent(Number(e.target.value))}
+                    onChange={(e) => setRent(Math.max(0, Number(e.target.value)))}
                     className="w-full h-10 px-3 rounded-xl border border-amber-300 font-extrabold text-xs bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                   />
                 </div>
@@ -1554,6 +1600,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   <input
                     type="number"
                     required
+                    min="1"
+                    max={leaseType === 'habitation' ? 2 : undefined}
                     value={advanceMonths}
                     onChange={(e) => setAdvanceMonths(Number(e.target.value))}
                     className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
@@ -1564,22 +1612,6 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   />
                 </div>
                 <div className="flex flex-col">
-                  <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Mois de Caution (Max 2)">
-                    Mois de Caution (Max 2)
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    value={cautionMonths}
-                    onChange={(e) => setCautionMonths(Number(e.target.value))}
-                    className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
-                      leaseType === 'habitation' && cautionMonths > 2
-                        ? 'border-rose-500 text-rose-900 bg-rose-50'
-                        : 'border-amber-300 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500'
-                    }`}
-                  />
-                </div>
-                <div className="flex flex-col col-span-2 sm:col-span-1">
                   <label className="font-bold text-amber-950 block mb-1 text-[11px] sm:text-xs truncate" title="Jour d'échéance">
                     Jour d'échéance
                   </label>
@@ -1593,6 +1625,147 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     <option value={1}>Le 01 du mois</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Bloc Dédié : Dépôt de Garantie / Caution (Habitation vs Professionnel / Commercial) */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-white border border-amber-200/80 flex flex-col gap-3 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-amber-700 shrink-0" />
+                    <div>
+                      <span className="font-bold text-slate-900 text-xs block">
+                        Dépôt de Garantie (Caution) — Régime : {leaseType === 'professionnel' ? 'Bail Professionnel / Commercial' : 'Bail d\'Habitation'}
+                      </span>
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        {leaseType === 'habitation'
+                          ? 'Plafond légal strict de 2 mois de loyer (Loi n° 2019-576 Art. 416)'
+                          : 'Régime contractuel entre parties — saisie libre en mois ou montant'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bascule Mode : En mois vs Montant personnalisé */}
+                  <div className="inline-flex rounded-lg p-0.5 bg-slate-100 border border-slate-200 self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setDepositMode('MONTHS')}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
+                        depositMode === 'MONTHS'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      En nombre de mois
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDepositMode('CUSTOM_AMOUNT');
+                        if (!customDepositAmount || customDepositAmount === 0) {
+                          setCustomDepositAmount(rent * cautionMonths);
+                        }
+                      }}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
+                        depositMode === 'CUSTOM_AMOUNT'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Montant personnalisé (FCFA)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Saisie selon le mode sélectionné */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                  {depositMode === 'MONTHS' ? (
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1 text-[11px]">
+                        Nombre de mois de caution {leaseType === 'habitation' ? '(Maximum 2 mois)' : ''}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        max={leaseType === 'habitation' ? 2 : undefined}
+                        value={cautionMonths}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setCautionMonths(val);
+                          setCustomDepositAmount(Math.round(rent * val));
+                        }}
+                        className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
+                          leaseType === 'habitation' && cautionMonths > 2
+                            ? 'border-rose-500 text-rose-900 bg-rose-50 focus:ring-2 focus:ring-rose-500/20'
+                            : 'border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+                        }`}
+                        placeholder={leaseType === 'habitation' ? 'Ex: 2 mois' : 'Ex: 3 mois'}
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1 text-[11px]">
+                        Montant du dépôt de garantie (en FCFA)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="10000"
+                        value={customDepositAmount}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setCustomDepositAmount(val);
+                          if (rent > 0) {
+                            setCautionMonths(Number((val / rent).toFixed(2)));
+                          }
+                        }}
+                        className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
+                          leaseType === 'habitation' && customDepositAmount > rent * 2
+                            ? 'border-rose-500 text-rose-900 bg-rose-50 focus:ring-2 focus:ring-rose-500/20'
+                            : 'border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+                        }`}
+                        placeholder="Ex: 1 500 000"
+                      />
+                    </div>
+                  )}
+
+                  {/* Synthèse du calcul en temps réel */}
+                  <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/60 text-xs flex flex-col justify-center">
+                    <span className="text-[11px] text-amber-900 font-medium">Synthèse de la garantie enregistrée :</span>
+                    <span className="font-black text-amber-950 text-sm">
+                      {new Intl.NumberFormat('fr-FR').format(effectiveCautionAmount)} FCFA
+                      <span className="text-xs font-semibold text-amber-800 ml-1.5">
+                        — soit {effectiveCautionMonths} mois de loyer
+                      </span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Bannière de validation ou mention d'information juridique contextuelle */}
+                {!depositValidation.valid ? (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-start gap-2.5 animate-fadeIn">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <strong className="block font-bold">Dépassement de plafond de garantie</strong>
+                      <span>{depositValidation.error}</span>
+                    </div>
+                  </div>
+                ) : leaseType === 'professionnel' ? (
+                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-950 text-xs flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 text-[11px] leading-relaxed">
+                      <strong className="block font-bold text-blue-900 mb-0.5">Régime juridique commercial</strong>
+                      <span>{depositValidation.infoNote}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-[11px] flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-semibold">
+                      Garantie conforme à la Loi ivoirienne n° 2019-576 (Art. 416 : plafonné à 2 mois maximum).
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 

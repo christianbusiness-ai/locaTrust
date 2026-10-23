@@ -118,18 +118,26 @@ export interface Property {
   };
 }
 
+export type LegalLeaseType = 'RESIDENTIAL' | 'PROFESSIONAL' | 'UNKNOWN' | 'habitation' | 'professionnel';
+export type DepositConfigMode = 'MONTHS' | 'CUSTOM_AMOUNT';
+
 export interface Contract {
   id: string;
   contract_number: string;
   property_id: string;
   tenant_id: string;
   owner_id: string;
-  lease_type?: 'habitation' | 'professionnel';
+  lease_type?: LegalLeaseType;
   usage_destination?: 'habitation' | 'professionnel';
   authorized_activity?: string;
   duration_months: number;
   rent: number;
   caution: number;
+  deposit_amount?: number;
+  deposit_months?: number;
+  deposit_configuration_mode?: DepositConfigMode;
+  deposit_currency?: string;
+  deposit_rules_version?: string;
   charges: number;
   payment_due_day: number;
   notice_period_days: number;

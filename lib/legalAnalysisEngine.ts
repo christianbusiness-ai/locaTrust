@@ -1297,30 +1297,30 @@ export function runLegalAnalysisEngine(params: {
       });
     }
 
-    // Dépôt de garantie / Caution (Art. 416 : Plafonné à 2 mois)
+    // Dépôt de garantie / Caution pour bail d'habitation (Art. 416 Loi n° 2019-576 : Plafonné à 2 mois)
     if (cautionMonths > 2) {
       analyzedClauses.push({
         id: 'fin_caution_cap',
-        rawText: `Dépôt de garantie / caution exigé de ${cautionMonths} mois`,
+        rawText: `Dépôt de garantie / caution saisi : ${cautionMonths} mois`,
         sourceParty: 'financier',
         category: 'loyer_caution',
         categoryLabel: 'Loyer et paiement',
         status: 'non_conforme',
         alertLevel: 3,
-        title: 'Plafond légal du dépôt de garantie dépassé (Max 2 mois - Art. 416)',
+        title: 'Plafond légal du dépôt de garantie dépassé (Bail d\'Habitation)',
         understoodMeaning: `Exigence de ${cautionMonths} mois de dépôt de garantie (caution).`,
         explanation:
-          'Le montant du dépôt de garantie (caution) exigible par le bailleur ne peut en aucun cas excéder deux (2) mois de loyer principal hors charges (Article 416 de la Loi n° 2019-576).',
+          'Pour un bail à usage d\'habitation, le dépôt de garantie ne peut pas dépasser deux mois de loyer conformément aux règles applicables (Article 416 de la Loi n° 2019-576).',
         legalBasis: {
           law: 'Loi n° 2019-576 du 26 juin 2019 (Code de la Construction et de l\'Habitat)',
           article: 'Article 416 (Plafonnement impératif du dépôt de garantie)',
           sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
           verified: true
         },
-        recommendedAction: 'Ajuster les mois de caution à deux (2) mois au maximum.',
+        recommendedAction: 'Ajuster le dépôt de garantie à deux (2) mois de loyer au maximum.',
         proposedCorrection: 'Caution fixée à 2 mois de loyer maximum.',
         reformulatedText:
-          'Le dépôt de garantie est plafonné à deux (02) mois de loyer hors charges conformément à l\'Article 416 de la Loi n° 2019-576.',
+          'Le dépôt de garantie est fixé à deux (02) mois de loyer hors charges conformément à l\'Article 416 de la Loi n° 2019-576.',
         fieldSource: 'cautionMonths'
       });
     }
@@ -1328,50 +1328,51 @@ export function runLegalAnalysisEngine(params: {
     if (advanceMonths <= 2 && cautionMonths <= 2) {
       analyzedClauses.push({
         id: 'fin_caps_compliant',
-        rawText: `Avance : ${advanceMonths} mois • Caution : ${cautionMonths} mois (Conformes aux plafonds légaux)`,
+        rawText: `Avance : ${advanceMonths} mois • Caution : ${cautionMonths} mois (Conformes aux règles)`,
         sourceParty: 'financier',
         category: 'loyer_caution',
         categoryLabel: 'Loyer et paiement',
         status: 'conforme',
-        title: 'Conditions financières conformes aux plafonds légaux (Art. 415 & 416)',
+        title: 'Dépôt de garantie et avance conformes (Bail d\'habitation)',
         understoodMeaning:
-          `Avance de ${advanceMonths} mois et caution de ${cautionMonths} mois conformes aux limites légales de la Loi 2019-576.`,
+          `Avance de ${advanceMonths} mois et caution de ${cautionMonths} mois conformes aux limites légales applicables.`,
         explanation:
-          'Le montant de l\'avance et de la caution respecte scrupuleusement les plafonds impératifs des Articles 415 et 416.',
+          'Pour un bail à usage d\'habitation, le dépôt de garantie et l\'avance respectent les plafonds de la réglementation en vigueur.',
         legalBasis: {
           law: 'Loi n° 2019-576 du 26 juin 2019',
           article: 'Articles 415 et 416',
           sourceHierarchy: 'Droit National Ivoirien (Ordre Public)',
           verified: true
         },
-        recommendedAction: 'Conditions financières validées.',
+        recommendedAction: 'Conditions financières d\'habitation validées.',
         reformulatedText:
-          `Le preneur verse une avance de ${advanceMonths} mois et un dépôt de garantie de ${cautionMonths} mois conformément aux dispositions légales.`,
+          `Le preneur verse une avance de ${advanceMonths} mois et un dépôt de garantie de ${cautionMonths} mois conformément aux dispositions légales applicables.`,
         fieldSource: 'cautionMonths'
       });
     }
   } else {
-    // Régime Professionnel : Liberté contractuelle (AUDCG OHADA Art. 116)
+    // Régime Professionnel / Commercial : Configuration contractuelle des parties
+    // NOTE LÉGALE STRICTE : Ne jamais affirmer arbitrairement que "3 mois est légalement autorisé par l'AUDCG".
     analyzedClauses.push({
-      id: 'fin_ohada_freedom',
-      rawText: `Garantie / Avance convenue : ${advanceMonths} mois d'avance, ${cautionMonths} mois de dépôt de garantie`,
+      id: 'fin_pro_contractual',
+      rawText: `Garantie / Avance prévue au contrat : ${advanceMonths} mois d'avance, ${cautionMonths} mois de dépôt de garantie`,
       sourceParty: 'financier',
       category: 'loyer_caution',
-      categoryLabel: 'Loyer et garanties commerciales',
+      categoryLabel: 'Loyer et garanties contractuelles',
       status: 'conforme',
-      title: 'Conditions financières fixées selon la liberté contractuelle (AUDCG OHADA Art. 116)',
-      understoodMeaning: `Conditions financières fixées d'un commun accord entre les parties (${advanceMonths} mois d'avance, ${cautionMonths} mois de garantie).`,
+      title: 'Garantie contractuelle convenue (Bail Professionnel)',
+      understoodMeaning: `Garantie prévue au contrat équivalente à ${cautionMonths} mois de loyer (${advanceMonths} mois d'avance).`,
       explanation:
-        'En matière de bail professionnel sous l\'Acte Uniforme OHADA (AUDCG, Article 116), le loyer et les garanties sont librement convenus entre les parties. Le plafonnement à deux (2) mois propre au bail d\'habitation ne s\'applique pas de plein droit aux relations commerciales.',
+        'Le contrat prévoit une garantie équivalente à trois mois de loyer (ou selon accord). Le montant de la garantie pour un bail à usage professionnel doit être conforme aux dispositions applicables et aux clauses du contrat. En cas de doute, faites vérifier le montant par un professionnel du droit.',
       legalBasis: {
-        law: 'Acte Uniforme OHADA portant sur le Droit Commercial Général (AUDCG)',
-        article: 'Article 116 (Liberté de fixation du loyer et des garanties)',
-        sourceHierarchy: 'Droit Commercial Communautaire OHADA',
+        law: 'Bail Professionnel / Commercial',
+        article: 'Clauses contractuelles applicables',
+        sourceHierarchy: 'Droit commercial & Accord des parties',
         verified: true
       },
-      recommendedAction: 'Conditions financières commerciales validées.',
+      recommendedAction: 'Vérifier la conformité de la clause avec les dispositions applicables au bail professionnel.',
       reformulatedText:
-        `Les conditions financières convenues s'établissent à ${advanceMonths} mois d'avance et ${cautionMonths} mois de garantie conformément à l'Article 116 de l'AUDCG OHADA.`,
+        `Le dépôt de garantie commercial est fixé d'un commun accord à ${cautionMonths} mois de loyer principal, avec une avance convenue de ${advanceMonths} mois.`,
       fieldSource: 'cautionMonths'
     });
   }

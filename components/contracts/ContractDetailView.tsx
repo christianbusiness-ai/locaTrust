@@ -488,7 +488,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       durationMonths: tenantData.duration,
       startDate: tenantData.startDate,
       rent: tenantData.rent,
-      cautionMonths: 2,
+      cautionAmount: tenantData.caution,
+      cautionMonths: tenantData.rent > 0 ? Number((tenantData.caution / tenantData.rent).toFixed(2)) : (realContract?.caution_months || 2),
       chargesAmount: tenantData.charges,
       dueDay: 5,
       ownerSignatureUrl: resolvedParties.owner.signatureUrl || ownerSignatureUrl,
@@ -1186,8 +1187,13 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
               <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex items-center justify-between">
                 <div>
-                  <h5 className="font-extrabold text-slate-900">ARTICLE 4 : CAUTION (DÉPÔT DE GARANTIE)</h5>
-                  <p className="text-[11px] text-slate-600">Restituée dans un délai maximal d'un (01) mois après la fin du bail.</p>
+                  <h5 className="font-extrabold text-slate-900">
+                    {leaseType === 'professionnel' ? 'ARTICLE 4 : DÉPÔT DE GARANTIE COMMERCIAL' : 'ARTICLE 4 : CAUTION (DÉPÔT DE GARANTIE)'}
+                  </h5>
+                  <p className="text-[11px] text-slate-600">
+                    {tenantData.rent > 0 ? `Montant correspondant à ${(tenantData.caution / tenantData.rent).toFixed(1)} mois de loyer. ` : ''}
+                    Restituée selon les conditions contractuelles après l'état des lieux de sortie.
+                  </p>
                 </div>
                 <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm">
                   {formatFCFA(tenantData.caution)}

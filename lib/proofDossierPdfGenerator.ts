@@ -36,6 +36,7 @@ export interface ProofDossierData {
   rentAmount: number;
   chargesAmount: number;
   cautionAmount: number;
+  cautionMonths?: number;
   paymentDueDay: number;
   ownerSignatureUrl?: string | null;
   tenantSignatureUrl?: string | null;
@@ -202,9 +203,13 @@ export async function collectProofDossierData(contractOrId: any): Promise<ProofD
     }
   }
 
-  const cautionAmount = Number(rawContract?.caution_amount || rawContract?.caution || rentAmount * 2);
+  const cautionAmount = Number(rawContract?.deposit_amount || rawContract?.caution_amount || rawContract?.caution || (rentAmount * 2));
+  const cautionMonths = rawContract?.deposit_months || (rentAmount > 0 && cautionAmount > 0 ? Number((cautionAmount / rentAmount).toFixed(1)) : 2);
   const paymentDueDay = rawContract?.payment_due_day || 5;
-  const leaseType = rawContract?.lease_type === 'professionnel' ? 'Bail à Usage Professionnel (AUDCG OHADA)' : 'Bail d\'Habitation (Loi n° 2019-576)';
+  const rawLt = String(rawContract?.lease_type || rawContract?.usage_destination || '').toUpperCase();
+  const leaseType = (rawLt === 'PROFESSIONAL' || rawLt === 'PROFESSIONNEL')
+    ? 'Bail à Usage Professionnel / Commercial (AUDCG OHADA)'
+    : (rawLt === 'UNKNOWN' ? 'Type de bail non qualifié' : 'Bail d\'Habitation (Loi n° 2019-576)');
 
   // Signatures
   const ownerSignatureUrl = resolvedParties.ownerSignatureUrl || rawContract?.owner_signature || rawContract?.owner_signature_url;
@@ -467,6 +472,7 @@ export async function collectProofDossierData(contractOrId: any): Promise<ProofD
     rentAmount,
     chargesAmount,
     cautionAmount,
+    cautionMonths,
     paymentDueDay,
     ownerSignatureUrl,
     tenantSignatureUrl,
@@ -762,7 +768,7 @@ export async function generateOfficialProofDossierPdf(data: ProofDossierData): P
     { label: 'Période du bail :', val: `Du ${data.startDate} au ${data.endDate} (${data.durationMonths} mois)` },
     { label: 'Loyer mensuel hors charges :', val: formatFCFA(data.rentAmount) },
     { label: 'Charges mensuelles :', val: formatFCFA(data.chargesAmount) },
-    { label: 'Caution consignée à l\'entrée :', val: formatFCFA(data.cautionAmount) },
+    { label: 'Caution consignée à l\'entrée :', val: data.cautionMonths ? `${data.cautionMonths} mois — ${formatFCFA(data.cautionAmount)}` : formatFCFA(data.cautionAmount) },
     { label: 'Échéance exigible :', val: `Le ${data.paymentDueDay} de chaque mois` }
   ];
 
@@ -801,7 +807,7 @@ export async function generateOfficialProofDossierPdf(data: ProofDossierData): P
   doc.roundedRect(margin, cursorY, contentWidth, 27, 2, 2, 'FD');
 
   const cautionCols = [
-    { label: 'Montant versé à l\'entrée :', val: formatFCFA(data.cautionAmount) },
+    { label: 'Montant versé à l\'entrée :', val: data.cautionMonths ? `${data.cautionMonths} mois — ${formatFCFA(data.cautionAmount)}` : formatFCFA(data.cautionAmount) },
     { label: 'Statut en fin de bail :', val: data.cautionStatus },
     { label: 'Date de restitution :', val: data.cautionRestitutionDate || data.endDate },
     { label: 'Montant restitué au preneur :', val: formatFCFA(data.cautionRestitutedAmount), boldColor: [5, 150, 105] },

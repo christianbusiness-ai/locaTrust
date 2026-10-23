@@ -6,8 +6,8 @@
  * - Invalidation contrôlée des jetons et redirection vers /login
  */
 
-// Inactivité maximale autorisée : 24 heures (86 400 000 ms)
-export const MAX_INACTIVITY_MS = 24 * 60 * 60 * 1000;
+// Inactivité maximale autorisée : 5 minutes d'inactivité ou fermeture/sortie (300 000 ms)
+export const MAX_INACTIVITY_MS = 5 * 60 * 1000;
 
 export const SESSION_KEYS = {
   LAST_ACTIVITY: 'locatrust_last_activity_time',

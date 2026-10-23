@@ -20,7 +20,6 @@ export const LoginPage: React.FC = () => {
 
   const { user, profile, loading: authLoading, signIn, signOut, resendVerificationEmail } = useAuth();
   const from = (location.state as any)?.from?.pathname || '/dashboard';
-  const isExpiredParam = location.search.includes('session_expired') || location.search.includes('expired');
 
   // Traitement d'expiration de session & gestion de compte actif
   useEffect(() => {
@@ -98,18 +97,6 @@ export const LoginPage: React.FC = () => {
         {/* Carte de connexion compacte et centrée */}
         <div className="w-full bg-white p-6 sm:p-8 rounded-3xl shadow-xl shadow-slate-200/60 border border-slate-200/80">
           
-          {isExpiredParam && (
-            <div className="mb-4 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold animate-fadeIn flex items-start gap-2.5">
-              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-extrabold">Session expirée pour votre sécurité</p>
-                <p className="font-medium text-[11px] text-amber-700 mt-0.5">
-                  Votre session s'est clôturée après 24 heures d'inactivité. Veuillez saisir vos identifiants pour continuer.
-                </p>
-              </div>
-            </div>
-          )}
-
           {user && !isSessionExpired() && (
             <div className="mb-4 p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-950 text-xs font-bold animate-fadeIn">
               <div className="flex items-center justify-between gap-2">

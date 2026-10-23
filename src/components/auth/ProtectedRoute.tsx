@@ -9,14 +9,31 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   const location = useLocation();
 
   useEffect(() => {
-    if (user) {
-      if (isSessionExpired()) {
+    const checkExpiry = () => {
+      if (user && isSessionExpired()) {
         clearSecuritySession();
         signOut().catch(() => {});
-      } else {
+      } else if (user) {
         recordUserActivity();
       }
-    }
+    };
+
+    checkExpiry();
+
+    // Vérification automatique au retour dans le navigateur après mise en arrière-plan
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkExpiry();
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', checkExpiry);
+
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', checkExpiry);
+    };
   }, [user, location.pathname, signOut]);
 
   if (loading) {
@@ -24,7 +41,7 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   }
 
   if (!user || isSessionExpired()) {
-    return <Navigate to="/login?reason=session_expired" state={{ from: location }} replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return <>{children}</>;
