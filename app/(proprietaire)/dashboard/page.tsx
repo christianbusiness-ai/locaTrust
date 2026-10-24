@@ -77,11 +77,12 @@ export default function ProprietaireDashboardPage({
     created_at: new Date().toISOString()
   });
 
-  // Active Navigation Tab State
+  // Active Navigation Tab State (Les propriétaires n'ont jamais accès aux mandants ni à l'équipe agence)
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      if (params.get('tab')) return params.get('tab')!;
+      const tab = params.get('tab');
+      if (tab && !['owners', 'mandants', 'team'].includes(tab)) return tab;
       if (params.get('contract')) return 'contracts';
     }
     return 'overview';
@@ -119,6 +120,11 @@ export default function ProprietaireDashboardPage({
 
   // Handle Tab Change
   const handleSelectTab = (tabId: string) => {
+    // Interdiction stricte de l'accès mandants / team agence pour un propriétaire
+    if (['owners', 'mandants', 'team'].includes(tabId)) {
+      setActiveTab('overview');
+      return;
+    }
     setActiveTab(tabId);
     setSelectedContractId(null);
     if (typeof window !== 'undefined') {

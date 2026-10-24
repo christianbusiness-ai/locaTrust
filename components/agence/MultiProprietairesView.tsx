@@ -19,61 +19,34 @@ import {
   Unlink,
   Home,
   ChevronRight,
-  ExternalLink
+  ExternalLink,
+  ShieldAlert,
+  Trash2
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { Property } from '@/types/database.types';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
+import {
+  AgencyMandate,
+  getAgencyMandates,
+  saveAgencyMandate,
+  deleteAgencyMandate,
+  syncAgencyMandatesFromDb
+} from '@/lib/agencyMandatesStore';
 
-export interface ManagedOwner {
-  id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  properties_count: number;
-  active_tenants: number;
-  total_monthly_rent: number;
-  mandate_type: 'exclusif' | 'simple';
-  joined_date: string;
-}
+export type ManagedOwner = AgencyMandate;
 
 export const MultiProprietairesView: React.FC = () => {
+  const { user, profile } = useAuth();
+  const agencyId = user?.id;
+  const isAgency = profile?.account_type === 'agence';
+
   const [owners, setOwners] = useState<ManagedOwner[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_agency_mandates');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            // Filtrer les anciens faux mandants de démo
-            return parsed.filter(
-              (o: any) =>
-                o.id !== 'owner_101' &&
-                o.id !== 'owner_102' &&
-                o.id !== 'owner_103' &&
-                o.id !== 'owner_104'
-            );
-          }
-        }
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
+    return agencyId ? (getAgencyMandates(agencyId) as ManagedOwner[]) : [];
   });
 
-  const [properties, setProperties] = useState<Property[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_properties');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) return parsed;
-        }
-      } catch {}
-    }
-    return [];
-  });
-
+  const [properties, setProperties] = useState<Property[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
   const [selectedOwnerForDetails, setSelectedOwnerForDetails] = useState<ManagedOwner | null>(null);
@@ -86,25 +59,89 @@ export const MultiProprietairesView: React.FC = () => {
   const [newPhone, setNewPhone] = useState('');
   const [newMandate, setNewMandate] = useState<'exclusif' | 'simple'>('exclusif');
 
-  // Écoute des mises à jour des propriétés
+  // 1. Charger et synchroniser les mandants appartenant STRICTEMENT à cette agence
   useEffect(() => {
-    const handlePropsUpdate = () => {
+    if (!agencyId || !isAgency) return;
+
+    const loadMandates = async () => {
+      const dbSynced = await syncAgencyMandatesFromDb(agencyId);
+      setOwners(dbSynced as ManagedOwner[]);
+    };
+
+    loadMandates();
+
+    const handleMandatesUpdate = (e: any) => {
+      if (!e.detail?.agencyId || e.detail.agencyId === agencyId) {
+        setOwners(getAgencyMandates(agencyId) as ManagedOwner[]);
+      }
+    };
+
+    window.addEventListener('locatrust:agency_mandates-updated', handleMandatesUpdate);
+    return () => {
+      window.removeEventListener('locatrust:agency_mandates-updated', handleMandatesUpdate);
+    };
+  }, [agencyId, isAgency]);
+
+  // 2. Charger les propriétés appartenant STRICTEMENT à cette agence
+  useEffect(() => {
+    if (!agencyId || !isAgency) return;
+
+    const fetchAgencyProperties = async () => {
       try {
-        const stored = localStorage.getItem('locatrust_properties');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) setProperties(parsed);
+        const { data, error } = await supabase
+          .from('properties')
+          .select('*')
+          .eq('agency_id', agencyId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(data)) {
+          setProperties(data as Property[]);
+        } else {
+          // Fallback sur le local storage strictement filtré par agency_id
+          const stored = localStorage.getItem('locatrust_properties');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+              setProperties(parsed.filter((p: any) => p && p.agency_id === agencyId));
+            }
+          }
         }
-      } catch {}
+      } catch (err) {
+        console.warn('Erreur chargement propriétés agence:', err);
+      }
+    };
+
+    fetchAgencyProperties();
+
+    const handlePropsUpdate = () => {
+      fetchAgencyProperties();
     };
 
     window.addEventListener('locatrust:properties-updated', handlePropsUpdate);
     return () => {
       window.removeEventListener('locatrust:properties-updated', handlePropsUpdate);
     };
-  }, []);
+  }, [agencyId, isAgency]);
 
-  // Calcul des métriques réelles pour un mandant
+  // Si l'utilisateur n'est pas une agence (ex: bailleur indépendant / propriétaire)
+  if (!isAgency) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-center gap-4 animate-fadeIn">
+        <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h3 className="text-xl font-black text-slate-900 dark:text-white">
+          Fonctionnalité réservée aux Agences Immobilières
+        </h3>
+        <p className="text-xs text-slate-500 max-w-md leading-relaxed">
+          La gestion des mandants de gérance est exclusivement destinée aux comptes agences immobilières gérant des portefeuilles pour des propriétaires tiers. En tant que propriétaire bailleur indépendant, vous gérez directement vos propres biens immobiliers.
+        </p>
+      </div>
+    );
+  }
+
+  // Calcul des métriques réelles pour un mandant de l'agence
   const getOwnerMetrics = (owner: ManagedOwner) => {
     const assigned = properties.filter(
       (p) =>
@@ -113,7 +150,7 @@ export const MultiProprietairesView: React.FC = () => {
     );
     const count = assigned.length;
     const activeTenants = assigned.filter((p) => p.status === 'loue').length;
-    const totalRent = assigned.reduce((acc, p) => acc + (p.rent || 0), 0);
+    const totalRent = assigned.reduce((acc, p) => acc + (Number(p.rent) || 0), 0);
 
     return {
       assignedProperties: assigned,
@@ -125,35 +162,38 @@ export const MultiProprietairesView: React.FC = () => {
 
   const handleAddOwner = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName || !newEmail || !newPhone) return;
+    if (!agencyId || !newName.trim()) return;
 
-    const created: ManagedOwner = {
-      id: `owner_${Date.now()}`,
-      full_name: newName,
-      email: newEmail,
-      phone: newPhone,
+    saveAgencyMandate(agencyId, {
+      full_name: newName.trim(),
+      email: newEmail.trim(),
+      phone: newPhone.trim(),
       properties_count: 0,
       active_tenants: 0,
       total_monthly_rent: 0,
       mandate_type: newMandate,
       joined_date: new Date().toISOString().split('T')[0]
-    };
+    });
 
-    const next = [created, ...owners];
-    setOwners(next);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('locatrust_agency_mandates', JSON.stringify(next));
-      window.dispatchEvent(new CustomEvent('locatrust:agency_mandates-updated', { detail: next }));
-    }
+    setOwners(getAgencyMandates(agencyId) as ManagedOwner[]);
     setShowAddModal(false);
     setNewName('');
     setNewEmail('');
     setNewPhone('');
   };
 
-  // Attribution d'un bien du parc à ce mandant
-  const handleAssignPropertyToOwner = (ownerId: string, ownerName: string) => {
-    if (!propertyToAssignId) return;
+  const handleDeleteOwner = (ownerId: string) => {
+    if (!agencyId) return;
+    deleteAgencyMandate(agencyId, ownerId);
+    setOwners(getAgencyMandates(agencyId) as ManagedOwner[]);
+    if (selectedOwnerForDetails?.id === ownerId) {
+      setSelectedOwnerForDetails(null);
+    }
+  };
+
+  // Attribution d'un bien du parc de cette agence à ce mandant
+  const handleAssignPropertyToOwner = async (ownerId: string, ownerName: string) => {
+    if (!propertyToAssignId || !agencyId) return;
 
     const updatedProps = properties.map((p) => {
       if (p.id === propertyToAssignId) {
@@ -167,6 +207,21 @@ export const MultiProprietairesView: React.FC = () => {
     });
 
     setProperties(updatedProps);
+
+    // Persistance Supabase
+    try {
+      await supabase
+        .from('properties')
+        .update({
+          mandant_id: ownerId,
+          mandant_name: ownerName
+        })
+        .eq('id', propertyToAssignId)
+        .eq('agency_id', agencyId);
+    } catch (err) {
+      console.warn('Erreur mise à jour mandant Supabase:', err);
+    }
+
     if (typeof window !== 'undefined') {
       localStorage.setItem('locatrust_properties', JSON.stringify(updatedProps));
       window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: updatedProps }));
@@ -178,7 +233,9 @@ export const MultiProprietairesView: React.FC = () => {
   };
 
   // Détachement d'un bien
-  const handleUnassignProperty = (propId: string) => {
+  const handleUnassignProperty = async (propId: string) => {
+    if (!agencyId) return;
+
     const updatedProps = properties.map((p) => {
       if (p.id === propId) {
         const copy = { ...p };
@@ -190,6 +247,21 @@ export const MultiProprietairesView: React.FC = () => {
     });
 
     setProperties(updatedProps);
+
+    // Persistance Supabase
+    try {
+      await supabase
+        .from('properties')
+        .update({
+          mandant_id: null,
+          mandant_name: null
+        })
+        .eq('id', propId)
+        .eq('agency_id', agencyId);
+    } catch (err) {
+      console.warn('Erreur détachement mandant Supabase:', err);
+    }
+
     if (typeof window !== 'undefined') {
       localStorage.setItem('locatrust_properties', JSON.stringify(updatedProps));
       window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: updatedProps }));
@@ -554,7 +626,19 @@ export const MultiProprietairesView: React.FC = () => {
               </div>
 
               {/* Footer Modal */}
-              <div className="flex items-center justify-end pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Êtes-vous sûr de vouloir supprimer le mandant ${selectedOwnerForDetails.full_name} de votre agence ?`)) {
+                      handleDeleteOwner(selectedOwnerForDetails.id);
+                    }
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-rose-600 hover:bg-rose-50 text-xs font-bold transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Supprimer ce mandant</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setSelectedOwnerForDetails(null)}

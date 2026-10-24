@@ -38,6 +38,7 @@ import { getActiveReferenceYear } from '@/lib/reports/accountingHistoryStore';
 import { useAuth } from '@/src/context/AuthContext';
 import { fetchRealAccountingData, RealAccountingDataset, RealAccountingSynthesis } from '@/lib/reports/accountingRealDataStore';
 import { supabase } from '@/src/lib/supabase';
+import { getAgencyMandates, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
 
 export const AccountingExportView: React.FC = () => {
   const { user, profile } = useAuth();
@@ -47,79 +48,41 @@ export const AccountingExportView: React.FC = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('annee_en_cours');
   const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats'>('resultats');
 
-  // Mandants pour les agences (Multi-Bailleurs réels)
-  const isAgency = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
+  // Mandants STRICTEMENT réservés aux agences immobilières (AUCUN accès pour les propriétaires)
+  const isAgency = profile?.account_type === 'agence';
+  const agencyId = user?.id;
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_agency_mandates');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            // Uniquement les vrais mandants créés par l'agence (exclure tout faux mandant de démo)
-            return parsed.filter(
-              (m: any) =>
-                m &&
-                m.id !== 'mnd_1' &&
-                m.id !== 'mnd_2' &&
-                m.id !== 'mnd_3' &&
-                m.id !== 'owner_101' &&
-                m.id !== 'owner_102' &&
-                m.id !== 'owner_103' &&
-                m.id !== 'owner_104'
-            );
-          }
-        }
-      } catch {}
-    }
-    return [];
+    return isAgency && agencyId ? getAgencyMandates(agencyId) : [];
   });
   const [selectedMandant, setSelectedMandant] = useState<string>('all');
 
-  // Synchronisation en temps réel de la liste des mandants réels depuis Supabase et localStorage
+  // Synchronisation des mandants appartenant STRICTEMENT à cette agence
   React.useEffect(() => {
+    if (!isAgency || !agencyId) {
+      setMandantsList([]);
+      return;
+    }
+
     const fetchMandants = async () => {
       try {
-        const { data: dbProfiles } = await supabase
-          .from('profiles')
-          .select('id, full_name, phone')
-          .in('account_type', ['proprietaire', 'bailleur', 'agence']);
-
-        const stored = typeof window !== 'undefined' ? localStorage.getItem('locatrust_agency_mandates') : null;
-        const localList = stored ? JSON.parse(stored) : [];
-
-        const map = new Map<string, { id: string; full_name: string; phone?: string }>();
-        if (Array.isArray(dbProfiles)) {
-          dbProfiles.forEach((p: any) => {
-            if (p?.id && p?.full_name && p.full_name !== 'Bailleur Démo') {
-              map.set(p.id, { id: p.id, full_name: p.full_name, phone: p.phone });
-            }
-          });
-        }
-        if (Array.isArray(localList)) {
-          localList.forEach((m: any) => {
-            if (m?.id && m?.full_name && !m.id.startsWith('owner_10') && !m.id.startsWith('mnd_')) {
-              map.set(m.id, { id: m.id, full_name: m.full_name, phone: m.phone });
-            }
-          });
-        }
-        setMandantsList(Array.from(map.values()));
+        const synced = await syncAgencyMandatesFromDb(agencyId);
+        setMandantsList(synced);
       } catch (err) {
-        console.warn('Erreur chargement mandants:', err);
+        setMandantsList(getAgencyMandates(agencyId));
       }
     };
 
     fetchMandants();
 
-    window.addEventListener('locatrust:agency_mandates-updated', fetchMandants);
-    window.addEventListener('locatrust:mandates-updated', fetchMandants);
-    window.addEventListener('locatrust:profile_updated', fetchMandants);
-    return () => {
-      window.removeEventListener('locatrust:agency_mandates-updated', fetchMandants);
-      window.removeEventListener('locatrust:mandates-updated', fetchMandants);
-      window.removeEventListener('locatrust:profile_updated', fetchMandants);
+    const handleUpdate = () => {
+      setMandantsList(getAgencyMandates(agencyId));
     };
-  }, []);
+
+    window.addEventListener('locatrust:agency_mandates-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:agency_mandates-updated', handleUpdate);
+    };
+  }, [isAgency, agencyId]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -416,81 +379,83 @@ export const AccountingExportView: React.FC = () => {
         </div>
       </div>
 
-      {/* SÉLECTEUR DE MANDANT (Spécifique aux Agences Immobilières & Multi-Bailleurs) */}
-      <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-black text-slate-900">
-                Filtrer la Comptabilité par Propriétaire Mandant
-              </h3>
-              <p className="text-xs text-slate-500">
-                Sélectionnez un mandant spécifique (ex: M. Badjou) pour éditer sa reddition de compte dédiée, ou conservez la vue consolidée globale.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0 max-w-full">
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-400 shrink-0">Mandant :</label>
-            <select
-              value={selectedMandant}
-              onChange={(e) => setSelectedMandant(e.target.value)}
-              className="w-full sm:w-72 md:w-80 max-w-full truncate px-3 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-slate-900 text-xs font-black text-indigo-950 dark:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer shadow-sm"
-            >
-              <option value="all">🏢 Tous les mandants (Global Agence Consolidé)</option>
-              {mandantsList.map((m) => (
-                <option key={m.id} value={m.full_name}>
-                  👤 {m.full_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Fiche Reddition de Compte Mandant Spécifique si un mandant est sélectionné */}
-        {selectedMandant !== 'all' && (
-          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-900 via-indigo-950 to-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md animate-fadeIn">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase">
-                  Reddition de Compte
-                </span>
-                <span className="text-sm font-black text-white">
-                  Mandant : {selectedMandant}
-                </span>
+      {/* SÉLECTEUR DE MANDANT (Strictement réservé aux Agences Immobilières - AUCUN accès pour les propriétaires) */}
+      {isAgency && (
+        <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4 animate-fadeIn">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5" />
               </div>
-              <p className="text-xs text-indigo-200">
-                Relevé financier du lot : loyers perçus, commission d'agence déduite (10%) et solde net à reverser au mandant.
-              </p>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">
+                  Filtrer la Comptabilité par Propriétaire Mandant
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Sélectionnez l'un de vos mandants pour éditer sa reddition de compte dédiée, ou conservez la vue consolidée globale.
+                </p>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 bg-white/10 p-3 rounded-xl border border-white/10">
-              <div className="flex flex-col">
-                <span className="text-[10px] uppercase font-bold text-indigo-300">Loyers encaissés</span>
-                <span className="text-xs font-black text-white">{formatFCFA(synthesis.loyersEncaisses)}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] uppercase font-bold text-amber-300">Commission agence (10%)</span>
-                <span className="text-xs font-black text-amber-400">-{formatFCFA(Math.round(synthesis.loyersEncaisses * 0.10))}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] uppercase font-bold text-emerald-300">Net à reverser au mandant</span>
-                <span className="text-sm font-black text-emerald-400">{formatFCFA(synthesis.resultatNet)}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleOpenPrepare('pdf', `Reddition de Compte - ${selectedMandant}`, 'results_pdf')}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow transition-all active:scale-95 text-center shrink-0"
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto min-w-0 max-w-full">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-400 shrink-0">Mandant :</label>
+              <select
+                value={selectedMandant}
+                onChange={(e) => setSelectedMandant(e.target.value)}
+                className="w-full sm:w-72 md:w-80 max-w-full truncate px-3 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-slate-900 text-xs font-black text-indigo-950 dark:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer shadow-sm"
               >
-                Exporter PDF Mandant
-              </button>
+                <option value="all">🏢 Tous les mandants (Global Agence Consolidé)</option>
+                {mandantsList.map((m) => (
+                  <option key={m.id} value={m.full_name}>
+                    👤 {m.full_name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Fiche Reddition de Compte Mandant Spécifique si un mandant est sélectionné */}
+          {selectedMandant !== 'all' && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-900 via-indigo-950 to-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md animate-fadeIn">
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase">
+                    Reddition de Compte
+                  </span>
+                  <span className="text-sm font-black text-white">
+                    Mandant : {selectedMandant}
+                  </span>
+                </div>
+                <p className="text-xs text-indigo-200">
+                  Relevé financier du lot : loyers perçus, commission d'agence déduite (10%) et solde net à reverser au mandant.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 bg-white/10 p-3 rounded-xl border border-white/10">
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-indigo-300">Loyers encaissés</span>
+                  <span className="text-xs font-black text-white">{formatFCFA(synthesis.loyersEncaisses)}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-amber-300">Commission agence (10%)</span>
+                  <span className="text-xs font-black text-amber-400">-{formatFCFA(Math.round(synthesis.loyersEncaisses * 0.10))}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase font-bold text-emerald-300">Net à reverser au mandant</span>
+                  <span className="text-sm font-black text-emerald-400">{formatFCFA(synthesis.resultatNet)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrepare('pdf', `Reddition de Compte - ${selectedMandant}`, 'results_pdf')}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow transition-all active:scale-95 text-center shrink-0"
+                >
+                  Exporter PDF Mandant
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 2. COMPACT PACK LIASSE COMPTABLE (Points 5, 6, 7 du prompt) */}
       <div className="max-w-4xl w-full bg-gradient-to-r from-blue-950 via-slate-900 to-blue-900 rounded-2xl p-4 text-white shadow-lg flex flex-col gap-3 border border-blue-800/40">

@@ -51,12 +51,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   onOpenSupport,
 }) => {
-  const isProprietaire = currentRole === 'proprietaire';
-  const isAgence = currentRole === 'agence';
-  const isLocataire = currentRole === 'locataire';
-  const isAdmin = currentRole === 'admin';
-
   const { user, profile } = useAuth();
+  const effectiveRole = profile?.account_type ? (profile.account_type as UserRole) : currentRole;
+  const isProprietaire = effectiveRole === 'proprietaire';
+  const isAgence = effectiveRole === 'agence';
+  const isLocataire = effectiveRole === 'locataire';
+  const isAdmin = effectiveRole === 'admin';
 
   const getInitials = (name?: string, email?: string): string => {
     if (name && name.trim()) {

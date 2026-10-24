@@ -37,6 +37,7 @@ import confetti from 'canvas-confetti';
 import { createProperty } from '@/lib/supabase/services';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { getAgencyMandates, saveAgencyMandate, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
 
 // Helper pour compresser les vraies photos de l'utilisateur sans aucune perte de sujet
 const compressImageToDataUrl = (file: File, maxWidth = 1280, maxHeight = 1280, quality = 0.82): Promise<string> => {
@@ -177,32 +178,31 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const [videoRawFile, setVideoRawFile] = useState<File | null>(null);
   const videoInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Mandats spécifiques pour les Agences Immobilières (AUCUN mandant fictif)
-  const isAgency = profile?.account_type === 'agence' || (profile?.role as any) === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_role') === 'agence');
+  // Mandats spécifiques strictement pour les Agences Immobilières (AUCUN accès pour les propriétaires)
+  const isAgency = profile?.account_type === 'agence';
+  const agencyId = user?.id;
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_agency_mandates');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            // Nettoyage strict : exclut tout mandant fictif ou test (Badjou, Touré, etc.)
-            return parsed.filter((m: any) =>
-              m &&
-              !['mnd_1', 'mnd_2', 'mnd_3'].includes(m.id) &&
-              !m.full_name?.toLowerCase().includes('badjou') &&
-              !m.full_name?.toLowerCase().includes('touré aïcha') &&
-              !m.full_name?.toLowerCase().includes('jean-baptiste')
-            );
-          }
-        }
-      } catch {}
-    }
-    return [];
+    return isAgency && agencyId ? getAgencyMandates(agencyId) : [];
   });
   const [selectedMandantId, setSelectedMandantId] = useState<string>('new');
   const [customMandantName, setCustomMandantName] = useState<string>('');
   const [customMandantPhone, setCustomMandantPhone] = useState<string>('');
+
+  useEffect(() => {
+    if (!isAgency || !agencyId) return;
+
+    const loadMandates = async () => {
+      const list = await syncAgencyMandatesFromDb(agencyId);
+      setMandantsList(list);
+    };
+    loadMandates();
+
+    const handleUpdate = () => {
+      setMandantsList(getAgencyMandates(agencyId));
+    };
+    window.addEventListener('locatrust:agency_mandates-updated', handleUpdate);
+    return () => window.removeEventListener('locatrust:agency_mandates-updated', handleUpdate);
+  }, [isAgency, agencyId]);
 
   if (!isOpen) return null;
 
@@ -310,16 +310,20 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       let finalMandantName: string | undefined = undefined;
       let finalMandantId: string | undefined = undefined;
 
-      if (isAgency) {
+      if (isAgency && agencyId) {
         if (selectedMandantId === 'new' || mandantsList.length === 0) {
           finalMandantName = customMandantName.trim();
-          finalMandantId = 'mnd_' + Date.now();
-          const newMandant = { id: finalMandantId, full_name: finalMandantName, phone: customMandantPhone.trim() };
-          const updated = [newMandant, ...mandantsList.filter((m) => m.full_name !== finalMandantName)];
-          setMandantsList(updated);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('locatrust_agency_mandates', JSON.stringify(updated));
-          }
+          const newMandate = saveAgencyMandate(agencyId, {
+            full_name: finalMandantName,
+            phone: customMandantPhone.trim(),
+            email: '',
+            properties_count: 1,
+            active_tenants: 0,
+            total_monthly_rent: 0,
+            mandate_type: 'exclusif'
+          });
+          finalMandantId = newMandate.id;
+          setMandantsList(getAgencyMandates(agencyId));
         } else {
           const found = mandantsList.find((m) => m.id === selectedMandantId);
           finalMandantName = found?.full_name || customMandantName.trim() || 'Propriétaire Mandant';

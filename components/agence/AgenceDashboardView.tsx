@@ -21,6 +21,7 @@ import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
+import { getAgencyMandates, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
 
 interface AgenceDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -53,16 +54,7 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
     return 0;
   });
   const [managedOwners, setManagedOwners] = useState<any[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_agency_mandates');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) return parsed;
-        }
-      } catch {}
-    }
-    return [];
+    return user?.id ? getAgencyMandates(user.id) : [];
   });
   const [totalCollectedRent, setTotalCollectedRent] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
@@ -90,25 +82,13 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
         setTotalProperties(propsRes.count);
       }
 
-      // Mandats réels de l'agence
-      let agencyOwners: any[] = [];
-      if (typeof window !== 'undefined') {
-        try {
-          const stored = localStorage.getItem('locatrust_agency_mandates');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed)) {
-              agencyOwners = parsed.filter((o: any) => 
-                !['mnd_1', 'mnd_2', 'mnd_3', 'owner_101', 'owner_102', 'owner_103', 'owner_104'].includes(o.id) &&
-                !o.full_name?.toLowerCase().includes('badjou')
-              );
-            }
-          }
-        } catch (e) {
-          agencyOwners = [];
-        }
+      // Mandats réels strictement isolés à cette agence
+      if (user?.id) {
+        const agencyOwners = await syncAgencyMandatesFromDb(user.id);
+        setManagedOwners(agencyOwners);
+      } else {
+        setManagedOwners([]);
       }
-      setManagedOwners(agencyOwners);
 
       if (paymentsRes?.data) {
         const sum = paymentsRes.data
