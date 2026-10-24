@@ -575,8 +575,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         if (isTenant) {
           query = query.eq('tenant_id', user.id);
         } else {
-          // Pour propriétaire / agence : inclure les cautions où il est owner_id ou tenant_id
-          query = query.or(`owner_id.eq.${user.id},tenant_id.eq.${user.id}`);
+          // Pour propriétaire / agence : inclure les cautions où il est owner_id, agency_id ou tenant_id
+          query = query.or(`owner_id.eq.${user.id},agency_id.eq.${user.id},tenant_id.eq.${user.id}`);
         }
       }
 
@@ -594,24 +594,13 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           if (isTenant) {
             basicQuery = basicQuery.eq('tenant_id', user.id);
           } else {
-            basicQuery = basicQuery.or(`owner_id.eq.${user.id},tenant_id.eq.${user.id}`);
+            basicQuery = basicQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id},tenant_id.eq.${user.id}`);
           }
         }
         const basicRes = await basicQuery;
         if (!basicRes.error && basicRes.data) {
           data = basicRes.data as any;
           error = null;
-        }
-      }
-
-      // Fallback 2 : pour agence / propriétaire si 0 résultat avec owner_id strict (ex: caution déclarée avec alias)
-      if (!isTenant && (!data || data.length === 0)) {
-        const { data: allData } = await supabase
-          .from('cautions')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (allData && allData.length > 0) {
-          data = allData as any;
         }
       }
 
@@ -653,8 +642,11 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           };
         });
 
-        // Fusionner avec le local store en dédoublonnant par contrat / ID
-        const local = getStoredDeposits() || [];
+        // Fusionner avec le local store en filtrant strictement par appartenance utilisateur
+        const rawLocal = getStoredDeposits() || [];
+        const local = rawLocal.filter((loc: any) =>
+          !user?.id || loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id
+        );
         const combined = [...enrichedDeposits];
         for (const loc of local) {
           const isDup = combined.some(d => 
@@ -668,13 +660,19 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         }
         setDeposits(combined as any);
       } else {
-        const local = getStoredDeposits();
-        setDeposits(local || []);
+        const rawLocal = getStoredDeposits() || [];
+        const local = rawLocal.filter((loc: any) =>
+          !user?.id || loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id
+        );
+        setDeposits(local);
       }
     } catch (e) {
       console.warn('Sync cautions error:', e);
-      const local = getStoredDeposits();
-      setDeposits(local || []);
+      const rawLocal = getStoredDeposits() || [];
+      const local = rawLocal.filter((loc: any) =>
+        !user?.id || loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id
+      );
+      setDeposits(local);
     } finally {
       setIsLoading(false);
     }

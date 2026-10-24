@@ -54,6 +54,14 @@ Ce document constitue la référence exhaustive du projet **LocaTrust**. Il pré
 * **Abonnement SaaS Bailleur (`AbonnementView.tsx`)** :
   * Tarification proportionnelle au parc actif (500 FCFA/mois pour 1 bien, 2 000 FCFA pour 2-10 biens, 5 000 FCFA pour 11-20 biens, 10 000 FCFA au-delà).
   * Intégration Stripe (cartes bancaires) et passerelles Mobile Money.
+* **Importation et Ajout de Locataires Existants (`AddExistingTenantModal.tsx`, `TenantsListView.tsx`)** :
+  * Bouton clairement visible `+ Ajouter un locataire existant` en haut de l'espace Propriétaire et Agence.
+  * Recherche sécurisée par identifiant LocaTrust, e-mail ou téléphone (sans annuaire public).
+  * Affichage restreint et protégé (nom, statut vérifié, e-mail et téléphone masqués).
+  * Générateur d'invitation avec partage WhatsApp si le locataire n'est pas encore inscrit.
+  * Détection stricte des conflits : blocage si le logement possède déjà un contrat actif, alerte si déjà associé.
+  * Saisie de la situation locative existante et enregistrement transparent des informations historiques déclarées.
+  * Notification temps réel du locataire et bascule transparente avec pré-remplissage dans le workflow de contrat certifié 41 points existant.
 
 ### B. Espace Locataire (`LocataireContratsView.tsx`, `LocatairePaiementsView.tsx`)
 * **Consultation et téléchargement des contrats finalisés** : Le preneur peut à tout moment télécharger son bail officiel au format PDF.
@@ -101,6 +109,7 @@ locatrust/
 │   │
 │   ├── dashboard/                      # Vues du tableau de bord Propriétaire / Agence
 │   │   ├── AbonnementView.tsx          # Gestion des formules SaaS LocaTrust
+│   │   ├── AddExistingTenantModal.tsx  # Importation et association de locataires déjà installés
 │   │   ├── CautionsView.tsx            # Suivi des dépôts de garantie & restitutions
 │   │   ├── DemandesView.tsx            # Gestion des candidatures, signatures & finalisation
 │   │   ├── HistoriqueView.tsx          # Historique chronologique des transactions

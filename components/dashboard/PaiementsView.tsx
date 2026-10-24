@@ -107,11 +107,15 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=proprietaire` : '/api/sync';
+        const syncRes = await fetch(syncUrl);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
-            loaded = [...syncJson.data.payments];
+            const mySyncPayments = syncJson.data.payments.filter((p: any) =>
+              !user?.id || p.owner_id === user.id || p.agency_id === user.id
+            );
+            loaded = [...mySyncPayments];
           }
         }
       } catch (syncErr) {
@@ -120,10 +124,16 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // 1. Supabase rent_payments
       try {
-        const { data, error } = await supabase
+        let pQuery = supabase
           .from('rent_payments')
           .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
           .order('payment_date', { ascending: false });
+
+        if (user?.id) {
+          pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        }
+
+        const { data, error } = await pQuery;
 
         if (!error && data && data.length > 0) {
           for (const sp of data) {
@@ -146,7 +156,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           try {
             const localList: RentPayment[] = JSON.parse(cached);
             if (Array.isArray(localList)) {
-              for (const loc of localList) {
+              const myLocalList = localList.filter((loc: any) =>
+                !user?.id || loc.owner_id === user.id || loc.agency_id === user.id
+              );
+              for (const loc of myLocalList) {
                 const idx = loaded.findIndex(p => p.id === loc.id || (loc.reference && p.reference === loc.reference));
                 if (idx === -1) {
                   loaded.unshift(loc);
@@ -175,24 +188,17 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
       }
 
-      // 3. Normalisation canonique stricte : WAV-2026-NOV-781920 est confirmé (reçu validé et signé)
-      // et le nom locataire est strictement "Christian" sur tous les documents et écrans
+      // 3. Normalisation canonique : respecter les données authentiques de chaque profil
       loaded = loaded.map((p) => {
-        const isNovWave = p.reference === 'WAV-2026-NOV-781920' || p.id === 'pmt_dec_nov2026_01';
-        const isEsp = p.reference === 'ESP-135945' || p.id === 'pmt_esp_135945';
-        const isConfirmed = isNovWave || isEsp || p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide';
-
+        const isConfirmed = p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide';
         const rawName = p.tenant?.full_name || (p as any).tenant_name || '';
-        const canonicalTenant = /christian/i.test(rawName) ? 'Christian' : (rawName || 'Christian');
 
         return {
           ...p,
           status: isConfirmed ? 'confirme' : p.status,
-          owner_signature_url: p.owner_signature_url || 'SIG_AGENCE_KK_CERTIFIED',
-          tenant_signature_url: isConfirmed ? (p.tenant_signature_url || 'SIG_TENANT_CHRISTIAN_CERTIFIED') : p.tenant_signature_url,
           tenant: {
             ...(p.tenant || {}),
-            full_name: canonicalTenant
+            full_name: rawName || 'Locataire'
           }
         };
       });

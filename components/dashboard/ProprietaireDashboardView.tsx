@@ -73,113 +73,143 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     try {
       // 0. Synchronisation prioritaire depuis /api/sync
       let loadedPayments: any[] = [];
-      try {
-        const syncRes = await fetch('/api/sync');
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
-            loadedPayments = [...syncJson.data.payments];
+      const currentUserId = user?.id;
+      const isMine = (x: any) =>
+        Boolean(currentUserId && x && (x.owner_id === currentUserId || x.agency_id === currentUserId));
+
+      if (currentUserId) {
+        try {
+          const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(userRole)}`);
+          if (syncRes.ok) {
+            const syncJson = await syncRes.json();
+            if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
+              loadedPayments = syncJson.data.payments.filter(isMine);
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       // 1. Biens immobiliers
       let finalProps: any[] = [];
-      try {
-        let pQuery = supabase.from('properties').select('*').is('deleted_at', null);
-        if (user?.id) pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        const { data: propsData } = await pQuery;
-        if (propsData && propsData.length > 0) finalProps = propsData;
-      } catch {}
-
-      if (finalProps.length === 0 && typeof window !== 'undefined') {
+      if (currentUserId) {
         try {
-          const raw = localStorage.getItem('locatrust_properties');
-          if (raw) finalProps = JSON.parse(raw);
+          const { data: propsData } = await supabase
+            .from('properties')
+            .select('*')
+            .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`)
+            .is('deleted_at', null);
+          if (propsData) finalProps = propsData;
         } catch {}
+
+        if (finalProps.length === 0 && typeof window !== 'undefined') {
+          try {
+            const raw = localStorage.getItem('locatrust_properties');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) {
+                finalProps = parsed.filter(isMine);
+              }
+            }
+          } catch {}
+        }
       }
       setRealProps(finalProps);
 
       // 2. Contrats actifs (Supabase + localStorage)
       let finalContracts: any[] = [];
-      try {
-        let cQuery = supabase.from('contracts').select('*');
-        if (user?.id) cQuery = cQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        const { data: contractsData } = await cQuery;
-        if (contractsData && contractsData.length > 0) finalContracts = contractsData;
-      } catch {}
-
-      if (typeof window !== 'undefined') {
+      if (currentUserId) {
         try {
-          const rawContracts = localStorage.getItem('locatrust_contracts');
-          if (rawContracts) {
-            const parsed = JSON.parse(rawContracts);
-            if (Array.isArray(parsed)) {
-              parsed.forEach((c: any) => {
-                if (!finalContracts.some(fc => fc.id === c.id || fc.contract_number === c.contract_number)) {
-                  finalContracts.push(c);
-                }
-              });
-            }
-          }
-          // Vérification des candidatures avec statut contrat_actif
-          const rawApps = localStorage.getItem('locatrust_rental_applications');
-          if (rawApps) {
-            const apps = JSON.parse(rawApps);
-            if (Array.isArray(apps)) {
-              apps.filter((a: any) => a.status === 'contrat_actif').forEach((a: any) => {
-                if (!finalContracts.some(fc => fc.contract_number === a.contract_number || fc.id === a.id)) {
-                  finalContracts.push({
-                    id: a.id,
-                    contract_number: a.contract_number || 'LT-2026-CI-000492',
-                    property_id: a.property_id,
-                    tenant_id: a.tenant_id,
-                    monthly_rent: Number(a.monthly_rent || a.rent || 30000),
-                    caution_amount: Number(a.caution_amount || 60000),
-                    status: 'contrat_actif'
-                  });
-                }
-              });
-            }
-          }
+          const { data: contractsData } = await supabase
+            .from('contracts')
+            .select('*')
+            .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`);
+          if (contractsData) finalContracts = contractsData;
         } catch {}
+
+        if (typeof window !== 'undefined') {
+          try {
+            const rawContracts = localStorage.getItem('locatrust_contracts');
+            if (rawContracts) {
+              const parsed = JSON.parse(rawContracts);
+              if (Array.isArray(parsed)) {
+                parsed.filter(isMine).forEach((c: any) => {
+                  if (!finalContracts.some(fc => fc.id === c.id || fc.contract_number === c.contract_number)) {
+                    finalContracts.push(c);
+                  }
+                });
+              }
+            }
+            // Vérification des candidatures avec statut contrat_actif
+            const rawApps = localStorage.getItem('locatrust_rental_applications');
+            if (rawApps) {
+              const apps = JSON.parse(rawApps);
+              if (Array.isArray(apps)) {
+                apps.filter((a: any) => a.status === 'contrat_actif' && isMine(a)).forEach((a: any) => {
+                  if (a.contract_number && !finalContracts.some(fc => fc.contract_number === a.contract_number || fc.id === a.id)) {
+                    finalContracts.push({
+                      id: a.id,
+                      contract_number: a.contract_number,
+                      property_id: a.property_id,
+                      tenant_id: a.tenant_id,
+                      monthly_rent: Number(a.monthly_rent || a.rent || 0),
+                      caution_amount: Number(a.caution_amount || 0),
+                      status: 'contrat_actif'
+                    });
+                  }
+                });
+              }
+            }
+          } catch {}
+        }
       }
       setRealContracts(finalContracts);
 
       // 3. Règlements de loyers (Supabase + /api/sync + localStorage)
-      try {
-        let pmQuery = supabase.from('rent_payments').select('*');
-        if (user?.id) pmQuery = pmQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        const { data: paymentsData } = await pmQuery;
-        if (paymentsData && paymentsData.length > 0) {
-          paymentsData.forEach(sp => {
-            const idx = loadedPayments.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
-            if (idx === -1) loadedPayments.push(sp);
-            else loadedPayments[idx] = { ...loadedPayments[idx], ...sp };
-          });
-        }
-      } catch {}
-
-      if (typeof window !== 'undefined') {
+      if (currentUserId) {
         try {
-          const rawPmts = localStorage.getItem('locatrust_rent_payments');
-          if (rawPmts) {
-            const parsedPmts = JSON.parse(rawPmts);
-            if (Array.isArray(parsedPmts)) {
-              parsedPmts.forEach(lp => {
-                const idx = loadedPayments.findIndex(p => p.id === lp.id || (lp.reference && p.reference === lp.reference));
-                if (idx === -1) loadedPayments.push(lp);
-                else loadedPayments[idx] = { ...loadedPayments[idx], ...lp };
-              });
-            }
+          const { data: paymentsData } = await supabase
+            .from('rent_payments')
+            .select('*')
+            .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`);
+          if (paymentsData && paymentsData.length > 0) {
+            paymentsData.forEach(sp => {
+              const idx = loadedPayments.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
+              if (idx === -1) loadedPayments.push(sp);
+              else loadedPayments[idx] = { ...loadedPayments[idx], ...sp };
+            });
           }
         } catch {}
+
+        if (typeof window !== 'undefined') {
+          try {
+            const rawPmts = localStorage.getItem('locatrust_rent_payments');
+            if (rawPmts) {
+              const parsedPmts = JSON.parse(rawPmts);
+              if (Array.isArray(parsedPmts)) {
+                parsedPmts.filter(isMine).forEach(lp => {
+                  const idx = loadedPayments.findIndex(p => p.id === lp.id || (lp.reference && p.reference === lp.reference));
+                  if (idx === -1) loadedPayments.push(lp);
+                  else loadedPayments[idx] = { ...loadedPayments[idx], ...lp };
+                });
+              }
+            }
+          } catch {}
+        }
       }
       setRealPayments(loadedPayments);
 
       // 4. Candidatures de location
-      const { data: appsData } = await supabase.from('rental_applications').select('*');
-      setRealApplications(appsData || []);
+      let finalApps: any[] = [];
+      if (currentUserId) {
+        try {
+          const { data: appsData } = await supabase
+            .from('rental_applications')
+            .select('*')
+            .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`);
+          if (appsData) finalApps = appsData;
+        } catch {}
+      }
+      setRealApplications(finalApps);
 
       // 5. Synthèse comptable unifiée (Supabase)
       try {

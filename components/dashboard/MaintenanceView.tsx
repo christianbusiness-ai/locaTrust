@@ -160,12 +160,14 @@ export const MaintenanceView: React.FC = () => {
 
     // Synchronisation depuis le serveur central /api/sync
     try {
-      const syncRes = await fetch('/api/sync');
+      const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}` : '/api/sync';
+      const syncRes = await fetch(syncUrl);
       if (syncRes.ok) {
         const syncJson = await syncRes.json();
         if (Array.isArray(syncJson?.data?.maintenance)) {
           syncJson.data.maintenance.forEach((m: any) => {
-            if (!list.some(l => l.id === m.id || l.ticketNumber === m.ticketNumber)) {
+            const isMine = !user?.id || m.owner_id === user.id || m.agency_id === user.id || m.tenant_id === user.id;
+            if (isMine && !list.some(l => l.id === m.id || l.ticketNumber === m.ticketNumber)) {
               list.push(m);
             }
           });
@@ -180,7 +182,8 @@ export const MaintenanceView: React.FC = () => {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
             parsed.forEach((pt: any) => {
-              if (!list.some(l => l.id === pt.id || l.ticketNumber === pt.ticketNumber)) {
+              const isMine = !user?.id || pt.owner_id === user.id || pt.agency_id === user.id || pt.tenant_id === user.id;
+              if (isMine && !list.some(l => l.id === pt.id || l.ticketNumber === pt.ticketNumber)) {
                 list.push(pt);
               }
             });
@@ -189,9 +192,7 @@ export const MaintenanceView: React.FC = () => {
       } catch {}
     }
 
-    if (list.length > 0) {
-      setTickets(list);
-    }
+    setTickets(list);
   };
 
   useEffect(() => {

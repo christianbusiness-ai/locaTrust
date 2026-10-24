@@ -23,7 +23,8 @@ import {
   Eye,
   X,
   Sparkles,
-  Check
+  Check,
+  UserPlus
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
@@ -31,6 +32,8 @@ import { TenantCardSkeleton } from '@/components/common/SkeletonLoader';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 
 import { UserAvatar } from '@/components/common/UserAvatar';
+import { AddExistingTenantModal, ExistingRentalData } from './AddExistingTenantModal';
+import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 
 export interface TenantReceiptItem {
   id: string;
@@ -67,55 +70,54 @@ export interface TenantProfile {
 }
 
 export const TenantsListView: React.FC = () => {
+  const { user, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'actifs' | 'historique'>('actifs');
-  const [tenants, setTenants] = useState<TenantProfile[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_tenants');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-        // Fallback: build from real contracts
-        const contractsRaw = localStorage.getItem('locatrust_contracts');
-        if (contractsRaw) {
-          const contracts = JSON.parse(contractsRaw);
-          if (Array.isArray(contracts)) {
-            // Un locataire n'est actif QUE si le contrat a été effectivement signé par le locataire
-            return contracts
-              .filter((c: any) => c && (c.tenant_signed || c.status === 'resilie' || c.status === 'termine'))
-              .map((c: any, idx: number) => ({
-                id: c.tenant_id || c.id || `t_${idx}`,
-                fullName: c.tenant?.full_name || c.tenant_name || 'Locataire',
-                email: c.tenant?.email || c.tenant_email || '',
-                phone: c.tenant?.phone || c.tenant_phone || '',
-                avatarUrl: c.tenant?.avatar_url || c.tenant_avatar || '',
-                verificationStatus: 'verifie' as const,
-                propertyTitle: c.property?.title || c.property_title || 'Bien immobilier',
-                propertyAddress: c.property?.address || c.property_address || 'Abidjan',
-                contractNumber: c.contract_number || `LT-2026-${idx}`,
-                contractStartDate: c.start_date || '01/01/2026',
-                contractEndDate: c.end_date || '31/12/2026',
-                rentAmount: Number(c.monthly_rent) || Number(c.rent_amount) || Number(c.rent) || Number(c.property?.rent) || 0,
-                cautionRequested: Number(c.caution_amount) || Number(c.caution) || Number(c.property?.caution) || 0,
-                cautionPaid: Number(c.caution_paid) || Number(c.caution_amount) || Number(c.caution) || 0,
-                cautionReceiptNumber: `CAU-2026-${idx}`,
-                cautionStatus: 'totalement_payee' as const,
-                isActive: (c.status === 'contrat_actif' || c.status === 'actif') && Boolean(c.tenant_signed),
-                receipts: []
-              }));
-          }
-        }
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [tenants, setTenants] = useState<TenantProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedTenantForReceipts, setSelectedTenantForReceipts] = useState<TenantProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  useEffect(() => {
-    async function loadTenantsFromDb() {
+  // Modale Ajouter un locataire existant (Sections 1 à 25)
+  const [isAddExistingTenantOpen, setIsAddExistingTenantOpen] = useState<boolean>(false);
+
+  // Workflow officiel de création de contrat (Section 10 & 11)
+  const [isContractGeneratorOpen, setIsContractGeneratorOpen] = useState<boolean>(false);
+  const [contractGeneratorInitialData, setContractGeneratorInitialData] = useState<any>(null);
+
+  const handleContinueToContract = (rentalData: ExistingRentalData) => {
+    const prefill = {
+      tenantId: rentalData.tenant.id,
+      tenantName: rentalData.tenant.fullName,
+      tenantEmail: rentalData.tenant.email,
+      tenantPhone: rentalData.tenant.phone,
+      tenantCni: rentalData.tenant.cniNumber,
+      propertyId: rentalData.propertyId,
+      propertyTitle: rentalData.propertyTitle,
+      propertyAddress: rentalData.propertyAddress,
+      propertyCity: rentalData.propertyCity,
+      propertyCommune: rentalData.propertyCommune,
+      propertyType: rentalData.propertyType,
+      rentAmount: rentalData.monthlyRent,
+      cautionAmount: rentalData.cautionAmount,
+      chargesAmount: rentalData.chargesAmount,
+      startDate: rentalData.entryDate,
+      durationMonths: rentalData.durationMonths,
+      leaseType: rentalData.leaseType,
+      usageDestination: rentalData.leaseType,
+      startAtStep: 'form' as const
+    };
+
+    setContractGeneratorInitialData(prefill);
+    setIsContractGeneratorOpen(true);
+  };
+
+  const loadTenantsFromDb = async () => {
+    if (!user?.id) {
+      setTenants([]);
+      setIsLoading(false);
+      return;
+    }
+
       setIsLoading(true);
       try {
         // Récupération des profils pour disposer des vrais avatars à jour
@@ -126,7 +128,8 @@ export const TenantsListView: React.FC = () => {
 
         const { data: contractsData, error } = await supabase
           .from('contracts')
-          .select('*, property:properties(*)');
+          .select('*, property:properties(*)')
+          .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
         
         if (!error && contractsData && contractsData.length > 0) {
           // Ne conserver que les contrats signés par le locataire ou arrivés à terme
@@ -159,14 +162,17 @@ export const TenantsListView: React.FC = () => {
           });
           setTenants(dbTenants);
           localStorage.setItem('locatrust_tenants', JSON.stringify(dbTenants));
+        } else {
+          setTenants([]);
         }
       } catch (err) {
         console.warn('Erreur chargement locataires depuis Supabase:', err);
       } finally {
         setIsLoading(false);
       }
-    }
+  };
 
+  useEffect(() => {
     loadTenantsFromDb();
 
     const handleUpdate = () => {
@@ -183,7 +189,7 @@ export const TenantsListView: React.FC = () => {
       window.removeEventListener('locatrust:avatar_updated', handleUpdate);
       window.removeEventListener('locatrust:profile_updated', handleUpdate);
     };
-  }, []);
+  }, [user?.id]);
 
   // Filter tenants based on active tab and search query
   const filteredTenants = tenants.filter((t) => {
@@ -268,46 +274,59 @@ export const TenantsListView: React.FC = () => {
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
       {/* Top Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
               Gestion des Locataires
             </h2>
             <span className="px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-900 dark:text-blue-300 text-xs font-black">
-              Espace Propriétaire
+              {profile?.account_type === 'agence' ? 'Espace Agence' : 'Espace Propriétaire'}
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Consultez la liste verticale de vos locataires actuels et l'historique complet des anciens locataires dont le bail est arrivé à terme.
+            Consultez la liste de vos locataires actuels, gérez l'historique et importez vos baux existants.
           </p>
         </div>
 
-        {/* 2 Main Navigation Tabs: Locataires Actifs vs Anciens Locataires */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Action Button: + Ajouter un locataire existant */}
           <button
-            onClick={() => setActiveTab('actifs')}
-            className={`px-4 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 ${
-              activeTab === 'actifs'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
+            type="button"
+            onClick={() => setIsAddExistingTenantOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs flex items-center gap-2 transition-all shadow-md shadow-blue-600/25 shrink-0"
+            title="Importer un locataire qui occupe déjà un de vos logements"
           >
-            <Users className="w-3.5 h-3.5" />
-            <span>Locataires Actifs ({activeCount})</span>
+            <UserPlus className="w-4 h-4" />
+            <span>+ Ajouter un locataire existant</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('historique')}
-            className={`px-4 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 ${
-              activeTab === 'historique'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            <span>Historique Anciens Locataires ({historyCount})</span>
-          </button>
+          {/* 2 Main Navigation Tabs: Locataires Actifs vs Anciens Locataires */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+            <button
+              onClick={() => setActiveTab('actifs')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 ${
+                activeTab === 'actifs'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Locataires Actifs ({activeCount})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('historique')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 ${
+                activeTab === 'historique'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Historique ({historyCount})</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -540,6 +559,30 @@ export const TenantsListView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modale d'ajout d'un locataire existant */}
+      <AddExistingTenantModal
+        isOpen={isAddExistingTenantOpen}
+        onClose={() => setIsAddExistingTenantOpen(false)}
+        onContinueToContract={handleContinueToContract}
+        isAgency={profile?.account_type === 'agence'}
+      />
+
+      {/* Workflow officiel de création de bail prérempli (Processus 41 points identique) */}
+      <LegalContractGeneratorModal
+        isOpen={isContractGeneratorOpen}
+        onClose={() => {
+          setIsContractGeneratorOpen(false);
+          setContractGeneratorInitialData(null);
+        }}
+        initialData={contractGeneratorInitialData}
+        isAgency={profile?.account_type === 'agence'}
+        onContractFinalized={() => {
+          setIsContractGeneratorOpen(false);
+          setContractGeneratorInitialData(null);
+          loadTenantsFromDb();
+        }}
+      />
     </div>
   );
 };

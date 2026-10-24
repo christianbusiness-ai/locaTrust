@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, ChevronDown, Check, Save, RotateCcw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '@/src/context/AuthContext';
 import {
   getCurrentAccountingYear,
   saveCurrentAccountingYear,
@@ -20,10 +21,11 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
   onYearChanged,
   className = ''
 }) => {
+  const { user } = useAuth();
   // Current real accounting year saved in DB / localStorage
-  const [currentAccountingYear, setCurrentAccountingYear] = useState<string>(() => getCurrentAccountingYear());
+  const [currentAccountingYear, setCurrentAccountingYear] = useState<string>(() => getCurrentAccountingYear(user?.id));
   // Input field for Control 1
-  const [inputYear, setInputYear] = useState<string>(() => getCurrentAccountingYear());
+  const [inputYear, setInputYear] = useState<string>(() => getCurrentAccountingYear(user?.id));
   // Temporary viewing year (in-memory)
   const [viewingYear, setViewingYear] = useState<string | null>(() => getSelectedViewingYear());
   // List of archived years
@@ -37,8 +39,14 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
 
   // Sync state on mount and with global custom events
   useEffect(() => {
+    const cy = getCurrentAccountingYear(user?.id);
+    setCurrentAccountingYear(cy);
+    setInputYear(cy);
+  }, [user?.id]);
+
+  useEffect(() => {
     const handleYearChanged = (e: any) => {
-      const cy = getCurrentAccountingYear();
+      const cy = getCurrentAccountingYear(user?.id);
       const vy = getSelectedViewingYear();
       setCurrentAccountingYear(cy);
       setViewingYear(vy);
@@ -48,7 +56,7 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
 
     window.addEventListener('locatrust:year_changed', handleYearChanged);
     return () => window.removeEventListener('locatrust:year_changed', handleYearChanged);
-  }, []);
+  }, [user?.id]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -70,12 +78,12 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
     e.preventDefault();
     const clean = inputYear.trim();
     if (!clean || isNaN(Number(clean)) || Number(clean) < 2000 || Number(clean) > 2100) {
-      setFeedback({ message: 'Veuillez saisir une année valide à 4 chiffres (ex: 2027).', type: 'error' });
+      setFeedback({ message: 'Veuillez saisir une année valide à 4 chiffres (ex: 2026).', type: 'error' });
       setTimeout(() => setFeedback(null), 3500);
       return;
     }
 
-    const res = saveCurrentAccountingYear(clean);
+    const res = saveCurrentAccountingYear(clean, user?.id);
     if (res.success) {
       setCurrentAccountingYear(res.currentYear);
       setViewingYear(null); // Reset temporary viewing
@@ -163,7 +171,7 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
         
         {/* ============================================================== */}
         {/* CONTRÔLE 1 — ENREGISTRER L'ANNÉE                               */}
-        {/* Zone de saisie manuelle [ 2027 ] + [ Enregistrer l'année ]     */}
+        {/* Zone de saisie manuelle [ 2026 ] + [ Enregistrer l'année ]     */}
         {/* ============================================================== */}
         <form onSubmit={handleSaveYear} className="flex items-center gap-2">
           <label htmlFor="input-accounting-year" className="sr-only">
@@ -176,7 +184,7 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
             max={2035}
             value={inputYear}
             onChange={(e) => setInputYear(e.target.value)}
-            placeholder="2027"
+            placeholder="2026"
             className="w-24 px-3 py-2 rounded-xl border border-slate-300 font-black text-sm text-slate-900 bg-white text-center focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 outline-none shadow-inner"
           />
           <button

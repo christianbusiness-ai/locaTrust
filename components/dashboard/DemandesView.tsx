@@ -237,12 +237,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         }
         if (isAdmin) return true;
         if (!user?.id) return isDemo || !appItem.owner_id || appItem.owner_id === 'usr_owner';
-        // Appartient au bailleur ou à l'agence si c'est pour l'un de ses biens
+        // Appartient strictement au bailleur ou à l'agence si c'est pour l'un de ses biens
         return (
           appItem.owner_id === user.id ||
           appItem.agency_id === user.id ||
-          userPropertyIds.has(appItem.property_id) ||
-          appItem.owner_id === 'usr_owner'
+          (Boolean(appItem.property_id) && userPropertyIds.has(appItem.property_id))
         );
       };
 

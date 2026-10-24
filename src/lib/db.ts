@@ -263,31 +263,19 @@ export async function createRentPayment(payment: any) {
     const isoTargetMonth = parseMonthToIsoDate(payment.target_month || payment.month || payment.payment_date);
     const normalizedMethod = normalizePaymentMethod(payment.payment_method || payment.method);
 
-    // 1. Résolution de l'owner_id (ex: KK ou propriétaire assigné)
+    // 1. Résolution stricte de l'owner_id (uniquement s'il est valide ou rattaché au contrat spécifique)
     let validOwnerId = payment.owner_id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(payment.owner_id) ? payment.owner_id : null;
-    if (!validOwnerId) {
-      try {
-        const { data: ownerProf } = await supabase
-          .from('profiles')
-          .select('id')
-          .in('account_type', ['agence', 'proprietaire'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (ownerProf?.id) validOwnerId = ownerProf.id;
-      } catch {}
-    }
-
-    // 2. Résolution du contract_id valide dans Supabase
     let validContractId = payment.contract_id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(payment.contract_id) ? payment.contract_id : null;
-    if (!validContractId) {
+
+    if (!validOwnerId && validContractId) {
       try {
-        const { data: dbCnt } = await supabase
+        const { data: cRow } = await supabase
           .from('contracts')
-          .select('id')
-          .limit(1)
+          .select('owner_id, agency_id')
+          .eq('id', validContractId)
           .maybeSingle();
-        if (dbCnt?.id) validContractId = dbCnt.id;
+        if (cRow?.owner_id) validOwnerId = cRow.owner_id;
+        else if (cRow?.agency_id) validOwnerId = cRow.agency_id;
       } catch {}
     }
 

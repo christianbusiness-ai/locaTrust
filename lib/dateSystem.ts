@@ -518,26 +518,36 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
   let contracts: any[] = [];
   let payments: any[] = [];
 
-  // 2. Connexion à la base de données Supabase pour contrats actifs
+  // 2. Connexion à la base de données Supabase pour contrats actifs isolés par utilisateur
   try {
-    const { data: dbContracts, error: cErr } = await supabase
+    let cQuery = supabase
       .from('contracts')
       .select('*, property:properties(*), owner:users!owner_id(*), tenant:users!tenant_id(*)')
       .eq('status', 'contrat_actif');
+
+    if (userId) {
+      cQuery = cQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId},tenant_id.eq.${userId}`);
+    }
+
+    const { data: dbContracts, error: cErr } = await cQuery;
 
     if (!cErr && dbContracts && dbContracts.length > 0) {
       contracts = dbContracts;
     }
   } catch {}
 
-  // 3. Complément / fallback avec les baux locaux
+  // 3. Complément / fallback avec les baux locaux de l'utilisateur
   if (typeof window !== 'undefined') {
+    const isMine = (x: any) =>
+      !userId ||
+      (x && (x.owner_id === userId || x.agency_id === userId || x.tenant_id === userId));
+
     try {
       const storedContracts = localStorage.getItem('locatrust_contracts');
       if (storedContracts) {
         const parsed = JSON.parse(storedContracts);
         if (Array.isArray(parsed)) {
-          parsed.forEach((c) => {
+          parsed.filter(isMine).forEach((c) => {
             const st = String(c.status || '').toLowerCase().trim();
             // Exclusion stricte des contrats terminés : aucun loyer futur attendu
             if (st === 'termine' || st === 'cloture' || st === 'resilie') return;
@@ -553,24 +563,24 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
         const apps = JSON.parse(storedApps);
         if (Array.isArray(apps)) {
           apps
-            .filter((a: any) => a.status === 'contrat_actif')
+            .filter((a: any) => a.status === 'contrat_actif' && isMine(a))
             .forEach((a: any) => {
-              if (!contracts.some((x) => x.id === a.id || x.contract_number === a.contract_number)) {
+              if (a.contract_number && !contracts.some((x) => x.id === a.id || x.contract_number === a.contract_number)) {
                 const effectiveSigned = a.tenant_signed_at || a.owner_signed_at || a.signed_date || a.created_at || now.toISOString().split('T')[0];
                 const parsedSigned = parseAnyDate(effectiveSigned);
                 contracts.push({
                   id: a.id,
-                  contract_number: a.contract_number || `LT-2026-CI-000492`,
+                  contract_number: a.contract_number,
                   property_title: a.property_title,
                   property_address: a.property_address,
                   rent: Number(a.rent_amount || a.property?.rent || a.rent || 0),
                   monthly_rent: Number(a.rent_amount || a.property?.rent || a.monthly_rent || 0),
                   signed_date: effectiveSigned,
                   tenant_id: a.tenant_id,
-                  tenant_name: a.applicant_name || a.tenant_name || 'Christian',
+                  tenant_name: a.applicant_name || a.tenant_name || 'Locataire',
                   owner_id: a.owner_id,
-                  owner_name: a.owner_name || 'KK',
-                  due_day: a.due_day ? Number(a.due_day) : (parsedSigned.getDate() || 16)
+                  owner_name: a.owner_name || 'Bailleur',
+                  due_day: a.due_day ? Number(a.due_day) : (parsedSigned.getDate() || 5)
                 });
               }
             });
@@ -581,10 +591,16 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
 
   // 4. Connexion à la base de données pour les paiements confirmés et déclarés
   try {
-    const { data: dbPayments, error: pErr } = await supabase
+    let pmQuery = supabase
       .from('rent_payments')
       .select('*')
       .in('status', ['confirme', 'declare', 'validé', 'valide', 'en_attente']);
+
+    if (userId) {
+      pmQuery = pmQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId},tenant_id.eq.${userId}`);
+    }
+
+    const { data: dbPayments, error: pErr } = await pmQuery;
 
     if (!pErr && dbPayments && dbPayments.length > 0) {
       payments = dbPayments;
@@ -592,12 +608,16 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
   } catch {}
 
   if (typeof window !== 'undefined') {
+    const isMine = (x: any) =>
+      !userId ||
+      (x && (x.owner_id === userId || x.agency_id === userId || x.tenant_id === userId));
+
     try {
       const storedPmts = localStorage.getItem('locatrust_rent_payments');
       if (storedPmts) {
         const parsed = JSON.parse(storedPmts);
         if (Array.isArray(parsed)) {
-          parsed.forEach((p) => {
+          parsed.filter(isMine).forEach((p) => {
             if (!payments.some((x) => x.id === p.id || x.reference === p.reference)) {
               payments.push(p);
             }
@@ -608,7 +628,7 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
       if (storedReceipts) {
         const parsed = JSON.parse(storedReceipts);
         if (Array.isArray(parsed)) {
-          parsed.forEach((rcp: any) => {
+          parsed.filter(isMine).forEach((rcp: any) => {
             payments.push({
               ...rcp,
               status: 'confirme',

@@ -68,13 +68,16 @@ export const ReceiptsQuittancesView: React.FC = () => {
 
       // 0. Synchronisation prioritaire depuis l'API centrale (/api/sync)
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=proprietaire` : '/api/sync';
+        const syncRes = await fetch(syncUrl);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.success && syncJson?.data) {
             // A. Quittances et reçus officiels du serveur central
             if (Array.isArray(syncJson.data.receipts)) {
               for (const r of syncJson.data.receipts) {
+                const isMine = !user?.id || r.owner_id === user.id || r.agency_id === user.id;
+                if (!isMine) continue;
                 const ref = r.receipt_number || `REC-${r.id.slice(0, 8)}`;
                 if (!seenRefs.has(ref)) {
                   seenRefs.add(ref);
@@ -82,10 +85,10 @@ export const ReceiptsQuittancesView: React.FC = () => {
                     id: r.id,
                     receipt_number: ref,
                     receipt_type: (r.type || 'loyer') as 'loyer' | 'caution',
-                    tenant_name: r.tenant_name || 'Christian',
-                    property_title: r.property_title || 'Maison 4 pièce',
-                    property_address: r.property_address || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-                    contract_number: r.contract_number || 'LT-2026-CI-000492',
+                    tenant_name: r.tenant_name || 'Locataire',
+                    property_title: r.property_title || 'Bien immobilier',
+                    property_address: r.property_address || '',
+                    contract_number: r.contract_number || 'N/A',
                     period_covered: r.period_covered || 'Période en cours',
                     amount: Number(r.amount) || 0,
                     payment_method: r.payment_method || 'Mobile Money',
@@ -102,19 +105,21 @@ export const ReceiptsQuittancesView: React.FC = () => {
             // B. Cautions confirmées du serveur central
             if (Array.isArray(syncJson.data.cautions)) {
               for (const c of syncJson.data.cautions) {
-                const ref = c.receipt_number || `REC-CAUTION-${(c.contract_number || '000492').slice(-6)}`;
+                const isMine = !user?.id || c.owner_id === user.id || c.agency_id === user.id;
+                if (!isMine) continue;
+                const ref = c.receipt_number || `REC-CAUTION-${(c.contract_number || '000000').slice(-6)}`;
                 if (!seenRefs.has(ref)) {
                   seenRefs.add(ref);
                   allRows.push({
                     id: c.id || `cau_${ref}`,
                     receipt_number: ref,
                     receipt_type: 'caution',
-                    tenant_name: c.tenant_name || c.tenant?.full_name || 'Christian',
-                    property_title: c.property_title || c.property?.title || 'Maison 4 pièce',
-                    property_address: c.property_address || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-                    contract_number: c.contract_number || 'LT-2026-CI-000492',
+                    tenant_name: c.tenant_name || c.tenant?.full_name || 'Locataire',
+                    property_title: c.property_title || c.property?.title || 'Bien immobilier',
+                    property_address: c.property_address || '',
+                    contract_number: c.contract_number || 'N/A',
                     period_covered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-                    amount: Number(c.amount_paid || c.amount_requested || 60000),
+                    amount: Number(c.amount_paid || c.amount_requested || 0),
                     payment_method: c.payment_method || 'Wave CI / Mobile Money',
                     payment_date: new Date(c.confirmed_at || c.created_at || Date.now()).toLocaleDateString('fr-FR'),
                     transaction_ref: c.token || c.declared_reference || ref,
@@ -133,10 +138,16 @@ export const ReceiptsQuittancesView: React.FC = () => {
 
       // 1. Quittances directes de la table receipts
       try {
-        const { data: dbReceipts } = await supabase
+        let rQuery = supabase
           .from('receipts')
           .select('*')
           .order('created_at', { ascending: false });
+
+        if (user?.id) {
+          rQuery = rQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        }
+
+        const { data: dbReceipts } = await rQuery;
 
         if (Array.isArray(dbReceipts)) {
           for (const r of dbReceipts) {
@@ -147,10 +158,10 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 id: r.id,
                 receipt_number: ref,
                 receipt_type: (r.type || 'loyer') as 'loyer' | 'caution',
-                tenant_name: r.tenant_name || 'Christian',
-                property_title: r.property_title || 'Maison 4 pièce',
-                property_address: r.property_address || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-                contract_number: r.contract_number || 'LT-2026-CI-000492',
+                tenant_name: r.tenant_name || 'Locataire',
+                property_title: r.property_title || 'Bien immobilier',
+                property_address: r.property_address || '',
+                contract_number: r.contract_number || 'N/A',
                 period_covered: r.period_covered || new Date(r.created_at || Date.now()).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
                 amount: Number(r.amount || r.amount_paid) || 0,
                 payment_method: r.payment_method || 'Mobile Money',
@@ -169,11 +180,17 @@ export const ReceiptsQuittancesView: React.FC = () => {
 
       // 2. Paiements de loyers validés/confirmés dans rent_payments
       try {
-        const { data: validatedPayments } = await supabase
+        let pmQuery = supabase
           .from('rent_payments')
           .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
           .in('status', ['valide', 'confirme', 'en_attente_signature_locataire'])
           .order('payment_date', { ascending: false });
+
+        if (user?.id) {
+          pmQuery = pmQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        }
+
+        const { data: validatedPayments } = await pmQuery;
 
         if (Array.isArray(validatedPayments)) {
           for (const p of validatedPayments) {
@@ -184,10 +201,10 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 id: p.id,
                 receipt_number: ref,
                 receipt_type: 'loyer',
-                tenant_name: p.tenant?.full_name || 'Christian',
-                property_title: p.contract?.property?.title || 'Maison 4 pièce',
-                property_address: p.contract?.property?.address || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-                contract_number: p.contract?.contract_number || 'LT-2026-CI-000492',
+                tenant_name: p.tenant?.full_name || 'Locataire',
+                property_title: p.contract?.property?.title || 'Bien immobilier',
+                property_address: p.contract?.property?.address || '',
+                contract_number: p.contract?.contract_number || 'N/A',
                 period_covered: p.target_month || new Date(p.payment_date || Date.now()).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
                 amount: Number(p.amount) || 0,
                 payment_method: p.payment_method || 'Mobile Money',
@@ -212,19 +229,21 @@ export const ReceiptsQuittancesView: React.FC = () => {
             const listDeps = JSON.parse(rawDeps);
             if (Array.isArray(listDeps)) {
               for (const cd of listDeps) {
-                const cRef = cd.receipt_number || `REC-CAUTION-${(cd.contract_number || '000492').slice(-6)}`;
+                const isMine = !user?.id || cd.owner_id === user.id || cd.agency_id === user.id;
+                if (!isMine) continue;
+                const cRef = cd.receipt_number || `REC-CAUTION-${(cd.contract_number || '000000').slice(-6)}`;
                 if (!seenRefs.has(cRef)) {
                   seenRefs.add(cRef);
                   allRows.push({
                     id: cd.id || `loc_cau_${cRef}`,
                     receipt_number: cRef,
                     receipt_type: 'caution',
-                    tenant_name: cd.tenant?.full_name || cd.tenant_name || 'Christian',
-                    property_title: cd.property?.title || cd.property_title || 'Maison 4 pièce',
-                    property_address: cd.property?.address || cd.property_address || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-                    contract_number: cd.contract_number || 'LT-2026-CI-000492',
+                    tenant_name: cd.tenant?.full_name || cd.tenant_name || 'Locataire',
+                    property_title: cd.property?.title || cd.property_title || 'Bien immobilier',
+                    property_address: cd.property?.address || cd.property_address || '',
+                    contract_number: cd.contract_number || 'N/A',
                     period_covered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-                    amount: Number(cd.amount_paid || cd.amount_requested || 60000),
+                    amount: Number(cd.amount_paid || cd.amount_requested || 0),
                     payment_method: cd.payment_method || 'Wave CI / Mobile Money',
                     payment_date: new Date(cd.confirmed_at || cd.created_at || Date.now()).toLocaleDateString('fr-FR'),
                     transaction_ref: cd.token || cd.declared_reference || cRef,
@@ -261,6 +280,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
                   localStorage.setItem(src, JSON.stringify(cleaned));
                 }
                 for (const lr of cleaned) {
+                  const isMine = !user?.id || lr.owner_id === user.id || lr.agency_id === user.id;
+                  if (!isMine) continue;
                   const ref = lr.receipt_number || lr.receiptNumber || lr.reference;
                   if (ref && !seenRefs.has(ref)) {
                     seenRefs.add(ref);
@@ -268,10 +289,10 @@ export const ReceiptsQuittancesView: React.FC = () => {
                       id: lr.id || `loc_${ref}`,
                       receipt_number: ref,
                       receipt_type: (lr.type || lr.receipt_type || 'loyer') as 'loyer' | 'caution',
-                      tenant_name: lr.tenant_name || lr.tenantName || 'Christian',
-                      property_title: lr.property_title || lr.propertyTitle || 'Maison 4 pièce',
-                      property_address: lr.property_address || lr.propertyAddress || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-                      contract_number: lr.contract_number || lr.contractNumber || 'LT-2026-CI-000492',
+                      tenant_name: lr.tenant_name || lr.tenantName || 'Locataire',
+                      property_title: lr.property_title || lr.propertyTitle || 'Bien immobilier',
+                      property_address: lr.property_address || lr.propertyAddress || '',
+                      contract_number: lr.contract_number || lr.contractNumber || 'N/A',
                       period_covered: lr.period_covered || lr.periodCovered || lr.periodsCovered || 'Mois en cours',
                       amount: Number(lr.amount || lr.amount_paid) || 0,
                       payment_method: lr.payment_method || lr.paymentMethod || 'Mobile Money',

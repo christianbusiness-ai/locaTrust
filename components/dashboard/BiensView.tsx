@@ -59,29 +59,20 @@ export const BiensView: React.FC<BiensViewProps> = ({
 }) => {
   const { user } = useAuth();
   const [properties, setProperties] = useState<Property[]>(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && user?.id) {
       try {
         const stored = localStorage.getItem('locatrust_properties');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed)) {
+            return parsed.filter((p: any) => p && (p.owner_id === user.id || p.agency_id === user.id));
+          }
         }
       } catch {}
     }
     return [];
   });
-  const [isLoading, setIsLoading] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('locatrust_properties');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return false;
-        } catch {}
-      }
-    }
-    return true;
-  });
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeTypeFilter, setActiveTypeFilter] = useState<string>('tous');
@@ -92,8 +83,14 @@ export const BiensView: React.FC<BiensViewProps> = ({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 6;
 
-  // Synchronisation avec la base de données Supabase (en tâche de fond non bloquante)
+  // Synchronisation avec la base de données Supabase isolée strictement par utilisateur
   const loadPropertiesFromDb = async () => {
+    if (!user?.id) {
+      setProperties([]);
+      setIsLoading(false);
+      return;
+    }
+
     if (properties.length === 0) {
       setIsLoading(true);
     }
@@ -101,17 +98,22 @@ export const BiensView: React.FC<BiensViewProps> = ({
     try {
       let syncProps: any[] = [];
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(user.id)}&role=proprietaire`);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.success && Array.isArray(syncJson.data?.properties)) {
-            syncProps = syncJson.data.properties;
+            syncProps = syncJson.data.properties.filter((sp: any) =>
+              sp && (sp.owner_id === user.id || sp.agency_id === user.id)
+            );
           }
         }
       } catch {}
 
-      const { data, error } = await fetchDbProperties(user?.id);
-      let combined = Array.isArray(data) ? [...data] : [];
+      const { data } = await fetchDbProperties(user.id);
+      let combined = Array.isArray(data)
+        ? data.filter((p: any) => p && (p.owner_id === user.id || p.agency_id === user.id))
+        : [];
+
       if (syncProps.length > 0) {
         for (const sp of syncProps) {
           if (!combined.some(c => c.id === sp.id)) {
@@ -120,11 +122,11 @@ export const BiensView: React.FC<BiensViewProps> = ({
         }
       }
 
-      if (combined.length > 0) {
-        setProperties(combined);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('locatrust_properties', JSON.stringify(combined)); } catch {}
-        }
+      setProperties(combined);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('locatrust_properties', JSON.stringify(combined));
+        } catch {}
       }
     } catch (err: any) {
       console.warn("Maintien des données du cache local pour une réactivité maximale.");

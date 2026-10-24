@@ -178,16 +178,25 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     let realTickets: any[] = ticketsRes.status === 'fulfilled' && Array.isArray(ticketsRes.value.data) ? ticketsRes.value.data : [];
     const allProfiles: any[] = profilesRes.status === 'fulfilled' && Array.isArray(profilesRes.value.data) ? profilesRes.value.data : [];
 
-    // 3. Synchronisation multi-appareils (/api/sync) et résilience locale
+    // 3. Synchronisation multi-appareils (/api/sync) et résilience locale isolée par utilisateur
     if (typeof window !== 'undefined') {
+      const isMine = (x: any) =>
+        x &&
+        (x.owner_id === userId ||
+          x.agency_id === userId ||
+          x.tenant_id === userId ||
+          x.user_id === userId ||
+          x.targetUserId === userId ||
+          x.senderUserId === userId);
+
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(userId || '')}`);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.data) {
             // Paiements centralisés depuis le serveur (Source de vérité)
             if (Array.isArray(syncJson.data.payments)) {
-              syncJson.data.payments.forEach((sp: any) => {
+              syncJson.data.payments.filter(isMine).forEach((sp: any) => {
                 const idx = realPayments.findIndex((p: any) => (sp.reference && p.reference === sp.reference) || p.id === sp.id);
                 if (idx !== -1) {
                   realPayments[idx] = {
@@ -203,7 +212,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             // Cautions
             if (Array.isArray(syncJson.data.cautions)) {
               const knownCNums = new Set(realCautions.map((c: any) => c.contract_number || c.id));
-              syncJson.data.cautions.forEach((sc: any) => {
+              syncJson.data.cautions.filter(isMine).forEach((sc: any) => {
                 if (sc && !knownCNums.has(sc.contract_number) && !knownCNums.has(sc.id)) {
                   realCautions.push(sc);
                   knownCNums.add(sc.contract_number || sc.id);
@@ -213,7 +222,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             // Reçus
             if (Array.isArray(syncJson.data.receipts)) {
               const knownRNums = new Set(realReceipts.map((r: any) => r.receipt_number));
-              syncJson.data.receipts.forEach((sr: any) => {
+              syncJson.data.receipts.filter(isMine).forEach((sr: any) => {
                 if (sr && !knownRNums.has(sr.receipt_number)) {
                   realReceipts.push(sr);
                   knownRNums.add(sr.receipt_number);
@@ -226,14 +235,14 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         // En cas d'indisponibilité temporaire de /api/sync, continuer
       }
 
-      // Fusion avec le stockage local (cache sécurisé des opérations récentes)
+      // Fusion avec le stockage local (cache sécurisé des opérations récentes de l'utilisateur)
       try {
         const rawLocalContracts = localStorage.getItem('locatrust_contracts');
         if (rawLocalContracts) {
           const localContracts = JSON.parse(rawLocalContracts);
           if (Array.isArray(localContracts)) {
             const knownCIds = new Set(realContracts.map((c: any) => c.contract_number || c.id));
-            localContracts.forEach((lc: any) => {
+            localContracts.filter(isMine).forEach((lc: any) => {
               if (lc && !knownCIds.has(lc.contract_number) && !knownCIds.has(lc.id)) {
                 realContracts.push(lc);
                 knownCIds.add(lc.contract_number || lc.id);
@@ -246,14 +255,13 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         if (rawLocalPayments) {
           const localPmts = JSON.parse(rawLocalPayments);
           if (Array.isArray(localPmts)) {
-            localPmts.forEach((lp: any) => {
+            localPmts.filter(isMine).forEach((lp: any) => {
               const idx = realPayments.findIndex((p: any) => (lp.reference && p.reference === lp.reference) || p.id === lp.id);
               if (idx !== -1) {
-                // Ne jamais rétrograder un paiement déjà confirmé par le serveur central
                 if (realPayments[idx].status !== 'confirme') {
                   realPayments[idx] = { ...realPayments[idx], ...lp };
                 }
-              } else if (lp.reference === 'WAV-2026-NOV-781920' || lp.reference === 'ESP-135945') {
+              } else {
                 realPayments.push(lp);
               }
             });
@@ -265,7 +273,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           const localCautions = JSON.parse(rawLocalCautions);
           if (Array.isArray(localCautions)) {
             const knownCauNums = new Set(realCautions.map((c: any) => c.contract_number || c.id));
-            localCautions.forEach((lc: any) => {
+            localCautions.filter(isMine).forEach((lc: any) => {
               if (lc && !knownCauNums.has(lc.contract_number) && !knownCauNums.has(lc.id)) {
                 realCautions.push(lc);
                 knownCauNums.add(lc.contract_number || lc.id);
@@ -313,20 +321,20 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           (r.contract_number && knownCautionKeys.has(String(r.contract_number))) ||
           (r.id && knownCautionKeys.has(String(r.id)));
 
-        if (!isAlreadyKnown) {
-          const contractNum = r.contract_number || 'LT-2026-CI-000492';
+        if (!isAlreadyKnown && r.contract_number) {
+          const contractNum = r.contract_number;
           realCautions.push({
             id: r.caution_id || r.id,
             contract_id: r.contract_id || contractNum,
             contract_number: contractNum,
-            amount_requested: Number(r.amount) || 60000,
-            amount_paid: Number(r.amount) || 60000,
+            amount_requested: Number(r.amount) || 0,
+            amount_paid: Number(r.amount) || 0,
             status: 'paye_complet',
             receipt_number: r.receipt_number,
             tenant_id: r.tenant_id,
             owner_id: r.owner_id,
             agency_id: r.agency_id,
-            created_at: r.created_at || '2026-10-16T15:45:00.000Z'
+            created_at: r.created_at || new Date().toISOString()
           });
           if (r.receipt_number) knownCautionKeys.add(String(r.receipt_number));
           if (contractNum) knownCautionKeys.add(String(contractNum));
@@ -334,12 +342,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       }
     });
 
-    // 4b. Normalisation stricte : tout paiement validé par reçu ou présent dans /api/sync est formellement 'confirme'
+    // 4b. Normalisation stricte : tout paiement validé par reçu est formellement 'confirme'
     realPayments = realPayments.map((p: any) => {
-      const isNovWave = p.reference === 'WAV-2026-NOV-781920' || p.id === 'pmt_dec_nov2026_01';
-      const isEsp = p.reference === 'ESP-135945' || p.id === 'pmt_esp_135945';
       const hasReceipt = realReceipts.some((r: any) => r.receipt_number === p.reference || r.receipt_number === p.receipt_number);
-      if (isNovWave || isEsp || hasReceipt) {
+      if (hasReceipt) {
         return { ...p, status: 'confirme' };
       }
       return p;
@@ -419,19 +425,16 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       if (ac.id) activeContractKeys.add(String(ac.id));
       if (ac.contract_number) activeContractKeys.add(String(ac.contract_number));
     });
-    if (activeContracts.length > 0) {
-      activeContractKeys.add('LT-2026-CI-000492');
-    }
 
     // Dédoublonner strictement les cautions par contrat actif (1 caution maximum par contrat signé)
     const activeCautionsMap = new Map<string, any>();
     realCautions.forEach((c: any) => {
       const isConfirmed = c.status === 'paye_complet' || c.status === 'confirme' || c.status === 'certifie' || c.status === 'caution_confirmee';
       const cContract = String(c.contract_number || c.contract_id || '').trim();
-      const isContractActive = activeContractKeys.has(cContract) || activeContractKeys.has(String(c.id)) || (activeContracts.length > 0 && c.tenant_name === 'Christian');
+      const isContractActive = activeContractKeys.has(cContract) || activeContractKeys.has(String(c.id));
 
       if (isConfirmed && isContractActive) {
-        const contractKey = cContract || 'LT-2026-CI-000492';
+        const contractKey = cContract || String(c.id);
         if (!activeCautionsMap.has(contractKey)) {
           activeCautionsMap.set(contractKey, c);
         } else {
@@ -439,7 +442,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           activeCautionsMap.set(contractKey, {
             ...existing,
             ...c,
-            amount_paid: Math.max(Number(existing.amount_paid) || 0, Number(c.amount_paid) || 0, Number(c.amount_requested) || 60000)
+            amount_paid: Math.max(Number(existing.amount_paid) || 0, Number(c.amount_paid) || 0, Number(c.amount_requested) || 0)
           });
         }
       }
@@ -447,7 +450,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
     const activeCautionsList = Array.from(activeCautionsMap.values());
     const cautionsRecues = activeContracts.length > 0
-      ? activeCautionsList.reduce((s: number, c: any) => s + (Number(c.amount_paid) || Number(c.amount_requested) || 60000), 0)
+      ? activeCautionsList.reduce((s: number, c: any) => s + (Number(c.amount_paid) || Number(c.amount_requested) || 0), 0)
       : 0;
 
     const cautionsRemboursees = activeCautionsList.reduce(
@@ -530,7 +533,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const monthCautionReceived = activeCautionsList.reduce((s: number, c: any) => {
         const cDate = c.confirmed_at || c.created_at;
         const matchesMonth = cDate ? String(cDate).includes(`-${monthNum}-`) : (monthNum === '10');
-        return s + (matchesMonth ? (Number(c.amount_paid) || Number(c.amount_requested) || 60000) : 0);
+        return s + (matchesMonth ? (Number(c.amount_paid) || Number(c.amount_requested) || 0) : 0);
       }, 0);
 
       // Maintenance ce mois
@@ -592,7 +595,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         date: dateFormatted,
         receiptNo: p.receipt_number || p.reference || `REC-${currentYearNum}-${String(idx + 1).padStart(6, '0')}`,
         contractNo: matchedContract?.contract_number || p.contract_id || '—',
-        tenant: /christian/i.test(tn?.full_name || p.tenant_name || p.tenant?.full_name || '') ? 'Christian' : (tn?.full_name || p.tenant_name || 'Christian'),
+        tenant: tn?.full_name || p.tenant_name || p.tenant?.full_name || 'Locataire',
         property: pr?.title || 'Bien immobilier',
         period: p.target_month || p.period || 'Mois en cours',
         method: p.payment_method || 'Mobile Money',
@@ -607,14 +610,14 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const mappedLoyers = realContracts.map((c: any) => {
       const pr = propertyMap.get(c.property_id) || c.property;
       const tn = profileMap.get(c.tenant_id) || c.tenant;
-      const monthlyRent = Number(c.monthly_rent ?? c.rent ?? pr?.rent ?? 30000);
+      const monthlyRent = Number(c.monthly_rent ?? c.rent ?? pr?.rent ?? 0);
 
       const contractPaid = realPayments
-        .filter((p: any) => (p.contract_id === c.id || p.contract_id === c.contract_number || p.reference === 'WAV-2026-NOV-781920' || p.reference === 'ESP-135945') && isPaymentConfirmed(p))
+        .filter((p: any) => (p.contract_id === c.id || p.contract_id === c.contract_number) && isPaymentConfirmed(p))
         .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
       return {
-        tenant: /christian/i.test(tn?.full_name || c.tenant_name || '') ? 'Christian' : (tn?.full_name || 'Christian'),
+        tenant: tn?.full_name || c.tenant_name || 'Locataire',
         property: pr?.title || 'Bien immobilier',
         monthlyRent,
         month: 'Mois en cours',
@@ -632,7 +635,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const pr = propertyMap.get(cau.property_id) || propertyMap.get(matchedContract?.property_id) || cau.property || matchedContract?.property;
       const tn = profileMap.get(cau.tenant_id) || profileMap.get(matchedContract?.tenant_id) || cau.tenant || matchedContract?.tenant;
 
-      const planned = Number(cau.amount_requested || matchedContract?.caution_amount || 60000);
+      const planned = Number(cau.amount_requested || matchedContract?.caution_amount || 0);
       const isConfirmed = cau.status === 'paye_complet' || cau.status === 'confirme' || cau.status === 'certifie';
       const deposited = Number(cau.amount_paid || (isConfirmed ? planned : 0));
       const refunded = Number(cau.amount_restituted || cau.refunded_amount || 0);
@@ -649,7 +652,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       }
 
       return {
-        tenant: /christian/i.test(tn?.full_name || cau.tenant_name || '') ? 'Christian' : (tn?.full_name || 'Christian'),
+        tenant: tn?.full_name || cau.tenant_name || 'Locataire',
         property: pr?.title || cau.property_title || 'Bien immobilier',
         contractNo: cau.contract_number || matchedContract?.contract_number || cau.contract_id || '—',
         planned,

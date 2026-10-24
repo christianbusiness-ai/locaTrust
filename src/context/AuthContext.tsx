@@ -52,6 +52,36 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+export const clearLocatrustUserDataCache = () => {
+  if (typeof window === 'undefined') return;
+  const userKeys = [
+    'locatrust_properties',
+    'locatrust_contracts',
+    'locatrust_rent_payments',
+    'locatrust_deposits_v1',
+    'locatrust_caution_deposits',
+    'locatrust_receipts',
+    'locatrust_tenant_receipts_v2',
+    'locatrust_rental_applications',
+    'locatrust_maintenance_tickets',
+    'locatrust_support_tickets',
+    'locatrust_accounting_live_summary',
+    'locatrust_chat_messages_v4',
+    'locatrust_notifications',
+    'locatrust_tenants',
+    'locatrust_accounting_reports_v2',
+    'locatrust_accounting_reports',
+    'locatrust_active_user',
+    'locatrust_registered_role',
+    'locatrust_user_avatar'
+  ];
+  userKeys.forEach((k) => {
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+  });
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -500,6 +530,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+
+
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -508,10 +540,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setSession(null);
       setProfile(null);
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('locatrust_active_user');
-        localStorage.removeItem('locatrust_registered_role');
-      }
+      clearLocatrustUserDataCache();
     }
   };
 

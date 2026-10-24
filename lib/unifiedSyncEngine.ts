@@ -35,22 +35,33 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
   lastSyncTimestamp = now;
 
   try {
-    // 0. SYNCHRONISATION SERVEUR CENTRAL (/api/sync) — MULTI-APPAREILS
+    // 0. SYNCHRONISATION SERVEUR CENTRAL (/api/sync) — MULTI-APPAREILS ISOLÉE PAR UTILISATEUR
     try {
-      const syncRes = await fetch('/api/sync');
+      const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role || '')}`);
       if (syncRes.ok) {
         const syncJson = await syncRes.json();
         if (syncJson?.success && syncJson?.data) {
           if (typeof window !== 'undefined') {
+            const isMine = (x: any) =>
+              x &&
+              (x.owner_id === userId ||
+                x.agency_id === userId ||
+                x.tenant_id === userId ||
+                x.user_id === userId ||
+                x.targetUserId === userId ||
+                x.senderUserId === userId);
+
             // A. Paiements
             if (Array.isArray(syncJson.data.payments)) {
               try {
+                const srvPayments = syncJson.data.payments.filter(isMine);
                 const rawP = localStorage.getItem('locatrust_rent_payments');
                 const localP = rawP ? JSON.parse(rawP) : [];
-                const srvIds = new Set(syncJson.data.payments.map((p: any) => p.id || p.reference));
+                const validLocalP = localP.filter(isMine);
+                const srvIds = new Set(srvPayments.map((p: any) => p.id || p.reference));
                 const mergedP = [
-                  ...syncJson.data.payments,
-                  ...localP.filter((lp: any) => !srvIds.has(lp.id) && !srvIds.has(lp.reference))
+                  ...srvPayments,
+                  ...validLocalP.filter((lp: any) => !srvIds.has(lp.id) && !srvIds.has(lp.reference))
                 ];
                 localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedP));
                 window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedP } }));
@@ -60,12 +71,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             // B. Cautions
             if (Array.isArray(syncJson.data.cautions)) {
               try {
+                const srvCautions = syncJson.data.cautions.filter(isMine);
                 const rawC = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_caution_deposits');
                 const localC = rawC ? JSON.parse(rawC) : [];
-                const srvCIds = new Set(syncJson.data.cautions.map((c: any) => c.id || c.contract_number));
+                const validLocalC = localC.filter(isMine);
+                const srvCIds = new Set(srvCautions.map((c: any) => c.id || c.contract_number));
                 const mergedC = [
-                  ...syncJson.data.cautions,
-                  ...localC.filter((lc: any) => !srvCIds.has(lc.id) && !srvCIds.has(lc.contract_number))
+                  ...srvCautions,
+                  ...validLocalC.filter((lc: any) => !srvCIds.has(lc.id) && !srvCIds.has(lc.contract_number))
                 ];
                 localStorage.setItem('locatrust_deposits_v1', JSON.stringify(mergedC));
                 localStorage.setItem('locatrust_caution_deposits', JSON.stringify(mergedC));
@@ -76,12 +89,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             // C. Quittances
             if (Array.isArray(syncJson.data.receipts)) {
               try {
+                const srvReceipts = syncJson.data.receipts.filter(isMine);
                 const rawR = localStorage.getItem('locatrust_receipts');
                 const localR = rawR ? JSON.parse(rawR) : [];
-                const srvRNums = new Set(syncJson.data.receipts.map((r: any) => r.receipt_number));
+                const validLocalR = localR.filter(isMine);
+                const srvRNums = new Set(srvReceipts.map((r: any) => r.receipt_number));
                 const mergedR = [
-                  ...syncJson.data.receipts,
-                  ...localR.filter((lr: any) => !srvRNums.has(lr.receipt_number || lr.receiptNumber))
+                  ...srvReceipts,
+                  ...validLocalR.filter((lr: any) => !srvRNums.has(lr.receipt_number || lr.receiptNumber))
                 ];
                 localStorage.setItem('locatrust_receipts', JSON.stringify(mergedR));
                 window.dispatchEvent(new CustomEvent('locatrust:receipts-updated', { detail: { receipts: mergedR } }));
@@ -91,12 +106,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             // D. Notifications
             if (Array.isArray(syncJson.data.notifications)) {
               try {
+                const srvNotifications = syncJson.data.notifications.filter(isMine);
                 const rawN = localStorage.getItem('locatrust_notifications');
                 const localN = rawN ? JSON.parse(rawN) : [];
-                const srvNIds = new Set(syncJson.data.notifications.map((n: any) => n.id));
+                const validLocalN = localN.filter(isMine);
+                const srvNIds = new Set(srvNotifications.map((n: any) => n.id));
                 const mergedN = [
-                  ...syncJson.data.notifications,
-                  ...localN.filter((ln: any) => !srvNIds.has(ln.id))
+                  ...srvNotifications,
+                  ...validLocalN.filter((ln: any) => !srvNIds.has(ln.id))
                 ];
                 localStorage.setItem('locatrust_notifications', JSON.stringify(mergedN));
                 window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedN } }));
@@ -106,12 +123,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             // E. Maintenance & Incidents
             if (Array.isArray(syncJson.data.maintenance)) {
               try {
+                const srvMaintenance = syncJson.data.maintenance.filter(isMine);
                 const rawM = localStorage.getItem('locatrust_maintenance_tickets');
                 const localM = rawM ? JSON.parse(rawM) : [];
-                const srvMIds = new Set(syncJson.data.maintenance.map((m: any) => m.id || m.ticketNumber));
+                const validLocalM = localM.filter(isMine);
+                const srvMIds = new Set(srvMaintenance.map((m: any) => m.id || m.ticketNumber));
                 const mergedM = [
-                  ...syncJson.data.maintenance,
-                  ...localM.filter((lm: any) => !srvMIds.has(lm.id) && !srvMIds.has(lm.ticketNumber))
+                  ...srvMaintenance,
+                  ...validLocalM.filter((lm: any) => !srvMIds.has(lm.id) && !srvMIds.has(lm.ticketNumber))
                 ];
                 localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(mergedM));
                 window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: { tickets: mergedM } }));
@@ -121,12 +140,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             // F. Contrats
             if (Array.isArray(syncJson.data.contracts)) {
               try {
+                const srvContracts = syncJson.data.contracts.filter(isMine);
                 const rawCnt = localStorage.getItem('locatrust_contracts');
                 const localCnt = rawCnt ? JSON.parse(rawCnt) : [];
-                const srvCntNums = new Set(syncJson.data.contracts.map((c: any) => c.contract_number || c.contractNumber));
+                const validLocalCnt = localCnt.filter(isMine);
+                const srvCntNums = new Set(srvContracts.map((c: any) => c.contract_number || c.contractNumber));
                 const mergedCnt = [
-                  ...syncJson.data.contracts,
-                  ...localCnt.filter((lc: any) => !srvCntNums.has(lc.contract_number || lc.contractNumber))
+                  ...srvContracts,
+                  ...validLocalCnt.filter((lc: any) => !srvCntNums.has(lc.contract_number || lc.contractNumber))
                 ];
                 localStorage.setItem('locatrust_contracts', JSON.stringify(mergedCnt));
                 window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: mergedCnt } }));
@@ -139,29 +160,35 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       console.warn('API /api/sync fetch error in unifiedSyncEngine:', syncErr);
     }
 
-    // 1. SYNCHRONISATION DES LOGEMENTS (PROPERTIES)
-    const { data: serverProps, error: propErr } = await supabase
+    // 1. SYNCHRONISATION DES LOGEMENTS (PROPERTIES) STRICTEMENT ISOLÉE PAR UTILISATEUR
+    let pQuery = supabase
       .from('properties')
       .select('*')
-      .or(`owner_id.eq.${userId},agency_id.eq.${userId},status.eq.disponible`)
       .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
-    if (!propErr && Array.isArray(serverProps) && serverProps.length > 0) {
-      if (typeof window !== 'undefined') {
-        try {
-          const rawLocal = localStorage.getItem('locatrust_properties');
-          const localProps = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverPropIds = new Set(serverProps.map(p => p.id));
-          // Conserver les props locaux qui ne sont pas encore sur le serveur
-          const mergedProps = [
-            ...serverProps,
-            ...localProps.filter((lp: any) => lp?.id && !serverPropIds.has(lp.id) && !isValidUuid(lp.id))
-          ];
-          localStorage.setItem('locatrust_properties', JSON.stringify(mergedProps));
-          window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { properties: mergedProps } }));
-        } catch {}
-      }
+    if (role === 'locataire') {
+      pQuery = pQuery.eq('status', 'disponible');
+    } else {
+      pQuery = pQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    }
+
+    const { data: serverProps, error: propErr } = await pQuery;
+
+    if (!propErr && typeof window !== 'undefined') {
+      try {
+        const rawLocal = localStorage.getItem('locatrust_properties');
+        const localProps = rawLocal ? JSON.parse(rawLocal) : [];
+        const isMyProp = (p: any) => p && (p.owner_id === userId || p.agency_id === userId);
+        const validLocalProps = localProps.filter((lp: any) => isMyProp(lp) && !isValidUuid(lp.id));
+        const serverPropIds = new Set((serverProps || []).map(p => p.id));
+        const mergedProps = [
+          ...(serverProps || []),
+          ...validLocalProps.filter((lp: any) => !serverPropIds.has(lp.id))
+        ];
+        localStorage.setItem('locatrust_properties', JSON.stringify(mergedProps));
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { properties: mergedProps } }));
+      } catch {}
     }
 
     // 2. SYNCHRONISATION DES CONTRATS (CONTRACTS)
@@ -218,92 +245,123 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     }
 
     // 3. SYNCHRONISATION DES CANDIDATURES LOCATIVES (RENTAL APPLICATIONS)
-    const { data: serverApps, error: appErr } = await supabase
+    let appQuery = supabase
       .from('rental_applications')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (!appErr && Array.isArray(serverApps)) {
-      if (typeof window !== 'undefined') {
-        try {
-          const rawLocal = localStorage.getItem('locatrust_rental_applications');
-          const localApps = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverAppIds = new Set(serverApps.map(a => a.id));
+    if (role === 'locataire') {
+      appQuery = appQuery.or(`applicant_id.eq.${userId},tenant_id.eq.${userId}`);
+    } else {
+      appQuery = appQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    }
 
-          const mergedApps = [
-            ...serverApps,
-            ...localApps.filter((la: any) => la?.id && !serverAppIds.has(la.id))
-          ];
+    const { data: serverApps, error: appErr } = await appQuery;
 
-          localStorage.setItem('locatrust_rental_applications', JSON.stringify(mergedApps));
-          window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { applications: mergedApps } }));
-        } catch {}
-      }
+    if (!appErr && typeof window !== 'undefined') {
+      try {
+        const rawLocal = localStorage.getItem('locatrust_rental_applications');
+        const localApps = rawLocal ? JSON.parse(rawLocal) : [];
+        const isMyApp = (a: any) =>
+          a &&
+          (a.owner_id === userId ||
+            a.agency_id === userId ||
+            a.applicant_id === userId ||
+            a.tenant_id === userId);
+        const validLocalApps = localApps.filter(isMyApp);
+        const serverAppIds = new Set((serverApps || []).map(a => a.id));
+
+        const mergedApps = [
+          ...(serverApps || []),
+          ...validLocalApps.filter((la: any) => la?.id && !serverAppIds.has(la.id))
+        ];
+
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(mergedApps));
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { applications: mergedApps } }));
+      } catch {}
     }
 
     // 4. SYNCHRONISATION DES CAUTIONS (CAUTIONS / DEPOSITS)
-    const { data: serverCautions, error: cauErr } = await supabase
+    let cauQuery = supabase
       .from('cautions')
       .select('*, contract:contract_id(*)')
       .order('created_at', { ascending: false });
 
-    if (!cauErr && Array.isArray(serverCautions)) {
-      if (typeof window !== 'undefined') {
-        try {
-          const rawLocal = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_caution_deposits');
-          const localDeps = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverCauIds = new Set(serverCautions.map(c => c.id));
+    if (role === 'locataire') {
+      cauQuery = cauQuery.eq('tenant_id', userId);
+    } else {
+      cauQuery = cauQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    }
 
-          const normalizedServerCautions = serverCautions.map(c => ({
-            ...c,
-            contract_number: c.contract?.contract_number || c.contract_number,
-            property: c.contract?.property || {
-              title: 'Logement LocaTrust',
-              address: 'Abidjan'
-            },
-            amount_requested: c.amount_requested,
-            amount_paid: c.amount_paid,
-            status: c.status || 'caution_a_confirmer',
-            owner_signature: c.owner_signature,
-            tenant_signature: c.tenant_signature,
-            declared_reference: c.declared_reference,
-            proof_url: c.proof_url
-          }));
+    const { data: serverCautions, error: cauErr } = await cauQuery;
 
-          const mergedCautions = [
-            ...normalizedServerCautions,
-            ...localDeps.filter((ld: any) => ld?.id && !serverCauIds.has(ld.id))
-          ];
+    if (!cauErr && typeof window !== 'undefined') {
+      try {
+        const rawLocal = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_caution_deposits');
+        const localDeps = rawLocal ? JSON.parse(rawLocal) : [];
+        const isMyCaution = (c: any) =>
+          c && (c.owner_id === userId || c.agency_id === userId || c.tenant_id === userId);
+        const validLocalDeps = localDeps.filter(isMyCaution);
+        const serverCauIds = new Set((serverCautions || []).map(c => c.id));
 
-          localStorage.setItem('locatrust_deposits_v1', JSON.stringify(mergedCautions));
-          localStorage.setItem('locatrust_caution_deposits', JSON.stringify(mergedCautions));
-          window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: { cautions: mergedCautions } }));
-        } catch {}
-      }
+        const normalizedServerCautions = (serverCautions || []).map(c => ({
+          ...c,
+          contract_number: c.contract?.contract_number || c.contract_number,
+          property: c.contract?.property || {
+            title: 'Logement LocaTrust',
+            address: 'Abidjan'
+          },
+          amount_requested: c.amount_requested,
+          amount_paid: c.amount_paid,
+          status: c.status || 'caution_a_confirmer',
+          owner_signature: c.owner_signature,
+          tenant_signature: c.tenant_signature,
+          declared_reference: c.declared_reference,
+          proof_url: c.proof_url
+        }));
+
+        const mergedCautions = [
+          ...normalizedServerCautions,
+          ...validLocalDeps.filter((ld: any) => ld?.id && !serverCauIds.has(ld.id))
+        ];
+
+        localStorage.setItem('locatrust_deposits_v1', JSON.stringify(mergedCautions));
+        localStorage.setItem('locatrust_caution_deposits', JSON.stringify(mergedCautions));
+        window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: { cautions: mergedCautions } }));
+      } catch {}
     }
 
     // 5. SYNCHRONISATION DES PAIEMENTS DE LOYERS (RENT PAYMENTS)
-    const { data: serverPayments, error: pmtErr } = await supabase
+    let pmQuery = supabase
       .from('rent_payments')
       .select('*, contract:contract_id(*)')
       .order('created_at', { ascending: false });
 
-    if (!pmtErr && Array.isArray(serverPayments)) {
-      if (typeof window !== 'undefined') {
-        try {
-          const rawLocal = localStorage.getItem('locatrust_rent_payments');
-          const localPmts = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverPmtIds = new Set(serverPayments.map(p => p.id));
+    if (role === 'locataire') {
+      pmQuery = pmQuery.eq('tenant_id', userId);
+    } else {
+      pmQuery = pmQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    }
 
-          const mergedPayments = [
-            ...serverPayments,
-            ...localPmts.filter((lp: any) => lp?.id && !serverPmtIds.has(lp.id))
-          ];
+    const { data: serverPayments, error: pmtErr } = await pmQuery;
 
-          localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedPayments));
-          window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedPayments } }));
-        } catch {}
-      }
+    if (!pmtErr && typeof window !== 'undefined') {
+      try {
+        const rawLocal = localStorage.getItem('locatrust_rent_payments');
+        const localPmts = rawLocal ? JSON.parse(rawLocal) : [];
+        const isMyPayment = (p: any) =>
+          p && (p.owner_id === userId || p.agency_id === userId || p.tenant_id === userId);
+        const validLocalPmts = localPmts.filter(isMyPayment);
+        const serverPmtIds = new Set((serverPayments || []).map(p => p.id));
+
+        const mergedPayments = [
+          ...(serverPayments || []),
+          ...validLocalPmts.filter((lp: any) => lp?.id && !serverPmtIds.has(lp.id))
+        ];
+
+        localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedPayments));
+        window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedPayments } }));
+      } catch {}
     }
 
     // 6. SYNCHRONISATION DES MESSAGES & CONVERSATIONS (MESSAGES)
@@ -472,14 +530,13 @@ async function pushPendingLocalDataToServer(userId: string) {
       const cautions = JSON.parse(rawCautions);
       if (Array.isArray(cautions)) {
         for (const dep of cautions) {
-          const tenantId = isValidUuid(dep.tenant_id) ? dep.tenant_id : (dep.tenant?.id && isValidUuid(dep.tenant.id) ? dep.tenant.id : (userId.includes('tenant') ? userId : null));
-          const ownerId = isValidUuid(dep.owner_id) ? dep.owner_id : (userId.includes('tenant') ? null : userId);
+          const isMyCaution = dep && (dep.owner_id === userId || dep.agency_id === userId || dep.tenant_id === userId);
+          if (!isMyCaution) continue;
 
           // Si le dépôt a un id déjà en UUID, vérifier s'il existe dans Supabase
           if (isValidUuid(dep.id)) {
             const { data: existing } = await supabase.from('cautions').select('id').eq('id', dep.id).maybeSingle();
             if (existing) {
-              // Mettre à jour si des signatures locales existent
               if (dep.tenant_signature || dep.owner_signature) {
                 await supabase.from('cautions').update({
                   status: dep.status || 'paye_complet',
@@ -504,6 +561,9 @@ async function pushPendingLocalDataToServer(userId: string) {
           const { createRentPayment } = await import('@/src/lib/db');
           let modified = false;
           for (const p of localPmts) {
+            const isMyPmt = p && (p.owner_id === userId || p.agency_id === userId || p.tenant_id === userId);
+            if (!isMyPmt) continue;
+
             if (p.reference) {
               const { data: existing } = await supabase
                 .from('rent_payments')
@@ -536,6 +596,9 @@ async function pushPendingLocalDataToServer(userId: string) {
         const localRcps = JSON.parse(rawReceipts);
         if (Array.isArray(localRcps)) {
           for (const r of localRcps) {
+            const isMyRcp = r && (r.owner_id === userId || r.agency_id === userId || r.tenant_id === userId);
+            if (!isMyRcp) continue;
+
             const rNum = r.receipt_number || r.receiptNumber;
             if (rNum) {
               const { data: existing } = await supabase

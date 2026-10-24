@@ -92,18 +92,30 @@ export const HistoriqueView: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const { data: dbContracts, error: cErr } = await supabase
+      let contractsQuery = supabase
         .from('contracts')
         .select('*, property:properties(*), tenant:users!tenant_id(*)')
         .order('created_at', { ascending: false });
 
+      if (user?.id) {
+        contractsQuery = contractsQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+      }
+
+      const { data: dbContracts, error: cErr } = await contractsQuery;
+
       const finalContracts = cErr ? [] : (dbContracts || []);
       setContracts(finalContracts);
 
-      const { data: dbReceipts } = await supabase
+      let receiptsQuery = supabase
         .from('receipts')
         .select('*')
         .order('created_at', { ascending: false });
+
+      if (user?.id) {
+        receiptsQuery = receiptsQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+      }
+
+      const { data: dbReceipts } = await receiptsQuery;
 
       const mappedTenants: ComprehensiveTenant[] = finalContracts.map((c: any) => {
         const cReceipts = (dbReceipts || []).filter((r: any) => r.contract_id === c.id);

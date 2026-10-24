@@ -324,17 +324,76 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const { role, userId } = req.query || {};
-      
+      const cleanUserId = userId ? String(userId).trim() : null;
+      const isAdmin = role === 'admin';
+
+      // Si l'utilisateur est admin, il a accès à la supervision globale
+      if (isAdmin && cleanUserId) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            payments: SERVER_STORE.payments,
+            cautions: SERVER_STORE.cautions,
+            receipts: SERVER_STORE.receipts,
+            notifications: SERVER_STORE.notifications,
+            contracts: SERVER_STORE.contracts,
+            maintenance: SERVER_STORE.maintenance,
+            properties: SERVER_STORE.properties,
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+
+      // Pour tout utilisateur authentifié (Propriétaire, Agence, Locataire), filtrer STRICTEMENT ses propres données
+      if (cleanUserId) {
+        const userPayments = SERVER_STORE.payments.filter(
+          (p) => p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId
+        );
+        const userCautions = SERVER_STORE.cautions.filter(
+          (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId
+        );
+        const userReceipts = SERVER_STORE.receipts.filter(
+          (r) => r.owner_id === cleanUserId || r.agency_id === cleanUserId || r.tenant_id === cleanUserId
+        );
+        const userContracts = SERVER_STORE.contracts.filter(
+          (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId
+        );
+        const userMaintenance = SERVER_STORE.maintenance.filter(
+          (m) => m.ownerId === cleanUserId || m.agencyId === cleanUserId || m.tenantId === cleanUserId
+        );
+        const userProperties = SERVER_STORE.properties.filter(
+          (pr) => pr.owner_id === cleanUserId || pr.agency_id === cleanUserId
+        );
+        const userNotifications = SERVER_STORE.notifications.filter(
+          (n) => n.targetUserId === cleanUserId || n.senderUserId === cleanUserId
+        );
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            payments: userPayments,
+            cautions: userCautions,
+            receipts: userReceipts,
+            notifications: userNotifications,
+            contracts: userContracts,
+            maintenance: userMaintenance,
+            properties: userProperties,
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+
+      // Par défaut (visiteur non authentifié ou requête sans userId) : AUCUNE donnée privée retournée
       return res.status(200).json({
         success: true,
         data: {
-          payments: SERVER_STORE.payments,
-          cautions: SERVER_STORE.cautions,
-          receipts: SERVER_STORE.receipts,
-          notifications: SERVER_STORE.notifications,
-          contracts: SERVER_STORE.contracts,
-          maintenance: SERVER_STORE.maintenance,
-          properties: SERVER_STORE.properties,
+          payments: [],
+          cautions: [],
+          receipts: [],
+          notifications: [],
+          contracts: [],
+          maintenance: [],
+          properties: [],
           timestamp: new Date().toISOString()
         }
       });

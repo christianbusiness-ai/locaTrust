@@ -230,8 +230,8 @@ const CURRENT_ACCOUNTING_YEAR_KEY = 'locatrust_current_accounting_year';
 const REF_YEAR_KEY = 'locatrust_accounting_reference_year';
 const ARCHIVED_YEARS_KEY = 'locatrust_accounting_archived_years';
 
-const DEFAULT_CURRENT_YEAR = '2027';
-const DEFAULT_ARCHIVED_YEARS = ['2026', '2025', '2024', '2023'];
+const DEFAULT_CURRENT_YEAR = '2026';
+const DEFAULT_ARCHIVED_YEARS = ['2025', '2024', '2023'];
 
 // In-memory temporary viewing year (resets automatically on reload / new session) (Point 4 & 5 du prompt)
 let inMemoryViewingYear: string | null = null;
@@ -257,9 +257,13 @@ export function saveArchivedYears(years: string[]): void {
   }
 }
 
-export function getCurrentAccountingYear(): string {
+export function getCurrentAccountingYear(userId?: string): string {
   if (typeof window === 'undefined') return DEFAULT_CURRENT_YEAR;
   try {
+    if (userId) {
+      const userStored = localStorage.getItem(`locatrust_${userId}_accounting_year`);
+      if (userStored) return userStored;
+    }
     const stored = localStorage.getItem(CURRENT_ACCOUNTING_YEAR_KEY) || localStorage.getItem(REF_YEAR_KEY);
     return stored || DEFAULT_CURRENT_YEAR;
   } catch {
@@ -267,10 +271,10 @@ export function getCurrentAccountingYear(): string {
   }
 }
 
-export function saveCurrentAccountingYear(year: string): { success: boolean; currentYear: string; archivedYears: string[] } {
+export function saveCurrentAccountingYear(year: string, userId?: string): { success: boolean; currentYear: string; archivedYears: string[] } {
   const cleanYear = year.trim();
   if (!cleanYear || isNaN(Number(cleanYear))) {
-    return { success: false, currentYear: getCurrentAccountingYear(), archivedYears: getArchivedYears() };
+    return { success: false, currentYear: getCurrentAccountingYear(userId), archivedYears: getArchivedYears() };
   }
 
   if (typeof window === 'undefined') {
@@ -278,7 +282,7 @@ export function saveCurrentAccountingYear(year: string): { success: boolean; cur
   }
 
   try {
-    const previous = getCurrentAccountingYear();
+    const previous = getCurrentAccountingYear(userId);
     let archived = getArchivedYears();
 
     if (previous !== cleanYear && !archived.includes(previous)) {
@@ -289,35 +293,25 @@ export function saveCurrentAccountingYear(year: string): { success: boolean; cur
       saveArchivedYears(archived);
     }
 
+    if (userId) {
+      localStorage.setItem(`locatrust_${userId}_accounting_year`, cleanYear);
+    }
     localStorage.setItem(CURRENT_ACCOUNTING_YEAR_KEY, cleanYear);
     localStorage.setItem(REF_YEAR_KEY, cleanYear);
+
+    // Maintien actif de la session de sécurité pour ne JAMAIS déconnecter l'utilisateur
+    try {
+      import('@/src/lib/sessionSecurity').then(({ recordUserActivity }) => {
+        recordUserActivity();
+      }).catch(() => {});
+    } catch {}
 
     // Reset temporary viewing year so user is directly on the new current year
     inMemoryViewingYear = null;
 
     window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
-      detail: { year: cleanYear, isTemporary: false, currentYear: cleanYear }
+      detail: { year: cleanYear, isTemporary: false, currentYear: cleanYear, userId }
     }));
-
-    // Sauvegarde en base de données Supabase et diffusion Realtime
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user?.id) {
-        try {
-          await supabase.auth.updateUser({ data: { accounting_year: cleanYear } });
-          await supabase.from('profiles').update({
-            accounting_year: cleanYear,
-            updated_at: new Date().toISOString()
-          }).eq('id', user.id);
-          await broadcastLiveEvent('ACCOUNTING_YEAR_UPDATED', {
-            actorId: user.id,
-            targetUserId: user.id,
-            data: { year: cleanYear }
-          });
-        } catch (dbErr) {
-          console.warn('Erreur sauvegarde exercice en base:', dbErr);
-        }
-      }
-    }).catch(() => {});
 
     return { success: true, currentYear: cleanYear, archivedYears: archived };
   } catch (e) {
@@ -409,19 +403,49 @@ function generateSyntheticYearRecords(targetYear: number): MonthAccountingRecord
   });
 }
 
-export function getYearRecords(year: string = '2026'): MonthAccountingRecord[] {
-  if (year === '2026') return HISTORICAL_2026;
-  if (year === '2025') return HISTORICAL_2025;
-  const parsed = parseInt(year, 10);
-  if (!isNaN(parsed)) {
-    return generateSyntheticYearRecords(parsed);
+export function getYearRecords(year: string = '2026', isDemo: boolean = false): MonthAccountingRecord[] {
+  if (isDemo) {
+    if (year === '2026') return HISTORICAL_2026;
+    if (year === '2025') return HISTORICAL_2025;
+    const parsed = parseInt(year, 10);
+    if (!isNaN(parsed)) {
+      return generateSyntheticYearRecords(parsed);
+    }
+    return HISTORICAL_2026;
   }
-  return HISTORICAL_2026;
+
+  // Pour un compte réel, générer une structure mensuelle propre à zéro
+  const targetYear = parseInt(year, 10) || 2026;
+  const monthNames = [
+    'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+  ];
+  return monthNames.map((name, idx) => {
+    const mNum = (idx + 1).toString().padStart(2, '0');
+    return {
+      monthKey: `${targetYear}-${mNum}`,
+      monthName: name,
+      year: targetYear,
+      expectedRent: 0,
+      collectedRent: 0,
+      lateRent: 0,
+      unpaidRent: 0,
+      otherIncome: 0,
+      maintenanceExpense: 0,
+      cautionReceived: 0,
+      cautionRefunded: 0,
+      otherExpenses: 0,
+      activeProperties: 0,
+      activeTenants: 0,
+      contractsActive: 0,
+      contractsSigned: 0
+    };
+  });
 }
 
 // Liste des mois disponibles pour le filtre "Mois précédent"
-export function getAvailableHistoricalMonths(year: string = '2026'): { key: string; label: string }[] {
-  const records = getYearRecords(year);
+export function getAvailableHistoricalMonths(year: string = '2026', isDemo: boolean = false): { key: string; label: string }[] {
+  const records = getYearRecords(year, isDemo);
   // Retourne les mois disponibles dans l'ordre chronologique inverse
   return records
     .slice()
@@ -450,9 +474,9 @@ function aggregateMonths(records: MonthAccountingRecord[], label: string, annual
   const recoveryRate = expectedRent > 0 ? (collectedRent / expectedRent) * 100 : 100;
 
   const latest = records[records.length - 1] || {
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7
+    activeProperties: 0,
+    activeTenants: 0,
+    contractsActive: 0
   };
 
   const maintenanceTickets = records.filter((r) => r.maintenanceExpense > 0).length;
@@ -473,9 +497,9 @@ function aggregateMonths(records: MonthAccountingRecord[], label: string, annual
     totalExpenses,
     netResult,
     annualCumulativeResult: annualCumulativeTotal,
-    activeProperties: latest.activeProperties,
-    activeTenants: latest.activeTenants,
-    activeContracts: latest.contractsActive,
+    activeProperties: latest.activeProperties || 0,
+    activeTenants: latest.activeTenants || 0,
+    activeContracts: latest.contractsActive || 0,
     maintenanceTickets,
     monthlyBreakdown: records
   };
@@ -490,9 +514,11 @@ export function calculatePeriodStats(params: {
   selectedYear?: string;
   selectedMonthKey?: string; // ex: '2026-08' pour mois précédent
   selectedQuarter?: 'T1' | 'T2' | 'T3' | 'T4';
+  isDemo?: boolean;
 }): PeriodSummary {
+  const isDemo = Boolean(params.isDemo);
   const year = params.selectedYear || getActiveReferenceYear();
-  const records = getYearRecords(year);
+  const records = getYearRecords(year, isDemo);
 
   // Cumul annuel réel jusqu'à présent
   const annualTotalNet = records.reduce(

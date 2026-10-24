@@ -126,7 +126,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
     try {
       let query = supabase.from('contracts').select('*, property:properties(*), tenant:users!tenant_id(*)').order('created_at', { ascending: false });
       if (user?.id) {
-        query = query.eq('owner_id', user.id);
+        query = query.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       }
       const { data, error } = await query;
       if (!error && data && data.length > 0) {
@@ -164,8 +164,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
         const raw = localStorage.getItem('locatrust_contracts');
         if (raw) {
           const list = JSON.parse(raw);
-          if (Array.isArray(list) && list.length > 0) {
-            const mapped = list.map((c: any) => ({
+          const myList = Array.isArray(list) ? list.filter((c: any) => !user?.id || c.owner_id === user.id || c.agency_id === user.id) : [];
+          if (myList.length > 0) {
+            const mapped = myList.map((c: any) => ({
               id: c.contract_number || c.id || 'CT-2026-0001',
               locataire: c.tenant_name || 'Locataire',
               role: 'Locataire',
