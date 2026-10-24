@@ -280,8 +280,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     setIsSendingDirectMessage(true);
 
     try {
-      const applicantId = user?.id || profile?.id || 'usr_tenant';
-      const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || selectedRental.agency_id || selectedRental.mandant_id || 'usr_owner';
+      const applicantId = user?.id || profile?.id;
+      if (!applicantId) {
+        alert("Veuillez vous connecter pour contacter directement le bailleur.");
+        setIsSendingDirectMessage(false);
+        return;
+      }
+      const targetOwnerId = selectedRental.ownerId || selectedRental.agencyId || selectedRental.mandant_id;
+      if (!targetOwnerId) {
+        alert("Les coordonnées du bailleur sont indisponibles pour ce bien.");
+        setIsSendingDirectMessage(false);
+        return;
+      }
       const textToSend = directMessageText.trim() || 'Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.';
 
       // Envoi réel dans Supabase + Cache Local
@@ -457,26 +467,23 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
     return {
       id: p.id,
-      ownerId: p.owner_id || p.owner?.id || p.agency_id || p.mandant_id || (p as any).ownerId || 'usr_owner',
+      ownerId: p.owner_id || p.owner?.id || p.agency_id || p.mandant_id || (p as any).ownerId || '',
       agencyId: p.agency_id || undefined,
       ownerName: (() => {
-        let name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
-        if (name && name.toLowerCase() === 'kk') name = 'KK';
+        const name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
         return name || (Boolean(p.is_agency || p.owner?.account_type === 'agence') ? 'Agence Immobilière' : 'Bailleur certifié');
       })(),
       ownerPhone: p.owner?.phone || p.mandant_phone || (p as any).owner_phone || '+225 07 00 00 00 00',
       ownerAvatar: p.owner?.avatar_url || (p as any).owner_avatar || '',
       ownerEmail: p.owner?.email || (p as any).owner_email || 'bailleur@locatrust.ci',
       authorName: (() => {
-        let name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
-        if (name && name.toLowerCase() === 'kk') name = 'KK';
+        const name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
         return name || (Boolean(p.is_agency || p.owner?.account_type === 'agence') ? 'Agence Immobilière' : 'Bailleur certifié');
       })(),
       authorAvatar: (() => {
         const real = p.owner?.avatar_url || (p as any).owner_avatar;
         if (real) return real;
-        let name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
-        if (name && name.toLowerCase() === 'kk') name = 'KK';
+        const name = (p as any).agency_name || p.owner?.full_name || (p as any).owner_name || p.mandant_name;
         return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Bailleur')}&background=1E40AF&color=fff`;
       })(),
       isVerified: true,

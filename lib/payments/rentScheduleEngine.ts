@@ -799,9 +799,7 @@ export function computePortfolioRentMetrics(
   const validPayments = (payments || []).filter((p: any) => {
     if (!p) return false;
     const st = String(p.status || '').toLowerCase().trim();
-    if (st === 'refuse' || st === 'rejete') return false;
-    return st === 'confirme' || st === 'valide' || st === 'certifie' || st === 'paye' ||
-      p.reference === 'ESP-135945' || p.reference === 'WAV-2026-NOV-781920';
+    return st === 'confirme' || st === 'valide' || st === 'certifie' || st === 'paye';
   });
 
   const refYear = refDate.getFullYear();

@@ -214,7 +214,7 @@ export const LocatairePaiementsView: React.FC = () => {
       // Vérification stricte des signatures (Règle d'or : le reçu attend la signature du locataire)
       rentList = rentList.map(p => {
         const hasTenantSig = Boolean(p.tenant_signature_url || p.tenant_signature);
-        if (!hasTenantSig && (p.status === 'en_attente_signature_locataire' || p.reference === 'WAV-2026-NOV-781920')) {
+        if (!hasTenantSig && p.status === 'en_attente_signature_locataire') {
           return {
             ...p,
             status: 'en_attente_signature_locataire'
@@ -530,11 +530,11 @@ export const LocatairePaiementsView: React.FC = () => {
             action: 'declare_payment',
             payment: {
               ...savedPayment,
-              tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Christian',
-              owner_id: targetOwnerId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-              agency_id: targetOwnerId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-              contract_id: chosenContract?.contract_number || chosenContract?.id || 'LT-2026-CI-000492',
-              property_title: chosenContract?.property?.title || 'Maison 4 pièce'
+              tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+              owner_id: targetOwnerId || '',
+              agency_id: targetOwnerId || '',
+              contract_id: chosenContract?.contract_number || chosenContract?.id || '',
+              property_title: chosenContract?.property?.title || 'Logement LocaTrust'
             }
           })
         }).catch(() => {});
@@ -605,16 +605,16 @@ export const LocatairePaiementsView: React.FC = () => {
         sendDeclarationMessageToOwner({
           type: 'loyer',
           declarationId: savedPayment.id,
-          contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
+          contractNumber: chosenContract?.contract_number || chosenContract?.id || '',
           propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
           amount: amount,
           paymentMethod: method,
           reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
           date: new Date().toLocaleDateString('fr-FR'),
           month: calculatedPeriodText,
-          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Christian',
-          tenantId: user?.id || 'usr_locataire',
-          ownerId: targetOwnerId || 'usr_owner',
+          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+          tenantId: user?.id || '',
+          ownerId: targetOwnerId || '',
           proofUrl: proofUrl || undefined,
           status: 'en_attente'
         });
@@ -804,15 +804,15 @@ export const LocatairePaiementsView: React.FC = () => {
         sendDeclarationMessageToOwner({
           type: 'caution',
           declarationId: savedCaution.id,
-          contractNumber: chosenContract?.contract_number || 'LT-2026-CI-000492',
+          contractNumber: chosenContract?.contract_number || chosenContract?.id || '',
           propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
           amount: cautionAmount,
           paymentMethod: cautionMethod,
           reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
           date: new Date().toLocaleDateString('fr-FR'),
           tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-          tenantId: user?.id || 'usr_locataire',
-          ownerId: targetOwnerId || 'usr_owner',
+          tenantId: user?.id || '',
+          ownerId: targetOwnerId || '',
           proofUrl: cautionProofUrl || undefined,
           status: 'en_attente'
         });

@@ -20,7 +20,9 @@ import {
   ChevronRight,
   Sparkles,
   DollarSign,
-  ShieldCheck
+  ShieldCheck,
+  Video,
+  Film
 } from 'lucide-react';
 import { Property, PropertyType, PropertyStatus } from '@/types/database.types';
 import { formatFCFA } from '@/lib/utils';
@@ -598,6 +600,30 @@ export const BiensView: React.FC<BiensViewProps> = ({
                   )}
                 </div>
               </div>
+
+              {/* Video Player (if property has video) */}
+              {(selectedProperty.videos || []).length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Film className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Vidéo de Visite Virtuelle</span>
+                  </h4>
+                  <div className="flex flex-col gap-3">
+                    {(selectedProperty.videos || []).map((vUrl, vIdx) => (
+                      <div key={vIdx} className="rounded-2xl overflow-hidden border border-purple-200 bg-black aspect-video shadow-md">
+                        <video
+                          src={vUrl}
+                          controls
+                          className="w-full h-full object-contain"
+                          preload="metadata"
+                        >
+                          Votre navigateur ne prend pas en charge la lecture vidéo.
+                        </video>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Specs Breakdown */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs">

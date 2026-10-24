@@ -31,7 +31,7 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
   if (!property) return null;
 
   const defaultMsg = `Bonjour ${property.owner?.full_name || 'Bailleur'}, je suis intéressé par votre annonce "${property.title}". Est-il toujours disponible pour une visite ?`;
-  const targetOwnerId = property.owner_id || property.owner?.id || (property as any)?.agency_id || 'usr_owner';
+  const targetOwnerId = property.owner_id || property.owner?.id || (property as any)?.agency_id || (property as any)?.mandant_id || '';
   const ownerFullName = property.owner?.full_name || (property as any)?.owner_name || 'Propriétaire Bailleur';
   const ownerAvatar = property.owner?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(ownerFullName)}&background=1E40AF&color=fff`;
 
@@ -39,7 +39,16 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     if (isSending) return;
 
-    const applicantId = user?.id || profile?.id || 'usr_tenant';
+    const applicantId = user?.id || profile?.id;
+    if (!applicantId) {
+      setErrorMessage("Veuillez vous connecter pour contacter directement le bailleur de ce logement.");
+      return;
+    }
+    if (!targetOwnerId) {
+      setErrorMessage("Les coordonnées du bailleur de ce logement sont momentanément indisponibles.");
+      return;
+    }
+
     const textToSend = message.trim() || defaultMsg;
 
     setIsSending(true);

@@ -31,22 +31,31 @@ import {
   downloadAccountingPDF,
   downloadCompleteAccountingZip,
   downloadStatementOfResultsPDF,
-  downloadStatementOfResultsCSV
+  downloadStatementOfResultsCSV,
+  downloadAgencyMandantsRevenuePDF,
+  downloadAgencyMandantsRevenueCSV
 } from '@/lib/reports/accountingExportEngine';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { getActiveReferenceYear } from '@/lib/reports/accountingHistoryStore';
 import { useAuth } from '@/src/context/AuthContext';
-import { fetchRealAccountingData, RealAccountingDataset, RealAccountingSynthesis } from '@/lib/reports/accountingRealDataStore';
+import {
+  fetchRealAccountingData,
+  RealAccountingDataset,
+  RealAccountingSynthesis,
+  fetchAgencyMandantsAccountingReport,
+  AgencyMandantsReportData
+} from '@/lib/reports/accountingRealDataStore';
 import { supabase } from '@/src/lib/supabase';
 import { getAgencyMandates, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
 
 export const AccountingExportView: React.FC = () => {
   const { user, profile } = useAuth();
   const [accountingData, setAccountingData] = useState<RealAccountingDataset | null>(null);
+  const [agencyMandantsReport, setAgencyMandantsReport] = useState<AgencyMandantsReportData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeYear, setActiveYear] = useState<string>(() => getActiveReferenceYear());
   const [selectedPeriod, setSelectedPeriod] = useState<string>('annee_en_cours');
-  const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats'>('resultats');
+  const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats' | 'mandants_revenus'>('resultats');
 
   // Mandants STRICTEMENT réservés aux agences immobilières (AUCUN accès pour les propriétaires)
   const isAgency = profile?.account_type === 'agence';
@@ -111,13 +120,38 @@ export const AccountingExportView: React.FC = () => {
     return () => window.removeEventListener('locatrust:year_changed', handleYearChange);
   }, []);
   
+  // Chargement du rapport de revenus par mandant pour l'agence
+  React.useEffect(() => {
+    if (!isAgency || !agencyId) return;
+
+    let isMounted = true;
+    const loadMandantsReport = async () => {
+      try {
+        const agencyName = profile?.full_name || 'Agence Immobilière Agréée';
+        const rep = await fetchAgencyMandantsAccountingReport(agencyId, agencyName, activeYear, currentPeriodObj.label);
+        if (isMounted) setAgencyMandantsReport(rep);
+      } catch (e) {
+        console.warn('Erreur chargement rapport mandants:', e);
+      }
+    };
+
+    loadMandantsReport();
+    window.addEventListener('locatrust:properties_updated', loadMandantsReport);
+    window.addEventListener('locatrust:agency_mandates-updated', loadMandantsReport);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('locatrust:properties_updated', loadMandantsReport);
+      window.removeEventListener('locatrust:agency_mandates-updated', loadMandantsReport);
+    };
+  }, [isAgency, agencyId, activeYear, currentPeriodObj.label, profile?.full_name]);
+  
   // Preparation & Confirmation Modal State
   const [prepareModal, setPrepareModal] = useState<{
     isOpen: boolean;
     format: 'pdf' | 'csv' | 'zip';
     title: string;
     periodLabel: string;
-    actionType?: 'full_pdf' | 'full_zip' | 'results_pdf' | 'results_csv' | 'general';
+    actionType?: 'full_pdf' | 'full_zip' | 'results_pdf' | 'results_csv' | 'mandants_pdf' | 'mandants_csv' | 'general';
   } | null>(null);
 
   const [confirmationModal, setConfirmationModal] = useState<{
@@ -132,7 +166,7 @@ export const AccountingExportView: React.FC = () => {
 
   const currentPeriodObj = ACCOUNTING_PERIODS.find((p) => p.id === selectedPeriod) || ACCOUNTING_PERIODS[0];
 
-  const handleOpenPrepare = (format: 'pdf' | 'csv' | 'zip', title: string, actionType: 'full_pdf' | 'full_zip' | 'results_pdf' | 'results_csv' | 'general' = 'general') => {
+  const handleOpenPrepare = (format: 'pdf' | 'csv' | 'zip', title: string, actionType: 'full_pdf' | 'full_zip' | 'results_pdf' | 'results_csv' | 'mandants_pdf' | 'mandants_csv' | 'general' = 'general') => {
     setPrepareModal({
       isOpen: true,
       format,
@@ -150,7 +184,11 @@ export const AccountingExportView: React.FC = () => {
 
     const targetDataset = activeDataset || accountingData;
 
-    if (actionType === 'full_zip') {
+    if (actionType === 'mandants_pdf') {
+      downloadAgencyMandantsRevenuePDF(periodLabel, agencyMandantsReport);
+    } else if (actionType === 'mandants_csv') {
+      downloadAgencyMandantsRevenueCSV(periodLabel, agencyMandantsReport);
+    } else if (actionType === 'full_zip') {
       downloadCompleteAccountingZip(periodLabel, targetDataset);
     } else if (actionType === 'results_pdf') {
       downloadStatementOfResultsPDF(periodLabel, targetDataset);
@@ -490,6 +528,15 @@ export const AccountingExportView: React.FC = () => {
           </p>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+            {isAgency && (
+              <button
+                onClick={() => handleOpenPrepare('pdf', 'Rapport Revenus par Mandant (.PDF)', 'mandants_pdf')}
+                className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-purple-700 hover:bg-purple-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 text-center"
+              >
+                <Users className="w-3.5 h-3.5 text-purple-200 shrink-0" />
+                <span>Rapport Mandants (.PDF)</span>
+              </button>
+            )}
             <button
               onClick={() => handleOpenPrepare('pdf', 'Dossier Comptable en PDF', 'full_pdf')}
               className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 text-center"
@@ -512,6 +559,7 @@ export const AccountingExportView: React.FC = () => {
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 text-xs font-bold">
         {[
           { id: 'resultats', label: '⭐ G. État des Résultats', icon: PieChart },
+          ...(isAgency ? [{ id: 'mandants_revenus', label: '🏢 H. Revenus par Mandant (Agence)', icon: Users }] : []),
           { id: 'synthese', label: 'F. Synthèse & Grand Livre', icon: BookOpen },
           { id: 'encaissements', label: 'A. Journal des Encaissements', icon: CreditCard },
           { id: 'loyers', label: 'B. État des Loyers', icon: Layers },
@@ -1179,6 +1227,173 @@ export const AccountingExportView: React.FC = () => {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* SUBTAB H : RAPPORT DES REVENUS PAR PROPRIÉTAIRE MANDANT (AGENCE UNIQUEMENT) */}
+        {activeSubTab === 'mandants_revenus' && isAgency && (
+          <div className="flex flex-col gap-5 animate-fadeIn">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-black text-slate-900">
+                    H. Rapport des Revenus & Honoraires de Gérance par Mandant ({currentPeriodObj.label})
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[10px] font-black border border-purple-200">
+                    Officiel Agence
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Décompte officiel des loyers collectés pour le compte des bailleurs mandants, honoraires de gestion de l'agence et solde net à reverser.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => handleOpenPrepare('pdf', 'Rapport Revenus par Mandant (PDF)', 'mandants_pdf')}
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-purple-700/30 transition-all active:scale-95 text-center"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>Télécharger PDF</span>
+                </button>
+                <button
+                  onClick={() => handleOpenPrepare('csv', 'Rapport Revenus par Mandant (CSV)', 'mandants_csv')}
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 text-center"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-purple-700 shrink-0" />
+                  <span>Exporter (.CSV)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Cards KPI Mandants */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 flex flex-col justify-between">
+                <span className="text-[10.5px] font-bold text-emerald-800 uppercase">1. Loyers Collectés Mandants</span>
+                <span className="text-2xl font-black text-emerald-700 my-1">
+                  {formatFCFA(agencyMandantsReport?.totals.totalLoyersEncaisses || 0)}
+                </span>
+                <span className="text-[10px] text-emerald-600 font-bold">100% justifié par quittances</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
+                <span className="text-[10.5px] font-bold text-blue-900 uppercase">2. Honoraires Gérance Agence</span>
+                <span className="text-2xl font-black text-blue-800 my-1">
+                  {formatFCFA(agencyMandantsReport?.totals.totalCommissionsAgence || 0)}
+                </span>
+                <span className="text-[10px] text-blue-600 font-bold">Revenus nets perçus par l'agence</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 flex flex-col justify-between">
+                <span className="text-[10.5px] font-bold text-rose-800 uppercase">3. Dépenses Maintenance</span>
+                <span className="text-2xl font-black text-rose-700 my-1">
+                  {formatFCFA(agencyMandantsReport?.totals.totalMaintenanceDeductions || 0)}
+                </span>
+                <span className="text-[10px] text-rose-600 font-bold">Travaux déduits sur mandats</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-purple-50/80 border border-purple-200 flex flex-col justify-between">
+                <span className="text-[10.5px] font-bold text-purple-900 uppercase">4. Net Reversé aux Mandants</span>
+                <span className="text-2xl font-black text-purple-900 my-1">
+                  {formatFCFA(agencyMandantsReport?.totals.totalNetReversedToMandants || 0)}
+                </span>
+                <span className="text-[10px] text-purple-700 font-bold">Solde net à créditer aux bailleurs</span>
+              </div>
+            </div>
+
+            {/* Tableau complet nominatif par Mandant */}
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="w-full text-left text-xs min-w-[850px]">
+                <thead className="bg-slate-50 text-slate-700 font-black uppercase text-[10px] border-b border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">Bailleur Mandant</th>
+                    <th className="py-3 px-4">Lots Sous Gestion</th>
+                    <th className="py-3 px-4 text-right">Loyers Collectés</th>
+                    <th className="py-3 px-4 text-center">Taux Gérance</th>
+                    <th className="py-3 px-4 text-right">Honoraires Agence</th>
+                    <th className="py-3 px-4 text-right">Dépenses Déduites</th>
+                    <th className="py-3 px-4 text-right">Solde Net Reversé</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
+                  {(!agencyMandantsReport?.mandants || agencyMandantsReport.mandants.length === 0) ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Users className="w-8 h-8 text-slate-300" />
+                          <span className="text-sm font-semibold text-slate-600">Aucun propriétaire mandant actif trouvé</span>
+                          <span className="text-xs text-slate-400">
+                            Ajoutez des mandants et associez vos biens pour que leurs états de revenus s'affichent automatiquement ici.
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    agencyMandantsReport.mandants.map((m, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-slate-900">{m.mandantName}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">{m.mandantPhone || '—'}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-slate-700">{m.propertiesCount} lot(s)</span>
+                            <span className="text-[10px] text-slate-400 truncate max-w-[180px]">
+                              {m.propertiesList.slice(0, 2).join(', ')}{m.propertiesList.length > 2 ? '...' : ''}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-3 text-right font-black text-emerald-700">
+                          {formatFCFA(m.loyersEncaisses)}
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[10px]">
+                            {m.commissionRate}%
+                          </span>
+                        </td>
+                        <td className="p-3 text-right font-black text-blue-700">
+                          {formatFCFA(m.commissionAmount)}
+                        </td>
+                        <td className="p-3 text-right text-rose-600 font-semibold">
+                          {m.maintenanceDeductions > 0 ? `-${formatFCFA(m.maintenanceDeductions)}` : '0 FCFA'}
+                        </td>
+                        <td className="p-3 text-right font-black text-purple-900 bg-purple-50/30">
+                          {formatFCFA(m.netDueToMandant)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {agencyMandantsReport?.mandants && agencyMandantsReport.mandants.length > 0 && (
+                  <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-black text-xs text-slate-900">
+                    <tr>
+                      <td className="p-3 uppercase">Total Général ({agencyMandantsReport.mandants.length} mandants)</td>
+                      <td className="p-3">{agencyMandantsReport.totals.totalProperties} lots</td>
+                      <td className="p-3 text-right text-emerald-800">{formatFCFA(agencyMandantsReport.totals.totalLoyersEncaisses)}</td>
+                      <td className="p-3 text-center text-slate-400">—</td>
+                      <td className="p-3 text-right text-blue-900">{formatFCFA(agencyMandantsReport.totals.totalCommissionsAgence)}</td>
+                      <td className="p-3 text-right text-rose-700">
+                        {agencyMandantsReport.totals.totalMaintenanceDeductions > 0 ? `-${formatFCFA(agencyMandantsReport.totals.totalMaintenanceDeductions)}` : '0 FCFA'}
+                      </td>
+                      <td className="p-3 text-right text-purple-950 bg-purple-100/50">
+                        {formatFCFA(agencyMandantsReport.totals.totalNetReversedToMandants)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+
+            {/* Note légale de décharge et de conformité */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex flex-col gap-1">
+              <span className="font-bold text-slate-900">
+                ⚖️ Conformité Légale & Acte Uniforme OHADA (Baux et Gestion Immobilière)
+              </span>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Ce rapport atteste de la stricte conformité des décomptes avec les mandats de gérance signés.
+                Les honoraires de gestion ont été automatiquement prélevés sur les loyers encaissés justifiés par quittance officielle.
+                Le solde net est garanti opposable aux tiers et certifié par LocaTrust Cloud.
+              </p>
             </div>
           </div>
         )}

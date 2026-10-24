@@ -34,7 +34,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import jsPDF from 'jspdf';
 import confetti from 'canvas-confetti';
-import { createProperty } from '@/lib/supabase/services';
+import { createProperty, uploadFileToStorage } from '@/lib/supabase/services';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { getAgencyMandates, saveAgencyMandate, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
@@ -331,18 +331,35 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         }
       }
 
-      // Vidéo optionnelle (n'injecte AUCUNE vidéo de stock Mixkit artificielle)
-      const finalVideos: string[] = [];
-      if (videoUrl.trim() && !videoUrl.startsWith('blob:')) {
-        finalVideos.push(videoUrl.trim());
-      } else if (videoFile?.url && !videoFile.url.startsWith('blob:')) {
-        finalVideos.push(videoFile.url);
-      }
-
-      const currentPublisherId = user?.id || profile?.id || (isAgency ? 'usr_agency' : 'usr_owner');
+      const currentPublisherId = user?.id || profile?.id || '';
       const currentPublisherName = profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur');
       const currentPublisherAvatar = profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentPublisherName)}&background=1E40AF&color=fff`;
       const currentPublisherPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
+
+      // Vidéo optionnelle : Téléversement réel vers Supabase Storage
+      const finalVideos: string[] = [];
+      if (videoRawFile) {
+        try {
+          const fileExt = videoRawFile.name.split('.').pop() || 'mp4';
+          const filePath = `videos/${currentPublisherId || 'properties'}/${Date.now()}_video.${fileExt}`;
+          const uploadRes = await uploadFileToStorage('property_photos', filePath, videoRawFile);
+          if (uploadRes?.publicUrl) {
+            finalVideos.push(uploadRes.publicUrl);
+          } else {
+            // Conversion base64 de secours si stockage indisponible
+            const base64Video = await new Promise<string>((resolve) => {
+              const r = new FileReader();
+              r.onloadend = () => resolve(r.result as string);
+              r.readAsDataURL(videoRawFile);
+            });
+            if (base64Video) finalVideos.push(base64Video);
+          }
+        } catch (vErr) {
+          console.warn('Erreur téléversement vidéo du bien:', vErr);
+        }
+      } else if (videoUrl.trim() && !videoUrl.startsWith('blob:')) {
+        finalVideos.push(videoUrl.trim());
+      }
 
       const newPropPayload = {
         title: finalTitle,

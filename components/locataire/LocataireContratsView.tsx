@@ -292,10 +292,10 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                   amount: amt,
                   token: sr.token,
                   type: sr.type || 'loyer',
-                  owner_name: sr.owner_name || 'KK',
-                  property_title: sr.property_title || 'Maison 4 pièce',
+                  owner_name: sr.owner_name || 'Bailleur',
+                  property_title: sr.property_title || 'Logement',
                   property_address: sr.property_address,
-                  contract_number: sr.contract_number || 'LT-2026-CI-000492',
+                  contract_number: sr.contract_number || '',
                   rawReceipt: sr
                 });
               }
@@ -1039,7 +1039,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                             period: rcp.period || rcp.period_covered || 'Mois en cours',
                             paymentMethod: rcp.payment_method || 'Mobile Money',
                             date: rcp.created_at ? new Date(rcp.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-                            ownerName: rcp.owner_name === 'Nat Yao' ? 'KK' : (rcp.owner_name || rcp.rawReceipt?.ownerName || 'KK'),
+                            ownerName: rcp.owner_name || rcp.rawReceipt?.ownerName || 'Bailleur',
                             tenantName: user?.user_metadata?.full_name || 'Locataire',
                             propertyTitle: rcp.property_title || rcp.rawReceipt?.propertyTitle || 'Logement LocaTrust',
                             propertyAddress: rcp.property_address || rcp.rawReceipt?.propertyAddress || 'Abidjan, Côte d\'Ivoire',
@@ -1091,69 +1091,71 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
             </div>
 
             {/* Dossier sections */}
-            <div className="flex flex-col gap-4">
-              
-              {/* 1. Contrat */}
-              <div className="p-4 rounded-2xl border border-slate-200 flex flex-col gap-2">
-                <span className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-blue-600" />
-                  1. Contrats de bail signés
-                </span>
-                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs">
-                  <div>
-                    <span className="font-black text-slate-900 block">Bail d'Habitation officiel N° LT-2026-CI-000492</span>
-                    <span className="text-slate-500 font-medium">Signé par les deux parties avec certification horodatée</span>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                    ✔ Signé
-                  </span>
-                </div>
-              </div>
+            {(() => {
+              const currentBailleur = bailleursList.find((b) => b.ownerName === selectedBailleurDossier);
+              const bRentals = currentBailleur?.rentals || [];
+              const bReceipts = receipts.filter(r => r.owner_name === selectedBailleurDossier || bRentals.some(br => br.contractNumber === r.contract_number));
+              const totalCaution = bRentals.reduce((sum, r) => sum + (r.cautionAmount || 0), 0);
 
-              {/* 2. Caution */}
-              <div className="p-4 rounded-2xl border border-slate-200 flex flex-col gap-2">
-                <span className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  2. Cautions & Restitutions
-                </span>
-                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs">
-                  <div>
-                    <span className="font-black text-slate-900 block">Dépôt de garantie : {formatFCFA(300000)}</span>
-                    <span className="text-slate-500 font-medium">Reçu officiel de caution N° DEP-2026-CI-00984 (Double signature)</span>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 font-bold text-[10px]">
-                    Consignée & Protégée
-                  </span>
-                </div>
-                {selectedBailleurDossier !== '' && (
-                  <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl text-xs border border-emerald-100">
-                    <div>
-                      <span className="font-black text-slate-900 block">Restitution ancienne location (Yamoussoukro)</span>
-                      <span className="text-slate-500 font-medium">Montant restitué : 440 000 FCFA sans litige (0 FCFA retenu)</span>
-                    </div>
-                    <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                      ✔ Restitution terminée
+              return (
+                <div className="flex flex-col gap-4">
+                  {/* 1. Contrat */}
+                  <div className="p-4 rounded-2xl border border-slate-200 flex flex-col gap-2">
+                    <span className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-600" />
+                      1. Contrats de bail signés ({bRentals.length})
                     </span>
+                    {bRentals.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic p-3 bg-slate-50 rounded-xl">Aucun contrat archivé pour ce bailleur.</p>
+                    ) : (
+                      bRentals.map((r, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs">
+                          <div>
+                            <span className="font-black text-slate-900 block">{r.propertyTitle} — N° {r.contractNumber}</span>
+                            <span className="text-slate-500 font-medium">{r.city} • Loyer : {formatFCFA(r.monthlyRent)}/mois</span>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                            ✔ {r.status === 'actif' ? 'Bail Actif' : 'Signé'}
+                          </span>
+                        </div>
+                      ))
+                    )}
                   </div>
-                )}
-              </div>
 
-              {/* 3. Loyers & Reçus */}
-              <div className="p-4 rounded-2xl border border-slate-200 flex flex-col gap-2">
-                <span className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                  <Receipt className="w-4 h-4 text-purple-600" />
-                  3. Quittances et paiements de loyers
-                </span>
-                <p className="text-xs text-slate-500">
-                  Toutes vos quittances mensuelles avec ce bailleur sont archivées et téléchargeables en permanence.
-                </p>
-                <div className="flex items-center gap-2 text-xs font-bold text-blue-700">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Aucun impayé constaté • Dossier locataire exemplaire</span>
+                  {/* 2. Caution */}
+                  <div className="p-4 rounded-2xl border border-slate-200 flex flex-col gap-2">
+                    <span className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      2. Cautions & Dépôts de garantie
+                    </span>
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs">
+                      <div>
+                        <span className="font-black text-slate-900 block">Dépôt de garantie : {formatFCFA(totalCaution)}</span>
+                        <span className="text-slate-500 font-medium">Conformité Art. 414 Loi 2019-576 (Plafonné à 2 mois)</span>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 font-bold text-[10px]">
+                        Consignée & Protégée
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3. Loyers & Reçus */}
+                  <div className="p-4 rounded-2xl border border-slate-200 flex flex-col gap-2">
+                    <span className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                      <Receipt className="w-4 h-4 text-purple-600" />
+                      3. Quittances et paiements de loyers ({bReceipts.length})
+                    </span>
+                    <p className="text-xs text-slate-500">
+                      Toutes vos quittances certifiées avec ce bailleur sont archivées et infalsifiables.
+                    </p>
+                    <div className="flex items-center gap-2 text-xs font-bold text-blue-700">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>{bReceipts.length} quittance(s) officielle(s) enregistrée(s)</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-            </div>
+              );
+            })()}
 
             <div className="flex justify-end pt-2 border-t">
               <button

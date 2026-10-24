@@ -89,7 +89,7 @@ interface MessagerieViewProps {
 
 export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'proprietaire' }) => {
   const { user, profile } = useAuth();
-  const currentUserId = user?.id || (userRole === 'locataire' ? 'usr_tenant' : userRole === 'agence' ? 'usr_agency' : 'usr_owner');
+  const currentUserId = user?.id || '';
 
   const myAliases = React.useMemo(() => {
     const s = new Set<string>();
@@ -97,33 +97,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     if (user?.email) s.add(user.email.toLowerCase());
     if (profile?.id) s.add(profile.id);
     if (currentUserId) s.add(currentUserId);
-    if (userRole === 'locataire') {
-      s.add('usr_tenant');
-      s.add('usr_locataire');
-      s.add('a939eff5-c93d-4e6e-9f1f-b61c39986a46');
-    }
-    if (userRole === 'agence' || userRole === 'proprietaire') {
-      s.add('usr_agency');
-      s.add('usr_owner');
-      s.add('d3a42346-c227-4c67-b4a3-52bd09b98ad9');
-    }
     return s;
-  }, [user?.id, user?.email, profile?.id, currentUserId, userRole]);
+  }, [user?.id, user?.email, profile?.id, currentUserId]);
 
   const [dbContacts, setDbContacts] = useState<ChatContact[]>([]);
 
   const roleContacts = React.useMemo(() => {
-    const list: ChatContact[] = [
-      {
-        id: 'usr_support',
-        name: 'Support LocaTrust',
-        phone: '+225 25 20 00 11 22',
-        role: 'Assistance Client 24/7',
-        propertyTitle: 'Support Technique & Juridique',
-        avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80',
-        online: true
-      }
-    ];
+    const list: ChatContact[] = [];
 
     // Intégrer les contacts réels chargés directement depuis Supabase
     if (dbContacts && dbContacts.length > 0) {
@@ -406,7 +386,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       const active = localStorage.getItem('locatrust_active_chat_contact');
       if (active) return active;
     }
-    return roleContacts[0]?.id || 'usr_support';
+    return roleContacts[0]?.id || '';
   });
   const [inputMessage, setInputMessage] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -622,7 +602,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
   }, [messages.length, selectedContactId, isTyping]);
 
-  const activeContact = roleContacts.find((c) => c.id === selectedContactId) || roleContacts[0];
+  const activeContact = roleContacts.find((c) => c.id === selectedContactId) || roleContacts[0] || null;
 
   // Marquer immédiatement les messages du contact actif comme lus
   useEffect(() => {
@@ -633,30 +613,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Filter messages between current user and active contact with intelligent deduplication
   const currentConversationMessages = React.useMemo(() => {
-    const isOwnerAgencyRole =
-      activeContact?.role?.toLowerCase().includes('propriétaire') ||
-      activeContact?.role?.toLowerCase().includes('bailleur') ||
-      activeContact?.role?.toLowerCase().includes('agence');
+    if (!activeContact?.id) return [];
 
     const contactAliases = new Set([
-      activeContact?.id,
-      activeContact?.name,
-      activeContact?.name?.toLowerCase(),
-      `tenant_${activeContact?.id}`,
-      `owner_${activeContact?.id}`,
-      ...(isOwnerAgencyRole ? ['usr_owner', 'usr_agency', 'owner_usr_owner'] : ['usr_tenant'])
+      activeContact.id,
+      activeContact.name,
+      activeContact.name?.toLowerCase(),
+      `tenant_${activeContact.id}`,
+      `owner_${activeContact.id}`
     ]);
-
-    if (activeContact?.name?.toLowerCase().includes('kk') || activeContact?.id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9') {
-      contactAliases.add('d3a42346-c227-4c67-b4a3-52bd09b98ad9');
-      contactAliases.add('usr_owner');
-      contactAliases.add('usr_agency');
-    }
-    if (activeContact?.name?.toLowerCase().includes('christian') || activeContact?.id === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46') {
-      contactAliases.add('a939eff5-c93d-4e6e-9f1f-b61c39986a46');
-      contactAliases.add('usr_tenant');
-      contactAliases.add('usr_locataire');
-    }
 
     const raw = (Array.isArray(messages) ? messages : []).filter(
       (m) => {
@@ -1752,7 +1717,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
           {/* Contacts List - Scrollable */}
           <div className="flex-1 flex flex-col divide-y divide-slate-100 dark:divide-slate-800/80 overflow-y-auto">
-            {filteredContacts.map((contact) => {
+            {filteredContacts.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500 dark:text-slate-400 my-auto">
+                <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
+                  <MessageSquare className="w-6 h-6 text-slate-400" />
+                </div>
+                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Aucune conversation</p>
+                <p className="text-[11px] text-slate-400 mt-1">Vous n'avez encore reçu aucun message.</p>
+              </div>
+            ) : (
+              filteredContacts.map((contact) => {
               const isSelected = selectedContactId === contact.id;
               const contactAliases = new Set([
                 contact.id,
@@ -1836,7 +1810,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                   </div>
                 </div>
               );
-            })}
+            }))}
           </div>
         </div>
 
@@ -1846,9 +1820,21 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             showMobileChat ? 'flex' : 'hidden md:flex'
           } flex-1 flex flex-col bg-slate-100/70 dark:bg-slate-900 h-full min-w-0 relative`}
         >
-          {/* Chat Header - Always visible at top */}
-          <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 shrink-0">
-            <div className="flex items-center gap-3 min-w-0">
+          {!activeContact ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white dark:bg-slate-900">
+              <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 shadow-inner">
+                <MessageSquare className="w-8 h-8" />
+              </div>
+              <h3 className="text-base font-black text-slate-800 dark:text-white mb-1">Aucune conversation</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">
+                Vous n'avez encore reçu aucun message.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Chat Header - Always visible at top */}
+              <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-white dark:bg-slate-900 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
               {/* Back button on mobile */}
               <button
                 type="button"
@@ -2657,6 +2643,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               )}
             </div>
           )}
+          </>
+        )}
         </div>
       </div>
 

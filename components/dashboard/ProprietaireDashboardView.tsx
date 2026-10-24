@@ -419,7 +419,6 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         const pendingApps = realApplications.filter((a: any) => a.status === 'en_attente');
         // Paiements réels en attente (exclure formellement les règlements déjà validés ou scellés)
         const pendingPayments = realPayments.filter((p: any) => {
-          if (p.reference === 'WAV-2026-NOV-781920' || p.reference === 'ESP-135945') return false;
           if (p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye') return false;
           return p.status === 'declare';
         });

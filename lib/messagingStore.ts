@@ -130,17 +130,7 @@ export interface ChatContact {
 
 export const OWNER_CHAT_CONTACTS: ChatContact[] = [];
 
-export const TENANT_CHAT_CONTACTS: ChatContact[] = [
-  {
-    id: 'usr_support',
-    name: 'Support LocaTrust',
-    phone: '+225 25 20 00 11 22',
-    role: 'Assistance Client 24/7',
-    propertyTitle: 'Support Technique & Juridique',
-    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=250&q=80',
-    online: true
-  }
-];
+export const TENANT_CHAT_CONTACTS: ChatContact[] = [];
 
 export const AGENCY_CHAT_CONTACTS: ChatContact[] = [];
 
@@ -528,21 +518,8 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
     contactId,
     contactId.toLowerCase(),
     `tenant_${contactId}`,
-    `owner_${contactId}`,
-    'usr_owner',
-    'usr_agency',
-    'usr_tenant'
+    `owner_${contactId}`
   ]);
-  if (contactId.includes('kk') || contactId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9') {
-    contactAliases.add('d3a42346-c227-4c67-b4a3-52bd09b98ad9');
-    contactAliases.add('usr_agency');
-    contactAliases.add('usr_owner');
-  }
-  if (contactId.includes('christian') || contactId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46') {
-    contactAliases.add('a939eff5-c93d-4e6e-9f1f-b61c39986a46');
-    contactAliases.add('usr_tenant');
-    contactAliases.add('usr_locataire');
-  }
 
   const updated = current.map((m) => {
     // Tout message reçu de ce contact ou de ses alias
@@ -588,22 +565,15 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
   const messages = getStoredMessages();
   if (!Array.isArray(messages) || messages.length === 0) return 0;
 
-  const role = user?.role || 'proprietaire';
   const userId = user?.id || '';
   const userEmail = (user?.email || '').toLowerCase();
-  const defaultId = role === 'locataire' ? 'usr_tenant' : role === 'agence' ? 'usr_agency' : 'usr_owner';
 
-  // Identifiants appartenant à l'utilisateur connecté
+  // Identifiants appartenant strictement à l'utilisateur connecté
   const myIds = new Set<string>();
   if (userId) myIds.add(userId);
   if (userEmail) myIds.add(userEmail);
-  myIds.add(defaultId);
-  if (role === 'locataire') myIds.add('usr_tenant');
-  if (role === 'proprietaire') myIds.add('usr_owner');
-  if (role === 'agence') {
-    myIds.add('usr_agency');
-    myIds.add('usr_owner');
-  }
+
+  if (myIds.size === 0) return 0;
 
   return messages.filter((m) => {
     // Message déjà lu
@@ -621,45 +591,9 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
 export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, senderId?: string, receiverId?: string): ChatMessage {
   const current = getStoredMessages();
 
-  // Résolution stricte : une quittance est TOUJOURS émise par le Bailleur/Agence et reçue par le Locataire
-  let finalSender = senderId || 'usr_owner';
-  let finalReceiver = receiverId || 'usr_tenant';
-
-  // Si le nom du locataire contient Christian ou que l'ID récepteur pointe vers un locataire
-  if (
-    (quittance.tenantName && quittance.tenantName.toLowerCase().includes('christian')) ||
-    (finalReceiver && (finalReceiver.toLowerCase().includes('christian') || finalReceiver === 'usr_tenant' || finalReceiver === 'usr_locataire'))
-  ) {
-    finalReceiver = 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
-  }
-
-  // Si le nom du propriétaire contient KK ou que l'ID émetteur pointe vers l'agence/bailleur
-  if (
-    (quittance.ownerName && quittance.ownerName.toLowerCase().includes('kk')) ||
-    (finalSender && (finalSender.toLowerCase().includes('kk') || finalSender === 'usr_agency' || finalSender === 'usr_owner'))
-  ) {
-    finalSender = 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
-  }
-
-  // Détection des inversions accidentelles d'arguments par l'appelant
-  const isSenderTenant = finalSender.includes('tenant') || finalSender.includes('locataire') || (quittance.tenantName && finalSender.includes(quittance.tenantName));
-  const isReceiverOwner = finalReceiver.includes('owner') || finalReceiver.includes('agency') || finalReceiver.includes('agence') || finalReceiver.includes('bailleur');
-
-  // Si l'émetteur a des caractéristiques de locataire et le destinataire de propriétaire, les permuter
-  if (isSenderTenant && isReceiverOwner) {
-    const temp = finalSender;
-    finalSender = finalReceiver;
-    finalReceiver = temp;
-  }
-
-  // Vérification directe sur les UUIDs de démonstration/production
-  if (isValidUuid(finalSender) && isValidUuid(finalReceiver)) {
-    // Si l'émetteur est le locataire Christian et le récepteur est l'agence KK, inverser
-    if (finalSender === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46' && finalReceiver === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9') {
-      finalSender = 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'; // KK (Agence)
-      finalReceiver = 'a939eff5-c93d-4e6e-9f1f-b61c39986a46'; // Christian (Locataire)
-    }
-  }
+  // Résolution stricte : une quittance est émise par le Bailleur/Agence et reçue par le Locataire
+  let finalSender = senderId || '';
+  let finalReceiver = receiverId || '';
 
   const isCaution = quittance.receiptType === 'caution' || quittance.receiptNumber.includes('CAUT');
   const messageText = isCaution

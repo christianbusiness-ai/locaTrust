@@ -1190,3 +1190,296 @@ Certifié conforme par LocaTrust Cloud Security.
   triggerCelebration('download');
 }
 
+// ============================================================================
+// H. RAPPORT OFFICIEL DES REVENUS ET COMMISSIONS PAR MANDANT (AGENCE IMMOBILIÈRE)
+// ============================================================================
+
+export function generateAgencyMandantsRevenuePDF(
+  periodLabel: string = 'Année 2026',
+  reportData?: any
+): jsPDF {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+
+  const agencyName = reportData?.agencyName || 'Agence Immobilière Agréée';
+  const agencyId = reportData?.agencyId || 'LT-AGENCY';
+  const mandants: any[] = reportData?.mandants || [];
+  const totals = reportData?.totals || {
+    totalProperties: mandants.reduce((s: number, m: any) => s + (m.propertiesCount || 0), 0),
+    totalContracts: mandants.reduce((s: number, m: any) => s + (m.contractsCount || 0), 0),
+    totalLoyersEncaisses: mandants.reduce((s: number, m: any) => s + (m.loyersEncaisses || 0), 0),
+    totalCommissionsAgence: mandants.reduce((s: number, m: any) => s + (m.commissionAmount || 0), 0),
+    totalMaintenanceDeductions: mandants.reduce((s: number, m: any) => s + (m.maintenanceDeductions || 0), 0),
+    totalNetReversedToMandants: mandants.reduce((s: number, m: any) => s + (m.netDueToMandant || 0), 0),
+    averageRecoveryRate: 100
+  };
+
+  // 1. En-tête Navy Institutionnel
+  doc.setFillColor(11, 25, 44);
+  doc.rect(0, 0, pageWidth, 24, 'F');
+
+  try {
+    doc.addImage(LOCATRUST_OFFICIAL_LOGO_BASE64, 'PNG', margin, 4, 38, 15);
+  } catch {}
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(255, 255, 255);
+  doc.text('RAPPORT DES REVENUS & COMMISSIONS PAR MANDANT', margin + 44, 11);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(203, 213, 225);
+  doc.text('Gérance Immobilière Professionnelle • Actes Uniformes OHADA & Loi 2019-576 (Côte d\'Ivoire)', margin + 44, 17);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(251, 191, 36);
+  doc.text(periodLabel.toUpperCase(), pageWidth - margin, 14, { align: 'right' });
+
+  let y = 30;
+
+  // 2. Fiche d'identification de l'Agence
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(margin, y, pageWidth - (margin * 2), 16, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`Agence Gestionnaire : ${agencyName}`, margin + 4, y + 6);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Identifiant Agence : ${agencyId} • Mandats actifs : ${mandants.length} • Biens gérés : ${totals.totalProperties}`, margin + 4, y + 11.5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(16, 149, 97);
+  doc.text('✓ Données certifiées extraites de la base Supabase LocaTrust', pageWidth - margin - 4, y + 9, { align: 'right' });
+
+  y += 21;
+
+  // 3. 4 Cartes Synthétiques KPI
+  const cardW = (pageWidth - (margin * 2) - 12) / 4;
+  const cards = [
+    { title: '1. LOYERS ENCAISSÉS MANDANTS', value: formatFCFA(totals.totalLoyersEncaisses), sub: 'Total collecté auprès des locataires', color: [16, 149, 97], bg: [236, 253, 245] },
+    { title: '2. COMMISSIONS AGÈNCE PERÇUES', value: formatFCFA(totals.totalCommissionsAgence), sub: 'Honoraires de gestion (Revenus agence)', color: [29, 78, 216], bg: [239, 246, 255] },
+    { title: '3. DÉPENSES MAINTENANCE DÉDUITES', value: formatFCFA(totals.totalMaintenanceDeductions), sub: 'Travaux et réparations justifiés', color: [225, 29, 72], bg: [255, 241, 242] },
+    { title: '4. SOLDE NET REVERSÉ AUX MANDANTS', value: formatFCFA(totals.totalNetReversedToMandants), sub: 'Reversé aux propriétaires mandants', color: [5, 150, 105], bg: [240, 253, 244] }
+  ];
+
+  cards.forEach((c, idx) => {
+    const cx = margin + idx * (cardW + 4);
+    doc.setFillColor(c.bg[0], c.bg[1], c.bg[2]);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(cx, y, cardW, 16, 2, 2, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.setTextColor(71, 85, 105);
+    doc.text(c.title, cx + 3, y + 5);
+
+    doc.setFontSize(8.5);
+    doc.setTextColor(c.color[0], c.color[1], c.color[2]);
+    doc.text(c.value, cx + 3, y + 10.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(c.sub, cx + 3, y + 14.5);
+  });
+
+  y += 21;
+
+  // 4. Titre de la section Tableau
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(11, 25, 44);
+  doc.text('DÉTAIL NOMINATIF PAR PROPRIÉTAIRE MANDANT', margin, y);
+  y += 4;
+
+  // En-tête du tableau
+  doc.setFillColor(11, 25, 44);
+  doc.rect(margin, y, pageWidth - (margin * 2), 7, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(255, 255, 255);
+
+  const colX = [
+    margin + 3,       // Mandant
+    margin + 75,      // Biens
+    margin + 115,     // Loyers Encaissés
+    margin + 155,     // Taux (%)
+    margin + 180,     // Honoraires Agence
+    margin + 215,     // Maintenance
+    pageWidth - margin - 3 // Net Reversé (align right)
+  ];
+
+  doc.text('PROPRIÉTAIRE MANDANT', colX[0], y + 4.8);
+  doc.text('LOTS GÉRÉS', colX[1], y + 4.8);
+  doc.text('LOYERS ENCAISSÉS', colX[2], y + 4.8);
+  doc.text('TAUX', colX[3], y + 4.8);
+  doc.text('HONORAIRES AGÈNCE', colX[4], y + 4.8);
+  doc.text('DÉPENSES DÉDUITES', colX[5], y + 4.8);
+  doc.text('NET REVERSÉ MANDANT', colX[6], y + 4.8, { align: 'right' });
+  y += 7;
+
+  // Lignes du tableau
+  if (mandants.length === 0) {
+    doc.setFillColor(248, 250, 252);
+    doc.rect(margin, y, pageWidth - (margin * 2), 10, 'F');
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Aucun propriétaire mandant ou encaissement enregistré pour cet exercice.', margin + 4, y + 6.5);
+    y += 10;
+  } else {
+    mandants.forEach((m, idx) => {
+      const isAlt = idx % 2 === 1;
+      doc.setFillColor(isAlt ? 248 : 255, isAlt ? 250 : 255, isAlt ? 252 : 255);
+      doc.rect(margin, y, pageWidth - (margin * 2), 6.5, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(15, 23, 42);
+      doc.text(m.mandantName || 'Bailleur Mandant', colX[0], y + 4.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`${m.propertiesCount} bien(s)`, colX[1], y + 4.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(16, 149, 97);
+      doc.text(formatFCFA(m.loyersEncaisses), colX[2], y + 4.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(71, 85, 105);
+      doc.text(`${m.commissionRate}%`, colX[3], y + 4.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(29, 78, 216);
+      doc.text(formatFCFA(m.commissionAmount), colX[4], y + 4.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(225, 29, 72);
+      doc.text(m.maintenanceDeductions > 0 ? `-${formatFCFA(m.maintenanceDeductions)}` : '0 FCFA', colX[5], y + 4.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(5, 150, 105);
+      doc.text(formatFCFA(m.netDueToMandant), colX[6], y + 4.5, { align: 'right' });
+
+      y += 6.5;
+    });
+  }
+
+  // Ligne de Totaux Généraux
+  doc.setFillColor(239, 246, 255);
+  doc.rect(margin, y, pageWidth - (margin * 2), 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(11, 25, 44);
+  doc.text('TOTAL GÉNÉRAL DU PORTEFEUILLE MANDANTS', colX[0], y + 5.2);
+  doc.text(`${totals.totalProperties} bien(s)`, colX[1], y + 5.2);
+
+  doc.setTextColor(16, 149, 97);
+  doc.text(formatFCFA(totals.totalLoyersEncaisses), colX[2], y + 5.2);
+
+  doc.setTextColor(71, 85, 105);
+  doc.text('—', colX[3], y + 5.2);
+
+  doc.setTextColor(29, 78, 216);
+  doc.text(formatFCFA(totals.totalCommissionsAgence), colX[4], y + 5.2);
+
+  doc.setTextColor(225, 29, 72);
+  doc.text(totals.totalMaintenanceDeductions > 0 ? `-${formatFCFA(totals.totalMaintenanceDeductions)}` : '0 FCFA', colX[5], y + 5.2);
+
+  doc.setTextColor(5, 150, 105);
+  doc.text(formatFCFA(totals.totalNetReversedToMandants), colX[6], y + 5.2, { align: 'right' });
+  y += 12;
+
+  // 5. Bloc de Certification & Mentions Légales
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(margin, y, pageWidth - (margin * 2), 22, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('ATTESTATION DE GÉRANCE ET DE CONFORMITÉ COMPTABLE', margin + 4, y + 5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    'Le présent état récapitule avec exactitude l\'ensemble des loyers perçus, honoraires de gestion prélevés et reversements effectués\n' +
+    'conformément aux mandats de gestion locative et aux dispositions du Code de la Construction et de l\'Habitat (Loi 2019-576).\n' +
+    `Fait à Abidjan, le ${new Date().toLocaleDateString('fr-FR')} • Pour l'Agence Gestionnaire : ${agencyName}`,
+    margin + 4,
+    y + 10
+  );
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(29, 78, 216);
+  doc.text('SCELLÉ PAR LOCATRUST COMPTABILITÉ CLOUD', pageWidth - margin - 4, y + 15, { align: 'right' });
+
+  return doc;
+}
+
+export function downloadAgencyMandantsRevenuePDF(
+  periodLabel: string = 'Année 2026',
+  reportData?: any
+) {
+  const doc = generateAgencyMandantsRevenuePDF(periodLabel, reportData);
+  const sanitizedPeriod = periodLabel.replace(/[\s\(\)\/]+/g, '_');
+  doc.save(`LocaTrust_Rapport_Revenus_Mandants_${sanitizedPeriod}.pdf`);
+  triggerCelebration('download');
+}
+
+export function downloadAgencyMandantsRevenueCSV(
+  periodLabel: string = 'Année 2026',
+  reportData?: any
+) {
+  const mandants: any[] = reportData?.mandants || [];
+  const lines: string[] = [];
+
+  lines.push(`LOCATRUST - RAPPORT COMPTABLE DES REVENUS PAR PROPRIÉTAIRE MANDANT`);
+  lines.push(`Agence Gestionnaire :;${reportData?.agencyName || 'Agence Immobilière Agréée'}`);
+  lines.push(`Identifiant :;${reportData?.agencyId || 'LT-AGENCY'}`);
+  lines.push(`Exercice :;${periodLabel}`);
+  lines.push(`Date d'édition :;${new Date().toLocaleDateString('fr-FR')} ${new Date().toLocaleTimeString('fr-FR')}`);
+  lines.push(``);
+  lines.push(`Mandant;Téléphone;Lots Gérés;Loyers Encaissés (FCFA);Taux Commission (%);Honoraires Agence (FCFA);Dépenses Déduites (FCFA);Net Reversé Mandant (FCFA)`);
+
+  if (mandants.length === 0) {
+    lines.push(`Aucun mandant;—;0;0;0;0;0;0`);
+  } else {
+    for (const m of mandants) {
+      lines.push(`"${m.mandantName}";"${m.mandantPhone || '—'}";${m.propertiesCount};${m.loyersEncaisses};${m.commissionRate};${m.commissionAmount};${m.maintenanceDeductions};${m.netDueToMandant}`);
+    }
+  }
+
+  const totals = reportData?.totals;
+  if (totals) {
+    lines.push(``);
+    lines.push(`TOTAL GÉNÉRAL;—;${totals.totalProperties};${totals.totalLoyersEncaisses};—;${totals.totalCommissionsAgence};${totals.totalMaintenanceDeductions};${totals.totalNetReversedToMandants}`);
+  }
+
+  const csvContent = '\uFEFF' + lines.join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const sanitizedPeriod = periodLabel.replace(/[\s\(\)\/]+/g, '_');
+  a.download = `LocaTrust_Revenus_Mandants_${sanitizedPeriod}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  triggerCelebration('download');
+}
+
+
