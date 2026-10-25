@@ -56,11 +56,19 @@ export const ACCENT_THEMES: AccentTheme[] = [
 ];
 
 export function getActiveThemeStorageKey(roleOrId?: string): string {
-  if (typeof window === 'undefined') return 'locatrust_accent_color';
+  if (typeof window === 'undefined') return 'locatrust_accent_color_default';
+  
+  // Si un rôle ou ID spécifique est fourni
   if (roleOrId) {
     return `locatrust_accent_color_${roleOrId}`;
   }
-  const activeRole = localStorage.getItem('locatrust_user_role') || 'proprietaire';
+
+  // Détection du contexte administrateur
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
+    return 'locatrust_accent_color_admin';
+  }
+
+  // Recherche de l'utilisateur actif
   const activeUserRaw = localStorage.getItem('locatrust_active_user');
   if (activeUserRaw) {
     try {
@@ -69,6 +77,21 @@ export function getActiveThemeStorageKey(roleOrId?: string): string {
       if (u.role) return `locatrust_accent_color_${u.role}`;
     } catch {}
   }
+
+  // Recherche dans les sessions Supabase
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
+      try {
+        const sessionData = JSON.parse(localStorage.getItem(k) || '');
+        if (sessionData?.user?.id) {
+          return `locatrust_accent_color_${sessionData.user.id}`;
+        }
+      } catch {}
+    }
+  }
+
+  const activeRole = localStorage.getItem('locatrust_user_role') || 'proprietaire';
   return `locatrust_accent_color_${activeRole}`;
 }
 
@@ -82,9 +105,7 @@ export function applyAccentTheme(themeId: string, broadcast = false, roleOrId?: 
     const key = getActiveThemeStorageKey(roleOrId);
     localStorage.setItem(key, theme.id);
     localStorage.setItem(`${key}_hex`, theme.hex);
-    // Sauvegarder aussi le rôle pour synchronisation contextuelle
-    localStorage.setItem('locatrust_accent_color', theme.id);
-    localStorage.setItem('locatrust_accent_color_hex', theme.hex);
+    // Note: Ne JAMAIS écraser une clé globale partagée qui impacterait les autres utilisateurs ou l'admin
   } catch (err) {
     console.warn('Impossible de sauvegarder le thème dans le localStorage', err);
   }
@@ -140,31 +161,31 @@ export function applyAccentTheme(themeId: string, broadcast = false, roleOrId?: 
     }
   `;
 
-  // 4. Émettre un événement personnalisé pour notifier l'UI si nécessaire
+  // 4. Émettre un événement personnalisé local UNIQUEMENT au sein du contexte de l'utilisateur actif
   window.dispatchEvent(
     new CustomEvent('locatrust:accent-color-changed', {
-      detail: { themeId: theme.id, theme }
+      detail: { themeId: theme.id, theme, roleOrId }
     })
   );
 
-  // 5. Diffusion temps réel WebSocket UNIQUEMENT vers les autres onglets du MÊME compte
-  if (broadcast) {
-    import('./supabaseRealtime').then((rt) => {
-      const myId = rt.getCurrentUserId();
-      rt.broadcastLiveEvent('THEME_UPDATED', {
-        actorId: myId,
-        targetUserId: myId,
-        data: { themeId: theme.id, accentColor: theme.id }
-      });
-    }).catch(() => {});
-  }
+  // La personnalisation des couleurs est STRICTEMENT individuelle et locale :
+  // Aucun événement réseau WebSocket n'est diffusé pour ne pas impacter les autres utilisateurs ou l'administrateur.
 }
 
 export function initAccentTheme(roleOrId?: string): void {
   if (typeof window === 'undefined') return;
   try {
+    // Si nous sommes dans l'espace admin ou que le rôle est admin : thème admin dédié (défaut 'blue')
+    const isAdmin = roleOrId === 'admin' || (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin'));
+    if (isAdmin) {
+      const savedAdmin = localStorage.getItem('locatrust_accent_color_admin') || 'blue';
+      applyAccentTheme(savedAdmin, false, 'admin');
+      return;
+    }
+
     const key = getActiveThemeStorageKey(roleOrId);
-    const saved = localStorage.getItem(key) || localStorage.getItem('locatrust_accent_color') || 'blue';
+    // Chaque utilisateur ou rôle charge STRICTEMENT sa propre couleur, avec 'blue' officiel par défaut
+    const saved = localStorage.getItem(key) || 'blue';
     applyAccentTheme(saved, false, roleOrId);
   } catch (err) {
     applyAccentTheme('blue', false, roleOrId);

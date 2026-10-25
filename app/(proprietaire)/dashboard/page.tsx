@@ -30,6 +30,7 @@ import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ShieldAlert, ArrowRight } from 'lucide-react';
 import { UserRole } from '@/types/database.types';
+import { initAccentTheme } from '@/lib/themeHelper';
 
 // Shared interactive modals
 import {
@@ -57,6 +58,11 @@ export default function ProprietaireDashboardPage({
   isDemo = false,
 }: ProprietaireDashboardPageProps) {
   const { user, profile } = useAuth();
+
+  useEffect(() => {
+    initAccentTheme(user?.id || 'proprietaire');
+  }, [user?.id]);
+
   const activeUser = getActiveUser();
   const currentUser = user ? {
     id: user.id,

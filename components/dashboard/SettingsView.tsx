@@ -37,7 +37,7 @@ import {
   getAvailableYears,
   getArchivedYears
 } from '@/lib/reports/accountingHistoryStore';
-import { ACCENT_THEMES, applyAccentTheme } from '@/lib/themeHelper';
+import { ACCENT_THEMES, applyAccentTheme, getActiveThemeStorageKey } from '@/lib/themeHelper';
 import { AccountingYearCompactControl } from './AccountingYearCompactControl';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
@@ -88,8 +88,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [defaultTab]);
 
   // Thème et couleurs d'ambiance de l'environnement (Demande vocale utilisateur)
+  const targetThemeId = user?.id || userRole || 'proprietaire';
+
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
+      const savedUserTheme = localStorage.getItem(`locatrust_theme_${targetThemeId}`);
+      if (savedUserTheme === 'light' || savedUserTheme === 'dark') return savedUserTheme;
       return (localStorage.getItem('locatrust_theme') as 'light' | 'dark') || 'light';
     }
     return 'light';
@@ -97,10 +101,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const [accentColor, setAccentColor] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('locatrust_accent_color') || 'blue';
+      const key = getActiveThemeStorageKey(targetThemeId);
+      return localStorage.getItem(key) || 'blue';
     }
     return 'blue';
   });
+
+  React.useEffect(() => {
+    const key = getActiveThemeStorageKey(targetThemeId);
+    const saved = localStorage.getItem(key) || 'blue';
+    setAccentColor(saved);
+  }, [targetThemeId]);
 
   // États des préférences de notifications
   const [notifPayments, setNotifPayments] = useState<boolean>(() => {
@@ -1119,7 +1130,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       onClick={() => {
                         setTheme('light');
                         document.documentElement.classList.remove('dark');
-                        localStorage.setItem('locatrust_theme', 'light');
+                        localStorage.setItem(`locatrust_theme_${targetThemeId}`, 'light');
                       }}
                       className={`px-4 py-2 rounded-xl font-black border transition-all ${
                         theme === 'light'
@@ -1134,7 +1145,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       onClick={() => {
                         setTheme('dark');
                         document.documentElement.classList.add('dark');
-                        localStorage.setItem('locatrust_theme', 'dark');
+                        localStorage.setItem(`locatrust_theme_${targetThemeId}`, 'dark');
                       }}
                       className={`px-4 py-2 rounded-xl font-black border transition-all ${
                         theme === 'dark'
@@ -1152,7 +1163,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div>
                     <h4 className="font-extrabold text-slate-900">Couleur d'ambiance de l'environnement</h4>
                     <p className="text-slate-500">
-                      Personnalisez les touches de couleur et l'accent visuel de votre espace SaaS (boutons, bordures, badges actifs)
+                      Personnalisez les touches de couleur et l'accent visuel de votre interface (visible uniquement sur votre compte)
                     </p>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
@@ -1162,8 +1173,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         type="button"
                         onClick={() => {
                           setAccentColor(col.id);
-                          applyAccentTheme(col.id);
-                          setSavedMessage(`Couleur d'ambiance « ${col.label} » activée instantanément !`);
+                          applyAccentTheme(col.id, false, targetThemeId);
+                          setSavedMessage(`Couleur d'ambiance « ${col.label} » activée pour votre interface.`);
                           setTimeout(() => setSavedMessage(null), 3500);
                         }}
                         className={`p-3 rounded-xl border flex items-center gap-2.5 transition-all text-left ${

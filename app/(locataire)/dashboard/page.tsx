@@ -25,6 +25,7 @@ import { MessagerieView } from '@/components/dashboard/MessagerieView';
 import { SupportModal } from '@/components/modals/InteractiveModals';
 
 import { ShieldCheck, ArrowRight } from 'lucide-react';
+import { initAccentTheme } from '@/lib/themeHelper';
 
 interface TenantDashboardPageProps {
   currentRole?: UserRole;
@@ -42,6 +43,11 @@ export default function TenantDashboardPage({
   isDemo,
 }: TenantDashboardPageProps) {
   const { user, profile } = useAuth();
+
+  useEffect(() => {
+    initAccentTheme(user?.id || 'locataire');
+  }, [user?.id]);
+
   const activeUser = getActiveUser();
   const currentUser = user ? {
     id: user.id,

@@ -9,6 +9,8 @@ import { AdminDashboardView } from '@/components/admin/AdminDashboardView';
 import { SupportModal } from '@/components/modals/InteractiveModals';
 import { UserRole } from '@/types/database.types';
 
+import { initAccentTheme } from '@/lib/themeHelper';
+
 interface AdminDashboardPageProps {
   currentRole?: UserRole;
   onRoleChange?: (role: UserRole) => void;
@@ -23,6 +25,10 @@ export default function AdminDashboardPage({
   onExitToLanding,
 }: AdminDashboardPageProps) {
   const { user, profile } = useAuth();
+
+  React.useEffect(() => {
+    initAccentTheme('admin');
+  }, []);
   const currentUser = {
     id: user?.id || 'admin_user',
     email: user?.email || 'admin@locatrust.ci',

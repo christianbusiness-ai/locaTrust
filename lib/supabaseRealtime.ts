@@ -21,7 +21,6 @@ export type LiveEventType =
   | 'AVATAR_UPDATED'
   | 'ACCOUNTING_YEAR_UPDATED'
   | 'NEW_MESSAGE'
-  | 'THEME_UPDATED'
   | 'NOTIFICATION_CREATED'
   | 'CALL_INCOMING'
   | 'CALL_ACCEPTED'
@@ -853,32 +852,6 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           }
           window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
-        }
-        break;
-
-      case 'THEME_UPDATED':
-        if (typeof window !== 'undefined') {
-          // Règle stricte : la couleur d'ambiance ne doit JAMAIS changer chez un autre utilisateur
-          const myId = getCurrentUserId();
-          if (payload.actorId && payload.actorId !== myId) {
-            break; // Ignorer le thème choisi par un autre compte
-          }
-          const themeId = payload?.data?.themeId;
-          if (themeId) {
-            import('@/lib/themeHelper').then((m) => {
-              m.applyAccentTheme(themeId, false);
-            });
-          }
-          if (payload?.data?.theme) {
-            const th = payload.data.theme;
-            if (th === 'dark') {
-              document.documentElement.classList.add('dark');
-            } else {
-              document.documentElement.classList.remove('dark');
-            }
-            try { localStorage.setItem('locatrust_theme', th); } catch {}
-          }
-          window.dispatchEvent(new CustomEvent('locatrust:accent-color-changed', { detail: payload?.data }));
         }
         break;
 

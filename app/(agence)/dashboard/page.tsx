@@ -45,6 +45,7 @@ import {
   SupportModal
 } from '@/components/modals/InteractiveModals';
 import { ShieldAlert, ArrowRight } from 'lucide-react';
+import { initAccentTheme } from '@/lib/themeHelper';
 
 interface AgencyDashboardPageProps {
   currentRole?: UserRole;
@@ -62,6 +63,11 @@ export default function AgencyDashboardPage({
   isDemo = false,
 }: AgencyDashboardPageProps) {
   const { user, profile } = useAuth();
+
+  useEffect(() => {
+    initAccentTheme(user?.id || 'agence');
+  }, [user?.id]);
+
   const activeUser = getActiveUser();
   const currentUser = user ? {
     id: user.id,
