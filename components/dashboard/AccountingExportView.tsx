@@ -56,6 +56,7 @@ export const AccountingExportView: React.FC = () => {
   const [activeYear, setActiveYear] = useState<string>(() => getActiveReferenceYear());
   const [selectedPeriod, setSelectedPeriod] = useState<string>('annee_en_cours');
   const [activeSubTab, setActiveSubTab] = useState<'resultats' | 'synthese' | 'encaissements' | 'loyers' | 'cautions' | 'maintenance' | 'contrats' | 'mandants_revenus'>('resultats');
+  const currentPeriodObj = ACCOUNTING_PERIODS.find((p) => p.id === selectedPeriod) || ACCOUNTING_PERIODS[0];
 
   // Mandants STRICTEMENT réservés aux agences immobilières (AUCUN accès pour les propriétaires)
   const isAgency = profile?.account_type === 'agence';
@@ -163,8 +164,6 @@ export const AccountingExportView: React.FC = () => {
     confirmText?: string;
     withCelebration?: boolean;
   } | null>(null);
-
-  const currentPeriodObj = ACCOUNTING_PERIODS.find((p) => p.id === selectedPeriod) || ACCOUNTING_PERIODS[0];
 
   const handleOpenPrepare = (format: 'pdf' | 'csv' | 'zip', title: string, actionType: 'full_pdf' | 'full_zip' | 'results_pdf' | 'results_csv' | 'mandants_pdf' | 'mandants_csv' | 'general' = 'general') => {
     setPrepareModal({
