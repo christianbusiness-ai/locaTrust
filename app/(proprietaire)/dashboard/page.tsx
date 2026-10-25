@@ -30,6 +30,16 @@ const ContractListView = lazy(() => import('@/components/contracts/ContractListV
 const ContractDetailView = lazy(() => import('@/components/contracts/ContractDetailView').then(m => ({ default: m.ContractDetailView })));
 const LocataireSupportView = lazy(() => import('@/components/locataire/LocataireSupportView').then(m => ({ default: m.LocataireSupportView })));
 
+// Shared interactive modals
+import {
+  AddPropertyModal,
+  CreateContractModal,
+  ConfirmPaymentModal,
+  SendReminderModal,
+  AddPaymentAccountModal,
+  SupportModal
+} from '@/components/modals/InteractiveModals';
+
 interface ProprietaireDashboardPageProps {
   currentRole?: UserRole;
   onRoleChange?: (role: UserRole) => void;
