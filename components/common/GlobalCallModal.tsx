@@ -253,7 +253,90 @@ export const GlobalCallModal: React.FC = () => {
   const [isRequestingMedia, setIsRequestingMedia] = useState<boolean>(false);
   const [mediaErrorMessage, setMediaErrorMessage] = useState<string>('');
 
-  // Demande manuelle et directe d'accès à la caméra et au microphone (Geste utilisateur direct comme WhatsApp)
+  // Démarrer spécifiquement la caméra physique (flux vidéo HD/standard) sans être bloqué par le micro
+  const startVideoTrackDirectly = async (facing: 'user' | 'environment' = 'user'): Promise<MediaStreamTrack | null> => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return null;
+    setIsRequestingMedia(true);
+    let vTrack: MediaStreamTrack | null = null;
+
+    const attempts = [
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: facing } },
+      { video: { facingMode: facing } },
+      { video: true }
+    ];
+
+    for (const constraint of attempts) {
+      try {
+        const vStream = await navigator.mediaDevices.getUserMedia(constraint);
+        if (vStream.getVideoTracks().length > 0) {
+          vTrack = vStream.getVideoTracks()[0];
+          break;
+        }
+      } catch (err) {
+        console.warn('Tentative capture vidéo avec contrainte', constraint, err);
+      }
+    }
+
+    setIsRequestingMedia(false);
+
+    if (vTrack) {
+      if (!localStreamRef.current) {
+        localStreamRef.current = new MediaStream([vTrack]);
+      } else {
+        localStreamRef.current.getVideoTracks().forEach((t) => {
+          try { t.stop(); } catch {}
+          localStreamRef.current?.removeTrack(t);
+        });
+        localStreamRef.current.addTrack(vTrack);
+      }
+
+      setHasRealCameraTrack(true);
+      setCameraPermissionStatus('granted');
+      setActiveCall((prev) => (prev ? { ...prev, isCamOff: false } : null));
+
+      if (peerConnectionRef.current) {
+        addTracksToPeerConnection(peerConnectionRef.current, localStreamRef.current);
+      }
+
+      syncVideoElements();
+      const elById = document.getElementById("localVideo") as HTMLVideoElement | null;
+      if (elById) {
+        elById.srcObject = localStreamRef.current;
+        elById.play().catch(() => {});
+      }
+      return vTrack;
+    }
+    return null;
+  };
+
+  // Démarrer spécifiquement le microphone sans bloquer la vidéo
+  const startAudioTrackDirectly = async (): Promise<MediaStreamTrack | null> => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return null;
+    try {
+      const aStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+      const aTrack = aStream.getAudioTracks()[0];
+      if (aTrack) {
+        if (!localStreamRef.current) {
+          localStreamRef.current = new MediaStream([aTrack]);
+        } else {
+          localStreamRef.current.addTrack(aTrack);
+        }
+        audioStreamRef.current = aStream;
+        setupAudioVolumeAnalysis(aStream);
+        if (peerConnectionRef.current) {
+          addTracksToPeerConnection(peerConnectionRef.current, localStreamRef.current);
+        }
+        return aTrack;
+      }
+    } catch (err) {
+      console.warn('Microphone capture échouée:', err);
+    }
+    return null;
+  };
+
+  // Demande manuelle et directe d'accès à la caméra et au microphone
   const requestCameraPermissionManually = async (facingMode: 'user' | 'environment' = 'user'): Promise<MediaStream | null> => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setMediaErrorMessage("Votre navigateur ne supporte pas l'accès caméra (getUserMedia).");
@@ -263,100 +346,24 @@ export const GlobalCallModal: React.FC = () => {
     setMediaErrorMessage('');
     setCameraPermissionStatus('requesting');
 
-    let stream: MediaStream | null = null;
-    let lastError: any = null;
-
-    // 1. Essai direct vidéo HD + audio (adapté du code fourni par l'utilisateur)
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode },
-        audio: true
-      });
-    } catch (err: any) {
-      lastError = err;
-      console.warn("Échec capture combinée vidéo HD + audio:", err);
-      // 2. Essai vidéo standard souple + audio
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode },
-          audio: true
-        });
-      } catch (err2: any) {
-        lastError = err2;
-        console.warn("Échec capture vidéo standard + audio:", err2);
-        // 3. Essai vidéo seule sans contrainte
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        } catch (errVideo: any) {
-          lastError = errVideo;
-          console.warn("Échec capture vidéo seule:", errVideo);
-          // 4. Si la webcam est bloquée ou occupée, tenter audio seul
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          } catch (errAudio: any) {
-            lastError = errAudio;
-            console.warn("Échec capture audio seule:", errAudio);
-          }
-        }
-      }
+    // 1. Démarrer d'abord la vidéo
+    const vTrack = await startVideoTrackDirectly(facingMode);
+    // 2. Démarrer le micro si pas encore présent
+    if (!audioStreamRef.current?.getAudioTracks().length && !localStreamRef.current?.getAudioTracks().length) {
+      await startAudioTrackDirectly();
     }
 
     setIsRequestingMedia(false);
 
-    if (stream) {
-      const hasVideo = stream.getVideoTracks().length > 0;
-      localStreamRef.current = stream;
-      setHasRealCameraTrack(hasVideo);
+    if (vTrack && localStreamRef.current) {
       setCameraPermissionStatus('granted');
       setMediaErrorMessage('');
-      console.log(`✅ Flux média réel obtenu : vidéo=${hasVideo}, audio=${stream.getAudioTracks().length > 0}`);
-
-      // Énumération des périphériques disponibles (Integrated Camera, Realtek Mic, etc.)
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        setAvailableCameras(devices.filter((d) => d.kind === 'videoinput'));
-        setAvailableMics(devices.filter((d) => d.kind === 'audioinput'));
-      } catch {}
-
-      if (localVideoRef.current && hasVideo) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.play().catch(() => {});
-      }
-      const elById = document.getElementById("localVideo") as HTMLVideoElement | null;
-      if (elById && hasVideo && elById !== localVideoRef.current) {
-        elById.srcObject = stream;
-        elById.play().catch(() => {});
-      }
-      if (peerConnectionRef.current) {
-        addTracksToPeerConnection(peerConnectionRef.current, stream);
-      }
-      setupAudioVolumeAnalysis(stream);
-      syncVideoElements();
-      return stream;
+      return localStreamRef.current;
     }
 
-    // Gestion précise de l'erreur pour informer l'utilisateur
     setCameraPermissionStatus('denied');
     setHasRealCameraTrack(false);
-
-    const errName = lastError?.name || '';
-    if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-      setMediaErrorMessage(
-        "L'accès à la caméra est bloqué dans Chrome. Cliquez sur l'icône 🔒 à gauche de 'locatrust.site' dans la barre d'adresse pour autoriser la Caméra et le Micro."
-      );
-    } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
-      setMediaErrorMessage(
-        "Votre caméra est déjà utilisée par une autre application (ex: WhatsApp, Zoom ou un autre onglet). Fermez l'autre application pour libérer la caméra."
-      );
-    } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
-      setMediaErrorMessage("Aucune caméra physique n'a été détectée sur votre ordinateur.");
-    } else {
-      setMediaErrorMessage(
-        `Impossible d'activer la caméra (${lastError?.message || 'Erreur inconnue'}). Vous pouvez basculer en appel vocal.`
-      );
-    }
-
-    return null;
+    setMediaErrorMessage("Impossible d'activer la caméra. Vérifiez les autorisations dans votre navigateur.");
   };
 
   // Récupération multi-niveaux du flux caméra et micro réels (Pas de canvas synthétique trompeur)
@@ -1518,15 +1525,15 @@ export const GlobalCallModal: React.FC = () => {
                     }}
                     autoPlay
                     playsInline
-                    muted={!isVideoSwapped}
+                    muted={true}
                     onLoadedMetadata={(e) => {
                       (e.target as HTMLVideoElement).play().catch(() => {});
                     }}
                     className={`w-full h-full object-cover ${(!isVideoSwapped && activeCall.isFrontCam) ? 'scale-x-[-1]' : ''}`}
                   />
 
-                  {/* Local Camera Off State in PiP si coupé manuellement */}
-                  {!isVideoSwapped && activeCall.isCamOff && (
+                  {/* Local Camera Off/Inactive State in PiP */}
+                  {(!isVideoSwapped && (activeCall.isCamOff || !hasRealCameraTrack)) && (
                     <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-2 text-center gap-1.5 z-10">
                       <UserAvatar
                         src={currentUserAvatar}
@@ -1535,8 +1542,18 @@ export const GlobalCallModal: React.FC = () => {
                         borderClassName="border border-white/20"
                       />
                       <span className="text-[9px] text-slate-300 font-bold leading-tight">
-                        Caméra coupée
+                        {activeCall.isCamOff ? 'Caméra coupée' : 'Caméra inactive'}
                       </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startVideoTrackDirectly(activeCall.isFrontCam ? 'user' : 'environment');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-[10px] font-bold text-white shadow"
+                      >
+                        Activer
+                      </button>
                     </div>
                   )}
 
@@ -1557,9 +1574,23 @@ export const GlobalCallModal: React.FC = () => {
                 type="button"
                 onClick={() => {
                   const newMuted = !activeCall.isMuted;
-                  const stream = localStreamRef.current || audioStreamRef.current;
-                  if (stream) {
-                    stream.getAudioTracks().forEach((t) => (t.enabled = !newMuted));
+                  // Couper réellement toutes les pistes audio sur tous les flux
+                  const streams = [localStreamRef.current, audioStreamRef.current];
+                  streams.forEach((s) => {
+                    s?.getAudioTracks().forEach((t) => {
+                      t.enabled = !newMuted;
+                    });
+                  });
+                  // Couper au niveau des senders WebRTC
+                  if (peerConnectionRef.current) {
+                    peerConnectionRef.current.getSenders().forEach((sender) => {
+                      if (sender.track && sender.track.kind === 'audio') {
+                        sender.track.enabled = !newMuted;
+                      }
+                    });
+                  }
+                  if (newMuted) {
+                    setAudioVolume(0);
                   }
                   setActiveCall({ ...activeCall, isMuted: newMuted });
                 }}
@@ -1573,15 +1604,16 @@ export const GlobalCallModal: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => {
-                  if (!hasRealCameraTrack) {
-                    requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment');
+                onClick={async () => {
+                  if (!hasRealCameraTrack || !localStreamRef.current?.getVideoTracks().length) {
+                    // Démarrer la caméra physique directement
+                    await startVideoTrackDirectly(activeCall.isFrontCam ? 'user' : 'environment');
                     return;
                   }
                   const newCamOff = !activeCall.isCamOff;
-                  if (localStreamRef.current) {
-                    localStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = !newCamOff));
-                  }
+                  localStreamRef.current?.getVideoTracks().forEach((t) => {
+                    t.enabled = !newCamOff;
+                  });
                   setActiveCall({ ...activeCall, isCamOff: newCamOff });
                 }}
                 className={`p-3 sm:p-3.5 rounded-full transition-all active:scale-95 cursor-pointer ${
@@ -1613,6 +1645,9 @@ export const GlobalCallModal: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Élément audio pour la voix entrante du correspondant */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
     </>
   );
 };
