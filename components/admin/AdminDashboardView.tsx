@@ -119,45 +119,7 @@ export interface AdminSupportTicket {
   admin_reply?: string;
 }
 
-const INITIAL_SUPPORT_TICKETS: AdminSupportTicket[] = [
-  {
-    id: 'TICK-2026-001',
-    sender_id: 'usr_owner_kone',
-    sender_name: 'Mamadou Koné',
-    sender_role: 'proprietaire',
-    sender_phone: '+225 07 48 99 21 00',
-    sender_email: 'mamadou.kone@gmail.com',
-    subject: 'Plafond caution pour bail commercial (AUDCG OHADA vs Loi 2019-576)',
-    message: 'Bonjour l\'équipe support, je loue un magasin commercial à Treichville. La Loi 2019-576 plafonne à 2 mois, mais mon notaire dit que l\'AUDCG OHADA prévaut pour les locaux professionnels. LocaTrust permet-il de paramétrer 3 mois pour un bail commercial ?',
-    status: 'en_attente',
-    created_at: 'Aujourd\'hui à 10:14'
-  },
-  {
-    id: 'TICK-2026-002',
-    sender_id: 'usr_tenant_aya',
-    sender_name: 'Aya Marie-Josée',
-    sender_role: 'locataire',
-    sender_phone: '+225 05 55 12 34 56',
-    sender_email: 'aya.mariejosee@outlook.ci',
-    subject: 'Délai légal de restitution de mon dépôt de garantie',
-    message: 'Bonjour, j\'ai libéré mon appartement à Cocody Riviera le 30 du mois dernier avec un état des lieux de sortie vierge. Mon bailleur tarde à me restituer les 600 000 FCFA de caution. Quel recours ai-je avec mon contrat LocaTrust ?',
-    status: 'en_attente',
-    created_at: 'Aujourd\'hui à 09:30'
-  },
-  {
-    id: 'TICK-2026-003',
-    sender_id: 'usr_agency_ivoire',
-    sender_name: 'Cabinet Ivoire Prestige Immo',
-    sender_role: 'agence',
-    sender_phone: '+225 27 20 22 33 44',
-    sender_email: 'direction@ivoireimmo.ci',
-    subject: 'Validation KYC & Agrément Agence Immobilière',
-    message: 'Bonjour la modération, nous avons soumis notre RCCM et agrément ministériel pour certifier notre compte agence multi-mandats. Quand pourrons-nous publier nos mandats exclusifs ?',
-    status: 'resolu',
-    created_at: 'Hier à 16:45',
-    admin_reply: 'Bonjour Cabinet Ivoire Prestige, votre dossier a été audité et validé. Votre badge Agence Agréée est actif !'
-  }
-];
+const INITIAL_SUPPORT_TICKETS: AdminSupportTicket[] = [];
 
 // Initial Clean States (Données réelles chargées depuis Supabase)
 const INITIAL_DOC_REQUESTS: DocumentVerificationRequest[] = [];
@@ -180,6 +142,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [searchUserQuery, setSearchUserQuery] = useState('');
   const [searchDocQuery, setSearchDocQuery] = useState('');
+
+  // Données brutes réelles pour calculs statistiques 100% dynamiques
+  const [rawProfiles, setRawProfiles] = useState<any[]>([]);
+  const [rawContracts, setRawContracts] = useState<any[]>([]);
+  const [rawPayments, setRawPayments] = useState<any[]>([]);
+  const [rawCautions, setRawCautions] = useState<any[]>([]);
 
   // Modals state (Centered modals)
   const [inspectedDoc, setInspectedDoc] = useState<DocumentVerificationRequest | null>(null);
@@ -286,6 +254,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           combinedCautions.push(sc);
         }
       });
+
+      setRawProfiles(profiles);
+      setRawContracts(contracts);
+      setRawPayments(payments);
+      setRawCautions(combinedCautions);
 
       // Mappage vers la liste des utilisateurs réels
       const users: AdminUserAccount[] = profiles.map(p => ({
@@ -396,10 +369,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [isSendingReply, setIsSendingReply] = useState(false);
 
   const syncSupportData = () => {
-    if (typeof window === 'undefined') return;
+    if (typeof window !== 'undefined') return;
     try {
       const raw = localStorage.getItem('locatrust_support_tickets');
-      let baseList: AdminSupportTicket[] = [...INITIAL_SUPPORT_TICKETS];
+      let baseList: AdminSupportTicket[] = [];
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -771,6 +744,92 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     showToast('💾 Paramètres système enregistrés et propagés sur l\'ensemble de la plateforme LocaTrust.');
   };
 
+  // 1. Graphique 1 : Évolution réelle des Utilisateurs et Baux par mois depuis la base de données
+  const monthlyUsersAndContractsBars = React.useMemo(() => {
+    const monthNames = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
+    const now = new Date();
+    const months = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const label = i === 0 ? `${monthNames[m]} (En cours)` : monthNames[m];
+
+      // Compter les utilisateurs créés ce mois-ci dans la BDD
+      const usersInMonth = rawProfiles.filter((p: any) => {
+        if (!p.created_at) return false;
+        const pDate = new Date(p.created_at);
+        return pDate.getFullYear() === y && pDate.getMonth() === m;
+      }).length;
+
+      // Compter les contrats créés ce mois-ci dans la BDD
+      const bauxInMonth = rawContracts.filter((c: any) => {
+        const cDate = new Date(c.created_at || c.start_date || c.date_creation || Date.now());
+        return cDate.getFullYear() === y && cDate.getMonth() === m;
+      }).length;
+
+      months.push({
+        month: label,
+        users: usersInMonth,
+        baux: bauxInMonth
+      });
+    }
+
+    const maxUsers = Math.max(1, ...months.map(m => m.users));
+    const maxBaux = Math.max(1, ...months.map(m => m.baux));
+
+    return months.map(m => ({
+      ...m,
+      heightUsers: m.users > 0 ? `${Math.max(12, Math.round((m.users / maxUsers) * 92))}%` : '4%',
+      heightBaux: m.baux > 0 ? `${Math.max(12, Math.round((m.baux / maxBaux) * 92))}%` : '4%'
+    }));
+  }, [rawProfiles, rawContracts]);
+
+  // 2. Graphique 2 : Évolution réelle des Flux Financiers par mois depuis la base de données
+  const monthlyFinancialBars = React.useMemo(() => {
+    const monthNames = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
+    const now = new Date();
+    const months = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const label = i === 0 ? `${monthNames[m]} (En cours)` : monthNames[m];
+
+      // Somme réelle des paiements confirmés ce mois
+      const monthPayments = rawPayments
+        .filter((p: any) => {
+          const pDate = new Date(p.created_at || p.payment_date || Date.now());
+          return pDate.getFullYear() === y && pDate.getMonth() === m && (p.status === 'confirme' || p.status === 'valide');
+        })
+        .reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+
+      // Somme réelle des cautions consignées ce mois
+      const monthCautions = rawCautions
+        .filter((c: any) => {
+          const cDate = new Date(c.created_at || Date.now());
+          return cDate.getFullYear() === y && cDate.getMonth() === m;
+        })
+        .reduce((sum: number, c: any) => sum + (Number(c.amount) || Number(c.amount_paid) || 0), 0);
+
+      const totalFlux = monthPayments + monthCautions;
+
+      months.push({
+        month: label,
+        flux: totalFlux
+      });
+    }
+
+    const maxFlux = Math.max(1, ...months.map(m => m.flux));
+
+    return months.map(m => ({
+      ...m,
+      height: m.flux > 0 ? `${Math.max(12, Math.round((m.flux / maxFlux) * 92))}%` : '4%'
+    }));
+  }, [rawPayments, rawCautions]);
+
   // Filtered queries
   const filteredUsers = usersList.filter(u =>
     u.name.toLowerCase().includes(searchUserQuery.toLowerCase()) ||
@@ -863,7 +922,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <BarChart3 className="w-4 h-4 text-purple-600" />
           </div>
           <span className="text-2xl font-black text-purple-950 mt-2">
-            99.8% Disponibilité
+            Système Opérationnel
           </span>
           <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[11px] text-purple-700 font-bold">
             <span>Flux sécurisés : {formatFCFA(statsDashboard.fluxSecurisesFCFA)}</span>
@@ -903,7 +962,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <Users className="w-4 h-4 text-emerald-600" />
           </div>
           <span className="text-2xl font-black text-emerald-800 mt-2">
-            {statsDashboard.totalLocataires + statsDashboard.proprietairesValides + statsDashboard.proprietairesNonValides} Comptes
+            {usersList.length} Comptes
           </span>
           <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[11px] text-emerald-700 font-bold">
             <span>Bailleurs, Agences & Locataires</span>
@@ -1072,7 +1131,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-xs text-slate-500 font-semibold">
                   <span>Revenus récurrents SaaS (MRR)</span>
-                  <span className="text-emerald-600 font-bold">+18.5% ce mois</span>
+                  <span className="text-emerald-600 font-bold">Données certifiées BDD</span>
                 </div>
               </div>
 
@@ -1104,41 +1163,34 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           {/* GRAPHIQUES DE CROISSANCE & RÉSULTAT GLOBAL DU SAAS DEMANDÉS DANS L'AUDIO */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
-            {/* Graphique 1 : Croissance des Utilisateurs & Baux */}
+            {/* Graphique 1 : Croissance des Utilisateurs & Baux (100% Données Réelles BDD) */}
             <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col gap-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-black text-slate-900 text-base">Croissance des Utilisateurs & Baux</h4>
-                  <p className="text-xs text-slate-500">Évolution mensuelle des créations de comptes et contrats</p>
+                  <p className="text-xs text-slate-500">Évolution mensuelle réelle des comptes et contrats certifiés</p>
                 </div>
                 <span className="px-2.5 py-1 rounded-xl bg-purple-50 text-purple-700 font-extrabold text-xs">
-                  +32% ce trimestre
+                  {usersList.length} inscrit(s) en BDD
                 </span>
               </div>
 
-              {/* Représentation Visuelle Élégante (Barres / Courbe SVG interactive) */}
+              {/* Représentation Visuelle Élégante (Barres réelles BDD) */}
               <div className="h-56 w-full pt-4 flex items-end justify-between gap-3 px-2">
-                {[
-                  { month: 'Mai', users: 620, baux: 110, heightUsers: '40%', heightBaux: '25%' },
-                  { month: 'Juin', users: 790, baux: 165, heightUsers: '52%', heightBaux: '38%' },
-                  { month: 'Juil', users: 980, baux: 215, heightUsers: '66%', heightBaux: '50%' },
-                  { month: 'Août', users: 1190, baux: 260, heightUsers: '80%', heightBaux: '62%' },
-                  { month: 'Sept', users: 1380, baux: 295, heightUsers: '92%', heightBaux: '75%' },
-                  { month: 'Oct (En cours)', users: 1482, baux: 328, heightUsers: '100%', heightBaux: '85%' },
-                ].map((col, idx) => (
+                {monthlyUsersAndContractsBars.map((col, idx) => (
                   <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
                     <div className="w-full flex items-end justify-center gap-1.5 h-full">
                       {/* Barre Utilisateurs */}
                       <div
                         style={{ height: col.heightUsers }}
-                        className="w-1/2 max-w-[20px] bg-purple-600 rounded-t-lg transition-all group-hover:bg-purple-500 shadow-sm relative"
-                        title={`Utilisateurs : ${col.users}`}
+                        className="w-1/2 max-w-[20px] bg-purple-600 rounded-t-lg transition-all group-hover:bg-purple-500 shadow-sm relative min-h-[4px]"
+                        title={`Utilisateurs réels (${col.month}) : ${col.users}`}
                       />
                       {/* Barre Baux Signés */}
                       <div
                         style={{ height: col.heightBaux }}
-                        className="w-1/2 max-w-[20px] bg-blue-500 rounded-t-lg transition-all group-hover:bg-blue-400 shadow-sm relative"
-                        title={`Baux signés : ${col.baux}`}
+                        className="w-1/2 max-w-[20px] bg-blue-500 rounded-t-lg transition-all group-hover:bg-blue-400 shadow-sm relative min-h-[4px]"
+                        title={`Baux réels (${col.month}) : ${col.baux}`}
                       />
                     </div>
                     <span className="text-[10px] font-bold text-slate-500 truncate">{col.month}</span>
@@ -1170,31 +1222,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </span>
               </div>
 
-              {/* Représentation Barres financières */}
+              {/* Représentation Barres financières (100% Données Réelles BDD) */}
               <div className="h-56 w-full pt-4 flex items-end justify-between gap-3 px-2">
-                {[
-                  { month: 'Mai', fluxRatio: 0.12 },
-                  { month: 'Juin', fluxRatio: 0.18 },
-                  { month: 'Juil', fluxRatio: 0.25 },
-                  { month: 'Août', fluxRatio: 0.40 },
-                  { month: 'Sept', fluxRatio: 0.65 },
-                  { month: 'Octobre', fluxRatio: 1.0 },
-                ].map((col, idx) => {
-                  const mFlux = Math.round(statsDashboard.fluxSecurisesFCFA * col.fluxRatio);
-                  const mHeight = statsDashboard.fluxSecurisesFCFA > 0 ? `${Math.max(12, Math.round(col.fluxRatio * 95))}%` : '6%';
-                  return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
-                      <span className="text-[10px] font-black text-emerald-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                        {mFlux > 0 ? formatFCFA(mFlux) : '0 FCFA'}
-                      </span>
-                      <div
-                        style={{ height: mHeight }}
-                        className="w-full max-w-[32px] bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-xl transition-all group-hover:brightness-110 shadow-sm min-h-[4px]"
-                      />
-                      <span className="text-[10px] font-bold text-slate-500">{col.month}</span>
-                    </div>
-                  );
-                })}
+                {monthlyFinancialBars.map((col, idx) => (
+                  <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                    <span className="text-[10px] font-black text-emerald-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                      {col.flux > 0 ? formatFCFA(col.flux) : '0 FCFA'}
+                    </span>
+                    <div
+                      style={{ height: col.height }}
+                      className="w-full max-w-[32px] bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-xl transition-all group-hover:brightness-110 shadow-sm min-h-[4px]"
+                      title={`Flux réel (${col.month}) : ${formatFCFA(col.flux)}`}
+                    />
+                    <span className="text-[10px] font-bold text-slate-500">{col.month}</span>
+                  </div>
+                ))}
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
@@ -1401,7 +1443,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
           {/* Disputes Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {disputes.map((dispute) => (
+            {disputes.length === 0 ? (
+              <div className="col-span-full py-12 flex flex-col items-center justify-center text-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center">
+                  <ShieldCheck className="w-6 h-6 text-emerald-600" />
+                </div>
+                <h4 className="text-sm font-bold text-slate-700">Aucun litige enregistré</h4>
+                <p className="text-xs text-slate-400 max-w-sm">
+                  Tous les dossiers locatifs sont conformes. Tout éventuel signalement apparaîtra ici.
+                </p>
+              </div>
+            ) : (
+              disputes.map((dispute) => (
               <div
                 key={dispute.id}
                 className="p-5 rounded-2xl border border-slate-200 bg-slate-50/70 hover:border-blue-300 transition-all flex flex-col justify-between gap-4 shadow-sm"
@@ -1467,7 +1520,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
 
               </div>
-            ))}
+            ))
+            )}
           </div>
         </div>
       )}
@@ -1590,7 +1644,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-2xl font-black">29 900 FCFA / mois</span>
                 <span className="text-xs text-blue-200">Mandats illimités, équipe, export comptable et signature électronique certifiée</span>
               </div>
-              <span className="text-xs font-bold text-emerald-400">18 agences abonnées actives</span>
+              <span className="text-xs font-bold text-emerald-400">{statsDashboard.totalAgences} agence(s) enregistrée(s)</span>
             </div>
 
             <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white flex flex-col justify-between gap-4 shadow-md">
@@ -1599,7 +1653,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-2xl font-black">9 900 FCFA / mois</span>
                 <span className="text-xs text-slate-300">Gestion jusqu'à 10 lots, quittances automatiques et médiation juridique incluse</span>
               </div>
-              <span className="text-xs font-bold text-emerald-400">124 propriétaires abonnés actifs</span>
+              <span className="text-xs font-bold text-emerald-400">{statsDashboard.proprietairesValides + statsDashboard.proprietairesNonValides} bailleur(s) enregistré(s)</span>
             </div>
           </div>
         </div>
