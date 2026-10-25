@@ -112,13 +112,6 @@ export const RegisterPage: React.FC = () => {
               Confirmez votre adresse email
             </h2>
 
-            <div className="mb-3">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Expédié via serveur SMTP sécurisé (Brevo)
-              </span>
-            </div>
-
             <p className="text-xs text-slate-600 mb-3 leading-relaxed">
               Un email contenant votre lien de confirmation sécurisé a été envoyé à l'adresse :
             </p>

@@ -331,17 +331,19 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const rawContact = localStorage.getItem(key);
               if (rawContact) {
                 const c = JSON.parse(rawContact);
+                if (!c || typeof c !== 'object') continue;
                 const isGenericOwner = c.name === 'Bailleur Propriétaire' || c.id === 'usr_owner' || c.id === 'usr_agency';
-                const hasRealOwner = list.some((existing) => existing.id !== 'usr_support' && existing.name.toLowerCase() !== 'bailleur propriétaire');
+                const hasRealOwner = list.some((existing) => existing && existing.id !== 'usr_support' && (existing.name || '').toLowerCase() !== 'bailleur propriétaire');
                 if (isGenericOwner && hasRealOwner) continue;
 
-                if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing.id === c.id || existing.name.toLowerCase() === (c.name || '').toLowerCase())) {
+                if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing && (existing.id === c.id || (existing.name || '').toLowerCase() === (c.name || '').toLowerCase()))) {
                   const safeAvatar =
                     c.avatar && !c.avatar.includes('ui-avatars.com')
                       ? c.avatar
-                      : getDefaultRealisticAvatar(c.name, c.role);
+                      : getDefaultRealisticAvatar(c.name || 'Contact', c.role);
                   list.push({
                     ...c,
+                    name: c.name || 'Contact',
                     avatar: safeAvatar
                   });
                 }
@@ -356,7 +358,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     const uniqueContacts: ChatContact[] = [];
     const seenNames = new Set<string>();
     const hasNamedOwner = list.some(
-      (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire' && c.name.toLowerCase() !== 'locataire candidat'
+      (c) => c && c.id !== 'usr_support' && (c.name || '').toLowerCase() !== 'bailleur propriétaire' && (c.name || '').toLowerCase() !== 'locataire candidat'
     );
 
     const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
@@ -720,8 +722,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   // Filter contacts by search
   const filteredContacts = roleContacts.filter(
     (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.propertyTitle.toLowerCase().includes(searchQuery.toLowerCase())
+      c &&
+      (((c.name || '').toLowerCase().includes(searchQuery.toLowerCase())) ||
+       ((c.propertyTitle || '').toLowerCase().includes(searchQuery.toLowerCase())))
   );
 
   const totalUnread = getUnreadMessagesCountForUser(
@@ -830,6 +833,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Audio Call Handlers (Appel Vocal Réel avec Microphone via GlobalCallModal)
   const handleStartAudioCall = async () => {
+    if (!activeContact) return;
     let prefetchedAudio: MediaStream | null = null;
     try {
       if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
@@ -846,7 +850,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         detail: {
           type: 'audio',
           peerId: activeContact.id,
-          peerName: activeContact.name,
+          peerName: activeContact.name || 'Contact',
           peerAvatar: activeContact.avatar,
           peerRole: activeContact.role,
           propertyTitle: activeContact.propertyTitle,
@@ -876,7 +880,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       const secs = activeAudioCall.seconds % 60;
       const durationStr = `${mins > 0 ? `${mins}m ` : ''}${secs}s`;
       const text = `📞 Appel vocal terminé (${durationStr})`;
-      sendRealChatMessage(currentUserId, activeContact.id, text).catch(() => {});
+      if (activeContact?.id) {
+        sendRealChatMessage(currentUserId, activeContact.id, text).catch(() => {});
+      }
       refreshMessages();
     }
     setActiveAudioCall(null);
@@ -885,6 +891,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   // Video Call Handler (Appel Vidéo Réel avec Caméra Physique & Micro via GlobalCallModal)
   const handleStartVideoCall = async () => {
+    if (!activeContact) return;
     let prefetchedVideo: MediaStream | null = null;
     try {
       if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
@@ -913,7 +920,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         detail: {
           type: 'video',
           peerId: activeContact.id,
-          peerName: activeContact.name,
+          peerName: activeContact.name || 'Contact',
           peerAvatar: activeContact.avatar,
           peerRole: activeContact.role,
           propertyTitle: activeContact.propertyTitle,
@@ -2313,7 +2320,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                                   durationMonths: 12,
                                   startDate: '01/10/2026',
                                   ownerName: user?.user_metadata?.full_name || "Bailleur",
-                                  tenantName: activeContact.name,
+                                  tenantName: activeContact?.name || "Locataire",
                                   ownerSigned: true,
                                   tenantSigned: false
                                 },
@@ -2352,7 +2359,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                   <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce [animation-delay:0.2s]" />
                   <span className="w-2 h-2 rounded-full bg-slate-400 animate-bounce [animation-delay:0.4s]" />
                   <span className="text-[11px] text-slate-500 ml-1.5 font-medium">
-                    {activeContact.name} écrit...
+                    {activeContact?.name || 'Votre correspondant'} écrit...
                   </span>
                 </div>
               </div>
@@ -2832,7 +2839,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         signerName={
           signingTarget?.role === 'proprietaire'
             ? (user?.user_metadata?.full_name || "Bailleur")
-            : (activeContact.name || "Locataire")
+            : (activeContact?.name || "Locataire")
         }
         signerRole={signingTarget?.role || 'locataire'}
         documentTitle={

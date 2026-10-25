@@ -129,6 +129,17 @@ export default function ProprietaireDashboardPage({
     }
   }, [activeTab, selectedContractId]);
 
+  React.useEffect(() => {
+    const handleNavigateTab = (e: any) => {
+      const targetTab = e?.detail?.tab;
+      if (targetTab) {
+        handleSelectTab(targetTab);
+      }
+    };
+    window.addEventListener('locatrust:navigate-tab', handleNavigateTab);
+    return () => window.removeEventListener('locatrust:navigate-tab', handleNavigateTab);
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#070F1E] font-sans text-slate-900 dark:text-slate-100 transition-colors">
       
@@ -306,7 +317,13 @@ export default function ProprietaireDashboardPage({
             {/* TAB 9: Documents (Baux, avenants, CNI, états des lieux) */}
             {activeTab === 'documents' && (
               <ErrorBoundary>
-                <DocumentsView />
+                <DocumentsView
+                  onOpenReceipts={() => handleSelectTab('receipts')}
+                  onOpenContractDetail={(c) => {
+                    setSelectedContractId(c);
+                    handleSelectTab('contracts');
+                  }}
+                />
               </ErrorBoundary>
             )}
 

@@ -65,28 +65,39 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
       const profilesMap = new Map((profilesData || []).map((p: any) => [p.id, p]));
 
       let combinedContracts: any[] = [];
-      const { data, error } = await supabase
-        .from('contracts')
-        .select('*, property:properties(*)');
+      const currentUid = user?.id;
+      const currentEmail = user?.email?.toLowerCase();
 
-      if (!error && Array.isArray(data)) {
-        combinedContracts = [...data];
-      }
+      if (currentUid) {
+        const { data, error } = await supabase
+          .from('contracts')
+          .select('*, property:properties(*)')
+          .or(`owner_id.eq.${currentUid},agency_id.eq.${currentUid},tenant_id.eq.${currentUid}`);
 
-      // 2. Contrats du registre local (offline/demo)
-      try {
-        const rawLocal = localStorage.getItem('locatrust_contracts');
-        if (rawLocal) {
-          const parsed = JSON.parse(rawLocal);
-          if (Array.isArray(parsed)) {
-            parsed.forEach((lc: any) => {
-              if (!combinedContracts.some((c) => c.contract_number === lc.contract_number || c.id === lc.id)) {
-                combinedContracts.push(lc);
-              }
-            });
-          }
+        if (!error && Array.isArray(data)) {
+          combinedContracts = [...data];
         }
-      } catch {}
+
+        // 2. Contrats du registre local (uniquement les contrats appartenant à l'utilisateur)
+        try {
+          const rawLocal = localStorage.getItem('locatrust_contracts');
+          if (rawLocal) {
+            const parsed = JSON.parse(rawLocal);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((lc: any) => {
+                const isMine =
+                  lc.owner_id === currentUid ||
+                  lc.agency_id === currentUid ||
+                  lc.tenant_id === currentUid ||
+                  (currentEmail && (lc.owner_email?.toLowerCase() === currentEmail || lc.tenant_email?.toLowerCase() === currentEmail));
+                if (isMine && !combinedContracts.some((c) => c.contract_number === lc.contract_number || c.id === lc.id)) {
+                  combinedContracts.push(lc);
+                }
+              });
+            }
+          }
+        } catch {}
+      }
 
       const rows: TenantDocumentRow[] = combinedContracts.map((c: any) => {
         const matchedProfile = profilesMap.get(c.tenant_id);
@@ -306,10 +317,14 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          if (onOpenReceipts) onOpenReceipts();
-                          else alert(`Ouverture des reçus pour ${row.tenant_name}`);
+                          if (onOpenReceipts) {
+                            onOpenReceipts();
+                          } else if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('locatrust:navigate-tab', { detail: { tab: 'receipts' } }));
+                          }
                         }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1 transition-colors"
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Consulter toutes les quittances et reçus de loyer"
                       >
                         <span>Voir les reçus</span>
                       </button>

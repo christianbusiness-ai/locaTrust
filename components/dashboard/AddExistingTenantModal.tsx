@@ -516,27 +516,27 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto animate-fadeIn">
-      <div className="relative w-full max-w-3xl my-8 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col font-sans transition-all">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto animate-fadeIn">
+      <div className="relative w-full max-w-3xl my-auto sm:my-6 max-h-[96vh] bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col font-sans transition-all">
         
         {/* ============================================================== */}
         {/* 1. HEADER DU MODAL (Section 3)                                  */}
         {/* ============================================================== */}
-        <div className="px-6 py-5 bg-gradient-to-r from-blue-900 via-slate-900 to-slate-900 text-white flex items-center justify-between border-b border-blue-950/50">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-blue-600/30 border border-blue-400/30 flex items-center justify-center text-blue-300 shadow-inner">
-              <UserPlus className="w-6 h-6 text-blue-400" />
+        <div className="px-4 sm:px-6 py-3.5 sm:py-5 bg-gradient-to-r from-blue-900 via-slate-900 to-slate-900 text-white flex items-center justify-between border-b border-blue-950/50 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-blue-600/30 border border-blue-400/30 flex items-center justify-center text-blue-300 shadow-inner shrink-0">
+              <UserPlus className="w-5 h-5 sm:w-6 sm:h-6 text-blue-400" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-black tracking-tight text-white">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-black tracking-tight text-white truncate">
                   Ajouter un locataire existant
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black border border-blue-400/20">
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black border border-blue-400/20 shrink-0">
                   {isAgency ? 'Espace Agence' : 'Espace Propriétaire'}
                 </span>
               </div>
-              <p className="text-xs text-blue-200/80 mt-0.5">
+              <p className="text-[11px] sm:text-xs text-blue-200/80 mt-0.5 line-clamp-1 sm:line-clamp-none">
                 Ajoutez un locataire qui occupe déjà l'un de vos logements avant votre arrivée sur LocaTrust.
               </p>
             </div>
@@ -544,17 +544,17 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
 
           <button
             onClick={onClose}
-            className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center transition-all"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white flex items-center justify-center transition-all shrink-0 ml-2"
             title="Fermer"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
 
         {/* ============================================================== */}
         {/* 2. CORPS DU MODAL                                              */}
         {/* ============================================================== */}
-        <div className="p-6 overflow-y-auto max-h-[calc(85vh-130px)] space-y-6">
+        <div className="p-3.5 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-4 sm:space-y-6">
 
           {/* MESSAGE D'ALERTE D'ERREUR GLOBALE */}
           {formError && (
@@ -1030,23 +1030,23 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         {/* ============================================================== */}
         {/* 3. FOOTER : BOUTON CONTINUER VERS LE CONTRAT (Section 9)       */}
         {/* ============================================================== */}
-        <div className="px-6 py-4 bg-slate-100 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="text-xs text-slate-500 dark:text-slate-400 text-center sm:text-left">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 bg-slate-100 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0">
+          <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 text-center sm:text-left">
             {foundTenant ? (
               <span className="text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1.5 justify-center sm:justify-start">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                Locataire prêt à être associé à votre contrat
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="truncate">Locataire prêt à être associé à votre contrat</span>
               </span>
             ) : (
-              <span>Recherchez d'abord le compte locataire pour continuer</span>
+              <span className="truncate block">Recherchez le compte locataire pour continuer</span>
             )}
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800 font-bold text-xs transition-all flex-1 sm:flex-initial text-center"
+              className="px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800 font-bold text-xs transition-all w-24 sm:w-auto shrink-0 text-center"
             >
               Annuler
             </button>
@@ -1055,17 +1055,17 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
               type="button"
               disabled={!foundTenant || !selectedPropertyId || (propertyConflict?.type === 'different_tenant') || isSaving}
               onClick={handleContinueToContract}
-              className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-600/30 flex-1 sm:flex-initial"
+              className="flex-1 sm:flex-initial px-4 sm:px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-600/30 text-center"
             >
               {isSaving ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Préparation en cours...</span>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                  <span className="truncate">Préparation en cours...</span>
                 </>
               ) : (
                 <>
-                  <span>Continuer vers la création du contrat</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span className="truncate">Continuer vers le contrat</span>
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </>
               )}
             </button>

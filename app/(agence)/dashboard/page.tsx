@@ -97,8 +97,17 @@ export default function AgencyDashboardPage({
   const [selectedContractApp, setSelectedContractApp] = useState<any>(null);
   const [isConfirmPaymentOpen, setIsConfirmPaymentOpen] = useState(false);
   const [isSendReminderOpen, setIsSendReminderOpen] = useState(false);
-  const [isAddPaymentAccountOpen, setIsAddPaymentAccountOpen] = useState(false);
-  const [isSupportOpen, setIsSupportOpen] = useState(false);
+  React.useEffect(() => {
+    const handleNavigateTab = (e: any) => {
+      const targetTab = e?.detail?.tab;
+      if (targetTab) {
+        setActiveTab(targetTab);
+        setSelectedContractId(null);
+      }
+    };
+    window.addEventListener('locatrust:navigate-tab', handleNavigateTab);
+    return () => window.removeEventListener('locatrust:navigate-tab', handleNavigateTab);
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
@@ -294,7 +303,16 @@ export default function AgencyDashboardPage({
             {/* TAB 11: Documents */}
             {activeTab === 'documents' && (
               <ErrorBoundary>
-                <DocumentsView />
+                <DocumentsView
+                  onOpenReceipts={() => {
+                    setActiveTab('receipts');
+                    setSelectedContractId(null);
+                  }}
+                  onOpenContractDetail={(c) => {
+                    setSelectedContractId(c);
+                    setActiveTab('contracts');
+                  }}
+                />
               </ErrorBoundary>
             )}
 
