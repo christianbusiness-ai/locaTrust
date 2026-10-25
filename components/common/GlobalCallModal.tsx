@@ -387,22 +387,41 @@ export const GlobalCallModal: React.FC = () => {
     }
   };
 
+  // Helper pour attacher et démarrer la lecture d'un flux vidéo sans blocage
+  const attachStreamToVideo = (el: HTMLVideoElement | null, stream: MediaStream | null) => {
+    if (!el || !stream) return;
+    try {
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+      }
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {});
+      }
+    } catch {}
+  };
+
   // Synchronisation systématique des flux vidéo avec les éléments <video> réels du DOM
   const syncVideoElements = () => {
+    if (activeCall?.status === 'ringing') {
+      if (localVideoRef.current && localStreamRef.current) {
+        attachStreamToVideo(localVideoRef.current, localStreamRef.current);
+      }
+      return;
+    }
+
     const mainVideo = isVideoSwapped ? localVideoRef.current : remoteVideoRef.current;
     const pipVideo = isVideoSwapped ? remoteVideoRef.current : localVideoRef.current;
 
     const mainStream = isVideoSwapped ? localStreamRef.current : remoteStreamRef.current;
     const pipStream = isVideoSwapped ? remoteStreamRef.current : localStreamRef.current;
 
-    if (mainVideo && mainStream && mainVideo.srcObject !== mainStream) {
-      mainVideo.srcObject = mainStream;
-      mainVideo.play().catch(() => {});
+    if (mainVideo && mainStream) {
+      attachStreamToVideo(mainVideo, mainStream);
     }
 
-    if (pipVideo && pipStream && pipVideo.srcObject !== pipStream) {
-      pipVideo.srcObject = pipStream;
-      pipVideo.play().catch(() => {});
+    if (pipVideo && pipStream) {
+      attachStreamToVideo(pipVideo, pipStream);
     }
   };
 
@@ -493,82 +512,6 @@ export const GlobalCallModal: React.FC = () => {
     return pc;
   };
 
-  // Helper to create live simulated remote video stream with contact avatar & realistic movement as fallback
-  const createSimulatedRemoteVideoStream = (userName: string, avatarUrl?: string): MediaStream => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    let frame = 0;
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    if (avatarUrl) img.src = avatarUrl;
-
-    const render = () => {
-      if (!ctx) return;
-      frame++;
-      const grad = ctx.createLinearGradient(0, 0, 640, 480);
-      grad.addColorStop(0, '#090d16');
-      grad.addColorStop(0.5, '#0f172a');
-      grad.addColorStop(1, '#1e293b');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 640, 480);
-
-      const cx = 320;
-      const cy = 210 + Math.sin(frame * 0.04) * 4;
-
-      const pulseScale = 1 + Math.sin(frame * 0.06) * 0.08;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 95 * pulseScale, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(5, 150, 105, 0.12)';
-      ctx.fill();
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, 80, 0, Math.PI * 2);
-      ctx.clip();
-
-      if (img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, cx - 80, cy - 80, 160, 160);
-      } else {
-        const bgGrad = ctx.createLinearGradient(cx - 80, cy - 80, cx + 80, cy + 80);
-        bgGrad.addColorStop(0, '#1E40AF');
-        bgGrad.addColorStop(1, '#059669');
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(cx - 80, cy - 80, 160, 160);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 48px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const inits = (userName || 'LT').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
-        ctx.fillText(inits, cx, cy);
-      }
-      ctx.restore();
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, 80, 0, Math.PI * 2);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = '#10B981';
-      ctx.stroke();
-
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 20px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(userName, cx, 340);
-
-      ctx.fillStyle = '#10B981';
-      ctx.font = '14px sans-serif';
-      ctx.fillText('● En direct HD', cx, 370);
-    };
-
-    render();
-    const interval = setInterval(render, 1000 / 30);
-    const stream = canvas.captureStream(30);
-    (stream as any)._interval = interval;
-    return stream;
-  };
-
   // Timer for connected call
   useEffect(() => {
     let timer: any = null;
@@ -589,62 +532,23 @@ export const GlobalCallModal: React.FC = () => {
         setHasRealCameraTrack(true);
         setCameraPermissionStatus('granted');
         if (localVideoRef.current) {
-          localVideoRef.current.srcObject = prefetched;
-          localVideoRef.current.play().catch(() => {});
+          attachStreamToVideo(localVideoRef.current, prefetched);
         }
         if (peerConnectionRef.current) {
           addTracksToPeerConnection(peerConnectionRef.current, prefetched);
         }
         setupAudioVolumeAnalysis(prefetched);
         syncVideoElements();
-      } else if (!localStreamRef.current && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        // Déclencher automatiquement la caméra physique dès que l'appel vidéo s'affiche
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-          .then((stream) => {
-            localStreamRef.current = stream;
-            setHasRealCameraTrack(stream.getVideoTracks().length > 0);
-            setCameraPermissionStatus('granted');
-            if (localVideoRef.current) {
-              localVideoRef.current.srcObject = stream;
-              localVideoRef.current.play().catch(() => {});
-            }
-            if (peerConnectionRef.current) {
-              addTracksToPeerConnection(peerConnectionRef.current, stream);
-            }
-            setupAudioVolumeAnalysis(stream);
-            syncVideoElements();
-          })
-          .catch(() => {
-            navigator.mediaDevices.getUserMedia({ video: true })
-              .then((vStream) => {
-                localStreamRef.current = vStream;
-                setHasRealCameraTrack(true);
-                setCameraPermissionStatus('granted');
-                if (localVideoRef.current) {
-                  localVideoRef.current.srcObject = vStream;
-                  localVideoRef.current.play().catch(() => {});
-                }
-                syncVideoElements();
-              })
-              .catch((err) => console.warn('Caméra automatique non disponible:', err));
-          });
-      }
-
-      if (localVideoRef.current && localStreamRef.current) {
-        if (localVideoRef.current.srcObject !== localStreamRef.current) {
-          localVideoRef.current.srcObject = localStreamRef.current;
-        }
-        localVideoRef.current.play().catch(() => {});
+      } else if (!localStreamRef.current && !isRequestingMedia) {
+        requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment');
       }
 
       syncVideoElements();
-      const t1 = setTimeout(syncVideoElements, 60);
-      const t2 = setTimeout(syncVideoElements, 250);
-      const t3 = setTimeout(syncVideoElements, 600);
+      const t1 = setTimeout(syncVideoElements, 80);
+      const t2 = setTimeout(syncVideoElements, 300);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
-        clearTimeout(t3);
       };
     }
   }, [activeCall?.callType, activeCall?.status, isVideoSwapped, hasRealCameraTrack]);
@@ -901,28 +805,13 @@ export const GlobalCallModal: React.FC = () => {
       } catch {}
 
       if (type === 'video') {
-        // En attente du correspondant : la vidéo affichée est la caméra de l'appelant (comme WhatsApp)
+        // En attente du correspondant : la vidéo affichée est la caméra réelle de l'appelant (comme WhatsApp)
         remoteStreamRef.current = null;
         setHasRemoteVideo(false);
-
-        // Si le correspondant est le support automatisé, décrocher après un court délai réaliste
-        if (peerName?.toLowerCase().includes('support') || peerId === 'support' || peerId === 'usr_support') {
-          setTimeout(() => {
-            if (activeCallRef.current?.status === 'ringing') {
-              stopRingtoneLoop();
-              playChime('connected');
-              setActiveCall((prev) => (prev ? { ...prev, status: 'connected', seconds: 0 } : null));
-              const simRemote = createSimulatedRemoteVideoStream(peerName || 'Support LocaTrust', peerAvatar);
-              remoteStreamRef.current = simRemote;
-              setHasRemoteVideo(true);
-              syncVideoElements();
-            }
-          }, 3500);
-        }
       }
 
-      // Capture micro et caméra réels (utilisation du flux pré-capturé au clic ou demande directe)
-      const streamSource = data?.stream || (window as any).__locatrust_prefetched_stream;
+      // Capture micro et caméra réels (utilisation du flux direct ou demande directe)
+      const streamSource = (e.detail as any)?.stream || (window as any).__locatrust_prefetched_stream;
       const streamPromise = streamSource
         ? Promise.resolve(streamSource)
         : getMediaStreamWithFallback(type || 'audio', 'user');
@@ -934,8 +823,7 @@ export const GlobalCallModal: React.FC = () => {
           setHasRealCameraTrack(stream.getVideoTracks().length > 0);
           setCameraPermissionStatus('granted');
           if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-            localVideoRef.current.play().catch(() => {});
+            attachStreamToVideo(localVideoRef.current, stream);
           }
         } else {
           audioStreamRef.current = stream;
@@ -1018,9 +906,8 @@ export const GlobalCallModal: React.FC = () => {
     setActiveCall(newActiveCall);
 
     if (callData.callType === 'video') {
-      const simRemote = createSimulatedRemoteVideoStream(callData.callerName || 'Correspondant', callData.callerAvatar);
-      remoteStreamRef.current = simRemote;
-      setHasRemoteVideo(true);
+      remoteStreamRef.current = null;
+      setHasRemoteVideo(false);
     }
 
     // Capture media avec fallback multi-plateformes (Caméra + Micro réels)
@@ -1377,13 +1264,13 @@ export const GlobalCallModal: React.FC = () => {
         </div>
       )}
 
-      {/* 3. ACTIVE VIDEO CALL MODAL (Conforme WhatsApp Web - Images 1 & 3) */}
+      {/* 3. ACTIVE VIDEO CALL MODAL (Conforme WhatsApp Web / Mobile) */}
       {activeCall && activeCall.callType === 'video' && (
-        <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
-          <div className="bg-[#0b0f19] border border-slate-800 rounded-3xl max-w-2xl w-full h-[90vh] max-h-[640px] min-h-[460px] shadow-2xl flex flex-col relative overflow-hidden">
+        <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 animate-fadeIn">
+          <div className="bg-[#0b0f19] border-0 sm:border sm:border-slate-800 sm:rounded-3xl w-full h-full sm:max-w-4xl sm:h-[88vh] sm:max-h-[750px] shadow-2xl flex flex-col relative overflow-hidden">
             
             {/* Top Bar Overlay */}
-            <div className="p-3 sm:p-4 bg-gradient-to-b from-slate-950 via-slate-950/80 to-transparent flex items-center justify-between z-30 shrink-0">
+            <div className="absolute top-0 inset-x-0 p-3 sm:p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent flex items-center justify-between z-30 shrink-0">
               <div className="flex items-center gap-3">
                 <UserAvatar
                   src={activeCall.peerAvatar}
@@ -1391,8 +1278,8 @@ export const GlobalCallModal: React.FC = () => {
                   sizeClassName="w-10 h-10"
                 />
                 <div className="flex flex-col text-left">
-                  <span className="text-sm font-black text-white">{activeCall.peerName}</span>
-                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-bold">
+                  <span className="text-sm font-black text-white drop-shadow">{activeCall.peerName}</span>
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-bold drop-shadow">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Appel vidéo HD chiffré LocaTrust
                   </span>
                 </div>
@@ -1423,86 +1310,94 @@ export const GlobalCallModal: React.FC = () => {
               </div>
             </div>
 
-            {/* CAS 1 : PENDANT LA SONNERIE (Appel en cours... comme WhatsApp Image 1) */}
+            {/* CAS 1 : PENDANT LA SONNERIE (Exactement comme WhatsApp : caméra réelle locale plein écran) */}
             {activeCall.status === 'ringing' ? (
-              <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center p-3 sm:p-4 z-20">
-                {/* Header contact en cours d'appel */}
-                <div className="flex flex-col items-center text-center mb-3 shrink-0">
+              <div className="flex-1 min-h-0 relative w-full h-full bg-slate-950 overflow-hidden flex items-center justify-center">
+                {/* 1. Caméra réelle locale en plein écran */}
+                <video
+                  ref={(node) => {
+                    localVideoRef.current = node;
+                    attachStreamToVideo(node, localStreamRef.current);
+                  }}
+                  autoPlay
+                  playsInline
+                  muted
+                  onLoadedMetadata={(e) => {
+                    (e.target as HTMLVideoElement).play().catch(() => {});
+                  }}
+                  className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${activeCall.isFrontCam ? 'scale-x-[-1]' : ''}`}
+                />
+
+                {/* 2. Header flottant avec nom et avatar du contact appelé */}
+                <div className="absolute top-16 sm:top-20 inset-x-0 p-4 flex flex-col items-center text-center z-20">
                   <UserAvatar
                     src={activeCall.peerAvatar}
                     name={activeCall.peerName}
-                    sizeClassName="w-14 h-14 sm:w-16 sm:h-16"
-                    borderClassName="border-2 border-white/20 shadow-xl mb-1.5"
+                    sizeClassName="w-20 h-20 sm:w-24 sm:h-24"
+                    borderClassName="border-2 border-white/40 shadow-2xl mb-2.5"
                   />
-                  <h3 className="text-lg sm:text-xl font-black text-white tracking-wide">
+                  <h3 className="text-xl sm:text-2xl font-black text-white tracking-wide drop-shadow-lg">
                     {activeCall.peerName}
                   </h3>
-                  <span className="text-xs text-slate-300 font-semibold mt-0.5 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                    Appel en cours...
-                  </span>
+                  {activeCall.propertyTitle && (
+                    <span className="text-xs text-slate-200 drop-shadow mt-0.5 font-semibold">{activeCall.propertyTitle}</span>
+                  )}
+                  <div className="mt-3 px-4 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/20 text-xs font-bold text-emerald-400 flex items-center gap-2 shadow-xl">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+                    <span>Appel en cours... Sonnerie...</span>
+                  </div>
                 </div>
 
-                {/* Cadre vidéo central : Caméra réelle de l'utilisateur (comme WhatsApp) */}
-                <div className="relative w-full max-w-md aspect-[4/3] sm:aspect-video rounded-3xl overflow-hidden bg-slate-950 border border-slate-700/70 shadow-2xl flex items-center justify-center shrink-0">
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    onLoadedMetadata={(e) => {
-                      (e.target as HTMLVideoElement).play().catch(() => {});
-                    }}
-                    className={`w-full h-full object-cover transition-opacity duration-300 ${activeCall.isFrontCam ? 'scale-x-[-1]' : ''} ${hasRealCameraTrack ? 'opacity-100' : 'opacity-0'}`}
-                  />
+                {/* 3. Badge caméra HD en direct */}
+                {hasRealCameraTrack && !activeCall.isCamOff && (
+                  <div className="absolute bottom-24 sm:bottom-28 left-4 px-3 py-1.5 rounded-full bg-slate-950/80 backdrop-blur border border-white/20 text-xs font-bold text-emerald-400 flex items-center gap-2 shadow z-20">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Votre caméra HD (En direct)</span>
+                  </div>
+                )}
 
-                  {hasRealCameraTrack ? (
-                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-950/80 backdrop-blur border border-white/10 text-[11px] font-bold text-emerald-400 flex items-center gap-1.5 shadow">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      Votre caméra HD
+                {/* Si la caméra est en cours d'autorisation ou bloquée */}
+                {!hasRealCameraTrack && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center gap-3 bg-slate-950/85 backdrop-blur-md z-15">
+                    <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
+                      <Camera className="w-8 h-8 animate-pulse" />
                     </div>
-                  ) : (
-                    /* En attente d'activation par l'appareil (sans aucun bouton in-app parasite) */
-                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center gap-3 bg-gradient-to-b from-slate-900/90 to-slate-950/95">
-                      <div className="relative">
-                        <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
-                          <Camera className="w-8 h-8 animate-pulse" />
-                        </div>
-                        <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500"></span>
-                        </span>
-                      </div>
-                      <div className="flex flex-col items-center gap-1">
-                        <p className="text-sm sm:text-base font-black text-white tracking-wide">
-                          Connexion à la caméra de votre appareil...
-                        </p>
-                        <p className="text-xs text-slate-300 max-w-xs">
-                          {mediaErrorMessage || "L'appareil prépare votre caméra. Autorisez l'accès dans le navigateur si demandé."}
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                    <p className="text-base font-black text-white">
+                      Connexion à votre caméra physique...
+                    </p>
+                    <p className="text-xs text-slate-300 max-w-sm">
+                      {mediaErrorMessage || "Autorisez l'accès à la caméra et au microphone dans votre navigateur si demandé pour lancer la vidéo."}
+                    </p>
+                  </div>
+                )}
 
-                  {activeCall.isCamOff && (
-                    <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center gap-2 z-10">
-                      <UserAvatar
-                        src={currentUserAvatar}
-                        name={currentUserName}
-                        sizeClassName="w-16 h-16"
-                        borderClassName="border-2 border-white/20"
-                      />
-                      <span className="text-xs text-slate-300 font-bold">Votre caméra est coupée</span>
-                    </div>
-                  )}
-                </div>
+                {/* Caméra coupée manuellement */}
+                {activeCall.isCamOff && (
+                  <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center gap-3 z-15">
+                    <UserAvatar
+                      src={currentUserAvatar}
+                      name={currentUserName}
+                      sizeClassName="w-20 h-20"
+                      borderClassName="border-2 border-white/20"
+                    />
+                    <span className="text-sm text-slate-300 font-bold">Votre caméra est coupée</span>
+                  </div>
+                )}
               </div>
             ) : (
-              /* CAS 2 : APPEL CONNECTÉ (Vidéo du correspondant + Fenêtre flottante PiP) */
+              /* CAS 2 : APPEL CONNECTÉ (Vidéo du correspondant en grand + PiP en bas à droite comme WhatsApp) */
               <div className="flex-1 min-h-0 relative bg-slate-950 overflow-hidden flex items-center justify-center">
-                {/* Main Video View */}
+                {/* Main Video Viewport (Remote Contact by default, or Local User if Swapped) */}
                 <video
-                  ref={isVideoSwapped ? localVideoRef : remoteVideoRef}
+                  ref={(node) => {
+                    if (isVideoSwapped) {
+                      localVideoRef.current = node;
+                      attachStreamToVideo(node, localStreamRef.current);
+                    } else {
+                      remoteVideoRef.current = node;
+                      attachStreamToVideo(node, remoteStreamRef.current);
+                    }
+                  }}
                   autoPlay
                   playsInline
                   muted={isVideoSwapped}
@@ -1552,14 +1447,22 @@ export const GlobalCallModal: React.FC = () => {
                   </div>
                 )}
 
-                {/* PiP Floating Window pour la caméra locale */}
+                {/* PiP Floating Window pour la caméra locale (Permutable au clic) */}
                 <div
                   onClick={() => setIsVideoSwapped(!isVideoSwapped)}
-                  className="absolute bottom-4 right-4 w-28 h-36 sm:w-36 sm:h-48 rounded-2xl overflow-hidden border-2 border-white/30 shadow-2xl z-20 cursor-pointer bg-slate-900 transition-all hover:scale-105 active:scale-95 group"
+                  className="absolute bottom-24 right-4 sm:bottom-28 sm:right-6 w-32 h-44 sm:w-44 sm:h-60 rounded-2xl overflow-hidden border-2 border-white/40 shadow-2xl z-20 cursor-pointer bg-slate-900 transition-all hover:scale-105 active:scale-95 group"
                   title="Cliquez pour permuter la vue"
                 >
                   <video
-                    ref={isVideoSwapped ? remoteVideoRef : localVideoRef}
+                    ref={(node) => {
+                      if (isVideoSwapped) {
+                        remoteVideoRef.current = node;
+                        attachStreamToVideo(node, remoteStreamRef.current);
+                      } else {
+                        localVideoRef.current = node;
+                        attachStreamToVideo(node, localStreamRef.current);
+                      }
+                    }}
                     autoPlay
                     playsInline
                     muted={!isVideoSwapped}
@@ -1584,15 +1487,19 @@ export const GlobalCallModal: React.FC = () => {
                     </div>
                   )}
 
-                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold">
+                  <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-[10px] font-bold text-white z-10">
+                    {isVideoSwapped ? activeCall.peerName : 'Vous'}
+                  </div>
+
+                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white text-[10px] font-bold z-10">
                     Permuter
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Bottom Controls Bar - TOUJOURS VISIBLE, JAMAIS MASQUÉE */}
-            <div className="shrink-0 p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-center gap-4 z-30">
+            {/* Bottom Controls Bar - TOUJOURS VISIBLE, FLOTTANTE EN BAS COMME WHATSAPP */}
+            <div className="shrink-0 p-3 sm:p-4 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 flex items-center justify-center gap-4 sm:gap-6 z-30">
               <button
                 type="button"
                 onClick={() => {

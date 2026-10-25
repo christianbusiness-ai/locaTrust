@@ -179,18 +179,29 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               if (!isMyPropertyApplication) return;
 
               const tenantId = app.tenant_id || `tenant_${app.id}`;
-              const tenantName = app.tenant_name || 'Candidat Locataire';
+              const tenantName = (app.tenant_name || '').trim();
+
+              // Ne jamais créer de contact générique fictif "Candidat Locataire"
+              if (
+                !tenantName ||
+                tenantName.toLowerCase().includes('candidat') ||
+                tenantName.toLowerCase() === 'locataire candidat' ||
+                tenantName.toLowerCase() === 'candidat locataire'
+              ) {
+                return;
+              }
+
               const tenantAvatar =
                 (app.tenant_avatar && !app.tenant_avatar.includes('ui-avatars.com') ? app.tenant_avatar : null) ||
                 (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${tenantId}`) : null) ||
                 getDefaultRealisticAvatar(tenantName, 'locataire');
 
-              if (app.tenant_name && !list.some((c) => c.id === tenantId || c.name.toLowerCase() === tenantName.toLowerCase())) {
+              if (!list.some((c) => c.id === tenantId || c.name.toLowerCase() === tenantName.toLowerCase())) {
                 list.push({
                   id: tenantId,
                   name: tenantName,
                   phone: app.tenant_phone || '+225 05 00 00 00 00',
-                  role: 'Candidat Locataire',
+                  role: 'Locataire',
                   propertyTitle: app.property_title || 'Bien immobilier',
                   avatar: tenantAvatar,
                   online: true
@@ -213,7 +224,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             otherId &&
             !myAliases.has(otherId) &&
             otherId !== 'usr_owner_1' &&
-            otherId !== 'usr_tenant_1'
+            otherId !== 'usr_tenant_1' &&
+            otherId !== 'usr_candidate' &&
+            !otherId.startsWith('candidate_')
           ) {
             const matchingApp = apps.find(
               (a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId
@@ -249,30 +262,36 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               }
             }
 
+            // Ne jamais inventer de nom générique fictif "Locataire Candidat"
+            if (
+              !contactName ||
+              contactName.toLowerCase().includes('candidat') ||
+              contactName.toLowerCase() === 'locataire candidat' ||
+              contactName.toLowerCase() === 'candidat locataire'
+            ) {
+              return;
+            }
+
             // Ne pas recréer de doublon si ce nom existe déjà dans la liste
-            if (contactName && list.some((c) => c.name.toLowerCase() === contactName!.toLowerCase())) {
+            if (list.some((c) => c.name.toLowerCase() === contactName!.toLowerCase())) {
               return;
             }
 
             // S'il s'agit d'un identifiant générique (usr_owner / usr_agency) ou sans nom précis,
             // et qu'on a déjà un contact bailleur/agence réel dans la liste, ne surtout pas créer de doublon
             const hasExistingNamedParty = list.some(
-              (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire' && c.name.toLowerCase() !== 'locataire candidat'
+              (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire'
             );
 
             if (
-              (otherId === 'usr_owner' || otherId === 'usr_agency' || !contactName || contactName.toLowerCase() === 'bailleur propriétaire') &&
+              (otherId === 'usr_owner' || otherId === 'usr_agency' || contactName.toLowerCase() === 'bailleur propriétaire') &&
               hasExistingNamedParty
             ) {
               return;
             }
 
-            if (!contactName) {
-              contactName = otherId.includes('owner') || otherId.includes('agency') ? 'Bailleur Propriétaire' : 'Locataire Candidat';
-            }
-
             const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
-            const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire Candidat';
+            const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire';
             let contactAvatar =
               (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') ? matchingApp.tenant_avatar : null) ||
               (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') ? matchingApp.owner_avatar : null) ||
@@ -345,6 +364,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     for (const c of list) {
       if (!c || !c.id) continue;
       const lower = (c.name || '').trim().toLowerCase();
+
+      // Ignorer tout contact candidat fictif
+      if (
+        lower === 'locataire candidat' ||
+        lower === 'candidat locataire' ||
+        lower.includes('candidat') ||
+        c.id === 'usr_candidate' ||
+        c.id.startsWith('candidate_')
+      ) {
+        continue;
+      }
 
       // Supprimer le doublon générique "Bailleur Propriétaire" s'il existe déjà un vrai contact propriétaire/agence
       if (hasNamedOwner && (lower === 'bailleur propriétaire' || c.id === 'usr_owner' || c.id === 'usr_agency')) {
@@ -853,122 +883,31 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     setShowMobileChat(true);
   };
 
-  const animationIntervalRef = useRef<any>(null);
-
-  // Helper to create live simulated remote video stream with contact avatar & realistic movement
-  const createSimulatedRemoteVideoStream = (userName: string, avatarUrl?: string): MediaStream => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    let frame = 0;
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    if (avatarUrl) {
-      img.src = avatarUrl;
+  // Video Call Handler (Appel Vidéo Réel avec Caméra Physique & Micro via GlobalCallModal)
+  const handleStartVideoCall = async () => {
+    let prefetchedVideo: MediaStream | null = null;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        prefetchedVideo = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: true
+        });
+      }
+    } catch (err) {
+      console.warn('Pré-capture combinée vidéo+audio au clic:', err);
+      try {
+        if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+          prefetchedVideo = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+      } catch (errVideo) {
+        console.warn('Pré-capture vidéo seule échouée:', errVideo);
+      }
     }
 
-    const renderFrame = () => {
-      if (!ctx) return;
-      frame++;
-      // Background gradient
-      const grad = ctx.createLinearGradient(0, 0, 640, 480);
-      grad.addColorStop(0, '#090d16');
-      grad.addColorStop(0.5, '#0f172a');
-      grad.addColorStop(1, '#1e293b');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 640, 480);
-
-      // Subtle ambient room lighting shift
-      const ambientLight = Math.sin(frame * 0.03) * 0.05;
-      ctx.fillStyle = `rgba(30, 58, 138, ${0.15 + ambientLight})`;
-      ctx.fillRect(0, 0, 640, 480);
-
-      // Center position
-      const cx = 320;
-      const cy = 210 + Math.sin(frame * 0.04) * 4; // Gentle breathing motion
-
-      // Outer glowing pulsing ring
-      const pulseScale = 1 + Math.sin(frame * 0.06) * 0.08;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 95 * pulseScale, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
-      ctx.fill();
-
-      // Inner ring
-      ctx.beginPath();
-      ctx.arc(cx, cy, 80, 0, Math.PI * 2);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = '#3b82f6';
-      ctx.stroke();
-
-      // Avatar circle clipping & drawing
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, 75, 0, Math.PI * 2);
-      ctx.clip();
-
-      if (img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, cx - 75, cy - 75, 150, 150);
-      } else {
-        // Fallback stylish avatar silhouette
-        ctx.fillStyle = '#1e40af';
-        ctx.fillRect(cx - 75, cy - 75, 150, 150);
-        ctx.beginPath();
-        ctx.arc(cx, cy - 15, 30, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(cx, cy + 55, 45, Math.PI, 0, false);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // Live video audio indicator bars
-      const barCount = 7;
-      const startX = cx - 45;
-      for (let i = 0; i < barCount; i++) {
-        const h = 10 + Math.abs(Math.sin((frame * 0.1) + i * 0.8)) * 22;
-        ctx.fillStyle = '#10b981';
-        ctx.fillRect(startX + i * 14, 335 - h / 2, 6, h);
-      }
-
-      // Name label banner
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-      ctx.roundRect ? ctx.roundRect(cx - 130, 365, 260, 32, 16) : ctx.fillRect(cx - 130, 365, 260, 32);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(userName, cx, 386);
-
-      // "En direct • 60 FPS" badge at top
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-      ctx.roundRect ? ctx.roundRect(20, 20, 150, 26, 13) : ctx.fillRect(20, 20, 150, 26);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(34, 33, 4, 0, Math.PI * 2);
-      ctx.fillStyle = '#10b981';
-      ctx.fill();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText('HD 1080p • EN DIRECT', 44, 37);
-    };
-
-    if (animationIntervalRef.current) {
-      clearInterval(animationIntervalRef.current);
+    if (prefetchedVideo) {
+      (window as any).__locatrust_prefetched_stream = prefetchedVideo;
     }
-    animationIntervalRef.current = setInterval(renderFrame, 40);
-    renderFrame();
-    return canvas.captureStream(30);
-  };
 
-  // Video Call Handlers (Ouverture Immédiate du Modal & Déclenchement Natif Caméra/Micro par l'Appareil)
-  const handleStartVideoCall = () => {
-    // 1. Déclencher l'appel immédiatement pour afficher le modal sans attendre
     window.dispatchEvent(
       new CustomEvent('locatrust:initiate_call', {
         detail: {
@@ -977,125 +916,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           peerName: activeContact.name,
           peerAvatar: activeContact.avatar,
           peerRole: activeContact.role,
-          propertyTitle: activeContact.propertyTitle
+          propertyTitle: activeContact.propertyTitle,
+          stream: prefetchedVideo
         }
       })
     );
-
-    // 2. Déclencher immédiatement l'autorisation native du navigateur dans le geste utilisateur direct
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then((stream) => {
-          (window as any).__locatrust_prefetched_stream = stream;
-          window.dispatchEvent(new CustomEvent('locatrust:media_stream_ready', { detail: { stream } }));
-        })
-        .catch((err) => {
-          console.warn('Essai vidéo seule suite à refus combiné:', err);
-          navigator.mediaDevices.getUserMedia({ video: true })
-            .then((vStream) => {
-              (window as any).__locatrust_prefetched_stream = vStream;
-              window.dispatchEvent(new CustomEvent('locatrust:media_stream_ready', { detail: { stream: vStream } }));
-            })
-            .catch((errFinal) => console.warn('Impossible d’ouvrir la caméra physique:', errFinal));
-        });
-    }
-  };
-
-
-
-  // Toggle Front/Rear Camera (Particulièrement utile sur smartphone)
-  const handleFlipCamera = async () => {
-    if (!activeVideoCall) return;
-    const nextFacingMode = !activeVideoCall.isFrontCam;
-    setActiveVideoCall((prev) => (prev ? { ...prev, isFrontCam: nextFacingMode } : null));
-
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => track.stop());
-    }
-
-    try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: nextFacingMode ? 'user' : 'environment' },
-          audio: !activeVideoCall.isMuted
-        });
-        localStreamRef.current = newStream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = newStream;
-          localVideoRef.current.play().catch(() => {});
-        }
-      }
-    } catch (err) {
-      console.warn('Could not switch camera facing mode:', err);
-    }
-  };
-
-  // Toggle Microphone
-  const handleToggleMute = () => {
-    if (!activeVideoCall) return;
-    const newMuted = !activeVideoCall.isMuted;
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = !newMuted;
-      });
-    }
-    setActiveVideoCall({ ...activeVideoCall, isMuted: newMuted });
-  };
-
-  // Toggle Camera
-  const handleToggleCam = () => {
-    if (!activeVideoCall) return;
-    const newCamOff = !activeVideoCall.isCamOff;
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = !newCamOff;
-      });
-    }
-    setActiveVideoCall({ ...activeVideoCall, isCamOff: newCamOff });
-  };
-
-  // Hang Up Video Call (Sécurisé sans rechargement ni fermeture de page)
-  const handleEndVideoCall = (e?: React.SyntheticEvent) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    playCallChime('hangup');
-    cleanupAudioAnalysis();
-
-    if (localStreamRef.current) {
-      try {
-        localStreamRef.current.getTracks().forEach((track) => track.stop());
-      } catch {}
-      localStreamRef.current = null;
-    }
-    if (remoteStreamRef.current) {
-      try {
-        remoteStreamRef.current.getTracks().forEach((track) => track.stop());
-      } catch {}
-      remoteStreamRef.current = null;
-    }
-    if (animationIntervalRef.current) {
-      clearInterval(animationIntervalRef.current);
-      animationIntervalRef.current = null;
-    }
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
-
-    if (activeVideoCall && activeVideoCall.seconds > 0) {
-      const mins = Math.floor(activeVideoCall.seconds / 60);
-      const secs = activeVideoCall.seconds % 60;
-      const durationStr = `${mins > 0 ? `${mins}m ` : ''}${secs}s`;
-      const text = `📹 Appel vidéo terminé (${durationStr})`;
-      sendRealChatMessage(currentUserId, activeContact.id, text).catch(() => {});
-      refreshMessages();
-    }
-    setActiveVideoCall(null);
-    setShowMobileChat(true);
   };
 
   // File Handlers: Image & Document (Point 6)
@@ -3022,351 +2847,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         }
       />
 
-      {/* MODAL: AUDIO CALL (Point 8 & Voix Réelle) */}
-      {activeAudioCall && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center text-center text-white relative">
-            <div className="relative mb-4">
-              <img
-                src={activeContact.avatar}
-                alt={activeContact.name}
-                className="w-24 h-24 rounded-full object-cover border-4 border-emerald-500/50 shadow-2xl shadow-emerald-500/20"
-              />
-              <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-slate-900 shadow" />
-            </div>
 
-            <h3 className="text-xl font-black text-white">{activeContact.name}</h3>
-            <span className="text-xs text-slate-400 mt-1">{activeContact.propertyTitle}</span>
-
-            <div className="mt-3 px-3.5 py-1.5 rounded-full bg-slate-800/90 border border-slate-700 text-emerald-400 font-mono text-xs font-black flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>
-                {Math.floor(activeAudioCall.seconds / 60).toString().padStart(2, '0')}:
-                {(activeAudioCall.seconds % 60).toString().padStart(2, '0')}
-              </span>
-              <span className="text-slate-500">&bull;</span>
-              <span className="text-[10px] text-slate-300 font-medium">Appel Vocal Sécurisé</span>
-            </div>
-
-            {/* Live Audio Equalizer Waveform */}
-            <div className="flex items-center gap-1.5 my-6 h-14">
-              {[25, 55, 40, 85, 70, 95, 75, 45, 80, 35, 65].map((baseH, i) => {
-                const dynamicVol = activeAudioCall.isMuted
-                  ? 0
-                  : Math.max(18, (audioVolume * 1.4) + Math.sin((activeAudioCall.seconds * 4) + i) * 16);
-                const finalH = Math.min(54, Math.max(8, (baseH * (dynamicVol / 100))));
-                return (
-                  <div
-                    key={i}
-                    className={`w-1.5 rounded-full transition-all duration-150 ${
-                      activeAudioCall.isMuted ? 'bg-slate-700' : 'bg-emerald-400 shadow-sm shadow-emerald-400/30'
-                    }`}
-                    style={{ height: `${finalH}px` }}
-                  />
-                );
-              })}
-            </div>
-
-            <div className="flex items-center gap-2 mb-4">
-              {activeAudioCall.isMuted ? (
-                <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
-                  <MicOff className="w-3.5 h-3.5" /> Votre micro est coupé
-                </span>
-              ) : audioVolume > 15 ? (
-                <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> Voix en direct détectée
-                </span>
-              ) : (
-                <span className="text-[11px] font-medium text-slate-400">Parlez dans votre microphone...</span>
-              )}
-            </div>
-
-            <div className="flex items-center justify-center gap-5 w-full pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const newMuted = !activeAudioCall.isMuted;
-                  if (audioStreamRef.current) {
-                    audioStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = !newMuted));
-                  }
-                  setActiveAudioCall({ ...activeAudioCall, isMuted: newMuted });
-                }}
-                className={`p-4 rounded-full transition-all active:scale-95 shadow-md ${
-                  activeAudioCall.isMuted ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
-                title={activeAudioCall.isMuted ? 'Réactiver le micro' : 'Couper le micro'}
-              >
-                {activeAudioCall.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleEndAudioCall(e);
-                }}
-                className="p-5 rounded-full bg-red-600 hover:bg-red-700 text-white shadow-xl shadow-red-600/30 transition-all active:scale-95 cursor-pointer z-30"
-                title="Raccrocher"
-              >
-                <PhoneOff className="w-6 h-6" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveAudioCall({ ...activeAudioCall, isSpeaker: !activeAudioCall.isSpeaker })}
-                className={`p-4 rounded-full transition-all active:scale-95 shadow-md ${
-                  activeAudioCall.isSpeaker ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
-                title="Haut-parleur"
-              >
-                <Volume2 className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: VIDEO CALL (Caméra Réelle Deux Parties + PiP Interactif) */}
-      {activeVideoCall && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full h-[88vh] max-h-[620px] min-h-[440px] shadow-2xl flex flex-col relative overflow-hidden">
-            
-            {/* Top Bar Overlay */}
-            <div className="absolute top-0 inset-x-0 z-30 p-3 sm:p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <img
-                  src={activeContact.avatar}
-                  alt={activeContact.name}
-                  className="w-10 h-10 rounded-full object-cover border-2 border-white/20 shadow shrink-0"
-                />
-                <div className="flex flex-col text-left">
-                  <span className="text-sm font-black text-white">{activeContact.name}</span>
-                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-bold">
-                    <ShieldCheck className="w-3 h-3 text-emerald-400" /> Appel vidéo HD chiffré LocaTrust
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="px-3 py-1 rounded-full bg-black/70 backdrop-blur-sm border border-white/10 text-white font-mono text-xs font-bold flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>
-                    {Math.floor(activeVideoCall.seconds / 60).toString().padStart(2, '0')}:
-                    {(activeVideoCall.seconds % 60).toString().padStart(2, '0')}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Camera Notification Notice if permission issue */}
-            {cameraError && (
-              <div className="absolute top-16 inset-x-4 z-30 p-2.5 rounded-xl bg-amber-500/90 text-slate-950 text-xs font-bold text-center backdrop-blur-sm shadow-lg flex items-center justify-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{cameraError}</span>
-              </div>
-            )}
-
-            {/* Main Video Viewport (Remote Contact by default, or Local User if Swapped) */}
-            <div className="flex-1 w-full h-full bg-slate-950 flex items-center justify-center relative overflow-hidden">
-              {!isVideoSwapped ? (
-                /* Vue Principale : Contact Distant (Bailleur ou Locataire en direct) */
-                <video
-                  ref={(node) => {
-                    remoteVideoRef.current = node;
-                    if (node && remoteStreamRef.current && node.srcObject !== remoteStreamRef.current) {
-                      node.srcObject = remoteStreamRef.current;
-                      node.play().catch(() => {});
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  controls={false}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                /* Vue Principale inversée : Caméra Physique de l'utilisateur */
-                activeVideoCall.isCamOff ? (
-                  <div className="flex flex-col items-center gap-3 text-slate-400 animate-fadeIn p-6 text-center">
-                    <CameraOff className="w-16 h-16 text-rose-500" />
-                    <span className="text-sm font-bold text-slate-200">Votre caméra est désactivée</span>
-                    <span className="text-xs text-slate-500">Cliquez sur « Activer caméra » pour réactiver votre flux</span>
-                  </div>
-                ) : (
-                  <video
-                    ref={(node) => {
-                      localVideoRef.current = node;
-                      if (node && localStreamRef.current && node.srcObject !== localStreamRef.current) {
-                        node.srcObject = localStreamRef.current;
-                        node.play().catch(() => {});
-                      }
-                    }}
-                    autoPlay
-                    playsInline
-                    muted
-                    controls={false}
-                    style={{ transform: activeVideoCall.isFrontCam ? 'scaleX(-1)' : 'none' }}
-                    className="w-full h-full object-cover"
-                  />
-                )
-              )}
-
-              {/* PiP Viewport (Small overlay in corner) — Cliquer pour permuter */}
-              <div
-                onClick={() => setIsVideoSwapped(!isVideoSwapped)}
-                className="absolute bottom-4 right-4 w-32 h-44 sm:w-36 sm:h-48 rounded-2xl bg-slate-900/90 backdrop-blur-sm border-2 border-slate-700/80 shadow-2xl overflow-hidden cursor-pointer group hover:border-blue-500 transition-all z-20"
-                title="Cliquer pour permuter l'affichage"
-              >
-                {!isVideoSwapped ? (
-                  /* PiP : Caméra Physique de l'utilisateur en temps réel */
-                  activeVideoCall.isCamOff ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center text-slate-400 bg-slate-950">
-                      <CameraOff className="w-6 h-6 text-rose-400 mb-1" />
-                      <span className="text-[10px] font-bold">Caméra coupée</span>
-                    </div>
-                  ) : (
-                    <div className="relative w-full h-full">
-                      <video
-                        ref={(node) => {
-                          localVideoRef.current = node;
-                          if (node && localStreamRef.current && node.srcObject !== localStreamRef.current) {
-                            node.srcObject = localStreamRef.current;
-                            node.play().catch(() => {});
-                          }
-                        }}
-                        autoPlay
-                        playsInline
-                        muted
-                        controls={false}
-                        style={{ transform: activeVideoCall.isFrontCam ? 'scaleX(-1)' : 'none' }}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-xs text-[9px] font-bold text-emerald-400 flex items-center gap-1 shadow">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        <span>Vous (En direct)</span>
-                      </div>
-                      <div className="absolute inset-0 bg-blue-600/0 group-hover:bg-blue-600/20 transition-colors flex items-center justify-center">
-                        <FlipHorizontal className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
-                      </div>
-                    </div>
-                  )
-                ) : (
-                  /* PiP : Contact Distant */
-                  <div className="relative w-full h-full">
-                    <video
-                      ref={(node) => {
-                        remoteVideoRef.current = node;
-                        if (node && remoteStreamRef.current && node.srcObject !== remoteStreamRef.current) {
-                          node.srcObject = remoteStreamRef.current;
-                          node.play().catch(() => {});
-                        }
-                      }}
-                      autoPlay
-                      playsInline
-                      controls={false}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-xs text-[9px] font-bold text-blue-400 flex items-center gap-1 shadow">
-                      <span>{activeContact.name.split(' ')[0]}</span>
-                    </div>
-                    <div className="absolute inset-0 bg-blue-600/0 group-hover:bg-blue-600/20 transition-colors flex items-center justify-center">
-                      <FlipHorizontal className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Bottom Controls — Toujours visibles et interactifs */}
-            <div className="p-3 sm:p-4 bg-slate-950/95 border-t border-slate-800 flex items-center justify-center gap-2 sm:gap-4 z-30 shrink-0">
-              {/* 1. Bouton Couper/Réactiver le micro */}
-              <button
-                type="button"
-                onClick={handleToggleMute}
-                className={`p-3 sm:px-3.5 sm:py-2.5 rounded-2xl flex items-center gap-2 font-bold text-xs transition-all active:scale-95 shadow-md ${
-                  activeVideoCall.isMuted
-                    ? 'bg-rose-600 hover:bg-rose-500 text-white ring-2 ring-rose-400'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                }`}
-                title={activeVideoCall.isMuted ? 'Réactiver le microphone' : 'Couper le microphone'}
-              >
-                {activeVideoCall.isMuted ? (
-                  <MicOff className="w-4 h-4 text-white" />
-                ) : (
-                  <Mic className="w-4 h-4 text-emerald-400" />
-                )}
-                <span className="hidden md:inline">
-                  {activeVideoCall.isMuted ? 'Micro coupé' : 'Micro actif'}
-                </span>
-              </button>
-
-              {/* 2. Bouton Éteindre/Réactiver la caméra */}
-              <button
-                type="button"
-                onClick={handleToggleCam}
-                className={`p-3 sm:px-3.5 sm:py-2.5 rounded-2xl flex items-center gap-2 font-bold text-xs transition-all active:scale-95 shadow-md ${
-                  activeVideoCall.isCamOff
-                    ? 'bg-rose-600 hover:bg-rose-500 text-white ring-2 ring-rose-400'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                }`}
-                title={activeVideoCall.isCamOff ? 'Réactiver la caméra' : 'Éteindre la caméra'}
-              >
-                {activeVideoCall.isCamOff ? (
-                  <CameraOff className="w-4 h-4 text-white" />
-                ) : (
-                  <Camera className="w-4 h-4 text-blue-400" />
-                )}
-                <span className="hidden md:inline">
-                  {activeVideoCall.isCamOff ? 'Caméra coupée' : 'Caméra active'}
-                </span>
-              </button>
-
-              {/* 3. Bouton Retourner la caméra (Avant/Arrière sur mobile) */}
-              <button
-                type="button"
-                onClick={handleFlipCamera}
-                className="p-3 sm:px-3.5 sm:py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-2 font-bold text-xs transition-all active:scale-95 shadow-md"
-                title="Basculer caméra avant / arrière"
-              >
-                <RotateCcw className="w-4 h-4 text-amber-400" />
-                <span className="hidden md:inline">
-                  {activeVideoCall.isFrontCam ? 'Cam. Arrière' : 'Cam. Avant'}
-                </span>
-              </button>
-
-              {/* 4. Bouton Inverser l'affichage (Swap PiP & Main) */}
-              <button
-                type="button"
-                onClick={() => setIsVideoSwapped(!isVideoSwapped)}
-                className={`p-3 sm:px-3.5 sm:py-2.5 rounded-2xl flex items-center gap-2 font-bold text-xs transition-all active:scale-95 shadow-md ${
-                  isVideoSwapped
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                }`}
-                title="Inverser les vues principale et miniature"
-              >
-                <FlipHorizontal className="w-4 h-4 text-cyan-400" />
-                <span className="hidden md:inline">Inverser la vue</span>
-              </button>
-
-              {/* 5. Bouton Raccrocher */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleEndVideoCall(e);
-                }}
-                className="px-5 py-2.5 sm:px-6 sm:py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-black text-xs shadow-xl shadow-red-600/40 transition-all active:scale-95 flex items-center gap-2 cursor-pointer z-30"
-                title="Terminer l'appel vidéo"
-              >
-                <PhoneOff className="w-4 h-4" />
-                <span>Raccrocher</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* MODAL: MICROPHONE PERMISSION / ERROR (Point 6 & Point 33) */}
       {micPermissionModal && (
