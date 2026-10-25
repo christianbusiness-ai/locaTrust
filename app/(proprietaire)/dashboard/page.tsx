@@ -1,34 +1,35 @@
-import React, { useState, Suspense, lazy } from 'react';
+'use client';
+
+import React, { useState } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
 import { getActiveUser } from '@/lib/authStore';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
 import { ProprietaireDashboardView } from '@/components/dashboard/ProprietaireDashboardView';
+import { BiensView } from '@/components/dashboard/BiensView';
+import { CautionsView } from '@/components/dashboard/CautionsView';
+import { PaiementsView } from '@/components/dashboard/PaiementsView';
+import { MaintenanceView } from '@/components/dashboard/MaintenanceView';
+import { AbonnementView } from '@/components/dashboard/AbonnementView';
+import { MessagerieView } from '@/components/dashboard/MessagerieView';
+import { VisitesView } from '@/components/dashboard/VisitesView';
+import { DemandesView } from '@/components/dashboard/DemandesView';
+import { DocumentsView } from '@/components/dashboard/DocumentsView';
+import { ReceiptsQuittancesView } from '@/components/dashboard/ReceiptsQuittancesView';
+import { TenantsListView } from '@/components/dashboard/TenantsListView';
+import { HistoriqueView } from '@/components/dashboard/HistoriqueView';
+import { PaymentAccountsView } from '@/components/dashboard/PaymentAccountsView';
+import { ReportsStatsView } from '@/components/dashboard/ReportsStatsView';
+import { AccountingExportView } from '@/components/dashboard/AccountingExportView';
+import { SettingsView } from '@/components/dashboard/SettingsView';
+import { ContractListView } from '@/components/contracts/ContractListView';
+import { ContractDetailView } from '@/components/contracts/ContractDetailView';
+import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
 import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ShieldAlert, ArrowRight } from 'lucide-react';
-
-// Lazy loading ciblé des sous-vues pour accélérer l'affichage sur mobile (économie de 70% de bundle initial)
-const BiensView = lazy(() => import('@/components/dashboard/BiensView').then(m => ({ default: m.BiensView })));
-const CautionsView = lazy(() => import('@/components/dashboard/CautionsView').then(m => ({ default: m.CautionsView })));
-const PaiementsView = lazy(() => import('@/components/dashboard/PaiementsView').then(m => ({ default: m.PaiementsView })));
-const MaintenanceView = lazy(() => import('@/components/dashboard/MaintenanceView').then(m => ({ default: m.MaintenanceView })));
-const AbonnementView = lazy(() => import('@/components/dashboard/AbonnementView').then(m => ({ default: m.AbonnementView })));
-const MessagerieView = lazy(() => import('@/components/dashboard/MessagerieView').then(m => ({ default: m.MessagerieView })));
-const VisitesView = lazy(() => import('@/components/dashboard/VisitesView').then(m => ({ default: m.VisitesView })));
-const DemandesView = lazy(() => import('@/components/dashboard/DemandesView').then(m => ({ default: m.DemandesView })));
-const DocumentsView = lazy(() => import('@/components/dashboard/DocumentsView').then(m => ({ default: m.DocumentsView })));
-const ReceiptsQuittancesView = lazy(() => import('@/components/dashboard/ReceiptsQuittancesView').then(m => ({ default: m.ReceiptsQuittancesView })));
-const TenantsListView = lazy(() => import('@/components/dashboard/TenantsListView').then(m => ({ default: m.TenantsListView })));
-const HistoriqueView = lazy(() => import('@/components/dashboard/HistoriqueView').then(m => ({ default: m.HistoriqueView })));
-const PaymentAccountsView = lazy(() => import('@/components/dashboard/PaymentAccountsView').then(m => ({ default: m.PaymentAccountsView })));
-const ReportsStatsView = lazy(() => import('@/components/dashboard/ReportsStatsView').then(m => ({ default: m.ReportsStatsView })));
-const AccountingExportView = lazy(() => import('@/components/dashboard/AccountingExportView').then(m => ({ default: m.AccountingExportView })));
-const SettingsView = lazy(() => import('@/components/dashboard/SettingsView').then(m => ({ default: m.SettingsView })));
-const ContractListView = lazy(() => import('@/components/contracts/ContractListView').then(m => ({ default: m.ContractListView })));
-const ContractDetailView = lazy(() => import('@/components/contracts/ContractDetailView').then(m => ({ default: m.ContractDetailView })));
-const LocataireSupportView = lazy(() => import('@/components/locataire/LocataireSupportView').then(m => ({ default: m.LocataireSupportView })));
+import { UserRole } from '@/types/database.types';
 
 // Shared interactive modals
 import {

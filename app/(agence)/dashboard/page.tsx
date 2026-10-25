@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
 import { getActiveUser } from '@/lib/authStore';
 import { Header } from '@/components/layout/Header';
@@ -13,29 +13,27 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 // Agency & Proprietaire shared components
 import { ProprietaireDashboardView } from '@/components/dashboard/ProprietaireDashboardView';
 import { AgenceDashboardView } from '@/components/agence/AgenceDashboardView';
-
-// Lazy loading ciblé des sous-vues pour booster la vitesse mobile
-const MultiProprietairesView = lazy(() => import('@/components/agence/MultiProprietairesView').then(m => ({ default: m.MultiProprietairesView })));
-const AgenceEquipeView = lazy(() => import('@/components/agence/AgenceEquipeView').then(m => ({ default: m.AgenceEquipeView })));
-const BiensView = lazy(() => import('@/components/dashboard/BiensView').then(m => ({ default: m.BiensView })));
-const CautionsView = lazy(() => import('@/components/dashboard/CautionsView').then(m => ({ default: m.CautionsView })));
-const PaiementsView = lazy(() => import('@/components/dashboard/PaiementsView').then(m => ({ default: m.PaiementsView })));
-const HistoriqueView = lazy(() => import('@/components/dashboard/HistoriqueView').then(m => ({ default: m.HistoriqueView })));
-const MaintenanceView = lazy(() => import('@/components/dashboard/MaintenanceView').then(m => ({ default: m.MaintenanceView })));
-const AbonnementView = lazy(() => import('@/components/dashboard/AbonnementView').then(m => ({ default: m.AbonnementView })));
-const MessagerieView = lazy(() => import('@/components/dashboard/MessagerieView').then(m => ({ default: m.MessagerieView })));
-const ContractListView = lazy(() => import('@/components/contracts/ContractListView').then(m => ({ default: m.ContractListView })));
-const ContractDetailView = lazy(() => import('@/components/contracts/ContractDetailView').then(m => ({ default: m.ContractDetailView })));
-const LocataireSupportView = lazy(() => import('@/components/locataire/LocataireSupportView').then(m => ({ default: m.LocataireSupportView })));
-const DemandesView = lazy(() => import('@/components/dashboard/DemandesView').then(m => ({ default: m.DemandesView })));
-const VisitesView = lazy(() => import('@/components/dashboard/VisitesView').then(m => ({ default: m.VisitesView })));
-const ReportsStatsView = lazy(() => import('@/components/dashboard/ReportsStatsView').then(m => ({ default: m.ReportsStatsView })));
-const AccountingExportView = lazy(() => import('@/components/dashboard/AccountingExportView').then(m => ({ default: m.AccountingExportView })));
-const SettingsView = lazy(() => import('@/components/dashboard/SettingsView').then(m => ({ default: m.SettingsView })));
-const PaymentAccountsView = lazy(() => import('@/components/dashboard/PaymentAccountsView').then(m => ({ default: m.PaymentAccountsView })));
-const DocumentsView = lazy(() => import('@/components/dashboard/DocumentsView').then(m => ({ default: m.DocumentsView })));
-const ReceiptsQuittancesView = lazy(() => import('@/components/dashboard/ReceiptsQuittancesView').then(m => ({ default: m.ReceiptsQuittancesView })));
-const TenantsListView = lazy(() => import('@/components/dashboard/TenantsListView').then(m => ({ default: m.TenantsListView })));
+import { MultiProprietairesView } from '@/components/agence/MultiProprietairesView';
+import { AgenceEquipeView } from '@/components/agence/AgenceEquipeView';
+import { BiensView } from '@/components/dashboard/BiensView';
+import { CautionsView } from '@/components/dashboard/CautionsView';
+import { PaiementsView } from '@/components/dashboard/PaiementsView';
+import { HistoriqueView } from '@/components/dashboard/HistoriqueView';
+import { MaintenanceView } from '@/components/dashboard/MaintenanceView';
+import { AbonnementView } from '@/components/dashboard/AbonnementView';
+import { MessagerieView } from '@/components/dashboard/MessagerieView';
+import { ContractListView } from '@/components/contracts/ContractListView';
+import { ContractDetailView } from '@/components/contracts/ContractDetailView';
+import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
+import { DemandesView } from '@/components/dashboard/DemandesView';
+import { VisitesView } from '@/components/dashboard/VisitesView';
+import { ReportsStatsView } from '@/components/dashboard/ReportsStatsView';
+import { AccountingExportView } from '@/components/dashboard/AccountingExportView';
+import { SettingsView } from '@/components/dashboard/SettingsView';
+import { PaymentAccountsView } from '@/components/dashboard/PaymentAccountsView';
+import { DocumentsView } from '@/components/dashboard/DocumentsView';
+import { ReceiptsQuittancesView } from '@/components/dashboard/ReceiptsQuittancesView';
+import { TenantsListView } from '@/components/dashboard/TenantsListView';
 
 // Shared modals
 import {
@@ -46,7 +44,6 @@ import {
   AddPaymentAccountModal,
   SupportModal
 } from '@/components/modals/InteractiveModals';
-import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ShieldAlert, ArrowRight } from 'lucide-react';
 
 interface AgencyDashboardPageProps {
