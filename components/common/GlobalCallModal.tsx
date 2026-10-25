@@ -271,9 +271,9 @@ export const GlobalCallModal: React.FC = () => {
     let vTrack: MediaStreamTrack | null = null;
 
     const attempts = [
-      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: facing } },
       { video: { facingMode: facing } },
-      { video: true }
+      { video: true },
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: facing } }
     ];
 
     for (const constraint of attempts) {
@@ -377,6 +377,7 @@ export const GlobalCallModal: React.FC = () => {
     setCameraPermissionStatus('denied');
     setHasRealCameraTrack(false);
     setMediaErrorMessage("Impossible d'activer la caméra. Vérifiez les autorisations dans votre navigateur.");
+    return null;
   };
 
   // Récupération multi-niveaux du flux caméra et micro réels (Pas de canvas synthétique trompeur)

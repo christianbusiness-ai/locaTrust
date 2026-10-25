@@ -214,6 +214,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(newSession?.user ?? null);
 
       if (newSession?.user) {
+        if (event === 'SIGNED_IN') {
+          recordUserActivity();
+        }
         let p = await fetchProfile(newSession.user.id);
         if (!p) {
           const meta = newSession.user.user_metadata || {};

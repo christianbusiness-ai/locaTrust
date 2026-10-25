@@ -1,63 +1,75 @@
 /**
  * LocaTrust Session Security & Expiration Management
- * Conforme aux standards de sécurité bancaires & fintech pour données financières sensibles :
- * - Durée maximale d'inactivité de session (24h)
- * - Détection automatique d'expiration après fermeture ou veille prolongée
- * - Invalidation contrôlée des jetons et redirection vers /login
+ * Règle demandée :
+ * 1. PAS de déconnexion automatique en mode veille (l'utilisateur peut laisser son écran
+ *    en veille pendant des heures sans être déconnecté).
+ * 2. Déconnexion automatique UNIQUEMENT lorsque l'utilisateur ferme / quitte totalement son navigateur.
+ *    (Géré par sessionStorage qui persiste indéfiniment en veille mais est purgé à la fermeture du navigateur).
  */
 
-// Inactivité maximale autorisée : 5 minutes d'inactivité ou fermeture/sortie (300 000 ms)
-export const MAX_INACTIVITY_MS = 5 * 60 * 1000;
-
 export const SESSION_KEYS = {
-  LAST_ACTIVITY: 'locatrust_last_activity_time',
+  BROWSER_SESSION: 'locatrust_browser_session_active',
   SESSION_START: 'locatrust_session_start_time',
+  LAST_ACTIVITY: 'locatrust_last_activity_time',
   DEVICE_REMEMBER: 'locatrust_remember_device',
 };
 
 /**
- * Enregistre un battement d'activité utilisateur (clic, frappe, navigation)
+ * Enregistre / active la session de navigation en cours (sessionStorage).
  */
 export function recordUserActivity(): void {
   if (typeof window === 'undefined') return;
   try {
+    sessionStorage.setItem(SESSION_KEYS.BROWSER_SESSION, 'true');
     const now = Date.now().toString();
-    localStorage.setItem(SESSION_KEYS.LAST_ACTIVITY, now);
-    if (!localStorage.getItem(SESSION_KEYS.SESSION_START)) {
-      localStorage.setItem(SESSION_KEYS.SESSION_START, now);
+    sessionStorage.setItem(SESSION_KEYS.LAST_ACTIVITY, now);
+    if (!sessionStorage.getItem(SESSION_KEYS.SESSION_START)) {
+      sessionStorage.setItem(SESSION_KEYS.SESSION_START, now);
     }
   } catch {}
 }
 
 /**
- * Vérifie si la session de l'utilisateur a expiré pour cause d'inactivité
+ * Marque explicitement la session comme active lors d'une connexion réussie
+ */
+export function markSessionActive(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(SESSION_KEYS.BROWSER_SESSION, 'true');
+    sessionStorage.setItem(SESSION_KEYS.LAST_ACTIVITY, Date.now().toString());
+  } catch {}
+}
+
+/**
+ * Vérifie si la session est expirée.
+ * La session n'expire JAMAIS lors d'une mise en veille ou d'une inactivité (même après plusieurs heures).
+ * Elle n'expire que si l'utilisateur a fermé ou quitté son navigateur (sessionStorage purgé).
  */
 export function isSessionExpired(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    const lastActivityStr = localStorage.getItem(SESSION_KEYS.LAST_ACTIVITY);
-    if (!lastActivityStr) {
-      // Pas d'activité enregistrée : session fraîche ou non initialisée
+    // Si la session du navigateur est active dans sessionStorage, l'utilisateur reste connecté
+    // (même après des heures de veille de l'écran du téléphone ou de l'ordinateur)
+    const browserSession = sessionStorage.getItem(SESSION_KEYS.BROWSER_SESSION);
+    if (browserSession === 'true') {
       return false;
     }
-    const lastActivity = Number(lastActivityStr);
-    if (isNaN(lastActivity)) return false;
-
-    const elapsed = Date.now() - lastActivity;
-    return elapsed > MAX_INACTIVITY_MS;
+    // Si sessionStorage ne contient pas le marqueur, le navigateur a été fermé
+    return true;
   } catch {
     return false;
   }
 }
 
 /**
- * Nettoie toutes les données de session sécurisée lors de la déconnexion
+ * Nettoie toutes les données de session sécurisée lors de la déconnexion volontaire
  */
 export function clearSecuritySession(): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.removeItem(SESSION_KEYS.LAST_ACTIVITY);
-    localStorage.removeItem(SESSION_KEYS.SESSION_START);
+    sessionStorage.removeItem(SESSION_KEYS.BROWSER_SESSION);
+    sessionStorage.removeItem(SESSION_KEYS.LAST_ACTIVITY);
+    sessionStorage.removeItem(SESSION_KEYS.SESSION_START);
     localStorage.removeItem('locatrust_active_user');
     localStorage.removeItem('locatrust_active_role');
   } catch {}
