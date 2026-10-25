@@ -124,20 +124,31 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   const loadContracts = async () => {
     setLoading(true);
     try {
-      let query = supabase.from('contracts').select('*, property:properties(*), tenant:users!tenant_id(*)').order('created_at', { ascending: false });
+      let query = supabase.from('contracts').select('*, property:properties(*)').order('created_at', { ascending: false });
       if (user?.id) {
         query = query.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       }
       const { data, error } = await query;
       if (!error && data && data.length > 0) {
-        const mapped = data.map((c: any) => ({
-          id: c.contract_number || c.id || 'CT-2026-0001',
-          locataire: c.tenant?.full_name || c.tenant_name || 'Locataire',
-          role: 'Locataire',
-          avatar: c.tenant?.avatar_url || c.tenant_avatar || '',
-          bien: c.property?.title || c.property_title || 'Bien immobilier',
-          quartier: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`,
-          periode: c.periode || `${new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
+        // Enriched with tenant profiles
+        const tenantIds = Array.from(new Set(data.map((c: any) => c.tenant_id).filter(Boolean)));
+        const profilesMap = new Map<string, any>();
+        if (tenantIds.length > 0) {
+          try {
+            const { data: profs } = await supabase.from('profiles').select('id, full_name, phone, email, avatar_url').in('id', tenantIds);
+            if (profs) profs.forEach((p: any) => profilesMap.set(p.id, p));
+          } catch {}
+        }
+        const mapped = data.map((c: any) => {
+          const tenantProf = profilesMap.get(c.tenant_id) || c.tenant;
+          return {
+            id: c.contract_number || c.id || 'CT-2026-0001',
+            locataire: tenantProf?.full_name || c.tenant_name || 'Locataire',
+            role: 'Locataire',
+            avatar: tenantProf?.avatar_url || c.tenant_avatar || '',
+            bien: c.property?.title || c.property_title || 'Bien immobilier',
+            quartier: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`,
+            periode: c.periode || `${new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
           statut:
             c.status === 'actif' || c.status === 'signe'
               ? 'Actif'
@@ -153,7 +164,8 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
           locataireSigne: Boolean(c.tenant_signed ?? c.tenant_signature),
           telephone: c.tenant?.phone || c.tenant_phone || '+225 07 00 00 00 00',
           raw: c
-        }));
+        };
+      });
         setContracts(mapped);
         setLoading(false);
         return;
@@ -1177,3 +1189,4 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
     </div>
   );
 };
+export default ContractListView;

@@ -446,6 +446,24 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return () => window.removeEventListener('locatrust:open_chat', handleOpenChat);
   }, []);
 
+  // Nettoyage impératif de toutes les pistes audio/vidéo résiduelles dès que l'appel prend fin
+  useEffect(() => {
+    const handleGlobalCallCleanup = () => {
+      if (audioStreamRef.current) {
+        try {
+          audioStreamRef.current.getTracks().forEach((track) => track.stop());
+        } catch {}
+        audioStreamRef.current = null;
+      }
+      cleanupAudioAnalysis();
+    };
+    window.addEventListener('locatrust:call_ended_cleanup', handleGlobalCallCleanup);
+    return () => {
+      window.removeEventListener('locatrust:call_ended_cleanup', handleGlobalCallCleanup);
+      handleGlobalCallCleanup();
+    };
+  }, []);
+
   // Sync selectedContactId if role contacts change
   useEffect(() => {
     if (!roleContacts.some((c) => c.id === selectedContactId)) {

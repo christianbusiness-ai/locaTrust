@@ -131,6 +131,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   const realContract = initialContract || dbContract || localContract;
   const contract = realContract;
+  const leaseType = (realContract?.usage_destination || (realContract?.property as any)?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
 
   const isTenantView =
     profile?.account_type === 'locataire' ||
@@ -1948,3 +1949,4 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     </div>
   );
 };
+export default ContractDetailView;

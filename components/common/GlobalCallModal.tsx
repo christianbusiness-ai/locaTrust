@@ -219,7 +219,18 @@ export const GlobalCallModal: React.FC = () => {
       remoteStreamRef.current = null;
     }
     if (typeof window !== 'undefined') {
-      try { delete (window as any).__locatrust_prefetched_stream; } catch {}
+      try {
+        const prefetched = (window as any).__locatrust_prefetched_stream;
+        if (prefetched && prefetched.getTracks) {
+          prefetched.getTracks().forEach((t: MediaStreamTrack) => {
+            try { t.stop(); } catch {}
+          });
+        }
+        delete (window as any).__locatrust_prefetched_stream;
+      } catch {}
+      try {
+        window.dispatchEvent(new CustomEvent('locatrust:call_ended_cleanup'));
+      } catch {}
     }
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
@@ -856,23 +867,32 @@ export const GlobalCallModal: React.FC = () => {
         ? Promise.resolve(streamSource)
         : getMediaStreamWithFallback(type || 'audio', 'user');
 
-      streamPromise.then((stream: MediaStream | null) => {
-        if (!stream) return;
+      streamPromise.then(async (stream: MediaStream | null) => {
+        let activeStream = stream;
         if (type === 'video') {
-          localStreamRef.current = stream;
-          setHasRealCameraTrack(stream.getVideoTracks().length > 0);
-          setCameraPermissionStatus('granted');
-          if (localVideoRef.current) {
-            attachStreamToVideo(localVideoRef.current, stream);
+          if (!activeStream || activeStream.getVideoTracks().length === 0) {
+            console.log('📹 Demande de la caméra physique pour appel vidéo...');
+            const vTrack = await startVideoTrackDirectly('user');
+            if (vTrack && localStreamRef.current) {
+              activeStream = localStreamRef.current;
+            }
+          }
+          if (activeStream) {
+            localStreamRef.current = activeStream;
+            setHasRealCameraTrack(activeStream.getVideoTracks().length > 0);
+            setCameraPermissionStatus('granted');
+            if (localVideoRef.current) {
+              attachStreamToVideo(localVideoRef.current, activeStream);
+            }
           }
         } else {
-          audioStreamRef.current = stream;
+          if (activeStream) audioStreamRef.current = activeStream;
         }
-        setupAudioVolumeAnalysis(stream);
-
-        // Si la peer connection est déjà établie, ajouter les pistes
-        if (peerConnectionRef.current) {
-          addTracksToPeerConnection(peerConnectionRef.current, stream);
+        if (activeStream) {
+          setupAudioVolumeAnalysis(activeStream);
+          if (peerConnectionRef.current) {
+            addTracksToPeerConnection(peerConnectionRef.current, activeStream);
+          }
         }
         syncVideoElements();
       });
@@ -1349,40 +1369,169 @@ export const GlobalCallModal: React.FC = () => {
 
             {/* VUE PRINCIPALE */}
             {activeCall.status === 'ringing' ? (
-              /* ÉCRAN DE SONNERIE SIMPLE & ÉPURÉ (Style WhatsApp) */
-              <div className="flex-1 relative w-full h-full bg-[#0b0f19] flex flex-col items-center justify-center p-6 text-center select-none">
-                <div className="relative mb-6">
-                  <div className="absolute -inset-4 rounded-full bg-emerald-500/20 animate-ping" />
-                  <div className="absolute -inset-8 rounded-full bg-emerald-500/10 animate-pulse" />
-                  <UserAvatar
-                    src={activeCall.peerAvatar}
-                    name={activeCall.peerName}
-                    sizeClassName="w-28 h-28 sm:w-36 sm:h-36"
-                    borderClassName="border-4 border-emerald-500/50 shadow-2xl"
+              activeCall.callType === 'video' ? (
+                /* ÉCRAN DE SONNERIE VIDÉO (Style WhatsApp : caméra locale en plein écran + overlay d'appel) */
+                <div className="flex-1 relative w-full h-full bg-black overflow-hidden flex items-center justify-center select-none">
+                  {/* Flux caméra réel de l'utilisateur */}
+                  <video
+                    ref={(node) => {
+                      localVideoRef.current = node;
+                      attachStreamToVideo(node, localStreamRef.current);
+                    }}
+                    autoPlay
+                    playsInline
+                    muted
+                    onLoadedMetadata={(e) => {
+                      (e.target as HTMLVideoElement).play().catch(() => {});
+                    }}
+                    className={`w-full h-full object-cover ${activeCall.isFrontCam ? 'scale-x-[-1]' : ''}`}
                   />
-                </div>
-                <h3 className="text-2xl font-bold text-white tracking-wide">
-                  {activeCall.peerName}
-                </h3>
-                {activeCall.propertyTitle && (
-                  <p className="text-xs text-slate-400 mt-1">{activeCall.propertyTitle}</p>
-                )}
-                <p className="text-xs font-semibold text-emerald-400 mt-3 animate-pulse">
-                  Sonnerie en cours...
-                </p>
 
-                {/* Bouton Raccrocher Unique en bas de sonnerie */}
-                <div className="absolute bottom-10 inset-x-0 flex items-center justify-center">
-                  <button
-                    type="button"
-                    onClick={handleEndCall}
-                    className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xl shadow-red-600/40 flex items-center justify-center transition-all cursor-pointer"
-                    title="Raccrocher"
-                  >
-                    <PhoneOff className="w-7 h-7" />
-                  </button>
+                  {/* Si la caméra démarre ou n'est pas encore disponible : fond d'attente animé propre */}
+                  {(!hasRealCameraTrack || !localStreamRef.current?.getVideoTracks().length) && (
+                    <div className="absolute inset-0 bg-[#0b0f19] flex flex-col items-center justify-center p-6 text-center z-10">
+                      <div className="relative mb-6">
+                        <div className="absolute -inset-4 rounded-full bg-blue-500/20 animate-ping" />
+                        <UserAvatar
+                          src={activeCall.peerAvatar}
+                          name={activeCall.peerName}
+                          sizeClassName="w-28 h-28 sm:w-36 sm:h-36"
+                          borderClassName="border-4 border-blue-500/50 shadow-2xl"
+                        />
+                      </div>
+                      <h3 className="text-2xl font-bold text-white tracking-wide">
+                        {activeCall.peerName}
+                      </h3>
+                      <p className="text-xs font-semibold text-blue-400 mt-3 animate-pulse">
+                        Connexion à la caméra...
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Overlay WhatsApp : Infos en haut et commandes en bas */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-black/80 flex flex-col justify-between p-6 z-20 pointer-events-none">
+                    {/* Header Appel en cours */}
+                    <div className="flex items-center justify-between pointer-events-auto">
+                      <div className="flex items-center gap-3">
+                        <UserAvatar
+                          src={activeCall.peerAvatar}
+                          name={activeCall.peerName}
+                          sizeClassName="w-12 h-12"
+                          borderClassName="border-2 border-white/50 shadow-lg"
+                        />
+                        <div className="flex flex-col">
+                          <h4 className="text-lg font-black text-white drop-shadow-md">
+                            {activeCall.peerName}
+                          </h4>
+                          <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5 animate-pulse">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                            Appel vidéo en cours...
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleFlipCamera}
+                        className="w-10 h-10 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white flex items-center justify-center transition-all cursor-pointer shadow-lg"
+                        title="Changer de caméra"
+                      >
+                        <RotateCcw className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Footer Contrôles Flottants */}
+                    <div className="flex items-center justify-center gap-5 sm:gap-6 pointer-events-auto pb-4">
+                      {/* Bascule micro */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newMuted = !activeCall.isMuted;
+                          const streams = [localStreamRef.current, audioStreamRef.current];
+                          streams.forEach((s) => {
+                            s?.getAudioTracks().forEach((t) => {
+                              t.enabled = !newMuted;
+                            });
+                          });
+                          setActiveCall({ ...activeCall, isMuted: newMuted });
+                        }}
+                        className={`w-13 h-13 sm:w-14 sm:h-14 rounded-full flex items-center justify-center text-white backdrop-blur-md transition-all shadow-lg active:scale-95 ${
+                          activeCall.isMuted ? 'bg-red-600' : 'bg-white/20 hover:bg-white/30'
+                        }`}
+                        title={activeCall.isMuted ? 'Activer le micro' : 'Couper le micro'}
+                      >
+                        {activeCall.isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+                      </button>
+
+                      {/* Bouton Raccrocher rouge */}
+                      <button
+                        type="button"
+                        onClick={handleEndCall}
+                        className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xl shadow-red-600/50 flex items-center justify-center transition-all cursor-pointer"
+                        title="Raccrocher"
+                      >
+                        <PhoneOff className="w-7 h-7" />
+                      </button>
+
+                      {/* Bascule caméra */}
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!hasRealCameraTrack || !localStreamRef.current?.getVideoTracks().length) {
+                            await startVideoTrackDirectly(activeCall.isFrontCam ? 'user' : 'environment');
+                            return;
+                          }
+                          const newCamOff = !activeCall.isCamOff;
+                          localStreamRef.current?.getVideoTracks().forEach((t) => {
+                            t.enabled = !newCamOff;
+                          });
+                          setActiveCall({ ...activeCall, isCamOff: newCamOff });
+                        }}
+                        className={`w-13 h-13 sm:w-14 sm:h-14 rounded-full flex items-center justify-center text-white backdrop-blur-md transition-all shadow-lg active:scale-95 ${
+                          activeCall.isCamOff ? 'bg-red-600' : 'bg-white/20 hover:bg-white/30'
+                        }`}
+                        title={activeCall.isCamOff ? 'Activer la caméra' : 'Couper la caméra'}
+                      >
+                        {activeCall.isCamOff ? <CameraOff className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* ÉCRAN DE SONNERIE VOCALE (Style WhatsApp) */
+                <div className="flex-1 relative w-full h-full bg-[#0b0f19] flex flex-col items-center justify-center p-6 text-center select-none">
+                  <div className="relative mb-6">
+                    <div className="absolute -inset-4 rounded-full bg-emerald-500/20 animate-ping" />
+                    <div className="absolute -inset-8 rounded-full bg-emerald-500/10 animate-pulse" />
+                    <UserAvatar
+                      src={activeCall.peerAvatar}
+                      name={activeCall.peerName}
+                      sizeClassName="w-28 h-28 sm:w-36 sm:h-36"
+                      borderClassName="border-4 border-emerald-500/50 shadow-2xl"
+                    />
+                  </div>
+                  <h3 className="text-2xl font-bold text-white tracking-wide">
+                    {activeCall.peerName}
+                  </h3>
+                  {activeCall.propertyTitle && (
+                    <p className="text-xs text-slate-400 mt-1">{activeCall.propertyTitle}</p>
+                  )}
+                  <p className="text-xs font-semibold text-emerald-400 mt-3 animate-pulse">
+                    Appel vocal en cours...
+                  </p>
+
+                  {/* Bouton Raccrocher Unique en bas de sonnerie */}
+                  <div className="absolute bottom-10 inset-x-0 flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={handleEndCall}
+                      className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xl shadow-red-600/40 flex items-center justify-center transition-all cursor-pointer"
+                      title="Raccrocher"
+                    >
+                      <PhoneOff className="w-7 h-7" />
+                    </button>
+                  </div>
+                </div>
+              )
             ) : (
               /* ÉCRAN CONNECTÉ : GRAND ÉCRAN DISTANT + MINIATURE FLOTTANTE EN HAUT À DROITE */
               <div className="flex-1 relative w-full h-full bg-black overflow-hidden flex items-center justify-center">
