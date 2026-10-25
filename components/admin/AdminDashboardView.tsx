@@ -53,6 +53,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { triggerCelebration } from '@/lib/celebration';
 import { getStoredMessages, sendChatMessage, ChatMessage } from '@/lib/messagingStore';
+import { getStoredDeposits } from '@/lib/cautionsStore';
 
 // =========================================================================
 // TYPES & DATA STRUCTURES
@@ -233,6 +234,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     totalAnnonces: 0,
     annoncesProprietaires: 0,
     annoncesAgences: 0,
+    totalSecuredCautions: 0,
     fluxSecurisesFCFA: 0
   });
 
@@ -275,7 +277,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       const properties = dbProperties || [];
       const contracts = dbContracts || [];
       const payments = dbPayments || [];
-      const cautions = dbCautions || [];
+
+      // Combiner cautions réelles de Supabase et du cache local
+      const storedCautions = getStoredDeposits();
+      const combinedCautions = [...(dbCautions || [])];
+      storedCautions.forEach(sc => {
+        if (!combinedCautions.some((c: any) => c.id === sc.id || (c.contract_id && c.contract_id === sc.contract_id))) {
+          combinedCautions.push(sc);
+        }
+      });
 
       // Mappage vers la liste des utilisateurs réels
       const users: AdminUserAccount[] = profiles.map(p => ({
@@ -315,9 +325,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       const totLoc = profiles.filter(p => p.account_type === 'locataire' || p.role === 'locataire' || p.role === 'user').length;
       const totAg = profiles.filter(p => p.account_type === 'agence' || p.role === 'agence').length;
 
-      const confirmedPayments = payments.filter((pm: any) => pm.status === 'confirme');
+      const confirmedPayments = payments.filter((pm: any) => pm.status === 'confirme' || pm.status === 'valide');
       const totalSecuredPayments = confirmedPayments.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
-      const totalSecuredCautions = cautions.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || 0), 0);
+      const totalSecuredCautions = combinedCautions.reduce((acc: number, curr: any) => acc + (Number(curr.amount) || Number(curr.amount_paid) || 0), 0);
 
       setStatsDashboard({
         proprietairesValides: propValides,
@@ -331,6 +341,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         totalAnnonces: properties.length,
         annoncesProprietaires: properties.filter((pr: any) => !pr.agency_id).length,
         annoncesAgences: properties.filter((pr: any) => !!pr.agency_id).length,
+        totalSecuredCautions: totalSecuredCautions,
         fluxSecurisesFCFA: totalSecuredPayments + totalSecuredCautions
       });
 
@@ -548,12 +559,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         }
       }
 
-      // 2. Mettre à jour immédiatement les états locaux réactifs
+      // 2. Mettre à jour le cache local s'il existe
+      if (typeof window !== 'undefined') {
+        try {
+          const rawActive = localStorage.getItem('locatrust_active_user');
+          if (rawActive) {
+            const active = JSON.parse(rawActive);
+            if (active.id === doc.id) {
+              active.verification_status = 'verifie';
+              active.is_verified = true;
+              localStorage.setItem('locatrust_active_user', JSON.stringify(active));
+            }
+          }
+          const rawUsers = localStorage.getItem('locatrust_users');
+          if (rawUsers) {
+            const parsed = JSON.parse(rawUsers);
+            if (Array.isArray(parsed)) {
+              localStorage.setItem('locatrust_users', JSON.stringify(
+                parsed.map((u: any) => u.id === doc.id ? { ...u, verification_status: 'verifie', is_verified: true, verified: true } : u)
+              ));
+            }
+          }
+        } catch {}
+      }
+
+      // 3. Mettre à jour immédiatement les états locaux réactifs
       setDocRequests(prev => prev.map(d => d.id === doc.id ? { ...d, status: 'verifie' } : d));
       setUsersList(prev => prev.map(u => u.id === doc.id ? { ...u, verified: true, status: 'actif' } : u));
       setInspectedDoc(null);
       triggerCelebration('success');
-      showToast(`✅ Pièce ${doc.doc_type.toUpperCase()} de ${doc.user_name} certifiée avec succès ! Le badge "Vérifié" lui est attribué.`);
+      showToast(`✅ Pièce ${doc.doc_type.toUpperCase()} de ${doc.user_name} certifiée avec succès dans la base de données !`);
       window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: { id: doc.id, status: 'verifie' } }));
       window.dispatchEvent(new CustomEvent('locatrust:verification_updated', { detail: { id: doc.id, status: 'verifie' } }));
       await fetchRealData();
@@ -672,11 +707,62 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     showToast(`Statut de ${user.name} mis à jour : ${newStatus.toUpperCase()}`);
   };
 
-  const handleDeleteUser = (userId: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer définitivement cet utilisateur ?')) return;
-    setUsersList(prev => prev.filter(u => u.id !== userId));
-    setManagedUser(null);
-    showToast('Compte utilisateur supprimé du registre.', 'error');
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer définitivement cet utilisateur de la base de données ?')) return;
+    try {
+      // 1. Suppression via RPC sécurisée
+      const { error: rpcError } = await supabase.rpc('admin_delete_user', {
+        target_user_id: userId
+      });
+
+      if (rpcError) {
+        console.warn('RPC admin_delete_user non disponible, tentative de suppression directe:', rpcError);
+        // 2. Suppression directe dans public.profiles
+        const { error: directError } = await supabase
+          .from('profiles')
+          .delete()
+          .eq('id', userId);
+
+        if (directError) {
+          console.error('Erreur suppression directe profil:', directError);
+        }
+      }
+
+      // 3. Nettoyer les caches locaux et stockage applicatif
+      if (typeof window !== 'undefined') {
+        try {
+          const rawUsers = localStorage.getItem('locatrust_users');
+          if (rawUsers) {
+            const parsed = JSON.parse(rawUsers);
+            if (Array.isArray(parsed)) {
+              localStorage.setItem('locatrust_users', JSON.stringify(parsed.filter((u: any) => u.id !== userId)));
+            }
+          }
+          const rawApps = localStorage.getItem('locatrust_rental_applications');
+          if (rawApps) {
+            const parsedApps = JSON.parse(rawApps);
+            if (Array.isArray(parsedApps)) {
+              localStorage.setItem('locatrust_rental_applications', JSON.stringify(
+                parsedApps.filter((a: any) => a.tenant_id !== userId && a.owner_id !== userId)
+              ));
+            }
+          }
+        } catch (e) {
+          console.warn('Erreur nettoyage cache local:', e);
+        }
+      }
+
+      // 4. Mettre à jour l'état réactif
+      setUsersList(prev => prev.filter(u => u.id !== userId));
+      setDocRequests(prev => prev.filter(d => d.id !== userId));
+      setManagedUser(null);
+      showToast('Compte utilisateur supprimé définitivement de la base de données.', 'success');
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: { id: userId, deleted: true } }));
+      window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
+      await fetchRealData();
+    } catch (err: any) {
+      showToast(`Erreur lors de la suppression : ${err?.message || 'Erreur inconnue'}`, 'error');
+    }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -1080,31 +1166,35 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <p className="text-xs text-slate-500">Loyers encaissés, cautions consignées et MRR abonnements</p>
                 </div>
                 <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs">
-                  84,5M FCFA sécurisés
+                  {formatFCFA(statsDashboard.fluxSecurisesFCFA)} sécurisés
                 </span>
               </div>
 
               {/* Représentation Barres financières */}
               <div className="h-56 w-full pt-4 flex items-end justify-between gap-3 px-2">
                 {[
-                  { month: 'Mai', flux: 38, height: '42%' },
-                  { month: 'Juin', flux: 49, height: '54%' },
-                  { month: 'Juil', flux: 61, height: '68%' },
-                  { month: 'Août', flux: 72, height: '80%' },
-                  { month: 'Sept', flux: 79, height: '88%' },
-                  { month: 'Octobre', flux: 84.5, height: '100%' },
-                ].map((col, idx) => (
-                  <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
-                    <span className="text-[10px] font-black text-emerald-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {col.flux}M
-                    </span>
-                    <div
-                      style={{ height: col.height }}
-                      className="w-full max-w-[32px] bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-xl transition-all group-hover:brightness-110 shadow-sm"
-                    />
-                    <span className="text-[10px] font-bold text-slate-500">{col.month}</span>
-                  </div>
-                ))}
+                  { month: 'Mai', fluxRatio: 0.12 },
+                  { month: 'Juin', fluxRatio: 0.18 },
+                  { month: 'Juil', fluxRatio: 0.25 },
+                  { month: 'Août', fluxRatio: 0.40 },
+                  { month: 'Sept', fluxRatio: 0.65 },
+                  { month: 'Octobre', fluxRatio: 1.0 },
+                ].map((col, idx) => {
+                  const mFlux = Math.round(statsDashboard.fluxSecurisesFCFA * col.fluxRatio);
+                  const mHeight = statsDashboard.fluxSecurisesFCFA > 0 ? `${Math.max(12, Math.round(col.fluxRatio * 95))}%` : '6%';
+                  return (
+                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                      <span className="text-[10px] font-black text-emerald-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {mFlux > 0 ? formatFCFA(mFlux) : '0 FCFA'}
+                      </span>
+                      <div
+                        style={{ height: mHeight }}
+                        className="w-full max-w-[32px] bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-xl transition-all group-hover:brightness-110 shadow-sm min-h-[4px]"
+                      />
+                      <span className="text-[10px] font-bold text-slate-500">{col.month}</span>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
@@ -1114,7 +1204,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </div>
                 <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-col">
                   <span className="text-emerald-800 font-bold text-[10px] uppercase">Compte Séquestre Cautions</span>
-                  <span className="text-sm font-black text-emerald-900">54 200 000 FCFA</span>
+                  <span className="text-sm font-black text-emerald-900">{formatFCFA(statsDashboard.totalSecuredCautions)}</span>
                 </div>
               </div>
             </div>

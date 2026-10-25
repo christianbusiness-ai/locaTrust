@@ -52,7 +52,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSupport,
 }) => {
   const { user, profile } = useAuth();
-  const effectiveRole = profile?.account_type ? (profile.account_type as UserRole) : currentRole;
+  const effectiveRole: UserRole = (currentRole === 'admin' || profile?.role === 'admin')
+    ? 'admin'
+    : (profile?.account_type ? (profile.account_type as UserRole) : currentRole);
   const isProprietaire = effectiveRole === 'proprietaire';
   const isAgence = effectiveRole === 'agence';
   const isLocataire = effectiveRole === 'locataire';
@@ -215,15 +217,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'support', name: 'Aide & Support', icon: HelpCircle },
   ];
 
-  // 2. ADMIN SPECIFIC NAVIGATION
+  // 2. ADMIN SPECIFIC NAVIGATION (Fil d'actualité & Paramètres uniquement)
   const adminItems = [
-    { id: 'supervision', name: 'Supervision globale', icon: BarChart3 },
-    { id: 'users', name: 'Gestion utilisateurs', icon: Users },
-    { id: 'subscriptions', name: 'Gestion abonnements', icon: CreditCard },
-    { id: 'verifications', name: 'Queue CNI & RCCM', icon: FileCheck },
-    { id: 'disputes', name: 'Litiges & Fraude', icon: ShieldAlert },
-    { id: 'support', name: 'Assistance & Support Clients', icon: LifeBuoy, badge: msgCount > 0 ? msgCount : undefined },
-    { id: 'settings', name: 'Paramètres système', icon: Settings },
+    { id: 'supervision', name: "Fil d'actualité", icon: LayoutDashboard },
+    { id: 'settings', name: 'Paramètres', icon: Settings },
   ];
 
   // 3. OWNER / AGENCY NAVIGATION
@@ -264,20 +261,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isVerified = profile?.verification_status === 'verifie' || activeUser?.verification_status === 'verifie';
 
   const getProfileName = () => {
+    if (isAdmin) return profile?.full_name || user?.user_metadata?.full_name || 'Administrateur LocaTrust';
     if (profile?.full_name) return profile.full_name;
     if (user?.user_metadata?.full_name) return user.user_metadata.full_name;
     if (activeUser?.full_name) return activeUser.full_name;
     if (user?.email) return user.email.split('@')[0];
     if (isAgence) return 'Mon Agence';
     if (isLocataire) return 'Locataire';
-    if (isAdmin) return 'Super Administrateur';
     return "Bailleur";
   };
 
   const getProfileSubtext = () => {
+    if (isAdmin) return 'Administrateur';
     if (isAgence) return isVerified ? 'Agence Agréée' : 'Agence Immobilière';
     if (isLocataire) return isVerified ? 'Locataire Certifié' : 'Locataire';
-    if (isAdmin) return 'Superviseur Système';
     return isVerified ? 'Propriétaire Certifié' : 'Propriétaire';
   };
 
@@ -290,7 +287,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* User / Agency Profile Card Header */}
-      <div className="flex items-center gap-3 px-3 py-2.5 mb-6 rounded-xl bg-slate-900/80 border border-slate-800">
+      <div 
+        onClick={() => onSelectTab?.('settings')}
+        className="flex items-center gap-3 px-3 py-2.5 mb-6 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 cursor-pointer transition-all hover:bg-slate-850 group select-none shadow-sm"
+        title="Accéder aux paramètres de mon compte"
+      >
         <div className="relative shrink-0">
           {avatarUrl && !avatarUrl.includes('images.unsplash.com') ? (
             <img
@@ -305,8 +306,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           <span className={`absolute bottom-0 right-0 w-3 h-3 ${isVerified ? 'bg-emerald-500' : 'bg-slate-400'} border-2 border-[#0B192C] rounded-full`} />
         </div>
-        <div className="flex flex-col text-left overflow-hidden">
-          <span className="text-xs font-bold text-white truncate">
+        <div className="flex flex-col text-left overflow-hidden flex-1 min-w-0">
+          <span className="text-xs font-bold text-white truncate group-hover:text-blue-400 transition-colors">
             {getProfileName()}
           </span>
           <span className={`text-[11px] font-semibold flex items-center gap-1 ${isVerified ? 'text-emerald-400' : 'text-slate-400'}`}>
@@ -316,6 +317,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {getProfileSubtext()}
           </span>
         </div>
+        <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors shrink-0" />
       </div>
 
       {/* Scrollable Navigation Sections */}
@@ -364,14 +366,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             })}
           </div>
         ) : isAdmin ? (
-          /* CAS 2: SUPER ADMIN (Menu administration dédié - Point 9) */
+          /* CAS 2: SUPER ADMIN (Fil d'actualité & Paramètres) */
           <div className="flex flex-col gap-1">
             <span className="px-3 text-[10px] font-extrabold uppercase tracking-wider text-purple-400">
               Administration Système
             </span>
             {adminItems.map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id || (item.id === 'supervision' && activeTab === 'overview');
+              const isActive = activeTab === item.id || 
+                (item.id === 'supervision' && (activeTab === 'overview' || activeTab === 'supervision' || activeTab === 'verifications' || activeTab === 'disputes' || activeTab === 'users' || activeTab === 'subscriptions' || activeTab === 'support'));
 
               return (
                 <button
@@ -386,14 +389,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                     <span>{item.name}</span>
                   </div>
-                  {item.badge && (
-                    <span
-                      className={`w-5 h-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${isActive ? 'bg-white text-purple-800' : 'bg-amber-500 text-slate-950'
-                        }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -545,33 +540,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Profil Utilisateur avec Avatar et Statut */}
-      <div
-        onClick={() => onSelectTab?.('settings')}
-        className="mt-3 p-2.5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 flex items-center gap-3 cursor-pointer transition-all hover:bg-slate-850 group select-none shadow-sm"
-        title="Accéder aux Paramètres de mon Profil"
-      >
-        {avatarUrl ? (
-          <img
-            src={avatarUrl}
-            alt={profile?.full_name || 'Profil'}
-            className="w-9 h-9 rounded-full object-cover ring-2 ring-blue-500/40 group-hover:ring-blue-500 transition-all shrink-0"
-          />
-        ) : (
-          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-xs flex items-center justify-center ring-2 ring-blue-500/40 shrink-0">
-            {getInitials(profile?.full_name || user?.user_metadata?.full_name, user?.email)}
-          </div>
-        )}
-        <div className="flex flex-col min-w-0 flex-1 text-left">
-          <span className="text-xs font-black text-white truncate leading-tight group-hover:text-blue-400 transition-colors">
-            {profile?.full_name || user?.user_metadata?.full_name || (isProprietaire ? 'Propriétaire' : isAgence ? 'Agence Immobilière' : isLocataire ? 'Locataire' : 'Administrateur')}
-          </span>
-          <span className="text-[10px] text-slate-400 font-semibold truncate capitalize">
-            {isProprietaire ? 'Bailleur certifié' : isAgence ? 'Agence Agréée' : isLocataire ? 'Locataire vérifié' : 'Administrateur'}
-          </span>
-        </div>
-        <Settings className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors shrink-0" />
-      </div>
+
 
     </aside>
   );
