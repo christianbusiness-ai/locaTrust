@@ -63,6 +63,7 @@ const INITIAL_SUPPORT_TICKETS: AdminTicket[] = [];
 interface SettingsViewProps {
   userRole?: 'proprietaire' | 'agence' | 'locataire' | 'admin';
   currentUser?: any;
+  defaultTab?: string;
   onNavigateToPaymentAccounts?: () => void;
   onNavigateToSubscription?: () => void;
 }
@@ -70,6 +71,7 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({
   userRole = 'proprietaire',
   currentUser,
+  defaultTab = 'profile',
   onNavigateToPaymentAccounts,
   onNavigateToSubscription
 }) => {
@@ -77,7 +79,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const isAgency = userRole === 'agence' || (profile as any)?.role === 'agence' || (profile as any)?.account_type === 'agence';
   const [activeTab, setActiveTab] = useState<
     'profile' | 'account' | 'accounting_year' | 'preferences' | 'notifications' | 'payments' | 'verification' | 'privacy' | 'support'
-  >('profile');
+  >(defaultTab === 'verification' ? 'profile' : (defaultTab as any) || 'profile');
+
+  React.useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab === 'verification' ? 'profile' : (defaultTab as any));
+    }
+  }, [defaultTab]);
 
   // Thème et couleurs d'ambiance de l'environnement (Demande vocale utilisateur)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -619,19 +627,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           <button
             type="button"
-            onClick={() => setActiveTab('verification')}
-            className={`shrink-0 whitespace-nowrap min-h-[44px] px-3.5 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-2.5 transition-all active:scale-95 ${
-              activeTab === 'verification'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            <FileCheck className="w-4 h-4 shrink-0" />
-            <span>{isAgency ? 'Agrément & Vérification' : 'Documents & Vérification'}</span>
-          </button>
-
-          <button
-            type="button"
             onClick={() => setActiveTab('privacy')}
             className={`shrink-0 whitespace-nowrap min-h-[44px] px-3.5 py-2.5 rounded-xl text-left text-xs font-bold flex items-center gap-2.5 transition-all active:scale-95 ${
               activeTab === 'privacy'
@@ -659,9 +654,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Right Tab Content View */}
         <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm min-h-[500px]">
-          {/* TAB 1: MON PROFIL */}
+          {/* TAB 1: MON PROFIL (Avec Documents & Vérification fusionnés) */}
           {activeTab === 'profile' && (
-            <form onSubmit={handleSaveProfile} className="flex flex-col gap-5 text-xs">
+            <div className="flex flex-col gap-6 text-xs animate-fadeIn">
+              <form onSubmit={handleSaveProfile} className="flex flex-col gap-5 text-xs">
               {/* Photo de profil (Points 19 & 20 du prompt) */}
               <div className="border-b border-slate-100 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -863,10 +859,173 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black flex items-center gap-2 shadow-md transition-all active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{isSaving ? 'Enregistrement...' : 'Enregistrer les modifications'}</span>
+                  <span>{isSaving ? 'Enregistrement...' : 'Enregistrer les informations personnelles'}</span>
                 </button>
               </div>
             </form>
+
+            {/* SECTION FUSIONNÉE : DOCUMENTS D'IDENTITÉ & VÉRIFICATION KYC */}
+            <div className="mt-8 pt-6 border-t-2 border-slate-100 flex flex-col gap-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                    <FileCheck className="w-4 h-4 text-blue-600" />
+                    <span>{isAgency ? "Documents d'Agrément & Conformité Agence" : "Documents d'Identité & Propriété (Certification KYC)"}</span>
+                  </h3>
+                  <p className="text-slate-500">
+                    {isAgency
+                      ? "Agrément ministériel MCU, RCCM et conformité réglementaire"
+                      : 'Pièce d’identité et attestations de propriété (Loi CI n° 2019-576)'}
+                  </p>
+                </div>
+                <div>
+                  {profile?.verification_status === 'verifie' ? (
+                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-black border border-emerald-200 flex items-center gap-1.5 shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{isAgency ? '✓ Agence Agréée & Vérifiée' : '✓ Propriétaire Vérifié'}</span>
+                    </span>
+                  ) : profile?.verification_status === 'en_attente' ? (
+                    <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 font-black border border-amber-200 flex items-center gap-1.5 shrink-0">
+                      <span>⏳ Dossier en cours d'examen</span>
+                    </span>
+                  ) : profile?.verification_status === 'rejete' ? (
+                    <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-800 font-black border border-rose-200 flex items-center gap-1.5 shrink-0">
+                      <span>❌ Dossier Rejeté</span>
+                    </span>
+                  ) : (
+                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-black border border-slate-300 flex items-center gap-1.5 shrink-0">
+                      <span>⚠️ Non vérifié</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {docSuccessMsg && (
+                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2 animate-fadeIn">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{docSuccessMsg}</span>
+                </div>
+              )}
+
+              {docErrorMsg && (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold flex items-center gap-2 animate-fadeIn">
+                  <X className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{docErrorMsg}</span>
+                </div>
+              )}
+
+              {/* Statut vérifié affiché */}
+              {profile?.verification_status === 'verifie' ? (
+                <div className="p-5 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <Shield className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-black text-emerald-950 text-sm">
+                        {isAgency ? 'Agence Immobilière Officiellement Agréée' : 'Profil Bailleur Certifié Conforme'}
+                      </h4>
+                      <p className="text-emerald-800 mt-0.5 font-medium">
+                        Vos documents ont été audités et validés par l'administration juridique LocaTrust. Vos contrats de bail générés sont scellés avec valeur probante et QR Code officiel.
+                      </p>
+                    </div>
+                  </div>
+                  {profile?.id_document_url && (
+                    <a
+                      href={profile.id_document_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-2 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 font-bold border border-emerald-300 flex items-center gap-1.5 shrink-0 shadow-sm"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Consulter la pièce validée</span>
+                    </a>
+                  )}
+                </div>
+              ) : (
+                /* Formulaire de soumission KYC pour Propriétaire et Agence */
+                <form onSubmit={handleKycDocSubmit} className="flex flex-col gap-4 p-5 bg-slate-50 rounded-2xl border border-slate-200">
+                  <div className="flex flex-col gap-1">
+                    <h4 className="font-bold text-slate-900 text-sm">
+                      {isAgency ? 'Téléverser votre Registre de Commerce (RCCM) ou Agrément MCU' : 'Téléverser votre Pièce d’Identité (CNI / Passeport)'}
+                    </h4>
+                    <p className="text-slate-500">
+                      Conformément à la Loi 2019-576, la certification de votre compte est requise pour publier des annonces et générer des baux scellés.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        {isAgency ? 'Numéro RCCM ou Agrément MCU *' : 'Numéro CNI ou Passeport *'}
+                      </label>
+                      <input
+                        type="text"
+                        value={docIdentifier}
+                        onChange={(e) => setDocIdentifier(e.target.value)}
+                        placeholder={isAgency ? 'Ex : CI-ABJ-2023-B-12849' : 'Ex : CI002894129'}
+                        className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold focus:ring-2 focus:ring-blue-600/30 bg-white"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Document scanné (PDF, PNG, JPG - Max 10 Mo) *
+                      </label>
+                      <label className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-3 flex flex-col items-center justify-center text-center cursor-pointer bg-white hover:bg-blue-50/30 transition-colors">
+                        <Upload className="w-5 h-5 text-blue-600 mb-0.5" />
+                        <span className="font-bold text-slate-800 text-xs">
+                          {docFile ? docFile.name : 'Sélectionner le document'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={handleKycFileSelect}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {docFilePreview && (
+                    <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img src={docFilePreview} alt="Aperçu" className="w-14 h-10 rounded-lg object-cover border" />
+                        <span className="font-bold text-slate-800">{docFile?.name}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setDocFile(null); setDocFilePreview(null); }}
+                        className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-200">
+                    <span className="text-slate-500 text-[11px] flex items-center gap-1.5">
+                      <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      Transmission directe et sécurisée vers l'administrateur système LocaTrust
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={isUploadingDoc || (!docFile && !docIdentifier.trim())}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
+                    >
+                      {isUploadingDoc ? (
+                        <span>Envoi en cours...</span>
+                      ) : (
+                        <>
+                          <FileCheck className="w-4 h-4" />
+                          <span>Soumettre à l’administrateur</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
           )}
 
           {/* TAB 2: COMPTE & SÉCURITÉ */}
@@ -1239,168 +1398,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          {/* TAB 6: DOCUMENTS & VÉRIFICATION KYC (Connecté en direct à la base de données Supabase) */}
-          {activeTab === 'verification' && (
-            <div className="flex flex-col gap-5 text-xs">
-              <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">
-                    {isAgency ? "Documents d'Agrément & Conformité Agence" : "Documents d'Identité & Propriété"}
-                  </h3>
-                  <p className="text-slate-500">
-                    {isAgency
-                      ? "Agrément ministériel MCU, RCCM et conformité réglementaire"
-                      : 'Pièce d’identité et attestations de propriété (Loi CI n° 2019-576)'}
-                  </p>
-                </div>
-                <div>
-                  {profile?.verification_status === 'verifie' ? (
-                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 font-black border border-emerald-200 flex items-center gap-1.5 shrink-0">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>{isAgency ? '✓ Agence Agréée & Vérifiée' : '✓ Propriétaire Vérifié'}</span>
-                    </span>
-                  ) : profile?.verification_status === 'en_attente' ? (
-                    <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 font-black border border-amber-200 flex items-center gap-1.5 shrink-0">
-                      <span>⏳ Dossier en cours d'examen</span>
-                    </span>
-                  ) : profile?.verification_status === 'rejete' ? (
-                    <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-800 font-black border border-rose-200 flex items-center gap-1.5 shrink-0">
-                      <span>❌ Dossier Rejeté</span>
-                    </span>
-                  ) : (
-                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-black border border-slate-300 flex items-center gap-1.5 shrink-0">
-                      <span>⚠️ Non vérifié</span>
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {docSuccessMsg && (
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{docSuccessMsg}</span>
-                </div>
-              )}
-
-              {docErrorMsg && (
-                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold flex items-center gap-2">
-                  <X className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>{docErrorMsg}</span>
-                </div>
-              )}
-
-              {/* Statut vérifié affiché */}
-              {profile?.verification_status === 'verifie' ? (
-                <div className="p-5 bg-emerald-50/70 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="flex items-start gap-3">
-                    <Shield className="w-6 h-6 text-emerald-600 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="font-black text-emerald-950 text-sm">
-                        {isAgency ? 'Agence Immobilière Officiellement Agréée' : 'Profil Bailleur Certifié Conforme'}
-                      </h4>
-                      <p className="text-emerald-800 mt-0.5 font-medium">
-                        Vos documents ont été audités et validés par l'administration juridique LocaTrust. Vos contrats de bail générés sont scellés avec valeur probante et QR Code officiel.
-                      </p>
-                    </div>
-                  </div>
-                  {profile?.id_document_url && (
-                    <a
-                      href={profile.id_document_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-4 py-2 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 font-bold border border-emerald-300 flex items-center gap-1.5 shrink-0 shadow-sm"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Consulter la pièce validée</span>
-                    </a>
-                  )}
-                </div>
-              ) : (
-                /* Formulaire de soumission KYC pour Propriétaire et Agence */
-                <form onSubmit={handleKycDocSubmit} className="flex flex-col gap-4 p-5 bg-slate-50 rounded-2xl border border-slate-200">
-                  <div className="flex flex-col gap-1">
-                    <h4 className="font-bold text-slate-900 text-sm">
-                      {isAgency ? 'Téléverser votre Registre de Commerce (RCCM) ou Agrément MCU' : 'Téléverser votre Pièce d’Identité (CNI / Passeport)'}
-                    </h4>
-                    <p className="text-slate-500">
-                      Conformément à la Loi 2019-576, la certification de votre compte est requise pour publier des annonces et générer des baux scellés.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">
-                        {isAgency ? 'Numéro RCCM ou Agrément MCU *' : 'Numéro CNI ou Passeport *'}
-                      </label>
-                      <input
-                        type="text"
-                        value={docIdentifier}
-                        onChange={(e) => setDocIdentifier(e.target.value)}
-                        placeholder={isAgency ? 'Ex : CI-ABJ-2023-B-12849' : 'Ex : CI002894129'}
-                        className="w-full p-3 rounded-xl border border-slate-300 font-mono font-bold focus:ring-2 focus:ring-blue-600/30 bg-white"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">
-                        Document scanné (PDF, PNG, JPG - Max 10 Mo) *
-                      </label>
-                      <label className="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-3 flex flex-col items-center justify-center text-center cursor-pointer bg-white hover:bg-blue-50/30 transition-colors">
-                        <Upload className="w-5 h-5 text-blue-600 mb-0.5" />
-                        <span className="font-bold text-slate-800 text-xs">
-                          {docFile ? docFile.name : 'Sélectionner le document'}
-                        </span>
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          onChange={handleKycFileSelect}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  {docFilePreview && (
-                    <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <img src={docFilePreview} alt="Aperçu" className="w-14 h-10 rounded-lg object-cover border" />
-                        <span className="font-bold text-slate-800">{docFile?.name}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => { setDocFile(null); setDocFilePreview(null); }}
-                        className="p-1 text-slate-400 hover:text-slate-600"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-200">
-                    <span className="text-slate-500 text-[11px] flex items-center gap-1.5">
-                      <Lock className="w-3.5 h-3.5 text-slate-400" />
-                      Transmission directe et sécurisée vers l'administrateur système LocaTrust
-                    </span>
-                    <button
-                      type="submit"
-                      disabled={isUploadingDoc || (!docFile && !docIdentifier.trim())}
-                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
-                    >
-                      {isUploadingDoc ? (
-                        <span>Envoi en cours...</span>
-                      ) : (
-                        <>
-                          <FileCheck className="w-4 h-4" />
-                          <span>Soumettre à l’administrateur</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          )}
 
           {/* TAB 7: CONFIDENTIALITÉ & DONNÉES */}
           {activeTab === 'privacy' && (

@@ -361,12 +361,13 @@ export default function AgencyDashboardPage({
               </ErrorBoundary>
             )}
 
-            {/* TAB 19: Settings (Point 4) */}
-            {activeTab === 'settings' && (
+            {/* TAB 19: Settings & Profile */}
+            {(activeTab === 'settings' || activeTab === 'profile') && (
               <ErrorBoundary>
                 <SettingsView
                   userRole="agence"
                   currentUser={currentUser}
+                  defaultTab="profile"
                   onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
                   onNavigateToSubscription={() => setActiveTab('subscription')}
                 />
@@ -388,7 +389,7 @@ export default function AgencyDashboardPage({
             )}
 
           {/* Fallback for other tabs */}
-          {!['overview', 'owners', 'team', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'stats', 'exports', 'settings', 'history', 'bank_accounts', 'support'].includes(activeTab) && (
+          {!['overview', 'owners', 'team', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'stats', 'exports', 'settings', 'profile', 'history', 'bank_accounts', 'support'].includes(activeTab) && (
             <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4 animate-fadeIn">
               <div className="flex items-center justify-between border-b pb-4">
                 <h2 className="text-xl font-black text-slate-900 capitalize">

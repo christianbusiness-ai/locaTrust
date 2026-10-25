@@ -387,12 +387,13 @@ export default function ProprietaireDashboardPage({
               </ErrorBoundary>
             )}
 
-            {/* TAB 16: Settings (Paramètres) */}
-            {activeTab === 'settings' && (
+            {/* TAB 16: Settings & Profile (Paramètres & Mon Profil) */}
+            {(activeTab === 'settings' || activeTab === 'profile') && (
               <ErrorBoundary>
                 <SettingsView
                   userRole="proprietaire"
                   currentUser={currentUser}
+                  defaultTab="profile"
                   onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
                   onNavigateToSubscription={() => setActiveTab('subscription')}
                 />
@@ -414,7 +415,7 @@ export default function ProprietaireDashboardPage({
             )}
 
           {/* Ultimate Fallback (Safeguard) */}
-          {!['overview', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'history', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'bank_accounts', 'stats', 'exports', 'settings', 'support'].includes(activeTab) && (
+          {!['overview', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'history', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'bank_accounts', 'stats', 'exports', 'settings', 'profile', 'support'].includes(activeTab) && (
             <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4 animate-fadeIn">
               <div className="flex items-center justify-between border-b pb-4">
                 <h2 className="text-xl font-black text-slate-900 capitalize">
