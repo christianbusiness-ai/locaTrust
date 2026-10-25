@@ -1,39 +1,41 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
 import { getActiveUser } from '@/lib/authStore';
 import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
 import { UserRole } from '@/types/database.types';
+import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 // Agency & Proprietaire shared components
 import { ProprietaireDashboardView } from '@/components/dashboard/ProprietaireDashboardView';
 import { AgenceDashboardView } from '@/components/agence/AgenceDashboardView';
-import { MultiProprietairesView } from '@/components/agence/MultiProprietairesView';
-import { AgenceEquipeView } from '@/components/agence/AgenceEquipeView';
 
-// Reused components from components/dashboard & components/contracts
-import { BiensView } from '@/components/dashboard/BiensView';
-import { CautionsView } from '@/components/dashboard/CautionsView';
-import { PaiementsView } from '@/components/dashboard/PaiementsView';
-import { HistoriqueView } from '@/components/dashboard/HistoriqueView';
-import { MaintenanceView } from '@/components/dashboard/MaintenanceView';
-import { AbonnementView } from '@/components/dashboard/AbonnementView';
-import { MessagerieView } from '@/components/dashboard/MessagerieView';
-import { ContractListView } from '@/components/contracts/ContractListView';
-import { ContractDetailView } from '@/components/contracts/ContractDetailView';
-import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
-import { DemandesView } from '@/components/dashboard/DemandesView';
-import { VisitesView } from '@/components/dashboard/VisitesView';
-import { ReportsStatsView } from '@/components/dashboard/ReportsStatsView';
-import { AccountingExportView } from '@/components/dashboard/AccountingExportView';
-import { SettingsView } from '@/components/dashboard/SettingsView';
-import { PaymentAccountsView } from '@/components/dashboard/PaymentAccountsView';
-import { DocumentsView } from '@/components/dashboard/DocumentsView';
-import { ReceiptsQuittancesView } from '@/components/dashboard/ReceiptsQuittancesView';
-import { TenantsListView } from '@/components/dashboard/TenantsListView';
+// Lazy loading ciblé des sous-vues pour booster la vitesse mobile
+const MultiProprietairesView = lazy(() => import('@/components/agence/MultiProprietairesView').then(m => ({ default: m.MultiProprietairesView })));
+const AgenceEquipeView = lazy(() => import('@/components/agence/AgenceEquipeView').then(m => ({ default: m.AgenceEquipeView })));
+const BiensView = lazy(() => import('@/components/dashboard/BiensView').then(m => ({ default: m.BiensView })));
+const CautionsView = lazy(() => import('@/components/dashboard/CautionsView').then(m => ({ default: m.CautionsView })));
+const PaiementsView = lazy(() => import('@/components/dashboard/PaiementsView').then(m => ({ default: m.PaiementsView })));
+const HistoriqueView = lazy(() => import('@/components/dashboard/HistoriqueView').then(m => ({ default: m.HistoriqueView })));
+const MaintenanceView = lazy(() => import('@/components/dashboard/MaintenanceView').then(m => ({ default: m.MaintenanceView })));
+const AbonnementView = lazy(() => import('@/components/dashboard/AbonnementView').then(m => ({ default: m.AbonnementView })));
+const MessagerieView = lazy(() => import('@/components/dashboard/MessagerieView').then(m => ({ default: m.MessagerieView })));
+const ContractListView = lazy(() => import('@/components/contracts/ContractListView').then(m => ({ default: m.ContractListView })));
+const ContractDetailView = lazy(() => import('@/components/contracts/ContractDetailView').then(m => ({ default: m.ContractDetailView })));
+const LocataireSupportView = lazy(() => import('@/components/locataire/LocataireSupportView').then(m => ({ default: m.LocataireSupportView })));
+const DemandesView = lazy(() => import('@/components/dashboard/DemandesView').then(m => ({ default: m.DemandesView })));
+const VisitesView = lazy(() => import('@/components/dashboard/VisitesView').then(m => ({ default: m.VisitesView })));
+const ReportsStatsView = lazy(() => import('@/components/dashboard/ReportsStatsView').then(m => ({ default: m.ReportsStatsView })));
+const AccountingExportView = lazy(() => import('@/components/dashboard/AccountingExportView').then(m => ({ default: m.AccountingExportView })));
+const SettingsView = lazy(() => import('@/components/dashboard/SettingsView').then(m => ({ default: m.SettingsView })));
+const PaymentAccountsView = lazy(() => import('@/components/dashboard/PaymentAccountsView').then(m => ({ default: m.PaymentAccountsView })));
+const DocumentsView = lazy(() => import('@/components/dashboard/DocumentsView').then(m => ({ default: m.DocumentsView })));
+const ReceiptsQuittancesView = lazy(() => import('@/components/dashboard/ReceiptsQuittancesView').then(m => ({ default: m.ReceiptsQuittancesView })));
+const TenantsListView = lazy(() => import('@/components/dashboard/TenantsListView').then(m => ({ default: m.TenantsListView })));
 
 // Shared modals
 import {
@@ -193,153 +195,184 @@ export default function AgencyDashboardPage({
             />
           )}
 
-          {/* TAB 2: Multi-Bailleurs Mandants */}
-          {activeTab === 'owners' && (
-            <MultiProprietairesView />
-          )}
+          {/* SOUS-VUES CHARGÉES DYNAMIQUEMENT EN LAZY LOADING (SUSPENSE) POUR RAPIDITÉ MOBILE */}
+          <Suspense fallback={<DashboardPageSkeleton />}>
+            {/* TAB 2: Multi-Bailleurs Mandants */}
+            {activeTab === 'owners' && (
+              <ErrorBoundary>
+                <MultiProprietairesView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 3: Équipe Agence */}
-          {activeTab === 'team' && (
-            <AgenceEquipeView />
-          )}
+            {/* TAB 3: Équipe Agence */}
+            {activeTab === 'team' && (
+              <ErrorBoundary>
+                <AgenceEquipeView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 4: Properties (Reused BiensView) */}
-          {activeTab === 'properties' && (
-            <ErrorBoundary>
-              <BiensView
-                onOpenAddProperty={() => setIsAddPropertyOpen(true)}
-              />
-            </ErrorBoundary>
-          )}
-
-          {/* TAB 5: Contracts (Reused Contract views) */}
-          {activeTab === 'contracts' && (
-            <>
-              {selectedContractId ? (
-                <ContractDetailView
-                  contractNumber={selectedContractId}
-                  isAgency={true}
-                  onBack={() => setSelectedContractId(null)}
+            {/* TAB 4: Properties (Reused BiensView) */}
+            {activeTab === 'properties' && (
+              <ErrorBoundary>
+                <BiensView
+                  onOpenAddProperty={() => setIsAddPropertyOpen(true)}
                 />
-              ) : (
-                <ContractListView
-                  onSelectContract={(id) => setSelectedContractId(id)}
-                  onCreateContract={() => setIsCreateContractOpen(true)}
+              </ErrorBoundary>
+            )}
+
+            {/* TAB 5: Contracts (Reused Contract views) */}
+            {activeTab === 'contracts' && (
+              <ErrorBoundary>
+                {selectedContractId ? (
+                  <ContractDetailView
+                    contractNumber={selectedContractId}
+                    isAgency={true}
+                    onBack={() => setSelectedContractId(null)}
+                  />
+                ) : (
+                  <ContractListView
+                    onSelectContract={(id) => setSelectedContractId(id)}
+                    onCreateContract={() => setIsCreateContractOpen(true)}
+                  />
+                )}
+              </ErrorBoundary>
+            )}
+
+            {/* TAB 6: Demandes de location (Strict candidature) */}
+            {(activeTab === 'applications' || activeTab === 'requests' || activeTab === 'demandes') && (
+              <ErrorBoundary>
+                <DemandesView
+                  onOpenMessages={(contactId?: string) => {
+                    if (contactId && typeof window !== 'undefined') {
+                      localStorage.setItem('locatrust_active_chat_contact', contactId);
+                      window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                    }
+                    setActiveTab('messages');
+                  }}
                 />
-              )}
-            </>
-          )}
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 6: Demandes de location (Strict candidature) */}
-          {(activeTab === 'applications' || activeTab === 'requests' || activeTab === 'demandes') && (
-            <ErrorBoundary>
-              <DemandesView
-                onOpenMessages={(contactId?: string) => {
-                  if (contactId && typeof window !== 'undefined') {
-                    localStorage.setItem('locatrust_active_chat_contact', contactId);
-                    window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
-                  }
-                  setActiveTab('messages');
-                }}
-              />
-            </ErrorBoundary>
-          )}
+            {/* TAB 7: Demandes de Visite */}
+            {activeTab === 'visits' && (
+              <ErrorBoundary>
+                <VisitesView
+                  onOpenMessages={(contactId?: string) => {
+                    if (contactId && typeof window !== 'undefined') {
+                      localStorage.setItem('locatrust_active_chat_contact', contactId);
+                      window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                    }
+                    setActiveTab('messages');
+                  }}
+                />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 7: Demandes de Visite */}
-          {activeTab === 'visits' && (
-            <VisitesView
-              onOpenMessages={(contactId?: string) => {
-                if (contactId && typeof window !== 'undefined') {
-                  localStorage.setItem('locatrust_active_chat_contact', contactId);
-                  window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
-                }
-                setActiveTab('messages');
-              }}
-            />
-          )}
+            {/* TAB 8: Guarantees (Reused CautionsView with isAgency) */}
+            {activeTab === 'guarantees' && (
+              <ErrorBoundary>
+                <CautionsView isAgency={true} userRole="agence" />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 8: Guarantees (Reused CautionsView with isAgency) */}
-          {activeTab === 'guarantees' && (
-            <CautionsView isAgency={true} userRole="agence" />
-          )}
+            {/* TAB 9: Payments (Reused PaiementsView) */}
+            {activeTab === 'payments' && (
+              <ErrorBoundary>
+                <PaiementsView
+                  onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
+                />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 9: Payments (Reused PaiementsView) */}
-          {activeTab === 'payments' && (
-            <ErrorBoundary>
-              <PaiementsView
-                onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
-              />
-            </ErrorBoundary>
-          )}
+            {/* TAB 10: Tenants (Locataires du parc) */}
+            {activeTab === 'tenants' && (
+              <ErrorBoundary>
+                <TenantsListView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 10: Tenants (Locataires du parc) */}
-          {activeTab === 'tenants' && (
-            <TenantsListView />
-          )}
+            {/* TAB 11: Documents */}
+            {activeTab === 'documents' && (
+              <ErrorBoundary>
+                <DocumentsView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 11: Documents */}
-          {activeTab === 'documents' && (
-            <DocumentsView />
-          )}
+            {/* TAB 12: Receipts & Quittances */}
+            {activeTab === 'receipts' && (
+              <ErrorBoundary>
+                <ReceiptsQuittancesView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 12: Receipts & Quittances */}
-          {activeTab === 'receipts' && (
-            <ReceiptsQuittancesView />
-          )}
+            {/* TAB 13: History (Historique général) */}
+            {activeTab === 'history' && (
+              <ErrorBoundary>
+                <HistoriqueView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 13: History (Historique général) */}
-          {activeTab === 'history' && (
-            <HistoriqueView />
-          )}
+            {/* TAB 14: Maintenance (Reused MaintenanceView) */}
+            {activeTab === 'maintenance' && (
+              <ErrorBoundary>
+                <MaintenanceView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 14: Maintenance (Reused MaintenanceView) */}
-          {activeTab === 'maintenance' && (
-            <MaintenanceView />
-          )}
+            {/* TAB 15: Payout Accounts */}
+            {activeTab === 'bank_accounts' && (
+              <ErrorBoundary>
+                <PaymentAccountsView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 15: Payout Accounts */}
-          {activeTab === 'bank_accounts' && (
-            <PaymentAccountsView />
-          )}
+            {/* TAB 16: Reports & Statistics (Point 4) */}
+            {activeTab === 'stats' && (
+              <ErrorBoundary>
+                <ReportsStatsView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 16: Reports & Statistics (Point 4) */}
-          {activeTab === 'stats' && (
-            <ReportsStatsView />
-          )}
+            {/* TAB 17: Accounting Exports (Point 4) */}
+            {activeTab === 'exports' && (
+              <ErrorBoundary>
+                <AccountingExportView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 17: Accounting Exports (Point 4) */}
-          {activeTab === 'exports' && (
-            <AccountingExportView />
-          )}
+            {/* TAB 18: Subscription (Reused AbonnementView) */}
+            {activeTab === 'subscription' && (
+              <ErrorBoundary>
+                <AbonnementView />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 18: Subscription (Reused AbonnementView) */}
-          {activeTab === 'subscription' && (
-            <ErrorBoundary>
-              <AbonnementView />
-            </ErrorBoundary>
-          )}
+            {/* TAB 19: Settings (Point 4) */}
+            {activeTab === 'settings' && (
+              <ErrorBoundary>
+                <SettingsView
+                  userRole="agence"
+                  currentUser={currentUser}
+                  onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
+                  onNavigateToSubscription={() => setActiveTab('subscription')}
+                />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 19: Settings (Point 4) */}
-          {activeTab === 'settings' && (
-            <ErrorBoundary>
-              <SettingsView
-                userRole="agence"
-                currentUser={currentUser}
-                onNavigateToPaymentAccounts={() => setActiveTab('bank_accounts')}
-                onNavigateToSubscription={() => setActiveTab('subscription')}
-              />
-            </ErrorBoundary>
-          )}
+            {/* TAB 20: Messages (Reused MessagerieView) */}
+            {activeTab === 'messages' && (
+              <ErrorBoundary>
+                <MessagerieView userRole="agence" />
+              </ErrorBoundary>
+            )}
 
-          {/* TAB 20: Messages (Reused MessagerieView) */}
-          {activeTab === 'messages' && (
-            <MessagerieView userRole="agence" />
-          )}
-
-          {/* TAB 21: Aide & Support Agence */}
-          {activeTab === 'support' && (
-            <LocataireSupportView userRole="agence" />
-          )}
+            {/* TAB 21: Aide & Support Agence */}
+            {activeTab === 'support' && (
+              <ErrorBoundary>
+                <LocataireSupportView userRole="agence" />
+              </ErrorBoundary>
+            )}
+          </Suspense>
 
           {/* Fallback for other tabs */}
           {!['overview', 'owners', 'team', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'stats', 'exports', 'settings', 'history', 'bank_accounts', 'support'].includes(activeTab) && (

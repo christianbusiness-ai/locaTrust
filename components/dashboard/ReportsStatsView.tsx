@@ -284,7 +284,7 @@ export const ReportsStatsView: React.FC = () => {
     const periodLabel = prepareModal.periodLabel;
 
     if (format === 'csv') {
-      downloadAccountingCSV(periodLabel);
+      downloadAccountingCSV(periodLabel, realDataset);
     } else {
       generateManagementReportPDF({
         periodSummary: currentPeriodSummary,
@@ -879,7 +879,7 @@ export const ReportsStatsView: React.FC = () => {
               </p>
             </div>
             <span className="px-3 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold rounded-xl">
-              1 bail signé & actif
+              {(realDataset?.activeContractsCount ?? 0)} bail{(realDataset?.activeContractsCount ?? 0) > 1 ? 's' : ''} signé{(realDataset?.activeContractsCount ?? 0) > 1 ? 's' : ''} & actif{(realDataset?.activeContractsCount ?? 0) > 1 ? 's' : ''}
             </span>
           </div>
 
@@ -887,28 +887,28 @@ export const ReportsStatsView: React.FC = () => {
             <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200">
               <span className="text-xs font-bold text-blue-800 dark:text-blue-300">Cautions Reçues</span>
               <span className="text-xl font-black text-blue-700 block mt-1">
-                {formatFCFA(realDataset?.synthesis?.cautionsRecues || currentPeriodSummary.cautionReceived || 60000)}
+                {formatFCFA(realDataset?.synthesis?.cautionsRecues ?? currentPeriodSummary.cautionReceived ?? 0)}
               </span>
               <span className="text-[10px] text-blue-600 font-medium block mt-0.5">Baux signés uniquement</span>
             </div>
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200">
               <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Détenues en Garantie</span>
               <span className="text-xl font-black text-emerald-700 block mt-1">
-                {formatFCFA(Math.max(0, (realDataset?.synthesis?.cautionsRecues || 60000) - (realDataset?.synthesis?.cautionsRemboursees || 0)))}
+                {formatFCFA(Math.max(0, (realDataset?.synthesis?.cautionsRecues ?? 0) - (realDataset?.synthesis?.cautionsRemboursees ?? 0)))}
               </span>
               <span className="text-[10px] text-emerald-600 font-medium block mt-0.5">Séquestre actif</span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200">
               <span className="text-xs font-bold text-slate-600 dark:text-slate-300">Remboursées (100 %)</span>
               <span className="text-xl font-black text-slate-700 dark:text-slate-200 block mt-1">
-                {formatFCFA(realDataset?.synthesis?.cautionsRemboursees || 0)}
+                {formatFCFA(realDataset?.synthesis?.cautionsRemboursees ?? 0)}
               </span>
               <span className="text-[10px] text-slate-500 font-medium block mt-0.5">0 sortie</span>
             </div>
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200">
               <span className="text-xs font-bold text-amber-800 dark:text-amber-300">Retenues Justifiées</span>
               <span className="text-xl font-black text-amber-700 block mt-1">
-                {formatFCFA(realDataset?.extraStats?.cautionsRetenues || 0)}
+                {formatFCFA(realDataset?.extraStats?.cautionsRetenues ?? 0)}
               </span>
               <span className="text-[10px] text-amber-600 font-medium block mt-0.5">Aucun litige</span>
             </div>
@@ -921,32 +921,35 @@ export const ReportsStatsView: React.FC = () => {
               <span className="text-[11px] text-slate-500">Plafond légal 2 mois respecté</span>
             </div>
             <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-              <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-900 dark:text-white">Maison 4 pièce — Yamoussoukro</span>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold">Bail Actif & Signé</span>
+              {realDataset?.cautions && realDataset.cautions.length > 0 ? (
+                realDataset.cautions.map((cau: any, idx: number) => (
+                  <div key={idx} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white">{cau.property || 'Bien loué'}</span>
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold">
+                          {cau.status || 'Bail Actif'}
+                        </span>
+                      </div>
+                      <p className="text-slate-500 text-[11px] mt-0.5">
+                        Locataire : <strong>{cau.tenant || 'Locataire'}</strong> • Réf. Contrat : <strong>{cau.contractNo || '—'}</strong>
+                      </p>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <span className="text-sm font-black text-emerald-600 block">{formatFCFA(Number(cau.deposited || cau.planned) || 0)}</span>
+                      <span className="text-[10px] text-slate-500">Caution versée & détenue</span>
+                    </div>
                   </div>
-                  <p className="text-slate-500 text-[11px] mt-0.5">Locataire : <strong>Christian</strong> • Réf. Contrat : <strong>LT-2026-CI-000492</strong> • Loyer : 30 000 FCFA/mois</p>
+                ))
+              ) : (
+                <div className="p-8 text-center text-slate-400">
+                  <ShieldCheck className="w-8 h-8 mx-auto mb-2 text-slate-300 dark:text-slate-600" />
+                  <p className="text-xs font-bold text-slate-600 dark:text-slate-400">Aucune caution locative enregistrée</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                    Dès qu'un bail est signé et sa garantie déclarée ou perçue, son décompte certifié s'affichera ici.
+                  </p>
                 </div>
-                <div className="text-left sm:text-right">
-                  <span className="text-sm font-black text-emerald-600 block">{formatFCFA(60000)}</span>
-                  <span className="text-[10px] text-slate-500">Caution versée & détenue (2 mois)</span>
-                </div>
-              </div>
-              <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-50/60 dark:bg-slate-900/30 opacity-75">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Autre bien du parc (Logement disponible)</span>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-[10px] font-medium">Contrat non encore signé</span>
-                  </div>
-                  <p className="text-slate-400 text-[11px] mt-0.5">Aucun dépôt de garantie exigible ni perçu avant la signature effective du bail</p>
-                </div>
-                <div className="text-left sm:text-right">
-                  <span className="text-sm font-bold text-slate-400 block">{formatFCFA(0)}</span>
-                  <span className="text-[10px] text-slate-400">Non perçue</span>
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </div>

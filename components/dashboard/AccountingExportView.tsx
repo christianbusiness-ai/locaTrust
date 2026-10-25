@@ -182,36 +182,49 @@ export const AccountingExportView: React.FC = () => {
     const periodLabel = prepareModal.periodLabel;
     const actionType = prepareModal.actionType;
 
-    const targetDataset = activeDataset || accountingData;
+    try {
+      const targetDataset = activeDataset || accountingData || ACCOUNTING_DATA;
 
-    if (actionType === 'mandants_pdf') {
-      downloadAgencyMandantsRevenuePDF(periodLabel, agencyMandantsReport);
-    } else if (actionType === 'mandants_csv') {
-      downloadAgencyMandantsRevenueCSV(periodLabel, agencyMandantsReport);
-    } else if (actionType === 'full_zip') {
-      downloadCompleteAccountingZip(periodLabel, targetDataset);
-    } else if (actionType === 'results_pdf') {
-      downloadStatementOfResultsPDF(periodLabel, targetDataset);
-    } else if (actionType === 'results_csv') {
-      downloadStatementOfResultsCSV(periodLabel, targetDataset);
-    } else if (format === 'csv') {
-      downloadAccountingCSV(periodLabel, targetDataset);
-    } else {
-      downloadAccountingPDF(periodLabel, targetDataset);
+      if (actionType === 'mandants_pdf') {
+        downloadAgencyMandantsRevenuePDF(periodLabel, agencyMandantsReport);
+      } else if (actionType === 'mandants_csv') {
+        downloadAgencyMandantsRevenueCSV(periodLabel, agencyMandantsReport);
+      } else if (actionType === 'full_zip') {
+        downloadCompleteAccountingZip(periodLabel, targetDataset);
+      } else if (actionType === 'results_pdf') {
+        downloadStatementOfResultsPDF(periodLabel, targetDataset);
+      } else if (actionType === 'results_csv') {
+        downloadStatementOfResultsCSV(periodLabel, targetDataset);
+      } else if (format === 'csv') {
+        downloadAccountingCSV(periodLabel, targetDataset);
+      } else {
+        downloadAccountingPDF(periodLabel, targetDataset);
+      }
+
+      setPrepareModal(null);
+
+      // Show modern centered confirmation modal
+      setConfirmationModal({
+        isOpen: true,
+        type: 'download',
+        title: 'Document comptable généré !',
+        message: `Votre document "${prepareModal.title}" (${format.toUpperCase()}) a été téléchargé avec succès. Les calculs, totaux et rubriques sont alignés avec les normes comptables.`,
+        details: `Période : ${periodLabel} • Norme LocaTrust`,
+        confirmText: 'OK, parfait',
+        withCelebration: true
+      });
+    } catch (err: any) {
+      console.error('Erreur export comptable:', err);
+      setPrepareModal(null);
+      setConfirmationModal({
+        isOpen: true,
+        type: 'dispute',
+        title: 'Erreur lors du téléchargement',
+        message: `Une erreur est survenue lors de la création du document : ${err?.message || 'Vérifiez vos données'}.`,
+        confirmText: 'Compris',
+        withCelebration: false
+      });
     }
-
-    setPrepareModal(null);
-
-    // Show modern centered confirmation modal
-    setConfirmationModal({
-      isOpen: true,
-      type: 'download',
-      title: 'Document comptable généré !',
-      message: `Votre document "${prepareModal.title}" (${format.toUpperCase()}) a été téléchargé avec succès. Les calculs, totaux et rubriques sont alignés avec les normes comptables.`,
-      details: `Période : ${periodLabel} • Norme LocaTrust`,
-      confirmText: 'OK, parfait',
-      withCelebration: true
-    });
   };
 
   const activeDataset = React.useMemo(() => {
