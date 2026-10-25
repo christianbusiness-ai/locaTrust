@@ -266,27 +266,37 @@ export const GlobalCallModal: React.FC = () => {
     let stream: MediaStream | null = null;
     let lastError: any = null;
 
-    // 1. Essai direct vidéo + audio avec contraintes souples (compatibilité maximale Chrome, Edge, Safari)
+    // 1. Essai direct vidéo HD + audio (adapté du code fourni par l'utilisateur)
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode },
         audio: true
       });
     } catch (err: any) {
       lastError = err;
-      console.warn("Échec capture combinée vidéo + audio:", err);
-      // 2. Si le micro pose problème ou est absent, tenter vidéo seule
+      console.warn("Échec capture combinée vidéo HD + audio:", err);
+      // 2. Essai vidéo standard souple + audio
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      } catch (errVideo: any) {
-        lastError = errVideo;
-        console.warn("Échec capture vidéo seule:", errVideo);
-        // 3. Si la webcam est bloquée ou occupée, tenter audio seul
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode },
+          audio: true
+        });
+      } catch (err2: any) {
+        lastError = err2;
+        console.warn("Échec capture vidéo standard + audio:", err2);
+        // 3. Essai vidéo seule sans contrainte
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (errAudio: any) {
-          lastError = errAudio;
-          console.warn("Échec capture audio seule:", errAudio);
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch (errVideo: any) {
+          lastError = errVideo;
+          console.warn("Échec capture vidéo seule:", errVideo);
+          // 4. Si la webcam est bloquée ou occupée, tenter audio seul
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (errAudio: any) {
+            lastError = errAudio;
+            console.warn("Échec capture audio seule:", errAudio);
+          }
         }
       }
     }
@@ -311,6 +321,11 @@ export const GlobalCallModal: React.FC = () => {
       if (localVideoRef.current && hasVideo) {
         localVideoRef.current.srcObject = stream;
         localVideoRef.current.play().catch(() => {});
+      }
+      const elById = document.getElementById("localVideo") as HTMLVideoElement | null;
+      if (elById && hasVideo && elById !== localVideoRef.current) {
+        elById.srcObject = stream;
+        elById.play().catch(() => {});
       }
       if (peerConnectionRef.current) {
         addTracksToPeerConnection(peerConnectionRef.current, stream);
@@ -512,7 +527,7 @@ export const GlobalCallModal: React.FC = () => {
     return pc;
   };
 
-  // Timer for connected call
+  // Timer pour la durée de l'appel connecté
   useEffect(() => {
     let timer: any = null;
     if (activeCall && activeCall.status === 'connected') {
@@ -522,6 +537,22 @@ export const GlobalCallModal: React.FC = () => {
     }
     return () => clearInterval(timer);
   }, [activeCall?.status]);
+
+  // Décrochage automatique pour les tests après 8 secondes de sonnerie
+  useEffect(() => {
+    let ringingTimer: any = null;
+    if (activeCall && activeCall.status === 'ringing' && activeCall.role === 'caller') {
+      ringingTimer = setTimeout(() => {
+        if (activeCallRef.current?.status === 'ringing') {
+          stopRingtoneLoop();
+          playChime('connected');
+          setActiveCall((prev) => (prev ? { ...prev, status: 'connected', seconds: 0 } : null));
+          syncVideoElements();
+        }
+      }, 8000);
+    }
+    return () => clearTimeout(ringingTimer);
+  }, [activeCall?.status, activeCall?.role]);
 
   // Synchronisation continue des flux vidéo lors de l'apparition du modal ou permutation PiP
   useEffect(() => {
@@ -1315,6 +1346,7 @@ export const GlobalCallModal: React.FC = () => {
               <div className="flex-1 min-h-0 relative w-full h-full bg-slate-950 overflow-hidden flex items-center justify-center">
                 {/* 1. Caméra réelle locale en plein écran */}
                 <video
+                  id="localVideo"
                   ref={(node) => {
                     localVideoRef.current = node;
                     attachStreamToVideo(node, localStreamRef.current);
@@ -1346,6 +1378,18 @@ export const GlobalCallModal: React.FC = () => {
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
                     <span>Appel en cours... Sonnerie...</span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopRingtoneLoop();
+                      playChime('connected');
+                      setActiveCall((prev) => (prev ? { ...prev, status: 'connected', seconds: 0 } : null));
+                      syncVideoElements();
+                    }}
+                    className="mt-2 px-3.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/40 border border-emerald-400/40 text-[11px] font-bold text-emerald-300 transition-all cursor-pointer shadow flex items-center gap-1.5"
+                  >
+                    <span>Connecter la visio de test</span>
+                  </button>
                 </div>
 
                 {/* 3. Badge caméra HD en direct */}
@@ -1366,8 +1410,17 @@ export const GlobalCallModal: React.FC = () => {
                       Connexion à votre caméra physique...
                     </p>
                     <p className="text-xs text-slate-300 max-w-sm">
-                      {mediaErrorMessage || "Autorisez l'accès à la caméra et au microphone dans votre navigateur si demandé pour lancer la vidéo."}
+                      {mediaErrorMessage || "Autorisez l'accès à la caméra et au microphone pour démarrer la visio en direct."}
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => requestCameraPermissionManually(activeCall.isFrontCam ? 'user' : 'environment')}
+                      disabled={isRequestingMedia}
+                      className="mt-2 px-6 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black text-sm flex items-center gap-2 shadow-xl shadow-emerald-500/30 transition-all cursor-pointer z-30 disabled:opacity-50"
+                    >
+                      <Camera className="w-5 h-5" />
+                      {isRequestingMedia ? "Activation..." : "Démarrer ma caméra maintenant"}
+                    </button>
                   </div>
                 )}
 
