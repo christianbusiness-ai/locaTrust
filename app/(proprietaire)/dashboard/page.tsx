@@ -7,6 +7,7 @@ import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
 import { ProprietaireDashboardView } from '@/components/dashboard/ProprietaireDashboardView';
 import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { ShieldAlert, ArrowRight } from 'lucide-react';
 
 // Lazy loading ciblé des sous-vues pour accélérer l'affichage sur mobile (économie de 70% de bundle initial)
 const BiensView = lazy(() => import('@/components/dashboard/BiensView').then(m => ({ default: m.BiensView })));
