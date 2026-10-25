@@ -113,7 +113,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           const syncJson = await syncRes.json();
           if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
             const mySyncPayments = syncJson.data.payments.filter((p: any) =>
-              !user?.id || p.owner_id === user.id || p.agency_id === user.id
+              Boolean(user?.id && (p.owner_id === user.id || p.agency_id === user.id))
             );
             loaded = [...mySyncPayments];
           }
@@ -131,6 +131,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
         if (user?.id) {
           pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        } else {
+          pQuery = pQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data, error } = await pQuery;
@@ -157,7 +159,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             const localList: RentPayment[] = JSON.parse(cached);
             if (Array.isArray(localList)) {
               const myLocalList = localList.filter((loc: any) =>
-                !user?.id || loc.owner_id === user.id || loc.agency_id === user.id
+                Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id))
               );
               for (const loc of myLocalList) {
                 const idx = loaded.findIndex(p => p.id === loc.id || (loc.reference && p.reference === loc.reference));

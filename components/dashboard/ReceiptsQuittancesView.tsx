@@ -76,7 +76,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
             // A. Quittances et reçus officiels du serveur central
             if (Array.isArray(syncJson.data.receipts)) {
               for (const r of syncJson.data.receipts) {
-                const isMine = !user?.id || r.owner_id === user.id || r.agency_id === user.id;
+                const isMine = Boolean(user?.id && (r.owner_id === user.id || r.agency_id === user.id));
                 if (!isMine) continue;
                 const ref = r.receipt_number || `REC-${r.id.slice(0, 8)}`;
                 if (!seenRefs.has(ref)) {
@@ -105,7 +105,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
             // B. Cautions confirmées du serveur central
             if (Array.isArray(syncJson.data.cautions)) {
               for (const c of syncJson.data.cautions) {
-                const isMine = !user?.id || c.owner_id === user.id || c.agency_id === user.id;
+                const isMine = Boolean(user?.id && (c.owner_id === user.id || c.agency_id === user.id));
                 if (!isMine) continue;
                 const ref = c.receipt_number || `REC-CAUTION-${(c.contract_number || '000000').slice(-6)}`;
                 if (!seenRefs.has(ref)) {
@@ -145,6 +145,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
 
         if (user?.id) {
           rQuery = rQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        } else {
+          rQuery = rQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data: dbReceipts } = await rQuery;
@@ -188,6 +190,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
 
         if (user?.id) {
           pmQuery = pmQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        } else {
+          pmQuery = pmQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data: validatedPayments } = await pmQuery;
@@ -229,7 +233,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
             const listDeps = JSON.parse(rawDeps);
             if (Array.isArray(listDeps)) {
               for (const cd of listDeps) {
-                const isMine = !user?.id || cd.owner_id === user.id || cd.agency_id === user.id;
+                const isMine = Boolean(user?.id && (cd.owner_id === user.id || cd.agency_id === user.id));
                 if (!isMine) continue;
                 const cRef = cd.receipt_number || `REC-CAUTION-${(cd.contract_number || '000000').slice(-6)}`;
                 if (!seenRefs.has(cRef)) {
@@ -280,7 +284,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
                   localStorage.setItem(src, JSON.stringify(cleaned));
                 }
                 for (const lr of cleaned) {
-                  const isMine = !user?.id || lr.owner_id === user.id || lr.agency_id === user.id;
+                  const isMine = Boolean(user?.id && (lr.owner_id === user.id || lr.agency_id === user.id));
                   if (!isMine) continue;
                   const ref = lr.receipt_number || lr.receiptNumber || lr.reference;
                   if (ref && !seenRefs.has(ref)) {
@@ -308,27 +312,6 @@ export const ReceiptsQuittancesView: React.FC = () => {
             }
           } catch {}
         }
-      }
-
-      // 5. Document officiel de caution par défaut si le contrat réel LT-2026-CI-000492 existe
-      if (!seenRefs.has('REC-CAUTION-000492')) {
-        allRows.push({
-          id: 'official_rec_cau_000492',
-          receipt_number: 'REC-CAUTION-000492',
-          receipt_type: 'caution',
-          tenant_name: 'Christian',
-          property_title: 'Maison 4 pièce',
-          property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-          contract_number: 'LT-2026-CI-000492',
-          period_covered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-          amount: 60000,
-          payment_method: 'Wave CI / Mobile Money',
-          payment_date: '16/10/2026',
-          transaction_ref: 'tok_rec_caution_000492',
-          status: 'certifie',
-          owner_signed: true,
-          tenant_signed: true
-        });
       }
 
       setReceipts(allRows);

@@ -131,7 +131,8 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
       // Synchronisation prioritaire depuis le serveur central (/api/sync)
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=locataire` : '/api/sync';
+        const syncRes = await fetch(syncUrl);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (Array.isArray(syncJson?.data?.contracts)) {
@@ -276,11 +277,17 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
       // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=locataire` : '/api/sync';
+        const syncRes = await fetch(syncUrl);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.data?.receipts && Array.isArray(syncJson.data.receipts)) {
             syncJson.data.receipts.forEach((sr: any) => {
+              const isMatch =
+                Boolean(user?.id && (sr.tenant_id === user.id || sr.tenant?.id === user.id)) ||
+                Boolean(user?.email && (sr.tenant_email?.toLowerCase() === user.email.toLowerCase() || sr.tenant?.email?.toLowerCase() === user.email.toLowerCase())) ||
+                Boolean(user?.user_metadata?.full_name && sr.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
+              if (!isMatch) return;
               const num = sr.receipt_number || sr.reference;
               const amt = Number(sr.amount) || 0;
               if (num && amt > 0 && !seenReceiptNums.has(num)) {

@@ -165,7 +165,7 @@ export const getDisplayPaymentMethod = (dep?: Deposit | null): string => {
 
 export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, userRole = 'proprietaire' }) => {
   const { user, profile } = useAuth();
-  const [deposits, setDeposits] = useState<Deposit[]>(() => getStoredDeposits());
+  const [deposits, setDeposits] = useState<Deposit[]>(() => []);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -578,6 +578,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           // Pour propriétaire / agence : inclure les cautions où il est owner_id, agency_id ou tenant_id
           query = query.or(`owner_id.eq.${user.id},agency_id.eq.${user.id},tenant_id.eq.${user.id}`);
         }
+      } else {
+        query = query.eq('id', '00000000-0000-0000-0000-000000000000');
       }
 
       let { data, error } = await query;
@@ -596,6 +598,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           } else {
             basicQuery = basicQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id},tenant_id.eq.${user.id}`);
           }
+        } else {
+          basicQuery = basicQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
         const basicRes = await basicQuery;
         if (!basicRes.error && basicRes.data) {
@@ -645,7 +649,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         // Fusionner avec le local store en filtrant strictement par appartenance utilisateur
         const rawLocal = getStoredDeposits() || [];
         const local = rawLocal.filter((loc: any) =>
-          !user?.id || loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id
+          Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
         );
         const combined = [...enrichedDeposits];
         for (const loc of local) {
@@ -662,7 +666,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       } else {
         const rawLocal = getStoredDeposits() || [];
         const local = rawLocal.filter((loc: any) =>
-          !user?.id || loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id
+          Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
         );
         setDeposits(local);
       }
@@ -670,7 +674,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       console.warn('Sync cautions error:', e);
       const rawLocal = getStoredDeposits() || [];
       const local = rawLocal.filter((loc: any) =>
-        !user?.id || loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id
+        Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
       );
       setDeposits(local);
     } finally {

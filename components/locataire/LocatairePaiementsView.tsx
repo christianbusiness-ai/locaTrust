@@ -150,11 +150,15 @@ export const LocatairePaiementsView: React.FC = () => {
 
       // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=locataire` : '/api/sync';
+        const syncRes = await fetch(syncUrl);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
-            rentList = [...syncJson.data.payments];
+            rentList = syncJson.data.payments.filter((p: any) =>
+              Boolean(user?.id && (p.tenant_id === user.id || p.tenant?.id === user.id)) ||
+              Boolean(user?.email && (p.tenant?.email?.toLowerCase() === user.email.toLowerCase() || p.tenant_email?.toLowerCase() === user.email.toLowerCase()))
+            );
           }
         }
       } catch (syncErr) {
@@ -183,10 +187,8 @@ export const LocatairePaiementsView: React.FC = () => {
           const parsed = JSON.parse(localRaw);
           if (Array.isArray(parsed)) {
             const userLocalPmts = parsed.filter((p: any) =>
-              !p.tenant_id ||
               p.tenant_id === user.id ||
               p.tenant?.id === user.id ||
-              p.tenant_id === 'usr_tenant' ||
               (user.email && (p.tenant?.email?.toLowerCase() === user.email.toLowerCase() || p.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
               (p.reference && rentList.some(r => r.reference === p.reference))
             );
@@ -240,7 +242,11 @@ export const LocatairePaiementsView: React.FC = () => {
 
       let localDeps: any[] = [];
       try {
-        localDeps = getStoredDeposits() || [];
+        const raw = getStoredDeposits() || [];
+        localDeps = raw.filter((d: any) =>
+          Boolean(user?.id && (d.tenant_id === user.id || d.tenant?.id === user.id)) ||
+          Boolean(user?.email && (d.tenant?.email?.toLowerCase() === user.email.toLowerCase() || d.tenant_email?.toLowerCase() === user.email.toLowerCase()))
+        );
       } catch (e) {
         console.warn('getStoredDeposits notice:', e);
       }
