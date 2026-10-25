@@ -243,9 +243,8 @@ export default function ProprietaireDashboardPage({
             />
           )}
 
-          {/* SOUS-VUES CHARGÉES DYNAMIQUEMENT EN LAZY LOADING (SUSPENSE) POUR RAPIDITÉ MOBILE */}
-          <Suspense fallback={<DashboardPageSkeleton />}>
-            {/* TAB 2: Properties (Mes Biens) */}
+          {/* SOUS-VUES DU TABLEAU DE BORD PROPRIÉTAIRE */}
+          {/* TAB 2: Properties (Mes Biens) */}
             {activeTab === 'properties' && (
               <ErrorBoundary>
                 <BiensView
@@ -413,7 +412,6 @@ export default function ProprietaireDashboardPage({
                 <LocataireSupportView userRole="proprietaire" />
               </ErrorBoundary>
             )}
-          </Suspense>
 
           {/* Ultimate Fallback (Safeguard) */}
           {!['overview', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'history', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'bank_accounts', 'stats', 'exports', 'settings', 'support'].includes(activeTab) && (

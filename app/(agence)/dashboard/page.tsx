@@ -201,9 +201,8 @@ export default function AgencyDashboardPage({
             />
           )}
 
-          {/* SOUS-VUES CHARGÉES DYNAMIQUEMENT EN LAZY LOADING (SUSPENSE) POUR RAPIDITÉ MOBILE */}
-          <Suspense fallback={<DashboardPageSkeleton />}>
-            {/* TAB 2: Multi-Bailleurs Mandants */}
+          {/* SOUS-VUES DU TABLEAU DE BORD AGENCE */}
+          {/* TAB 2: Multi-Bailleurs Mandants */}
             {activeTab === 'owners' && (
               <ErrorBoundary>
                 <MultiProprietairesView />
@@ -387,7 +386,6 @@ export default function AgencyDashboardPage({
                 <LocataireSupportView userRole="agence" />
               </ErrorBoundary>
             )}
-          </Suspense>
 
           {/* Fallback for other tabs */}
           {!['overview', 'owners', 'team', 'properties', 'contracts', 'guarantees', 'payments', 'tenants', 'receipts', 'documents', 'maintenance', 'subscription', 'messages', 'applications', 'requests', 'visits', 'demandes', 'stats', 'exports', 'settings', 'history', 'bank_accounts', 'support'].includes(activeTab) && (
