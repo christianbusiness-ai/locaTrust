@@ -20,19 +20,31 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
 
     checkExpiry();
 
-    // Vérification automatique au retour dans le navigateur après mise en arrière-plan
+    // Vérification automatique au retour dans le navigateur après mise en veille ou arrière-plan
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         checkExpiry();
       }
     };
 
+    const handleUserInteraction = () => {
+      if (user) {
+        recordUserActivity();
+      }
+    };
+
     window.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', checkExpiry);
+    window.addEventListener('pointerdown', handleUserInteraction, { passive: true });
+    window.addEventListener('keydown', handleUserInteraction, { passive: true });
+    window.addEventListener('touchstart', handleUserInteraction, { passive: true });
 
     return () => {
       window.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', checkExpiry);
+      window.removeEventListener('pointerdown', handleUserInteraction);
+      window.removeEventListener('keydown', handleUserInteraction);
+      window.removeEventListener('touchstart', handleUserInteraction);
     };
   }, [user, location.pathname, signOut]);
 
