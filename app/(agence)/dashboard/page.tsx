@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
 import { getActiveUser } from '@/lib/authStore';
 import { Header } from '@/components/layout/Header';

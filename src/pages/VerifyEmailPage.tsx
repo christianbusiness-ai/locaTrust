@@ -114,9 +114,9 @@ export const VerifyEmailPage: React.FC = () => {
     // Célébration visuelle festive
     triggerCelebration();
 
-    // Redirection directe vers la page profil
+    // Redirection directe vers le tableau de bord
     setTimeout(() => {
-      navigate('/profile', { replace: true });
+      navigate('/dashboard', { replace: true });
     }, 1200);
   };
 
