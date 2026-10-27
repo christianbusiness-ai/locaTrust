@@ -230,7 +230,7 @@ export const ProfilePage: React.FC = () => {
         setErrorMsg(error.message || 'Impossible de mettre à jour le profil.');
       } else {
         await refreshProfile();
-        setSuccessMsg('Votre profil a été mis à jour avec succès dans la base de données !');
+        setSuccessMsg('Vos informations personnelles ont été enregistrées');
         setTimeout(() => setSuccessMsg(null), 4000);
       }
     } catch (err: any) {

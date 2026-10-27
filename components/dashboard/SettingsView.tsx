@@ -487,7 +487,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       window.dispatchEvent(new CustomEvent('locatrust:active_user_changed'));
 
       triggerCelebration('success');
-      setSavedMessage('✅ Vos informations personnelles ont été enregistrées avec succès dans la base de données !');
+      setSavedMessage('✅ Vos informations personnelles ont été enregistrées');
       setTimeout(() => setSavedMessage(null), 4500);
     } catch (err: any) {
       console.error('Erreur sauvegarde profil:', err);
@@ -1029,7 +1029,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black flex items-center gap-2 shadow-md transition-all active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{isSaving ? 'Enregistrement dans la base...' : 'Enregistrer les informations personnelles'}</span>
+                  <span>{isSaving ? 'Enregistrement...' : 'Enregistrer les informations personnelles'}</span>
                 </button>
               </div>
             </form>
