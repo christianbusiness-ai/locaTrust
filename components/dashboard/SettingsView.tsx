@@ -185,7 +185,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [fullName, setFullName] = useState<string>(() => profile?.full_name || currentUser?.full_name || '');
   const [email, setEmail] = useState<string>(() => (profile as any)?.email || user?.email || currentUser?.email || '');
   const [phone, setPhone] = useState<string>(() => profile?.phone || currentUser?.phone || '');
-  const [address, setAddress] = useState<string>(() => currentUser?.address || 'Abidjan, Côte d\'Ivoire');
+  const [city, setCity] = useState<string>(() => profile?.city || 'Abidjan');
+  const [address, setAddress] = useState<string>(() => profile?.commune || currentUser?.address || '');
 
   // Synchronize when profile or user loads
   React.useEffect(() => {
@@ -194,9 +195,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if ((profile as any).email) setEmail((profile as any).email);
       if (profile.phone) setPhone(profile.phone);
       if (profile.cni_number) setDocIdentifier(profile.cni_number);
-      if (profile.commune || profile.city) {
-        setAddress(profile.commune || profile.city || '');
-      }
+      if (profile.city) setCity(profile.city);
+      if (profile.commune) setAddress(profile.commune);
       if (profile.accounting_year) {
         setActiveAccountingYear(profile.accounting_year);
         setInputAccountingYear(profile.accounting_year);
@@ -385,12 +385,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     const trimmedFullName = fullName.trim();
     const trimmedPhone = phone.trim();
+    const trimmedCity = city.trim();
     const trimmedAddress = address.trim();
     const trimmedCni = docIdentifier.trim();
     const trimmedEmail = email.trim();
 
     if (!user?.id) {
-      if (trimmedAddress) try { localStorage.setItem('locatrust_user_address', trimmedAddress); } catch {}
+      if (trimmedCity) try { localStorage.setItem('locatrust_user_city', trimmedCity); } catch {}
+      if (trimmedAddress) try { localStorage.setItem('locatrust_user_commune', trimmedAddress); } catch {}
+      const fullLoc = trimmedAddress ? (trimmedCity ? `${trimmedAddress}, ${trimmedCity}` : trimmedAddress) : (trimmedCity || '');
+      if (fullLoc) try { localStorage.setItem('locatrust_user_address', fullLoc); } catch {}
       if (trimmedPhone) try { localStorage.setItem('locatrust_user_phone', trimmedPhone); } catch {}
       if (trimmedCni) try { localStorage.setItem('locatrust_user_cni', trimmedCni); } catch {}
       if (trimmedFullName) {
@@ -406,12 +410,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     try {
       setIsSaving(true);
+      // La ville et l'adresse/commune sont enregistrées STRICTEMENT telles que saisies par l'utilisateur
       const updatePayload: Record<string, any> = {
         full_name: trimmedFullName,
         phone: trimmedPhone,
         cni_number: trimmedCni,
+        city: trimmedCity || undefined,
         commune: trimmedAddress || undefined,
-        city: trimmedAddress || 'Abidjan',
         updated_at: new Date().toISOString()
       };
 
@@ -428,8 +433,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (updError) throw updError;
 
       // 2. Synchronisation dans tous les stores locaux pour que les contrats et quittances disposent des données exactes
+      if (trimmedCity) {
+        try { localStorage.setItem('locatrust_user_city', trimmedCity); } catch {}
+      }
       if (trimmedAddress) {
-        try { localStorage.setItem('locatrust_user_address', trimmedAddress); } catch {}
+        try { localStorage.setItem('locatrust_user_commune', trimmedAddress); } catch {}
+      }
+      const fullLocationString = trimmedAddress
+        ? (trimmedCity ? `${trimmedAddress}, ${trimmedCity}` : trimmedAddress)
+        : (trimmedCity || '');
+      if (fullLocationString) {
+        try { localStorage.setItem('locatrust_user_address', fullLocationString); } catch {}
       }
       if (trimmedPhone) {
         try { localStorage.setItem('locatrust_user_phone', trimmedPhone); } catch {}
@@ -862,14 +876,73 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">
-                    {isAgency ? "Adresse du Siège Social" : 'Adresse de résidence principale'}
+                    {isAgency ? "Ville du Siège Social" : 'Ville de résidence'}
+                  </label>
+                  <input
+                    type="text"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    list="ci-cities-list"
+                    placeholder="Ex : Abidjan, Bouaké, Yamoussoukro, San-Pédro, Korhogo, Daloa..."
+                    className="w-full p-3 rounded-xl border border-slate-300 font-bold focus:ring-2 focus:ring-blue-600/30"
+                  />
+                  <datalist id="ci-cities-list">
+                    <option value="Abidjan" />
+                    <option value="Bouaké" />
+                    <option value="Yamoussoukro" />
+                    <option value="San-Pédro" />
+                    <option value="Korhogo" />
+                    <option value="Daloa" />
+                    <option value="Man" />
+                    <option value="Gagnoa" />
+                    <option value="Divo" />
+                    <option value="Soubré" />
+                    <option value="Grand-Bassam" />
+                    <option value="Dabou" />
+                    <option value="Bingerville" />
+                    <option value="Anyama" />
+                    <option value="Agboville" />
+                    <option value="Aboisso" />
+                    <option value="Bondoukou" />
+                    <option value="Séguéla" />
+                    <option value="Ferkessédougou" />
+                    <option value="Odienné" />
+                    <option value="Katiola" />
+                    <option value="Toumodi" />
+                    <option value="Daoukro" />
+                    <option value="Guiglo" />
+                    <option value="Duékoué" />
+                    <option value="Danané" />
+                    <option value="Issia" />
+                    <option value="Sinfra" />
+                    <option value="Oumé" />
+                    <option value="Tiassalé" />
+                    <option value="Boundiali" />
+                    <option value="Bouna" />
+                    <option value="Sassandra" />
+                    <option value="Tabou" />
+                    <option value="Adzopé" />
+                    <option value="Akoupé" />
+                  </datalist>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    Sélectionnez une ville de Côte d'Ivoire ou saisissez librement n'importe quelle ville de votre choix.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    {isAgency ? "Adresse précise du Siège (Rue, Quartier)" : 'Commune, Quartier ou Rue de résidence'}
                   </label>
                   <input
                     type="text"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
+                    placeholder="Ex : Cocody Angré, Koko, Commerce, Kennedy, Riviera..."
                     className="w-full p-3 rounded-xl border border-slate-300 font-bold focus:ring-2 focus:ring-blue-600/30"
                   />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    Précisez votre quartier, commune ou rue.
+                  </span>
                 </div>
 
                 {!isAgency && (

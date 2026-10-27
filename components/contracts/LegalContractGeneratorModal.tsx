@@ -169,7 +169,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.ownerEmail || user?.email || (profile as any)?.email || 'contact@locatrust.ci'
   );
   const [ownerAddress, setOwnerAddress] = useState<string>(
-    initialData?.ownerAddress || (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : 'Abidjan - Côte d\'Ivoire')
+    initialData?.ownerAddress ||
+    (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_address') : null) ||
+    (profile?.commune && profile?.city
+      ? `${profile.commune}, ${profile.city}`
+      : profile?.city || profile?.commune || (profile as any)?.address || 'Côte d\'Ivoire')
   );
   const [ownerCni, setOwnerCni] = useState<string>(
     initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A'
@@ -297,7 +301,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         else if (user?.email || (profile as any)?.email) setOwnerEmail(user?.email || (profile as any)?.email);
 
         if (initialData.ownerAddress) setOwnerAddress(initialData.ownerAddress);
-        else if (profile?.commune || profile?.city) setOwnerAddress(profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : (profile?.city || 'Abidjan'));
+        else if (profile?.commune && profile?.city) setOwnerAddress(`${profile.commune}, ${profile.city}`);
+        else if (profile?.city || profile?.commune) setOwnerAddress(profile?.city || profile?.commune || 'Côte d\'Ivoire');
+        else if (typeof window !== 'undefined' && localStorage.getItem('locatrust_user_address')) setOwnerAddress(localStorage.getItem('locatrust_user_address')!);
 
         if (initialData.ownerCni) setOwnerCni(initialData.ownerCni);
         else if (profile?.cni_number) setOwnerCni(profile.cni_number);
