@@ -140,8 +140,9 @@ export function resolveRealReceiptData(
   let ownerPhone =
     matchedContract?.owner?.phone ||
     matchedContract?.owner_phone ||
-    currentUser?.user_metadata?.phone ||
     currentProfile?.phone ||
+    currentUser?.user_metadata?.phone ||
+    (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_phone') : null) ||
     '0500552141';
 
   let ownerCni =
@@ -149,6 +150,7 @@ export function resolveRealReceiptData(
     matchedContract?.owner_cni ||
     currentProfile?.cni_number ||
     currentUser?.user_metadata?.cni_number ||
+    (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) ||
     'CI-00289412';
 
   // --- Locataire ---

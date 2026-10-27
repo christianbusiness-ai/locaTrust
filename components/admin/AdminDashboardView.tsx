@@ -327,6 +327,34 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   useEffect(() => {
     fetchRealData();
+
+    // Rafraîchissement automatique instantané sur soumission KYC ou modification de profil
+    const handleSync = () => {
+      fetchRealData();
+    };
+
+    window.addEventListener('locatrust:verification_updated', handleSync);
+    window.addEventListener('locatrust:profile_updated', handleSync);
+    window.addEventListener('locatrust:refresh_admin_data', handleSync);
+
+    // Canal Supabase Realtime pour détecter les nouveaux dossiers KYC en direct
+    const channel = supabase
+      .channel('admin-kyc-live-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          fetchRealData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      window.removeEventListener('locatrust:verification_updated', handleSync);
+      window.removeEventListener('locatrust:profile_updated', handleSync);
+      window.removeEventListener('locatrust:refresh_admin_data', handleSync);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const pendingDocsCount = docRequests.filter(d => d.status === 'en_attente').length;

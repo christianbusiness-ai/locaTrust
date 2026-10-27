@@ -288,10 +288,19 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (initialData.tenantEmail) setTenantEmail(initialData.tenantEmail);
         if (initialData.tenantAddress) setTenantAddress(initialData.tenantAddress);
         if (initialData.ownerName) setOwnerName(initialData.ownerName);
+        else if (profile?.full_name) setOwnerName(profile.full_name);
+
         if (initialData.ownerPhone) setOwnerPhone(initialData.ownerPhone);
+        else if (profile?.phone) setOwnerPhone(profile.phone);
+
         if (initialData.ownerEmail) setOwnerEmail(initialData.ownerEmail);
+        else if (user?.email || (profile as any)?.email) setOwnerEmail(user?.email || (profile as any)?.email);
+
         if (initialData.ownerAddress) setOwnerAddress(initialData.ownerAddress);
+        else if (profile?.commune || profile?.city) setOwnerAddress(profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : (profile?.city || 'Abidjan'));
+
         if (initialData.ownerCni) setOwnerCni(initialData.ownerCni);
+        else if (profile?.cni_number) setOwnerCni(profile.cni_number);
 
         // Récupérer les informations complètes du locataire depuis la table profiles si disponible
         if (initialData.tenantId) {

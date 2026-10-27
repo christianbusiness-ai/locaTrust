@@ -41,6 +41,8 @@ import { ACCENT_THEMES, applyAccentTheme, getActiveThemeStorageKey } from '@/lib
 import { AccountingYearCompactControl } from './AccountingYearCompactControl';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { triggerCelebration } from '@/lib/celebration';
+import { getActiveUser, saveActiveUser } from '@/lib/authStore';
 import {
   SUGGESTED_AVATARS,
   getDefaultRealisticAvatar,
@@ -191,6 +193,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (profile.full_name) setFullName(profile.full_name);
       if ((profile as any).email) setEmail((profile as any).email);
       if (profile.phone) setPhone(profile.phone);
+      if (profile.cni_number) setDocIdentifier(profile.cni_number);
+      if (profile.commune || profile.city) {
+        setAddress(profile.commune || profile.city || '');
+      }
       if (profile.accounting_year) {
         setActiveAccountingYear(profile.accounting_year);
         setInputAccountingYear(profile.accounting_year);
@@ -291,9 +297,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       await refreshProfile();
       setDocFile(null);
       setDocFilePreview(null);
+      triggerCelebration('success');
       setDocSuccessMsg('✅ Vos pièces justificatives ont été transmises avec succès à l’administrateur ! Votre dossier KYC est désormais en cours d’examen.');
-      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
-      window.dispatchEvent(new CustomEvent('locatrust:verification_updated'));
+      
+      // Notifier l'administrateur en temps réel (via Realtime et CustomEvents)
+      try {
+        await broadcastLiveEvent('KYC_SUBMITTED', {
+          actorId: user.id,
+          data: {
+            userId: user.id,
+            userName: fullName || user.email,
+            cniNumber: docIdentifier.trim(),
+            docUrl: finalDocUrl
+          }
+        });
+      } catch {}
+
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: { id: user.id, status: 'en_attente' } }));
+      window.dispatchEvent(new CustomEvent('locatrust:verification_updated', { detail: { id: user.id, status: 'en_attente' } }));
+      window.dispatchEvent(new CustomEvent('locatrust:refresh_admin_data'));
       setTimeout(() => setDocSuccessMsg(null), 8000);
     } catch (err: any) {
       setDocErrorMsg(err?.message || 'Erreur lors du téléversement.');
@@ -355,58 +377,114 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const subscriptionCost = activePropertiesCount <= 1 ? 500 : activePropertiesCount <= 10 ? 2000 : activePropertiesCount <= 20 ? 5000 : 10000;
 
-  // Handle Save Profile
+  // Handle Save Profile (Persistance garantie dans la base de données Supabase)
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveError(null);
+    setSavedMessage(null);
+
+    const trimmedFullName = fullName.trim();
+    const trimmedPhone = phone.trim();
+    const trimmedAddress = address.trim();
+    const trimmedCni = docIdentifier.trim();
+    const trimmedEmail = email.trim();
+
     if (!user?.id) {
+      if (trimmedAddress) try { localStorage.setItem('locatrust_user_address', trimmedAddress); } catch {}
+      if (trimmedPhone) try { localStorage.setItem('locatrust_user_phone', trimmedPhone); } catch {}
+      if (trimmedCni) try { localStorage.setItem('locatrust_user_cni', trimmedCni); } catch {}
+      if (trimmedFullName) {
+        try {
+          localStorage.setItem('locatrust_user_fullname', trimmedFullName);
+          localStorage.setItem('locatrust_owner_name', trimmedFullName);
+        } catch {}
+      }
       setSavedMessage('Modifications enregistrées localement.');
-      setTimeout(() => setSavedMessage(null), 3000);
+      setTimeout(() => setSavedMessage(null), 3500);
       return;
     }
+
     try {
       setIsSaving(true);
       const updatePayload: Record<string, any> = {
-        full_name: fullName.trim(),
-        phone: phone.trim(),
-        cni_number: docIdentifier.trim(),
-        commune: address.trim() || undefined,
-        city: 'Abidjan',
+        full_name: trimmedFullName,
+        phone: trimmedPhone,
+        cni_number: trimmedCni,
+        commune: trimmedAddress || undefined,
+        city: trimmedAddress || 'Abidjan',
         updated_at: new Date().toISOString()
       };
 
-      const { error: updError } = await supabase.from('profiles').update(updatePayload).eq('id', user.id);
+      if (trimmedEmail) {
+        updatePayload.email = trimmedEmail;
+      }
+
+      // 1. Mise à jour directe et prioritaire dans la base de données Supabase (table profiles)
+      const { error: updError } = await supabase
+        .from('profiles')
+        .update(updatePayload)
+        .eq('id', user.id);
 
       if (updError) throw updError;
 
-      if (address) {
-        try { localStorage.setItem('locatrust_user_address', address.trim()); } catch {}
+      // 2. Synchronisation dans tous les stores locaux pour que les contrats et quittances disposent des données exactes
+      if (trimmedAddress) {
+        try { localStorage.setItem('locatrust_user_address', trimmedAddress); } catch {}
       }
-      if (phone) {
-        try { localStorage.setItem('locatrust_user_phone', phone.trim()); } catch {}
+      if (trimmedPhone) {
+        try { localStorage.setItem('locatrust_user_phone', trimmedPhone); } catch {}
       }
-      if (docIdentifier) {
-        try { localStorage.setItem('locatrust_user_cni', docIdentifier.trim()); } catch {}
+      if (trimmedCni) {
+        try { localStorage.setItem('locatrust_user_cni', trimmedCni); } catch {}
+      }
+      if (trimmedFullName) {
+        try {
+          localStorage.setItem('locatrust_user_fullname', trimmedFullName);
+          localStorage.setItem('locatrust_owner_name', trimmedFullName);
+        } catch {}
       }
 
+      // 3. Mise à jour de l'utilisateur actif dans authStore
+      const currentActive = getActiveUser();
+      if (currentActive) {
+        saveActiveUser({
+          ...currentActive,
+          full_name: trimmedFullName || currentActive.full_name,
+          phone: trimmedPhone || currentActive.phone,
+          cni_number: trimmedCni || currentActive.cni_number,
+          address: trimmedAddress || currentActive.address,
+          email: trimmedEmail || currentActive.email
+        });
+      }
+
+      // 4. Rafraîchissement réactif du contexte utilisateur global
       await refreshProfile();
-      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
-      setSavedMessage('Vos informations personnelles ont été mises à jour avec succès.');
-      setTimeout(() => setSavedMessage(null), 3500);
+
+      // 5. Diffusion en temps réel vers tous les appareils connectés et l'administrateur
+      try {
+        await broadcastLiveEvent('PROFILE_UPDATED', {
+          actorId: user.id,
+          targetUserId: user.id,
+          data: updatePayload
+        });
+      } catch {}
+
+      window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: updatePayload }));
+      window.dispatchEvent(new CustomEvent('locatrust:active_user_changed'));
+
+      triggerCelebration('success');
+      setSavedMessage('✅ Vos informations personnelles ont été enregistrées avec succès dans la base de données !');
+      setTimeout(() => setSavedMessage(null), 4500);
     } catch (err: any) {
       console.error('Erreur sauvegarde profil:', err);
-      // Fallback local pour garantir la continuité même si la connexion réseau est instable
-      if (address) {
-        try { localStorage.setItem('locatrust_user_address', address.trim()); } catch {}
-      }
-      if (phone) {
-        try { localStorage.setItem('locatrust_user_phone', phone.trim()); } catch {}
-      }
-      if (docIdentifier) {
-        try { localStorage.setItem('locatrust_user_cni', docIdentifier.trim()); } catch {}
-      }
-      window.dispatchEvent(new CustomEvent('locatrust:profile_updated'));
-      setSavedMessage('Vos informations ont été enregistrées avec succès.');
-      setTimeout(() => setSavedMessage(null), 3500);
+      // Fallback local pour garantir la continuité
+      if (trimmedAddress) try { localStorage.setItem('locatrust_user_address', trimmedAddress); } catch {}
+      if (trimmedPhone) try { localStorage.setItem('locatrust_user_phone', trimmedPhone); } catch {}
+      if (trimmedCni) try { localStorage.setItem('locatrust_user_cni', trimmedCni); } catch {}
+      if (trimmedFullName) try { localStorage.setItem('locatrust_owner_name', trimmedFullName); } catch {}
+      
+      setSaveError(err?.message || 'Erreur lors de la mise à jour sur la base de données.');
+      setTimeout(() => setSaveError(null), 5000);
     } finally {
       setIsSaving(false);
     }
@@ -857,9 +935,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </div>
 
+              {savedMessage && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2.5 animate-fadeIn shadow-sm">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{savedMessage}</span>
+                </div>
+              )}
+
               {saveError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl">
-                  {saveError}
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl flex items-center gap-2">
+                  <X className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{saveError}</span>
                 </div>
               )}
 
@@ -870,7 +956,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-black flex items-center gap-2 shadow-md transition-all active:scale-95"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{isSaving ? 'Enregistrement...' : 'Enregistrer les informations personnelles'}</span>
+                  <span>{isSaving ? 'Enregistrement dans la base...' : 'Enregistrer les informations personnelles'}</span>
                 </button>
               </div>
             </form>
