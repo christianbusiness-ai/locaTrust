@@ -50,6 +50,8 @@ const VerifyEmailPage = lazyWithRetry(() => import('@/src/pages/VerifyEmailPage'
 const ForgotPasswordPage = lazyWithRetry(() => import('@/src/pages/ForgotPasswordPage').then(m => ({ default: m.ForgotPasswordPage })), 'forgotPw');
 const ResetPasswordPage = lazyWithRetry(() => import('@/src/pages/ResetPasswordPage').then(m => ({ default: m.ResetPasswordPage })), 'resetPw');
 const ProfilePage = lazyWithRetry(() => import('@/src/pages/ProfilePage').then(m => ({ default: m.ProfilePage })), 'profile');
+const PrivacyPolicyPage = lazyWithRetry(() => import('@/src/pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })), 'privacy');
+const TermsPage = lazyWithRetry(() => import('@/src/pages/TermsPage').then(m => ({ default: m.TermsPage })), 'terms');
 const DashboardPage = lazyWithRetry(() => import('@/src/pages/DashboardPage').then(m => ({ default: m.DashboardPage })), 'dashboard');
 const DocumentVerificationView = lazyWithRetry(() => import('@/components/verification/DocumentVerificationView').then(m => ({ default: m.DocumentVerificationView })), 'docVerify');
 const RegisterModal = lazyWithRetry(() => import('@/components/auth/RegisterModal').then(m => ({ default: m.RegisterModal })), 'regModal');
@@ -235,6 +237,12 @@ export default function App() {
               <Route path="/verify-email" element={<VerifyEmailPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+              {/* Pages Légales Publiques (Exigées par Google OAuth & Conformité) */}
+              <Route path="/privacy" element={<PrivacyPolicyPage />} />
+              <Route path="/politique-de-confidentialite" element={<PrivacyPolicyPage />} />
+              <Route path="/terms" element={<TermsPage />} />
+              <Route path="/conditions" element={<TermsPage />} />
 
               {/* Routes Privées Sécurisées */}
               <Route
