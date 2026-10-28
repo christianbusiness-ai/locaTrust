@@ -100,6 +100,8 @@ export default function AgencyDashboardPage({
   const [selectedContractApp, setSelectedContractApp] = useState<any>(null);
   const [isConfirmPaymentOpen, setIsConfirmPaymentOpen] = useState(false);
   const [isSendReminderOpen, setIsSendReminderOpen] = useState(false);
+  const [isAddPaymentAccountOpen, setIsAddPaymentAccountOpen] = useState(false);
+  const [isSupportOpen, setIsSupportOpen] = useState(false);
   React.useEffect(() => {
     const handleNavigateTab = (e: any) => {
       const targetTab = e?.detail?.tab;
