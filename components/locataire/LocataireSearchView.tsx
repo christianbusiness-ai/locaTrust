@@ -22,7 +22,8 @@ import {
   RefreshCw,
   Home,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  Clock
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { Property } from '@/types/database.types';
@@ -32,6 +33,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
 export interface LocataireSearchViewProps {
@@ -480,7 +482,27 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         console.warn('LocalStorage error:', err);
       }
 
+      // Synchronisation temps réel immédiate multi-appareils
+      broadcastLiveEvent('APPLICATION_SUBMITTED', {
+        actorId: applicantId,
+        targetUserId: targetOwnerId,
+        propertyId: selectedProperty.id,
+        data: newApp,
+        timestamp: new Date().toISOString()
+      });
+
+      // Synchronisation persistante avec le serveur central /api/sync
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'submit_application',
+          application: newApp
+        })
+      }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
+
       await createRentalApplication({
+        id: newApp.id,
         property_id: selectedProperty.id,
         tenant_id: applicantId,
         owner_id: targetOwnerId,
@@ -488,6 +510,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,
+        tenant_avatar: newApp.tenant_avatar,
         property_title: selectedProperty.title,
         property_address: (selectedProperty as any).address || `${selectedProperty.commune || ''}, ${selectedProperty.city || 'Abidjan'}`.trim(),
         rent_amount: Number(selectedProperty.rent || (selectedProperty as any).rent_amount || 0),

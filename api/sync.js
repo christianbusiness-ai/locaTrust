@@ -307,7 +307,33 @@ let SERVER_STORE = {
   ],
   messages: [],
   conversations: [],
-  contacts: {}
+  contacts: {},
+  applications: [
+    {
+      id: 'app_christian_maison_daloa',
+      property_id: '8c6bb0dd-d482-4878-96ff-8ba245c4f9af',
+      property_title: 'Maison à louer',
+      property_address: 'Daloa, Daloa',
+      rent_amount: 250000,
+      caution_amount: 500000,
+      date_received: '2026-10-29',
+      status: 'en_attente',
+      dossier_status: 'complet',
+      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      tenant_name: 'christian',
+      tenant_email: 'christianyaokoffi88@gmail.com',
+      tenant_phone: '+225 07 00 00 00 00',
+      owner_id: 'c26c548a-4a86-4f0f-a6b5-6eb38127021d',
+      owner_name: 'Romaric koffi',
+      comment: 'Bonjour, je souhaite réserver ce bien et planifier la constitution du dossier de location.',
+      documents: {
+        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+      },
+      created_at: new Date().toISOString()
+    }
+  ]
 };
 
 export default async function handler(req, res) {
@@ -345,6 +371,7 @@ export default async function handler(req, res) {
             messages: SERVER_STORE.messages,
             conversations: SERVER_STORE.conversations,
             contacts: SERVER_STORE.contacts,
+            applications: SERVER_STORE.applications,
             timestamp: new Date().toISOString()
           }
         });
@@ -379,6 +406,9 @@ export default async function handler(req, res) {
         const userConversations = SERVER_STORE.conversations.filter(
           (c) => c.participant_a === cleanUserId || c.participant_b === cleanUserId || c.tenant_id === cleanUserId || c.owner_id === cleanUserId
         );
+        const userApplications = SERVER_STORE.applications.filter(
+          (a) => a.owner_id === cleanUserId || a.agency_id === cleanUserId || a.tenant_id === cleanUserId || (!cleanUserId && (a.owner_id === 'usr_owner' || a.tenant_id === 'usr_tenant'))
+        );
 
         return res.status(200).json({
           success: true,
@@ -393,6 +423,7 @@ export default async function handler(req, res) {
             messages: userMessages,
             conversations: userConversations,
             contacts: SERVER_STORE.contacts,
+            applications: userApplications,
             timestamp: new Date().toISOString()
           }
         });
@@ -412,6 +443,7 @@ export default async function handler(req, res) {
           messages: [],
           conversations: [],
           contacts: {},
+          applications: [],
           timestamp: new Date().toISOString()
         }
       });
@@ -889,9 +921,108 @@ export default async function handler(req, res) {
         }
       }
 
+      // 6sexies. Soumission d'une demande de location par le locataire
+      if (action === 'submit_application') {
+        const application = body.application;
+        if (!application) {
+          return res.status(400).json({ success: false, error: 'Données de candidature manquantes.' });
+        }
+
+        const newId = application.id || `app_${Date.now()}`;
+        const normalizedApp = {
+          ...application,
+          id: newId,
+          created_at: application.created_at || new Date().toISOString()
+        };
+
+        SERVER_STORE.applications = [
+          normalizedApp,
+          ...SERVER_STORE.applications.filter(a => a.id !== newId)
+        ];
+
+        // Créer notification pour le propriétaire / agence
+        const notifId = `notif_app_${Date.now()}`;
+        const applicantName = application.tenant_name || 'Un locataire';
+        const propertyTitle = application.property_title || 'votre logement';
+        const targetUserId = application.owner_id || application.agency_id;
+
+        const notifApp = {
+          id: notifId,
+          title: 'Nouvelle demande de location reçue',
+          description: `${applicantName} a postulé pour le bien « ${propertyTitle} ».`,
+          time: "À l'instant",
+          timestamp: new Date().toISOString(),
+          unread: true,
+          read: false,
+          category: 'candidature',
+          type: 'info',
+          targetTab: 'applications',
+          targetUserId: targetUserId,
+          senderUserId: application.tenant_id,
+          payload: {
+            applicationId: newId,
+            propertyId: application.property_id,
+            tenantId: application.tenant_id
+          }
+        };
+
+        SERVER_STORE.notifications = [
+          notifApp,
+          ...SERVER_STORE.notifications.filter(n => n.id !== notifId)
+        ];
+
+        return res.status(200).json({
+          success: true,
+          application: normalizedApp,
+          applications: SERVER_STORE.applications,
+          notifications: SERVER_STORE.notifications
+        });
+      }
+
+      // 6septies. Mise à jour d'une demande de location
+      if (action === 'update_application') {
+        const { applicationId, updates } = body;
+        if (applicationId && updates) {
+          SERVER_STORE.applications = SERVER_STORE.applications.map(a => {
+            if (a.id === applicationId) {
+              return { ...a, ...updates, updated_at: new Date().toISOString() };
+            }
+            return a;
+          });
+          return res.status(200).json({
+            success: true,
+            applications: SERVER_STORE.applications
+          });
+        }
+      }
+
+      // 6octies. Marquage des notifications comme lues
+      if (action === 'mark_notification_read') {
+        const { notificationId, userId } = body;
+        if (notificationId) {
+          SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
+            if (n.id === notificationId) {
+              return { ...n, read: true, unread: false, is_read: true };
+            }
+            return n;
+          });
+        } else if (userId) {
+          SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
+            if (n.targetUserId === userId) {
+              return { ...n, read: true, unread: false, is_read: true };
+            }
+            return n;
+          });
+        }
+        return res.status(200).json({
+          success: true,
+          notifications: SERVER_STORE.notifications
+        });
+      }
+
       // 7. Synchronisation bidirectionnelle globale
       if (action === 'sync_all') {
-        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties, clientMessages, clientContacts } = body;
+        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties, clientMessages, clientContacts, clientApplications } = body;
         if (Array.isArray(clientPayments)) {
           for (const cp of clientPayments) {
             if (cp && cp.reference && !SERVER_STORE.payments.some(p => p.reference === cp.reference)) {
@@ -937,6 +1068,13 @@ export default async function handler(req, res) {
         if (clientContacts && typeof clientContacts === 'object') {
           Object.assign(SERVER_STORE.contacts, clientContacts);
         }
+        if (Array.isArray(clientApplications)) {
+          for (const a of clientApplications) {
+            if (a && a.id && !SERVER_STORE.applications.some(sa => sa.id === a.id)) {
+              SERVER_STORE.applications.unshift(a);
+            }
+          }
+        }
         return res.status(200).json({
           success: true,
           data: {
@@ -949,7 +1087,8 @@ export default async function handler(req, res) {
             properties: SERVER_STORE.properties,
             messages: SERVER_STORE.messages,
             conversations: SERVER_STORE.conversations,
-            contacts: SERVER_STORE.contacts
+            contacts: SERVER_STORE.contacts,
+            applications: SERVER_STORE.applications
           }
         });
       }

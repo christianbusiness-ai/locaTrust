@@ -151,7 +151,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 localStorage.getItem('locatrust_tenant_avatar') ||
                 localStorage.getItem('locatrust_user_avatar_usr_tenant')
               : null) ||
-            getDefaultRealisticAvatar(dbA.tenant_name, 'locataire'),
+            (dbA.tenant_name ? `https://ui-avatars.com/api/?name=${encodeURIComponent(dbA.tenant_name)}&background=0284c7&color=fff` : undefined),
           tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
           documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
             ? dbA.documents
@@ -182,8 +182,38 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         } catch {}
       }
 
-      // 1. Récupérer les identifiants des biens appartenant au bailleur ou à l'agence connectée
+      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
+      let serverApps: any[] = [];
       const userPropertyIds = new Set<string>();
+
+      try {
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=${encodeURIComponent(profile?.role || 'proprietaire')}` : '/api/sync';
+        const syncRes = await fetch(syncUrl);
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (syncJson?.success && Array.isArray(syncJson.data?.applications)) {
+            serverApps = syncJson.data.applications;
+          }
+          if (syncJson?.data?.properties && Array.isArray(syncJson.data.properties)) {
+            syncJson.data.properties.forEach((p: any) => {
+              if (p.id && (p.owner_id === user?.id || p.agency_id === user?.id || !user?.id)) {
+                userPropertyIds.add(p.id);
+              }
+            });
+          }
+        }
+      } catch (syncErr) {
+        console.warn('API /api/sync applications notice:', syncErr);
+      }
+
+      // Fusionner les candidatures du serveur central
+      for (const sa of serverApps) {
+        if (!localApps.some(a => a.id === sa.id)) {
+          localApps.unshift(sa);
+        }
+      }
+
+      // 1. Récupérer les identifiants des biens appartenant au bailleur ou à l'agence connectée
       if (user?.id) {
         try {
           const { data: myProperties } = await supabase

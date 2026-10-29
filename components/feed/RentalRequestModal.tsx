@@ -12,6 +12,7 @@ import { sendChatMessage } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 interface RentalRequestModalProps {
   property: Property | null;
@@ -124,15 +125,39 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
+      // Synchronisation temps réel immédiate multi-appareils
+      broadcastLiveEvent('APPLICATION_SUBMITTED', {
+        actorId: applicantId,
+        targetUserId: targetOwnerId,
+        propertyId: property.id,
+        data: newApp,
+        timestamp: new Date().toISOString()
+      });
+
+      // Synchronisation persistante avec le serveur central /api/sync
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'submit_application',
+          application: newApp
+        })
+      }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
+
       // Notification ciblée pour le bailleur
       pushGlobalNotification({
         title: 'Nouvelle demande de location reçue',
         description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
-        category: 'demande',
+        category: 'candidature',
         targetTab: 'applications',
         targetUserId: targetOwnerId,
         senderUserId: applicantId,
-        senderAvatar: applicantAvatar
+        senderAvatar: applicantAvatar,
+        payload: {
+          applicationId: newApp.id,
+          propertyId: property.id,
+          tenantId: applicantId
+        }
       });
 
       // Stocker les coordonnées des deux interlocuteurs pour la messagerie
@@ -174,7 +199,10 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
 
     try {
       const res = await createRentalApplication({
+        id: newApp.id,
         property_id: property.id,
+        owner_id: targetOwnerId,
+        agency_id: (property as any).agency_id,
         tenant_id: applicantId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,

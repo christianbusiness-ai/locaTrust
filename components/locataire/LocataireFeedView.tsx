@@ -41,6 +41,7 @@ import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { createRentalApplication } from '@/lib/supabase/services';
 import { sendChatMessage, sendRealChatMessage } from '@/lib/messagingStore';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 interface LocataireFeedViewProps {
   onOpenMessages?: (landlordName?: string) => void;
@@ -205,14 +206,38 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
-      // Notification temps réel immédiate pour le bailleur
+      // Synchronisation temps réel immédiate multi-appareils
+      broadcastLiveEvent('APPLICATION_SUBMITTED', {
+        actorId: applicantId,
+        targetUserId: targetOwnerId,
+        propertyId: selectedRental.id,
+        data: newApp,
+        timestamp: new Date().toISOString()
+      });
+
+      // Synchronisation persistante avec le serveur central /api/sync
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'submit_application',
+          application: newApp
+        })
+      }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
+
+      // Notification ciblée pour le bailleur ou l'agence gestionnaire
       pushGlobalNotification({
         title: 'Nouvelle demande de location reçue',
         description: `${applicantName} a postulé pour le bien « ${selectedRental.title} ».`,
-        category: 'demande',
+        category: 'candidature',
         targetTab: 'applications',
         targetUserId: targetOwnerId,
-        senderUserId: applicantId
+        senderUserId: applicantId,
+        payload: {
+          applicationId: newApp.id,
+          propertyId: selectedRental.id,
+          tenantId: applicantId
+        }
       });
 
       // Stocker les coordonnées du propriétaire pour la messagerie
@@ -243,21 +268,29 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         console.warn('Chat message warning:', msgErr);
       }
 
-      // 3. Sauvegarde asynchrone Supabase (avec fallback transparent)
+      // 3. Sauvegarde asynchrone Supabase (avec toutes les métadonnées réelles)
       try {
         createRentalApplication({
+          id: newApp.id,
           property_id: selectedRental.id,
+          owner_id: targetOwnerId,
+          agency_id: selectedRental.agencyId,
           tenant_id: applicantId,
           tenant_name: applicantName,
           tenant_email: applicantEmail,
           tenant_phone: applicantPhone,
+          tenant_avatar: applicantAvatar,
+          property_title: selectedRental.title,
+          property_address: selectedRental.location,
+          rent_amount: realRent,
+          caution_amount: realCaution,
           status: 'en_attente',
           dossier_status: 'complet',
-          monthly_income: Number(selectedRental.price || 0) * 3,
+          monthly_income: realRent * 3,
           profession: 'Locataire vérifié',
           message: applyComment,
           documents: newApp.documents as any
-        }).catch(() => {});
+        }).catch((err) => console.warn('Supabase createRentalApplication warning:', err));
       } catch {}
 
       // Fermeture immédiate du modal et déclenchement de la célébration

@@ -489,7 +489,7 @@ export const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadCount = notifications.filter((n) => !n.read && n.unread !== false && !n.is_read).length;
 
   const markAllAsRead = () => {
     setNotifications((prev) => {
@@ -506,6 +506,15 @@ export const Header: React.FC<HeaderProps> = ({
     if (currentUser?.id && isValidUuid(currentUser.id)) {
       supabase.from('notifications').update({ read: true, is_read: true }).eq('user_id', currentUser.id).then();
     }
+
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'mark_notification_read',
+        userId: currentUser?.id
+      })
+    }).catch(() => {});
   };
 
   const clearAllNotifications = () => {
@@ -537,6 +546,15 @@ export const Header: React.FC<HeaderProps> = ({
       supabase.from('notifications').update({ read: true, is_read: true }).eq('id', item.id).then();
     }
 
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'mark_notification_read',
+        notificationId: item.id
+      })
+    }).catch(() => {});
+
     setShowNotifications(false);
     setSelectedNotification(item);
 
@@ -551,8 +569,17 @@ export const Header: React.FC<HeaderProps> = ({
         }
       }, 150);
     } else if (
+      item.targetTab === 'applications' ||
+      item.category === 'candidature' ||
+      (item.category === 'demande' && item.targetTab !== 'messages' && !item.title?.toLowerCase().includes('message')) ||
+      (item.title && item.title.toLowerCase().includes('demande de location')) ||
+      (item.title && item.title.toLowerCase().includes('candidature'))
+    ) {
+      if (onNavigateTab) {
+        onNavigateTab('applications');
+      }
+    } else if (
       item.targetTab === 'messages' ||
-      item.category === 'demande' ||
       item.type === 'message' ||
       (item.title && item.title.toLowerCase().includes('message'))
     ) {

@@ -380,6 +380,15 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
       case 'APPLICATION_SUBMITTED':
       case 'APPLICATION_UPDATED':
+        if (typeof window !== 'undefined' && payload?.data) {
+          try {
+            const raw = localStorage.getItem('locatrust_rental_applications');
+            const apps = raw ? JSON.parse(raw) : [];
+            const newApp = payload.data;
+            const updated = [newApp, ...apps.filter((a: any) => a.id !== newApp.id)];
+            localStorage.setItem('locatrust_rental_applications', JSON.stringify(updated));
+          } catch {}
+        }
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: payload }));
         break;
 
