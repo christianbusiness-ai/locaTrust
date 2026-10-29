@@ -262,6 +262,7 @@ export default function AgencyDashboardPage({
                     }
                     setActiveTab('messages');
                   }}
+                  isDemo={isDemo}
                 />
               </ErrorBoundary>
             )}

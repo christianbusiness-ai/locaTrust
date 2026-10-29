@@ -210,7 +210,7 @@ export const Header: React.FC<HeaderProps> = ({
             } else {
               countApps = validApps.filter((a: any) =>
                 a.status === 'en_attente' &&
-                (!currentUser.id || a.owner_id === currentUser.id || a.property_owner_id === currentUser.id)
+                (!currentUser.id || a.owner_id === currentUser.id || a.agency_id === currentUser.id || a.property_owner_id === currentUser.id)
               ).length;
             }
           }
@@ -230,7 +230,7 @@ export const Header: React.FC<HeaderProps> = ({
             } else {
               countContracts = cnts.filter((c: any) =>
                 c.status === 'actif' &&
-                (!currentUser.id || c.owner_id === currentUser.id || c.owner?.id === currentUser.id)
+                (!currentUser.id || c.owner_id === currentUser.id || c.agency_id === currentUser.id || c.owner?.id === currentUser.id)
               ).length;
             }
           }
@@ -353,10 +353,12 @@ export const Header: React.FC<HeaderProps> = ({
             if (n.targetUserId) {
               const matchesMe =
                 n.targetUserId === userId ||
+                n.payload?.agencyId === userId ||
+                n.payload?.ownerId === userId ||
                 (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
                 (!userId && userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
                 (!userId && userRole === 'proprietaire' && n.targetUserId === 'usr_owner') ||
-                (!userId && userRole === 'agence' && n.targetUserId === 'usr_agency');
+                (!userId && userRole === 'agence' && (n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner'));
               if (!matchesMe) return false;
             } else if (n.targetRole) {
               const matchesRole =
@@ -420,10 +422,12 @@ export const Header: React.FC<HeaderProps> = ({
           if (n.targetUserId) {
             const matchesMe =
               n.targetUserId === userId ||
+              n.payload?.agencyId === userId ||
+              n.payload?.ownerId === userId ||
               (userEmail && n.targetUserId.toLowerCase() === userEmail) ||
               (!userId && userRole === 'locataire' && n.targetUserId === 'usr_tenant') ||
               (!userId && userRole === 'proprietaire' && n.targetUserId === 'usr_owner') ||
-              (!userId && userRole === 'agence' && n.targetUserId === 'usr_agency');
+              (!userId && userRole === 'agence' && (n.targetUserId === 'usr_agency' || n.targetUserId === 'usr_owner'));
             if (!matchesMe) return false;
           } else if (n.targetRole) {
             const matchesRole =

@@ -127,7 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             } else if (isProprietaire || isAgence) {
               countApps = validApps.filter((a: any) =>
                 a.status === 'en_attente' &&
-                (!user?.id || a.owner_id === user.id || a.property_owner_id === user.id)
+                (!user?.id || a.owner_id === user.id || a.agency_id === user.id || a.property_owner_id === user.id)
               ).length;
             }
           }
@@ -147,7 +147,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             } else if (isProprietaire || isAgence) {
               countContracts = cnts.filter((c: any) =>
                 c.status === 'actif' &&
-                (!user?.id || c.owner_id === user.id || c.owner?.id === user.id)
+                (!user?.id || c.owner_id === user.id || c.agency_id === user.id || c.owner?.id === user.id)
               ).length;
             }
           }

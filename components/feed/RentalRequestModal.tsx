@@ -50,11 +50,13 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         : null) ||
       getDefaultRealisticAvatar(applicantName, 'locataire');
 
-    const targetOwnerId = property.owner_id || (property as any).agency_id || property.owner?.id || 'usr_owner';
+    const isAgency = Boolean((property as any).is_agency || (property as any).agency_id || (property as any).agency_name || (property.owner as any)?.account_type === 'agence');
+    const targetAgencyId = (property as any).agency_id || (isAgency ? (property.owner_id || property.owner?.id) : undefined);
+    const targetOwnerId = property.owner_id || targetAgencyId || property.owner?.id || 'usr_owner';
+    const primaryRecipientId = targetAgencyId || targetOwnerId;
     const targetOwnerName = (property as any).agency_name || property.owner?.full_name || (property as any).owner_name || (property as any).mandant_name || 'Propriétaire Bailleur';
     const targetOwnerAvatar = property.owner?.avatar_url || (property as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(targetOwnerName)}&background=1E40AF&color=fff`;
     const targetOwnerPhone = property.owner?.phone || (property as any).owner_phone || '+225 07 00 00 00 00';
-    const isAgency = Boolean((property as any).is_agency || (property as any).agency_name || (property.owner as any)?.account_type === 'agence');
 
     const realRent = Number(property.rent || (property as any).price || 0);
     const realCaution = Number(
@@ -83,8 +85,9 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       owner_name: targetOwnerName,
       owner_phone: targetOwnerPhone,
       owner_avatar: targetOwnerAvatar,
-      agency_id: (property as any).agency_id,
-      agency_name: (property as any).agency_name,
+      agency_id: targetAgencyId,
+      agency_name: (property as any).agency_name || (isAgency ? targetOwnerName : undefined),
+      mandant_id: (property as any).mandant_id,
       is_agency: isAgency,
       tenant_signed: false,
       comment: message,
@@ -128,7 +131,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       // Synchronisation temps réel immédiate multi-appareils
       broadcastLiveEvent('APPLICATION_SUBMITTED', {
         actorId: applicantId,
-        targetUserId: targetOwnerId,
+        targetUserId: primaryRecipientId,
         propertyId: property.id,
         data: newApp,
         timestamp: new Date().toISOString()
@@ -144,28 +147,51 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         })
       }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
 
-      // Notification ciblée pour le bailleur
+      // Notification ciblée pour le bailleur ou l'agence
       pushGlobalNotification({
         title: 'Nouvelle demande de location reçue',
         description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
         category: 'candidature',
         targetTab: 'applications',
-        targetUserId: targetOwnerId,
+        targetRole: isAgency ? 'agence' : 'proprietaire',
+        targetUserId: primaryRecipientId,
         senderUserId: applicantId,
         senderAvatar: applicantAvatar,
         payload: {
           applicationId: newApp.id,
           propertyId: property.id,
-          tenantId: applicantId
+          tenantId: applicantId,
+          agencyId: targetAgencyId,
+          ownerId: targetOwnerId
         }
       });
 
+      if (targetAgencyId && targetOwnerId && targetAgencyId !== targetOwnerId) {
+        pushGlobalNotification({
+          title: 'Nouvelle demande de location reçue',
+          description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
+          category: 'candidature',
+          targetTab: 'applications',
+          targetRole: 'proprietaire',
+          targetUserId: targetOwnerId,
+          senderUserId: applicantId,
+          senderAvatar: applicantAvatar,
+          payload: {
+            applicationId: newApp.id,
+            propertyId: property.id,
+            tenantId: applicantId,
+            agencyId: targetAgencyId,
+            ownerId: targetOwnerId
+          }
+        });
+      }
+
       // Stocker les coordonnées des deux interlocuteurs pour la messagerie
-      localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+      localStorage.setItem('locatrust_active_chat_contact', primaryRecipientId);
       localStorage.setItem(
-        'locatrust_contact_' + targetOwnerId,
+        'locatrust_contact_' + primaryRecipientId,
         JSON.stringify({
-          id: targetOwnerId,
+          id: primaryRecipientId,
           name: targetOwnerName,
           phone: targetOwnerPhone,
           role: isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
@@ -192,7 +218,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
 
     try {
       const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${property.title} ». ${message ? `Message : "${message}"` : ''}`;
-      sendChatMessage(applicantId, targetOwnerId, introMsg);
+      sendChatMessage(applicantId, primaryRecipientId, introMsg);
     } catch (msgErr) {
       console.warn('Chat message warning:', msgErr);
     }
@@ -202,7 +228,7 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         id: newApp.id,
         property_id: property.id,
         owner_id: targetOwnerId,
-        agency_id: (property as any).agency_id,
+        agency_id: targetAgencyId,
         tenant_id: applicantId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,

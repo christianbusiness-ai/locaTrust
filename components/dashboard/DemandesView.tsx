@@ -185,9 +185,27 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
       let serverApps: any[] = [];
       const userPropertyIds = new Set<string>();
+      const userMandantIds = new Set<string>();
+
+      if (typeof window !== 'undefined' && user?.id) {
+        try {
+          const rawMandates = localStorage.getItem(`locatrust_mandants_${user.id}`) || localStorage.getItem('locatrust_agency_mandates');
+          if (rawMandates) {
+            const parsedM = JSON.parse(rawMandates);
+            if (Array.isArray(parsedM)) {
+              parsedM.forEach((m: any) => {
+                if (m?.id && (!m.agency_id || m.agency_id === user.id)) {
+                  userMandantIds.add(m.id);
+                }
+              });
+            }
+          }
+        } catch {}
+      }
 
       try {
-        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=${encodeURIComponent(profile?.role || 'proprietaire')}` : '/api/sync';
+        const effectiveRole = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' ? 'agence' : (profile?.role || 'proprietaire');
+        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=${encodeURIComponent(effectiveRole)}` : '/api/sync';
         const syncRes = await fetch(syncUrl);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
@@ -198,6 +216,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             syncJson.data.properties.forEach((p: any) => {
               if (p.id && (p.owner_id === user?.id || p.agency_id === user?.id || !user?.id)) {
                 userPropertyIds.add(p.id);
+                if (p.mandant_id) userMandantIds.add(p.mandant_id);
               }
             });
           }
@@ -218,10 +237,13 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         try {
           const { data: myProperties } = await supabase
             .from('properties')
-            .select('id')
+            .select('id, mandant_id')
             .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
           if (myProperties) {
-            myProperties.forEach((p: any) => userPropertyIds.add(p.id));
+            myProperties.forEach((p: any) => {
+              userPropertyIds.add(p.id);
+              if (p.mandant_id) userMandantIds.add(p.mandant_id);
+            });
           }
         } catch (e) {
           console.warn('Erreur récupération propriétés utilisateur:', e);
@@ -237,6 +259,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               parsedProps.forEach((p: any) => {
                 if (p.id && (p.owner_id === user?.id || p.agency_id === user?.id || !user?.id)) {
                   userPropertyIds.add(p.id);
+                  if (p.mandant_id) userMandantIds.add(p.mandant_id);
                 }
               });
             }
@@ -252,7 +275,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const isAdmin = profile?.role === 'admin' || (user as any)?.role === 'admin';
 
-      // Filtrer strictement les candidatures appartenant à l'utilisateur
+      // Filtrer strictement les candidatures appartenant à l'utilisateur (Propriétaire ou Agence)
       const isRelevantForUser = (appItem: any) => {
         if (!appItem) return false;
         // Éliminer toute donnée fictive
@@ -266,11 +289,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           return false;
         }
         if (isAdmin) return true;
-        if (!user?.id) return isDemo || !appItem.owner_id || appItem.owner_id === 'usr_owner';
-        // Appartient strictement au bailleur ou à l'agence si c'est pour l'un de ses biens
+        if (!user?.id) return isDemo || !appItem.owner_id || appItem.owner_id === 'usr_owner' || appItem.agency_id === 'usr_agency' || appItem.owner_id === 'usr_agency';
+        // Appartient strictement au bailleur ou à l'agence si c'est pour l'un de ses biens ou mandants
         return (
           appItem.owner_id === user.id ||
           appItem.agency_id === user.id ||
+          appItem.mandant_id === user.id ||
+          (Boolean(appItem.owner_id) && userMandantIds.has(appItem.owner_id)) ||
+          (Boolean(appItem.mandant_id) && userMandantIds.has(appItem.mandant_id)) ||
           (Boolean(appItem.property_id) && userPropertyIds.has(appItem.property_id))
         );
       };
@@ -319,16 +345,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   useEffect(() => {
     loadFromDatabase();
 
-    const handleAppsUpdated = (e: any) => {
-      if (e.detail?.updatedApps && Array.isArray(e.detail.updatedApps)) {
-        setApplications(e.detail.updatedApps);
-      } else {
-        loadFromDatabase();
-      }
+    const handleAppsUpdated = () => {
+      loadFromDatabase();
     };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'locatrust_rental_applications' && e.newValue) {
-        try { setApplications(JSON.parse(e.newValue)); } catch {}
+        loadFromDatabase();
       }
     };
     window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
@@ -339,7 +361,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       window.removeEventListener('locatrust:contracts-updated', loadFromDatabase);
       window.removeEventListener('storage', handleStorage);
     };
-  }, []);
+  }, [user?.id, profile?.role, profile?.account_type]);
 
   const saveApplications = (updated: RentalApplication[]) => {
     setApplications(updated);
@@ -348,6 +370,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       window.dispatchEvent(
         new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: updated } })
       );
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync_all',
+          clientApplications: updated
+        })
+      }).catch(() => {});
     } catch (e) {
       console.warn(e);
     }

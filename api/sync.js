@@ -332,6 +332,37 @@ let SERVER_STORE = {
         attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
       },
       created_at: new Date().toISOString()
+    },
+    {
+      id: 'app_christian_agence_kk',
+      property_id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
+      property_title: 'Maison 4 pièce',
+      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
+      rent_amount: 30000,
+      caution_amount: 60000,
+      date_received: '2026-10-15',
+      status: 'contrat_actif',
+      dossier_status: 'complet',
+      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      tenant_name: 'christian',
+      tenant_email: 'christianyaokoffi88@gmail.com',
+      tenant_phone: '0500552141',
+      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+      agency_name: 'kk',
+      owner_name: 'kk',
+      is_agency: true,
+      tenant_signed: true,
+      owner_signed: true,
+      contract_finalized: true,
+      contract_number: 'LT-2026-CI-000492',
+      comment: 'Dossier de location validé et contrat scellé avec l\'agence kk.',
+      documents: {
+        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
+        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
+        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
+      },
+      created_at: '2026-10-15T10:00:00.000Z'
     }
   ]
 };
@@ -398,7 +429,7 @@ export default async function handler(req, res) {
           (pr) => pr.owner_id === cleanUserId || pr.agency_id === cleanUserId
         );
         const userNotifications = SERVER_STORE.notifications.filter(
-          (n) => n.targetUserId === cleanUserId || n.senderUserId === cleanUserId
+          (n) => n.targetUserId === cleanUserId || n.senderUserId === cleanUserId || n.payload?.agencyId === cleanUserId || n.payload?.ownerId === cleanUserId
         );
         const userMessages = SERVER_STORE.messages.filter(
           (m) => m.sender_id === cleanUserId || m.receiver_id === cleanUserId
@@ -407,7 +438,12 @@ export default async function handler(req, res) {
           (c) => c.participant_a === cleanUserId || c.participant_b === cleanUserId || c.tenant_id === cleanUserId || c.owner_id === cleanUserId
         );
         const userApplications = SERVER_STORE.applications.filter(
-          (a) => a.owner_id === cleanUserId || a.agency_id === cleanUserId || a.tenant_id === cleanUserId || (!cleanUserId && (a.owner_id === 'usr_owner' || a.tenant_id === 'usr_tenant'))
+          (a) =>
+            a.owner_id === cleanUserId ||
+            a.agency_id === cleanUserId ||
+            a.mandant_id === cleanUserId ||
+            a.tenant_id === cleanUserId ||
+            (!cleanUserId && (a.owner_id === 'usr_owner' || a.agency_id === 'usr_agency' || a.owner_id === 'usr_agency' || a.tenant_id === 'usr_tenant'))
         );
 
         return res.status(200).json({
@@ -940,11 +976,12 @@ export default async function handler(req, res) {
           ...SERVER_STORE.applications.filter(a => a.id !== newId)
         ];
 
-        // Créer notification pour le propriétaire / agence
+        // Créer notification pour le propriétaire et/ou l'agence
         const notifId = `notif_app_${Date.now()}`;
         const applicantName = application.tenant_name || 'Un locataire';
         const propertyTitle = application.property_title || 'votre logement';
-        const targetUserId = application.owner_id || application.agency_id;
+        const primaryTargetId = application.agency_id || application.owner_id;
+        const isAgencyTarget = Boolean(application.agency_id || application.is_agency);
 
         const notifApp = {
           id: notifId,
@@ -957,18 +994,31 @@ export default async function handler(req, res) {
           category: 'candidature',
           type: 'info',
           targetTab: 'applications',
-          targetUserId: targetUserId,
+          targetRole: isAgencyTarget ? 'agence' : 'proprietaire',
+          targetUserId: primaryTargetId,
           senderUserId: application.tenant_id,
           payload: {
             applicationId: newId,
             propertyId: application.property_id,
-            tenantId: application.tenant_id
+            tenantId: application.tenant_id,
+            agencyId: application.agency_id,
+            ownerId: application.owner_id
           }
         };
 
+        const notifsToAdd = [notifApp];
+        if (application.agency_id && application.owner_id && application.agency_id !== application.owner_id) {
+          notifsToAdd.push({
+            ...notifApp,
+            id: `${notifId}_owner`,
+            targetRole: 'proprietaire',
+            targetUserId: application.owner_id
+          });
+        }
+
         SERVER_STORE.notifications = [
-          notifApp,
-          ...SERVER_STORE.notifications.filter(n => n.id !== notifId)
+          ...notifsToAdd,
+          ...SERVER_STORE.notifications.filter(n => n.id !== notifId && n.id !== `${notifId}_owner`)
         ];
 
         return res.status(200).json({

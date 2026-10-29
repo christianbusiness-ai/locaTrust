@@ -73,6 +73,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     try {
       // 0. Synchronisation prioritaire depuis /api/sync
       let loadedPayments: any[] = [];
+      let loadedApps: any[] = [];
       const currentUserId = user?.id;
       const isMine = (x: any) =>
         Boolean(currentUserId && x && (x.owner_id === currentUserId || x.agency_id === currentUserId));
@@ -84,6 +85,9 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
             const syncJson = await syncRes.json();
             if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
               loadedPayments = syncJson.data.payments.filter(isMine);
+            }
+            if (syncJson?.success && Array.isArray(syncJson.data?.applications)) {
+              loadedApps = syncJson.data.applications.filter(isMine);
             }
           }
         } catch {}
@@ -198,16 +202,47 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       }
       setRealPayments(loadedPayments);
 
-      // 4. Candidatures de location
-      let finalApps: any[] = [];
+      // 4. Candidatures de location (Supabase + /api/sync + localStorage)
+      let finalApps: any[] = [...loadedApps];
       if (currentUserId) {
+        const myPropIds = new Set(finalProps.map((p: any) => p.id));
+        const isMyApp = (a: any) =>
+          Boolean(
+            a &&
+              (a.owner_id === currentUserId ||
+                a.agency_id === currentUserId ||
+                (a.property_id && myPropIds.has(a.property_id)))
+          );
+
         try {
           const { data: appsData } = await supabase
             .from('rental_applications')
             .select('*')
             .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`);
-          if (appsData) finalApps = appsData;
+          if (appsData && appsData.length > 0) {
+            appsData.forEach((sa: any) => {
+              if (!finalApps.some((fa: any) => fa.id === sa.id)) {
+                finalApps.push(sa);
+              }
+            });
+          }
         } catch {}
+
+        if (typeof window !== 'undefined') {
+          try {
+            const rawApps = localStorage.getItem('locatrust_rental_applications');
+            if (rawApps) {
+              const parsedApps = JSON.parse(rawApps);
+              if (Array.isArray(parsedApps)) {
+                parsedApps.filter(isMyApp).forEach((la: any) => {
+                  if (!finalApps.some((fa: any) => fa.id === la.id)) {
+                    finalApps.push(la);
+                  }
+                });
+              }
+            }
+          } catch {}
+        }
       }
       setRealApplications(finalApps);
 
@@ -882,18 +917,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
         {/* Demandes réelles de location */}
         {(() => {
-          const realApps = (() => {
-            if (typeof window !== 'undefined') {
-              try {
-                const raw = localStorage.getItem('locatrust_rental_applications');
-                if (raw) {
-                  const list = JSON.parse(raw);
-                  if (Array.isArray(list)) return list;
-                }
-              } catch (e) {}
-            }
-            return [];
-          })();
+          const realApps = realApplications;
 
           return (
             <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-3">

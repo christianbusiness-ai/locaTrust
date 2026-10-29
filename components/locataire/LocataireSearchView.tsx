@@ -391,7 +391,10 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       const applicantName = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
       const applicantPhone = profile?.phone || '+225 07 00 00 00 00';
       const applicantEmail = user?.email || 'locataire@locatrust.ci';
-      const targetOwnerId = selectedProperty.owner_id || (selectedProperty.owner as any)?.id || '';
+      const isAgencyProp = Boolean((selectedProperty as any).is_agency || (selectedProperty as any).agency_id || (selectedProperty as any).agency_name || (selectedProperty.owner as any)?.account_type === 'agence');
+      const targetAgencyId = (selectedProperty as any).agency_id || (isAgencyProp ? (selectedProperty.owner_id || (selectedProperty.owner as any)?.id) : undefined);
+      const targetOwnerId = selectedProperty.owner_id || targetAgencyId || (selectedProperty.owner as any)?.id || '';
+      const primaryRecipientId = targetAgencyId || targetOwnerId;
 
       const realRent = Number(selectedProperty.rent || (selectedProperty as any).price || 0);
       const realCaution = Number(
@@ -420,9 +423,10 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         owner_name: (selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || (selectedProperty as any).owner_name || (selectedProperty as any).mandant_name || 'Propriétaire Bailleur',
         owner_phone: (selectedProperty.owner as any)?.phone || (selectedProperty as any).owner_phone || '+225 07 00 00 00 00',
         owner_avatar: (selectedProperty.owner as any)?.avatar_url || (selectedProperty as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || 'Bailleur')}&background=1E40AF&color=fff`,
-        agency_id: (selectedProperty as any).agency_id,
-        agency_name: (selectedProperty as any).agency_name,
-        is_agency: Boolean((selectedProperty as any).is_agency || (selectedProperty as any).agency_name || (selectedProperty.owner as any)?.account_type === 'agence'),
+        agency_id: targetAgencyId,
+        agency_name: (selectedProperty as any).agency_name || (isAgencyProp ? ((selectedProperty.owner as any)?.full_name || (selectedProperty as any).owner_name) : undefined),
+        mandant_id: (selectedProperty as any).mandant_id,
+        is_agency: isAgencyProp,
         tenant_signed: false,
         comment: applyMessage,
         documents: {
@@ -442,22 +446,49 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
-        // Notification ciblée pour le bailleur
+        // Notification ciblée pour le bailleur ou l'agence
         pushGlobalNotification({
           title: 'Nouvelle demande de location reçue',
           description: `${applicantName} a candidaté pour « ${selectedProperty.title} ».`,
-          category: 'demande',
+          category: 'candidature',
           targetTab: 'applications',
-          targetUserId: targetOwnerId,
-          senderUserId: applicantId
+          targetRole: isAgencyProp ? 'agence' : 'proprietaire',
+          targetUserId: primaryRecipientId,
+          senderUserId: applicantId,
+          payload: {
+            applicationId: newApp.id,
+            propertyId: selectedProperty.id,
+            tenantId: applicantId,
+            agencyId: targetAgencyId,
+            ownerId: targetOwnerId
+          }
         });
 
+        if (targetAgencyId && targetOwnerId && targetAgencyId !== targetOwnerId) {
+          pushGlobalNotification({
+            title: 'Nouvelle demande de location reçue',
+            description: `${applicantName} a candidaté pour « ${selectedProperty.title} ».`,
+            category: 'candidature',
+            targetTab: 'applications',
+            targetRole: 'proprietaire',
+            targetUserId: targetOwnerId,
+            senderUserId: applicantId,
+            payload: {
+              applicationId: newApp.id,
+              propertyId: selectedProperty.id,
+              tenantId: applicantId,
+              agencyId: targetAgencyId,
+              ownerId: targetOwnerId
+            }
+          });
+        }
+
         // Stocker les coordonnées des deux interlocuteurs pour la messagerie
-        localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+        localStorage.setItem('locatrust_active_chat_contact', primaryRecipientId);
         localStorage.setItem(
-          'locatrust_contact_' + targetOwnerId,
+          'locatrust_contact_' + primaryRecipientId,
           JSON.stringify({
-            id: targetOwnerId,
+            id: primaryRecipientId,
             name: newApp.owner_name,
             phone: newApp.owner_phone,
             role: newApp.is_agency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
@@ -485,7 +516,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       // Synchronisation temps réel immédiate multi-appareils
       broadcastLiveEvent('APPLICATION_SUBMITTED', {
         actorId: applicantId,
-        targetUserId: targetOwnerId,
+        targetUserId: primaryRecipientId,
         propertyId: selectedProperty.id,
         data: newApp,
         timestamp: new Date().toISOString()
@@ -506,7 +537,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         property_id: selectedProperty.id,
         tenant_id: applicantId,
         owner_id: targetOwnerId,
-        agency_id: (selectedProperty as any).agency_id,
+        agency_id: targetAgencyId,
         tenant_name: applicantName,
         tenant_email: applicantEmail,
         tenant_phone: applicantPhone,

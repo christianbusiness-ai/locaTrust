@@ -153,6 +153,23 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                 window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: mergedCnt } }));
               } catch {}
             }
+
+            // G. Candidatures de location (Applications)
+            if (Array.isArray(syncJson.data.applications)) {
+              try {
+                const srvApps = syncJson.data.applications.filter(isMine);
+                const rawA = localStorage.getItem('locatrust_rental_applications');
+                const localA = rawA ? JSON.parse(rawA) : [];
+                const validLocalA = localA.filter(isMine);
+                const srvAIds = new Set(srvApps.map((a: any) => a.id));
+                const mergedA = [
+                  ...srvApps,
+                  ...validLocalA.filter((la: any) => la?.id && !srvAIds.has(la.id))
+                ];
+                localStorage.setItem('locatrust_rental_applications', JSON.stringify(mergedA));
+                window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: mergedA, applications: mergedA } }));
+              } catch {}
+            }
           }
         }
       }
@@ -251,7 +268,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       .order('created_at', { ascending: false });
 
     if (role === 'locataire') {
-      appQuery = appQuery.or(`applicant_id.eq.${userId},tenant_id.eq.${userId}`);
+      appQuery = appQuery.eq('tenant_id', userId);
     } else {
       appQuery = appQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
     }
@@ -260,14 +277,15 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     if (!appErr && typeof window !== 'undefined') {
       try {
+        const myPropIds = new Set((serverProps || []).map((p: any) => p.id));
         const rawLocal = localStorage.getItem('locatrust_rental_applications');
         const localApps = rawLocal ? JSON.parse(rawLocal) : [];
         const isMyApp = (a: any) =>
           a &&
           (a.owner_id === userId ||
             a.agency_id === userId ||
-            a.applicant_id === userId ||
-            a.tenant_id === userId);
+            a.tenant_id === userId ||
+            (a.property_id && myPropIds.has(a.property_id)));
         const validLocalApps = localApps.filter(isMyApp);
         const serverAppIds = new Set((serverApps || []).map(a => a.id));
 
@@ -277,7 +295,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         ];
 
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(mergedApps));
-        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { applications: mergedApps } }));
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: mergedApps, applications: mergedApps } }));
       } catch {}
     }
 
