@@ -493,7 +493,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const markAllAsRead = () => {
     setNotifications((prev) => {
-      const updated = prev.map((n) => ({ ...n, read: true }));
+      const updated = prev.map((n) => ({ ...n, read: true, is_read: true, unread: false }));
       try {
         localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
         window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
@@ -504,7 +504,7 @@ export const Header: React.FC<HeaderProps> = ({
     });
 
     if (currentUser?.id && isValidUuid(currentUser.id)) {
-      supabase.from('notifications').update({ read: true }).eq('user_id', currentUser.id).then();
+      supabase.from('notifications').update({ read: true, is_read: true }).eq('user_id', currentUser.id).then();
     }
   };
 
@@ -523,7 +523,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const handleNotificationClick = (item: NotificationItem) => {
     setNotifications((prev) => {
-      const updated = prev.map((n) => (n.id === item.id ? { ...n, read: true } : n));
+      const updated = prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n));
       try {
         localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
         window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
@@ -534,7 +534,7 @@ export const Header: React.FC<HeaderProps> = ({
     });
 
     if (item.id && isValidUuid(item.id)) {
-      supabase.from('notifications').update({ read: true }).eq('id', item.id).then();
+      supabase.from('notifications').update({ read: true, is_read: true }).eq('id', item.id).then();
     }
 
     setShowNotifications(false);
@@ -550,6 +550,21 @@ export const Header: React.FC<HeaderProps> = ({
           window.dispatchEvent(new CustomEvent('locatrust:open_sign_receipt', { detail: item.payload }));
         }
       }, 150);
+    } else if (
+      item.targetTab === 'messages' ||
+      item.category === 'demande' ||
+      item.type === 'message' ||
+      (item.title && item.title.toLowerCase().includes('message'))
+    ) {
+      const contactId = item.senderUserId || item.payload?.contactId || item.payload?.sender_id;
+      if (contactId && typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_active_chat_contact', contactId);
+        window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+        markMessagesAsRead(contactId, currentUser?.id);
+      }
+      if (onNavigateTab) {
+        onNavigateTab('messages');
+      }
     } else if (item.targetTab && onNavigateTab) {
       onNavigateTab(item.targetTab);
     }

@@ -302,6 +302,19 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
       // Mémoriser le contact actif pour que la messagerie ouvre directement la bonne discussion
       if (typeof window !== 'undefined') {
+        const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Christian';
+        const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
+        const myAvatar = profile?.avatar_url || (user as any)?.avatar_url || localStorage.getItem('locatrust_user_avatar') || '';
+        localStorage.setItem(`locatrust_contact_${applicantId}`, JSON.stringify({
+          id: applicantId,
+          name: myName,
+          phone: myPhone,
+          role: 'Locataire Preneur',
+          propertyTitle: selectedRental.title || 'Bien immobilier',
+          avatar: myAvatar,
+          online: true
+        }));
+
         localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
         const contactInfo = {
           id: targetOwnerId,

@@ -149,12 +149,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               const ownerRole = app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur';
               const isAgencyRole = Boolean(app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' || ownerId.includes('agency'));
               let ownerAvatar =
-                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') ? app.owner_avatar : null) ||
-                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') ? (app.owner as any).avatar_url : null) ||
+                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') && !app.owner_avatar.includes('unsplash.com') ? app.owner_avatar : null) ||
+                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') && !(app.owner as any).avatar_url.includes('unsplash.com') ? (app.owner as any).avatar_url : null) ||
                 (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${ownerId}`) : null) ||
-                (typeof window !== 'undefined' && isAgencyRole ? localStorage.getItem('locatrust_agency_avatar') || localStorage.getItem('locatrust_user_avatar_usr_agency') : null) ||
-                (typeof window !== 'undefined' && !isAgencyRole ? localStorage.getItem('locatrust_owner_avatar') || localStorage.getItem('locatrust_user_avatar_usr_owner') : null) ||
-                getDefaultRealisticAvatar(ownerName, ownerRole);
+                undefined;
 
               if (!list.some((c) => c.id === ownerId || c.name.toLowerCase() === ownerName.toLowerCase())) {
                 list.push({
@@ -192,9 +190,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               }
 
               const tenantAvatar =
-                (app.tenant_avatar && !app.tenant_avatar.includes('ui-avatars.com') ? app.tenant_avatar : null) ||
+                (app.tenant_avatar && !app.tenant_avatar.includes('ui-avatars.com') && !app.tenant_avatar.includes('unsplash.com') ? app.tenant_avatar : null) ||
                 (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${tenantId}`) : null) ||
-                getDefaultRealisticAvatar(tenantName, 'locataire');
+                undefined;
 
               if (!list.some((c) => c.id === tenantId || c.name.toLowerCase() === tenantName.toLowerCase())) {
                 list.push({
@@ -262,56 +260,49 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               }
             }
 
-            // Ne jamais inventer de nom générique fictif "Locataire Candidat"
-            if (
-              !contactName ||
-              contactName.toLowerCase().includes('candidat') ||
-              contactName.toLowerCase() === 'locataire candidat' ||
-              contactName.toLowerCase() === 'candidat locataire'
-            ) {
-              return;
+            if (!contactName) {
+              const fromDb = dbContacts.find((c) => c.id === otherId);
+              if (fromDb?.name) {
+                contactName = fromDb.name;
+              }
             }
 
-            // Ne pas recréer de doublon si ce nom existe déjà dans la liste
-            if (list.some((c) => c.name.toLowerCase() === contactName!.toLowerCase())) {
-              return;
+            if (!contactName) {
+              const fromMsg = (m as any).sender_name || (m as any).senderName;
+              if (fromMsg) contactName = fromMsg;
             }
 
-            // S'il s'agit d'un identifiant générique (usr_owner / usr_agency) ou sans nom précis,
-            // et qu'on a déjà un contact bailleur/agence réel dans la liste, ne surtout pas créer de doublon
-            const hasExistingNamedParty = list.some(
-              (c) => c.id !== 'usr_support' && c.name.toLowerCase() !== 'bailleur propriétaire'
-            );
+            // Ne jamais bloquer une vraie conversation si un message réel existe
+            if (!contactName) {
+              contactName = userRole === 'locataire' ? 'Propriétaire Bailleur' : 'Locataire Preneur';
+            }
 
-            if (
-              (otherId === 'usr_owner' || otherId === 'usr_agency' || contactName.toLowerCase() === 'bailleur propriétaire') &&
-              hasExistingNamedParty
-            ) {
+            // Éviter les doublons par ID
+            if (list.some((c) => c.id === otherId)) {
               return;
             }
 
             const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
             const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire';
+            
+            const dbMatch = dbContacts.find((c) => c.id === otherId);
             let contactAvatar =
-              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') ? matchingApp.tenant_avatar : null) ||
-              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') ? matchingApp.owner_avatar : null) ||
+              (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') && !matchingApp.tenant_avatar.includes('unsplash.com') ? matchingApp.tenant_avatar : null) ||
+              (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') && !matchingApp.owner_avatar.includes('unsplash.com') ? matchingApp.owner_avatar : null) ||
               (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${otherId}`) : null) ||
-              (typeof window !== 'undefined' && isAgencyRole ? localStorage.getItem('locatrust_agency_avatar') || localStorage.getItem('locatrust_user_avatar_usr_agency') : null) ||
-              (typeof window !== 'undefined' && !isAgencyRole && otherId.includes('owner') ? localStorage.getItem('locatrust_owner_avatar') || localStorage.getItem('locatrust_user_avatar_usr_owner') : null) ||
-              (typeof window !== 'undefined' && otherId.includes('tenant') ? localStorage.getItem('locatrust_tenant_avatar') || localStorage.getItem('locatrust_user_avatar_usr_tenant') : null) ||
-              getDefaultRealisticAvatar(contactName, contactRole);
+              ((m as any).sender_avatar && !(m as any).sender_avatar.includes('ui-avatars.com') && !(m as any).sender_avatar.includes('unsplash.com') ? (m as any).sender_avatar : null) ||
+              (dbMatch?.avatar && !dbMatch.avatar.includes('ui-avatars.com') && !dbMatch.avatar.includes('unsplash.com') ? dbMatch.avatar : null) ||
+              undefined;
 
-            if (!list.some((c) => c.id === otherId || c.name.toLowerCase() === contactName!.toLowerCase())) {
-              list.push({
-                id: otherId,
-                name: contactName,
-                phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
-                role: contactRole,
-                propertyTitle: matchingApp?.property_title || contractObj?.propertyTitle || 'Échange direct',
-                avatar: contactAvatar,
-                online: true
-              });
-            }
+            list.push({
+              id: otherId,
+              name: contactName,
+              phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
+              role: contactRole,
+              propertyTitle: matchingApp?.property_title || contractObj?.propertyTitle || (m as any).property_title || 'Échange direct',
+              avatar: contactAvatar,
+              online: true
+            });
           }
         });
 
@@ -338,9 +329,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
                 if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing && (existing.id === c.id || (existing.name || '').toLowerCase() === (c.name || '').toLowerCase()))) {
                   const safeAvatar =
-                    c.avatar && !c.avatar.includes('ui-avatars.com')
+                    c.avatar && !c.avatar.includes('ui-avatars.com') && !c.avatar.includes('unsplash.com')
                       ? c.avatar
-                      : getDefaultRealisticAvatar(c.name || 'Contact', c.role);
+                      : (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${c.id}`) : null) || undefined;
                   list.push({
                     ...c,
                     name: c.name || 'Contact',
@@ -391,17 +382,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
       // Si ce n'est pas moi et que l'avatar est identique à mon propre avatar, le réinitialiser
       if (!isMe && myStoredAvatar && finalAvatar === myStoredAvatar) {
-        finalAvatar = null;
+        finalAvatar = undefined;
       }
 
-      if (!finalAvatar || finalAvatar.includes('ui-avatars.com') || finalAvatar.trim().length <= 5) {
+      if (!finalAvatar || finalAvatar.includes('ui-avatars.com') || finalAvatar.includes('unsplash.com') || finalAvatar.trim().length <= 5) {
         finalAvatar =
-          (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${c.id}`) : null) ||
-          getDefaultRealisticAvatar(c.name, c.role);
+          (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${c.id}`) : null) || undefined;
       }
 
       if (!isMe && myStoredAvatar && finalAvatar === myStoredAvatar) {
-        finalAvatar = getDefaultRealisticAvatar(c.name, c.role);
+        finalAvatar = undefined;
       }
 
       uniqueContacts.push({
@@ -474,7 +464,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           return;
         }
       }
-      setSelectedContactId(roleContacts[0]?.id || 'usr_support');
+      setSelectedContactId(roleContacts[0]?.id || '');
     }
   }, [roleContacts, selectedContactId]);
 

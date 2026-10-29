@@ -559,21 +559,18 @@ export const GlobalCallModal: React.FC = () => {
     return () => clearInterval(timer);
   }, [activeCall?.status]);
 
-  // Décrochage automatique pour les tests après 8 secondes de sonnerie
+  // Fin d'appel automatique après 45 secondes en absence de réponse du correspondant
   useEffect(() => {
-    let ringingTimer: any = null;
-    if (activeCall && activeCall.status === 'ringing' && activeCall.role === 'caller') {
-      ringingTimer = setTimeout(() => {
+    let timeoutTimer: any = null;
+    if (activeCall && activeCall.status === 'ringing') {
+      timeoutTimer = setTimeout(() => {
         if (activeCallRef.current?.status === 'ringing') {
-          stopRingtoneLoop();
-          playChime('connected');
-          setActiveCall((prev) => (prev ? { ...prev, status: 'connected', seconds: 0 } : null));
-          syncVideoElements();
+          handleEndCall();
         }
-      }, 8000);
+      }, 45000);
     }
-    return () => clearTimeout(ringingTimer);
-  }, [activeCall?.status, activeCall?.role]);
+    return () => clearTimeout(timeoutTimer);
+  }, [activeCall?.status]);
 
   // Synchronisation continue des flux vidéo lors de l'apparition du modal ou permutation PiP
   useEffect(() => {
@@ -1549,7 +1546,7 @@ export const GlobalCallModal: React.FC = () => {
                   }}
                   autoPlay
                   playsInline
-                  muted={isVideoSwapped}
+                  muted={true}
                   onLoadedMetadata={(e) => {
                     (e.target as HTMLVideoElement).play().catch(() => {});
                   }}
@@ -1701,9 +1698,6 @@ export const GlobalCallModal: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Élément audio pour la voix entrante du correspondant */}
-      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
     </>
   );
 };

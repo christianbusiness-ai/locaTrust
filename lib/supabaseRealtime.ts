@@ -823,23 +823,59 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'NEW_MESSAGE':
         if (typeof window !== 'undefined') {
           const incomingMsg = payload?.data;
-          if (incomingMsg && incomingMsg.id) {
+          if (incomingMsg && (incomingMsg.id || incomingMsg.text)) {
+            const senderId = incomingMsg.sender_id || incomingMsg.senderId || payload?.actorId;
+            const receiverId = incomingMsg.receiver_id || incomingMsg.receiverId || payload?.targetUserId;
+
+            // 1. Sauvegarder immédiatement la fiche de contact de l'expéditeur sur le terminal destinataire
+            if (senderId) {
+              try {
+                const existingContactRaw = localStorage.getItem(`locatrust_contact_${senderId}`);
+                const existingContact = existingContactRaw ? JSON.parse(existingContactRaw) : null;
+                const contactName = incomingMsg.sender_name || existingContact?.name;
+                const contactAvatar = incomingMsg.sender_avatar || existingContact?.avatar;
+                const contactRole = incomingMsg.sender_role || existingContact?.role || 'Locataire';
+                const propertyTitle = incomingMsg.property_title || existingContact?.propertyTitle || 'Échange direct';
+
+                localStorage.setItem(`locatrust_contact_${senderId}`, JSON.stringify({
+                  id: senderId,
+                  name: contactName || (contactRole.toLowerCase().includes('proprietaire') ? 'Propriétaire Bailleur' : contactRole.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Locataire'),
+                  role: contactRole,
+                  propertyTitle: propertyTitle,
+                  avatar: contactAvatar || undefined,
+                  online: true
+                }));
+              } catch {}
+            }
+
+            // 2. Ingestion du message dans locatrust_chat_messages_v4
             try {
               const msgsRaw = localStorage.getItem('locatrust_chat_messages_v4');
               const curMsgs = msgsRaw ? JSON.parse(msgsRaw) : [];
               const exists = curMsgs.some(
                 (m: any) =>
                   m.id === incomingMsg.id ||
-                  (m.sender_id === incomingMsg.sender_id &&
+                  (m.sender_id === senderId &&
                     m.text === incomingMsg.text &&
                     Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 60000)
               );
               if (!exists) {
-                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify([...curMsgs, incomingMsg]));
+                const formattedMsg = {
+                  id: incomingMsg.id || `msg_${Date.now()}`,
+                  sender_id: senderId,
+                  receiver_id: receiverId,
+                  text: incomingMsg.text || '',
+                  created_at: incomingMsg.created_at || new Date().toISOString(),
+                  status: incomingMsg.status || 'delivered',
+                  quittance: incomingMsg.quittance,
+                  contract: incomingMsg.contract,
+                  declaration: incomingMsg.declaration
+                };
+                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify([...curMsgs, formattedMsg]));
               }
             } catch {}
 
-            // Si le message transporte une quittance ou un reçu de caution
+            // 3. Si le message transporte une quittance ou un reçu de caution
             if (incomingMsg.quittance && incomingMsg.quittance.receiptNumber) {
               try {
                 const curRaw = localStorage.getItem('locatrust_tenant_receipts_v2');
@@ -849,6 +885,30 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                 window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
               } catch {}
             }
+
+            // 4. Notification in-app ciblée pour le destinataire
+            try {
+              const notifsRaw = localStorage.getItem('locatrust_notifications');
+              const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+              const notifId = `notif_msg_${incomingMsg.id || Date.now()}`;
+              if (!curNotifs.some((n: any) => n.id === notifId)) {
+                const senderDisplayName = incomingMsg.sender_name || 'Correspondant';
+                const newNotif = {
+                  id: notifId,
+                  title: `Nouveau message de ${senderDisplayName}`,
+                  description: (incomingMsg.text || '').length > 70 ? `${(incomingMsg.text || '').slice(0, 70)}...` : (incomingMsg.text || 'Message reçu'),
+                  timestamp: "À l'instant",
+                  category: 'demande' as const,
+                  read: false,
+                  targetTab: 'messages',
+                  targetUserId: receiverId,
+                  senderUserId: senderId
+                };
+                const mergedNotifs = [newNotif, ...curNotifs.slice(0, 49)];
+                localStorage.setItem('locatrust_notifications', JSON.stringify(mergedNotifs));
+                window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedNotifs } }));
+              }
+            } catch {}
           }
           window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));

@@ -242,14 +242,63 @@ export async function syncMessageToSupabase(
   propertyId?: string
 ): Promise<{ success: boolean; error?: any }> {
   try {
-    // 1. Diffusion Realtime immédiate via le canal Supabase actif
+    // 1. Résolution des informations du profil de l'expéditeur
+    let senderName = '';
+    let senderAvatar = '';
+    let senderRole = '';
+    let propTitle = '';
+    if (typeof window !== 'undefined') {
+      try {
+        const u = localStorage.getItem('locatrust_user');
+        if (u) {
+          const pu = JSON.parse(u);
+          senderName = pu.full_name || pu.name || '';
+          senderRole = pu.account_type || pu.role || '';
+          senderAvatar = pu.avatar_url || localStorage.getItem('locatrust_user_avatar') || '';
+        }
+        const c = localStorage.getItem('locatrust_contact_' + senderId);
+        if (c) {
+          const pc = JSON.parse(c);
+          if (!senderName) senderName = pc.name || '';
+          if (!senderAvatar) senderAvatar = pc.avatar || '';
+          if (!senderRole) senderRole = pc.role || '';
+          if (!propTitle) propTitle = pc.propertyTitle || '';
+        }
+      } catch {}
+    }
+
+    const enrichedMessage = {
+      ...newMsg,
+      senderId,
+      receiverId,
+      sender_name: senderName,
+      sender_avatar: senderAvatar,
+      sender_role: senderRole,
+      property_title: propTitle
+    };
+
+    // Diffusion Realtime immédiate via le canal Supabase actif
     try {
       broadcastLiveEvent('NEW_MESSAGE', {
         actorId: senderId,
         targetUserId: receiverId,
-        data: { ...newMsg, senderId, receiverId }
+        data: enrichedMessage
       });
     } catch {}
+
+    // Synchronisation avec /api/sync en arrière-plan
+    if (typeof window !== 'undefined') {
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'send_message',
+            message: enrichedMessage
+          })
+        }).catch(() => {});
+      } catch {}
+    }
 
     // 2. Persistance BDD : résolution automatique des identifiants réels si alias génériques
     let finalSenderId = senderId;
@@ -534,6 +583,37 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
 
   if (changed) {
     saveStoredMessages(updated);
+
+    // Synchronisation en tâche de fond avec Supabase et /api/sync
+    if (currentUserId) {
+      try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'mark_messages_read',
+            contactId,
+            currentUserId
+          })
+        }).catch(() => {});
+      } catch {}
+
+      if (isValidUuid(currentUserId) && isValidUuid(contactId)) {
+        try {
+          supabase
+            .from('notifications')
+            .update({ read: true, is_read: true })
+            .eq('user_id', currentUserId)
+            .eq('sender_id', contactId)
+            .then();
+        } catch {}
+      }
+    }
+
+    // Émettre les événements pour rafraîchir les compteurs et les vues en temps réel
+    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
     return true;
   }
   return false;
@@ -555,6 +635,18 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
 
   if (changed) {
     saveStoredMessages(updated);
+    if (currentUserId && isValidUuid(currentUserId)) {
+      try {
+        supabase
+          .from('notifications')
+          .update({ read: true, is_read: true })
+          .eq('user_id', currentUserId)
+          .then();
+      } catch {}
+    }
+    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+    window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
     return true;
   }
   return false;
@@ -575,17 +667,25 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
 
   if (myIds.size === 0) return 0;
 
-  return messages.filter((m) => {
+  // Règle produit impérative : Le compteur doit représenter UNIQUEMENT
+  // le nombre de CONVERSATIONS contenant des messages réellement non lus pour l'utilisateur
+  const unreadSenders = new Set<string>();
+
+  messages.forEach((m) => {
     // Message déjà lu
-    if (m.status === 'read' || (m as any).is_read) return false;
+    if (m.status === 'read' || (m as any).is_read) return;
 
     // Ne JAMAIS compter ses propres messages envoyés
-    if (myIds.has(m.sender_id)) return false;
+    if (myIds.has(m.sender_id)) return;
 
     // Le message doit être adressé à l'utilisateur connecté
     const isForMe = myIds.has(m.receiver_id);
-    return isForMe;
-  }).length;
+    if (isForMe && m.sender_id) {
+      unreadSenders.add(m.sender_id);
+    }
+  });
+
+  return unreadSenders.size;
 }
 
 export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, senderId?: string, receiverId?: string): ChatMessage {
@@ -1219,15 +1319,13 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
         ? 'Propriétaire Bailleur'
         : 'Locataire Preneur';
 
+      const propTitle = c.properties?.title || (c as any).property_title || 'Échange direct';
+
       const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
       let avatarUrl =
         prof.avatar_url && prof.avatar_url.trim().length > 5 && !prof.avatar_url.includes('ui-avatars.com') && prof.avatar_url !== myStoredAvatar
           ? prof.avatar_url
           : (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${prof.id}`) : null);
-
-      if (!avatarUrl || avatarUrl === myStoredAvatar) {
-        avatarUrl = getDefaultRealisticAvatar(prof.full_name, roleLabel);
-      }
 
       if (!realContacts.some((rc) => rc.id === prof.id)) {
         realContacts.push({
@@ -1236,7 +1334,7 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
           phone: prof.phone || '+225 07 00 00 00 00',
           role: roleLabel,
           propertyTitle: propTitle,
-          avatar: avatarUrl,
+          avatar: avatarUrl || undefined,
           online: true
         });
 
@@ -1249,7 +1347,7 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
             phone: prof.phone || '+225 07 00 00 00 00',
             role: roleLabel,
             propertyTitle: propTitle,
-            avatar: avatarUrl,
+            avatar: avatarUrl || undefined,
             online: true
           })
         );

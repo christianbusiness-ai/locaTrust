@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 
 interface UserAvatarProps {
   src?: string | null;
@@ -13,6 +12,16 @@ interface UserAvatarProps {
   fallbackRole?: string;
 }
 
+// Couleurs de fond distinctives et stables selon le nom de l'utilisateur
+const AVATAR_GRADIENTS = [
+  'from-blue-600 to-indigo-700',
+  'from-emerald-600 to-teal-700',
+  'from-indigo-600 to-purple-700',
+  'from-amber-600 to-orange-700',
+  'from-rose-600 to-pink-700',
+  'from-cyan-600 to-blue-700'
+];
+
 export const UserAvatar: React.FC<UserAvatarProps> = ({
   src,
   name,
@@ -20,7 +29,6 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   sizeClassName = 'w-10 h-10',
   isOnline = false,
   borderClassName = 'border-2 border-emerald-500',
-  fallbackRole
 }) => {
   const [hasError, setHasError] = useState(false);
 
@@ -35,36 +43,38 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
         .toUpperCase()
     : 'LT';
 
-  const defaultPhoto = getDefaultRealisticAvatar(cleanName, fallbackRole);
-  const myStoredAvatar = typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null;
-  const isErronenousDuplicateOfMe = Boolean(
-    myStoredAvatar &&
-    src === myStoredAvatar &&
-    cleanName &&
-    cleanName.toLowerCase() !== 'christian' &&
-    !cleanName.toLowerCase().includes('chris')
+  // Déterminer un gradient stable et unique basé sur le nom
+  let hash = 0;
+  for (let i = 0; i < cleanName.length; i++) {
+    hash = cleanName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const gradientClass = AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
+
+  // Vérifier si le src fourni est une vraie photo réelle (non fictive)
+  const isRealPhoto = Boolean(
+    src &&
+    typeof src === 'string' &&
+    src.trim().length > 10 &&
+    !src.includes('ui-avatars.com') &&
+    !src.includes('images.unsplash.com') &&
+    (src.startsWith('data:image') || src.startsWith('http://') || src.startsWith('https://') || src.startsWith('/'))
   );
 
-  const isValidCustomSrc = Boolean(
-    src &&
-    src.trim().length > 5 &&
-    !src.includes('ui-avatars.com') &&
-    !isErronenousDuplicateOfMe
-  );
-  const currentImgSrc = hasError ? (src !== defaultPhoto ? defaultPhoto : null) : (isValidCustomSrc ? src! : defaultPhoto);
+  const showImage = isRealPhoto && !hasError;
 
   return (
     <div className={`relative shrink-0 ${sizeClassName} ${className}`}>
-      {currentImgSrc ? (
+      {showImage ? (
         <img
-          src={currentImgSrc}
+          src={src!}
           alt={cleanName || 'Avatar'}
           className={`w-full h-full rounded-full object-cover ${borderClassName} shadow-sm`}
           onError={() => setHasError(true)}
         />
       ) : (
         <div
-          className={`w-full h-full rounded-full bg-gradient-to-tr from-blue-700 via-indigo-600 to-sky-500 text-white font-black text-xs flex items-center justify-center ${borderClassName} shadow-sm select-none tracking-wider`}
+          className={`w-full h-full rounded-full bg-gradient-to-tr ${gradientClass} text-white font-black text-xs flex items-center justify-center ${borderClassName} shadow-sm select-none tracking-wider`}
+          title={cleanName}
         >
           {initials}
         </div>

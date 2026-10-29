@@ -304,7 +304,10 @@ let SERVER_STORE = {
       owner_name: 'KK',
       created_at: '2026-10-15T10:00:00.000Z'
     }
-  ]
+  ],
+  messages: [],
+  conversations: [],
+  contacts: {}
 };
 
 export default async function handler(req, res) {
@@ -339,6 +342,9 @@ export default async function handler(req, res) {
             contracts: SERVER_STORE.contracts,
             maintenance: SERVER_STORE.maintenance,
             properties: SERVER_STORE.properties,
+            messages: SERVER_STORE.messages,
+            conversations: SERVER_STORE.conversations,
+            contacts: SERVER_STORE.contacts,
             timestamp: new Date().toISOString()
           }
         });
@@ -367,6 +373,12 @@ export default async function handler(req, res) {
         const userNotifications = SERVER_STORE.notifications.filter(
           (n) => n.targetUserId === cleanUserId || n.senderUserId === cleanUserId
         );
+        const userMessages = SERVER_STORE.messages.filter(
+          (m) => m.sender_id === cleanUserId || m.receiver_id === cleanUserId
+        );
+        const userConversations = SERVER_STORE.conversations.filter(
+          (c) => c.participant_a === cleanUserId || c.participant_b === cleanUserId || c.tenant_id === cleanUserId || c.owner_id === cleanUserId
+        );
 
         return res.status(200).json({
           success: true,
@@ -378,6 +390,9 @@ export default async function handler(req, res) {
             contracts: userContracts,
             maintenance: userMaintenance,
             properties: userProperties,
+            messages: userMessages,
+            conversations: userConversations,
+            contacts: SERVER_STORE.contacts,
             timestamp: new Date().toISOString()
           }
         });
@@ -394,6 +409,9 @@ export default async function handler(req, res) {
           contracts: [],
           maintenance: [],
           properties: [],
+          messages: [],
+          conversations: [],
+          contacts: {},
           timestamp: new Date().toISOString()
         }
       });
@@ -752,9 +770,128 @@ export default async function handler(req, res) {
         }
       }
 
+      // 6quater. Envoi d'un message réel dans le store centralisé
+      if (action === 'send_message') {
+        const { message, contactInfo, conversation } = body;
+        if (message && message.sender_id && message.receiver_id) {
+          const mid = message.id || `msg_${Date.now()}`;
+          const normalizedMsg = {
+            ...message,
+            id: mid,
+            created_at: message.created_at || new Date().toISOString(),
+            status: message.status || 'delivered'
+          };
+          // Éviter tout doublon
+          SERVER_STORE.messages = [
+            normalizedMsg,
+            ...SERVER_STORE.messages.filter(m => m.id !== mid)
+          ];
+
+          // Sauvegarde ou mise à jour de la conversation
+          const convId = conversation?.id || `conv_${message.sender_id}_${message.receiver_id}`;
+          const existingConvIndex = SERVER_STORE.conversations.findIndex(c =>
+            c.id === convId ||
+            (c.participant_a === message.sender_id && c.participant_b === message.receiver_id) ||
+            (c.participant_a === message.receiver_id && c.participant_b === message.sender_id) ||
+            (c.tenant_id === message.sender_id && c.owner_id === message.receiver_id) ||
+            (c.tenant_id === message.receiver_id && c.owner_id === message.sender_id)
+          );
+
+          const convObj = {
+            id: convId,
+            participant_a: message.sender_id,
+            participant_b: message.receiver_id,
+            tenant_id: message.sender_id,
+            owner_id: message.receiver_id,
+            property_id: message.propertyId || conversation?.property_id,
+            property_title: message.propertyTitle || conversation?.property_title,
+            last_message: message.text,
+            last_message_at: normalizedMsg.created_at,
+            updated_at: normalizedMsg.created_at
+          };
+
+          if (existingConvIndex >= 0) {
+            SERVER_STORE.conversations[existingConvIndex] = {
+              ...SERVER_STORE.conversations[existingConvIndex],
+              ...convObj
+            };
+          } else {
+            SERVER_STORE.conversations.unshift(convObj);
+          }
+
+          // Mémorisation des métadonnées de contact pour résolution instantanée
+          if (contactInfo && contactInfo.id) {
+            SERVER_STORE.contacts[contactInfo.id] = contactInfo;
+          }
+
+          // Génération de la notification ciblée pour le destinataire
+          const notifId = `notif_msg_${Date.now()}`;
+          const senderName = contactInfo?.name || 'Un utilisateur';
+          const notifMsg = {
+            id: notifId,
+            title: `Nouveau message de ${senderName}`,
+            description: message.text?.length > 80 ? `${message.text.slice(0, 80)}...` : message.text,
+            time: "À l'instant",
+            timestamp: new Date().toISOString(),
+            unread: true,
+            read: false,
+            category: 'demande',
+            type: 'info',
+            targetTab: 'messages',
+            targetUserId: message.receiver_id,
+            senderUserId: message.sender_id,
+            payload: {
+              contactId: message.sender_id,
+              propertyId: message.propertyId
+            }
+          };
+
+          SERVER_STORE.notifications = [
+            notifMsg,
+            ...SERVER_STORE.notifications.filter(n => n.id !== notifId)
+          ];
+
+          return res.status(200).json({
+            success: true,
+            message: normalizedMsg,
+            conversation: convObj,
+            messages: SERVER_STORE.messages,
+            conversations: SERVER_STORE.conversations
+          });
+        }
+        return res.status(400).json({ success: false, error: 'Données de message incomplètes.' });
+      }
+
+      // 6quinquies. Marquage des messages d'un contact comme lus
+      if (action === 'mark_messages_read') {
+        const { contactId, currentUserId } = body;
+        if (contactId && currentUserId) {
+          SERVER_STORE.messages = SERVER_STORE.messages.map(m => {
+            if (m.sender_id === contactId && m.receiver_id === currentUserId) {
+              return { ...m, status: 'read', read: true, is_read: true };
+            }
+            return m;
+          });
+
+          // Marquer également les notifications de ce sender comme lues
+          SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
+            if (n.senderUserId === contactId && n.targetUserId === currentUserId) {
+              return { ...n, read: true, unread: false };
+            }
+            return n;
+          });
+
+          return res.status(200).json({
+            success: true,
+            messages: SERVER_STORE.messages,
+            notifications: SERVER_STORE.notifications
+          });
+        }
+      }
+
       // 7. Synchronisation bidirectionnelle globale
       if (action === 'sync_all') {
-        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties } = body;
+        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties, clientMessages, clientContacts } = body;
         if (Array.isArray(clientPayments)) {
           for (const cp of clientPayments) {
             if (cp && cp.reference && !SERVER_STORE.payments.some(p => p.reference === cp.reference)) {
@@ -790,6 +927,16 @@ export default async function handler(req, res) {
             }
           }
         }
+        if (Array.isArray(clientMessages)) {
+          for (const msg of clientMessages) {
+            if (msg && msg.id && !SERVER_STORE.messages.some(sm => sm.id === msg.id)) {
+              SERVER_STORE.messages.push(msg);
+            }
+          }
+        }
+        if (clientContacts && typeof clientContacts === 'object') {
+          Object.assign(SERVER_STORE.contacts, clientContacts);
+        }
         return res.status(200).json({
           success: true,
           data: {
@@ -799,7 +946,10 @@ export default async function handler(req, res) {
             notifications: SERVER_STORE.notifications,
             contracts: SERVER_STORE.contracts,
             maintenance: SERVER_STORE.maintenance,
-            properties: SERVER_STORE.properties
+            properties: SERVER_STORE.properties,
+            messages: SERVER_STORE.messages,
+            conversations: SERVER_STORE.conversations,
+            contacts: SERVER_STORE.contacts
           }
         });
       }

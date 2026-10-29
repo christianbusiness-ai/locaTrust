@@ -63,6 +63,23 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
 
       // 2. Sauvegarder les métadonnées de contact pour la messagerie
       if (typeof window !== 'undefined') {
+        const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Locataire Certifié';
+        const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
+        const myAvatar = profile?.avatar_url || (user as any)?.avatar_url || localStorage.getItem('locatrust_user_avatar') || undefined;
+
+        localStorage.setItem(
+          'locatrust_contact_' + applicantId,
+          JSON.stringify({
+            id: applicantId,
+            name: myName,
+            phone: myPhone,
+            role: 'Locataire Preneur',
+            propertyTitle: property.title || 'Bien immobilier',
+            avatar: myAvatar,
+            online: true,
+          })
+        );
+
         localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
         localStorage.setItem(
           'locatrust_contact_' + targetOwnerId,
@@ -72,7 +89,7 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
             phone: property.owner?.phone || '+225 07 00 00 00 00',
             role: Boolean((property as any).is_agency || property.agency_id || property.owner?.role === 'agence' || (property.owner as any)?.account_type === 'agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
             propertyTitle: property.title || 'Bien immobilier',
-            avatar: ownerAvatar,
+            avatar: property.owner?.avatar_url || undefined,
             online: true,
           })
         );
