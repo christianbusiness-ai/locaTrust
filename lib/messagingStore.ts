@@ -5,6 +5,7 @@ import { triggerCelebration } from '@/lib/celebration';
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
+import { formatFCFA } from '@/lib/utils';
 
 export interface ChatQuittanceAttachment {
   receiptNumber: string;

@@ -24,7 +24,8 @@ import {
   Sparkles,
   Phone,
   Mail,
-  PenTool
+  PenTool,
+  Lock
 } from 'lucide-react';
 import { formatFCFA, formatPeriodCovered } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';

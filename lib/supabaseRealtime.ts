@@ -397,7 +397,7 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           const newAvatar = payload?.data?.avatarUrl;
           const actorId = payload?.actorId || payload?.data?.userId;
           const senderRole = payload?.data?.role;
-          const myId = getCurrentUserId();
+          const myId = currentActiveUserId;
 
           if (newAvatar) {
             try {

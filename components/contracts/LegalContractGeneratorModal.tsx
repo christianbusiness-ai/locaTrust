@@ -24,7 +24,9 @@ import {
   Mic,
   MicOff,
   Bell,
-  ExternalLink
+  ExternalLink,
+  Info,
+  CheckCircle
 } from 'lucide-react';
 import { formatFCFA, generateUniqueContractNumber } from '@/lib/utils';
 import { getLocaTrustVerificationQR } from '@/lib/qrCode';

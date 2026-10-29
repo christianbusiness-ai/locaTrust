@@ -97,6 +97,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   const [applyComment, setApplyComment] = useState('Bonjour, je souhaite visiter et candidater pour ce logement. Mon dossier est complet.');
   const [directMessageText, setDirectMessageText] = useState('Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.');
   const [applySuccessModal, setApplySuccessModal] = useState(false);
+  const [duplicateAppModal, setDuplicateAppModal] = useState(false);
+  const [noticeModal, setNoticeModal] = useState<{ title: string; message: string } | null>(null);
   const [isSubmittingApp, setIsSubmittingApp] = useState(false);
   const [isSendingDirectMessage, setIsSendingDirectMessage] = useState(false);
 
@@ -208,9 +210,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       );
 
       if (isAlreadyActive) {
-        alert("Vous avez déjà envoyé une demande active pour ce logement. Votre candidature est actuellement en cours d'examen par le bailleur.");
         setIsApplyModalOpen(false);
         setIsSubmittingApp(false);
+        setDuplicateAppModal(true);
         return;
       }
 
@@ -349,13 +351,21 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     try {
       const applicantId = user?.id || profile?.id;
       if (!applicantId) {
-        alert("Veuillez vous connecter pour contacter directement le bailleur.");
+        setIsMessageModalOpen(false);
+        setNoticeModal({
+          title: 'Connexion requise',
+          message: 'Veuillez vous connecter pour contacter directement le bailleur.'
+        });
         setIsSendingDirectMessage(false);
         return;
       }
       const targetOwnerId = selectedRental.ownerId || selectedRental.agencyId || selectedRental.mandant_id;
       if (!targetOwnerId) {
-        alert("Les coordonnées du bailleur sont indisponibles pour ce bien.");
+        setIsMessageModalOpen(false);
+        setNoticeModal({
+          title: 'Coordonnées indisponibles',
+          message: 'Les coordonnées du bailleur sont temporairement indisponibles pour ce bien.'
+        });
         setIsSendingDirectMessage(false);
         return;
       }
@@ -407,7 +417,11 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       }
     } catch (error) {
       console.error('Error sending direct message:', error);
-      alert("Impossible d'envoyer le message. Vérifiez votre connexion et réessayez.");
+      setIsMessageModalOpen(false);
+      setNoticeModal({
+        title: 'Envoi interrompu',
+        message: "Impossible d'envoyer le message pour le moment. Vérifiez votre connexion et réessayez."
+      });
     } finally {
       setIsSendingDirectMessage(false);
     }
@@ -1428,9 +1442,116 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                 setApplySuccessModal(false);
                 if (onNavigateTab) onNavigateTab('applications');
               }}
-              className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md transition-all mt-2"
+              className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md transition-all mt-2 cursor-pointer"
             >
               Voir mes demandes
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL MODERNE: Demande déjà active (Anti-doublon)        */}
+      {/* ======================================================== */}
+      {duplicateAppModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl flex flex-col items-center text-center gap-4 border border-slate-100 relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-500 to-amber-500" />
+
+            <button
+              type="button"
+              onClick={() => setDuplicateAppModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="relative mt-1">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-100 border border-blue-200/80 text-blue-600 flex items-center justify-center shadow-inner">
+                <Clock className="w-8 h-8 text-blue-600 animate-pulse" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center ring-2 ring-white shadow">
+                <ShieldCheck className="w-3.5 h-3.5" />
+              </div>
+            </div>
+
+            <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-black uppercase tracking-wider">
+              Dossier déjà transmis
+            </span>
+
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-lg sm:text-xl font-black text-slate-900">
+                Demande déjà en cours d&apos;examen
+              </h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                Vous avez déjà envoyé une demande active pour ce logement. Votre candidature certifiée est actuellement en cours d&apos;examen par le bailleur.
+              </p>
+            </div>
+
+            {selectedRental && (
+              <div className="w-full p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center gap-3 text-left">
+                <img
+                  src={selectedRental.images?.main}
+                  alt={selectedRental.title}
+                  className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-slate-200"
+                />
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="text-xs font-black text-slate-900 truncate">
+                    {selectedRental.title}
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-500 truncate">
+                    Bailleur : {selectedRental.authorName || 'Bailleur certifié'}
+                  </span>
+                  <span className="text-xs font-black text-blue-700 mt-0.5">
+                    {formatFCFA(selectedRental.price)} / mois
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="w-full flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateAppModal(false);
+                  if (onNavigateTab) onNavigateTab('applications');
+                }}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>Voir mes demandes</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setDuplicateAppModal(false)}
+                className="w-full sm:w-auto py-3 px-5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL MODERNE: Information / Notification                */}
+      {/* ======================================================== */}
+      {noticeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl flex flex-col items-center text-center gap-4 border border-slate-100">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <h3 className="text-base font-black text-slate-900">{noticeModal.title}</h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed">{noticeModal.message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNoticeModal(null)}
+              className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
+            >
+              Compris
             </button>
           </div>
         </div>

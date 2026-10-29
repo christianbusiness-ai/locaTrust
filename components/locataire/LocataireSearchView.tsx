@@ -23,7 +23,8 @@ import {
   Home,
   ShieldAlert,
   ArrowRight,
-  Clock
+  Clock,
+  X
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { Property } from '@/types/database.types';
@@ -69,6 +70,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [showVisitModal, setShowVisitModal] = useState<boolean>(false);
   const [showApplyModal, setShowApplyModal] = useState<boolean>(false);
+  const [duplicateAppModal, setDuplicateAppModal] = useState<boolean>(false);
   const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   // Form states for visit & application
@@ -135,6 +137,29 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       if (data && Array.isArray(data)) {
         appsList.push(...data);
       }
+
+      // Compléter avec l'API centrale /api/sync
+      try {
+        const syncRes = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'sync_all', userId: user.id })
+        });
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          const serverApps = syncJson?.data?.applications;
+          if (Array.isArray(serverApps)) {
+            serverApps.forEach((sa: any) => {
+              const isMatch =
+                (user.id && sa.tenant_id === user.id) ||
+                (user.email && sa.tenant_email?.toLowerCase() === user.email.toLowerCase());
+              if (isMatch && !appsList.some((ex) => ex.id === sa.id || (ex.property_id === sa.property_id && ex.tenant_id === sa.tenant_id))) {
+                appsList.push(sa);
+              }
+            });
+          }
+        }
+      } catch {}
 
       // Compléter avec le cache local synchronisé si besoin
       try {
@@ -243,6 +268,13 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
     } else if (activeTab === 'visits') {
       fetchTenantVisits();
     }
+    const handleAppsUpdated = () => {
+      if (activeTab === 'applications') fetchTenantApplications();
+    };
+    window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
+    return () => {
+      window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
+    };
   }, [activeTab, user?.id]);
 
   const toggleFavorite = (id: string) => {
@@ -441,6 +473,19 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         let currentApps: any[] = [];
         if (existingRaw) {
           try { currentApps = JSON.parse(existingRaw); } catch {}
+        }
+        const isAlreadyActive = currentApps.some(
+          (a: any) =>
+            a.property_id === selectedProperty.id &&
+            a.status !== 'refusee' &&
+            ((applicantId && a.tenant_id === applicantId) ||
+              (applicantEmail && a.tenant_email?.toLowerCase() === applicantEmail.toLowerCase()))
+        );
+        if (isAlreadyActive) {
+          setShowApplyModal(false);
+          setIsSubmitting(false);
+          setDuplicateAppModal(true);
+          return;
         }
         const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
@@ -1185,6 +1230,87 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Modal Moderne Anti-Doublon (Demande déjà active) */}
+      {duplicateAppModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl flex flex-col items-center text-center gap-4 border border-slate-100 relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-500 to-amber-500" />
+
+            <button
+              type="button"
+              onClick={() => setDuplicateAppModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="relative mt-1">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-100 border border-blue-200/80 text-blue-600 flex items-center justify-center shadow-inner">
+                <Clock className="w-8 h-8 text-blue-600 animate-pulse" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center ring-2 ring-white shadow">
+                <ShieldCheck className="w-3.5 h-3.5" />
+              </div>
+            </div>
+
+            <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-black uppercase tracking-wider">
+              Dossier déjà transmis
+            </span>
+
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-lg sm:text-xl font-black text-slate-900">
+                Demande déjà en cours d&apos;examen
+              </h3>
+              <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                Vous avez déjà envoyé une demande active pour ce logement. Votre candidature certifiée est actuellement en cours d&apos;examen par le bailleur.
+              </p>
+            </div>
+
+            {selectedProperty && (
+              <div className="w-full p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center gap-3 text-left">
+                <img
+                  src={selectedProperty.photos?.[0] || 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&w=800&q=80'}
+                  alt={selectedProperty.title}
+                  className="w-12 h-12 rounded-xl object-cover shrink-0 ring-1 ring-slate-200"
+                />
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="text-xs font-black text-slate-900 truncate">
+                    {selectedProperty.title}
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-500 truncate">
+                    {selectedProperty.location?.commune || ''}, {selectedProperty.location?.city || 'Abidjan'}
+                  </span>
+                  <span className="text-xs font-black text-blue-700 mt-0.5">
+                    {formatFCFA(selectedProperty.rent)} / mois
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="w-full flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateAppModal(false);
+                  if (onNavigateTab) onNavigateTab('applications');
+                }}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs shadow-md shadow-blue-600/20 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>Voir mes demandes</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setDuplicateAppModal(false)}
+                className="w-full sm:w-auto py-3 px-5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

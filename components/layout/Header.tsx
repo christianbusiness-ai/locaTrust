@@ -41,7 +41,8 @@ import {
 } from 'lucide-react';
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
-import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser, isValidUuid } from '@/lib/messagingStore';
+import { supabase } from '@/src/lib/supabase';
+import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser, markMessagesAsRead, isValidUuid } from '@/lib/messagingStore';
 import { runBackgroundRentScheduleAudit } from '@/lib/dateSystem';
 
 interface NotificationItem {

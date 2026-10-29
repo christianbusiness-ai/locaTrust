@@ -40,9 +40,12 @@ import {
   Radio,
   Sparkles,
   RefreshCw,
-  Lock
+  Lock,
+  Clock,
+  CreditCard
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { formatFCFA } from '@/lib/utils';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { SignatureModal } from '@/components/common/SignatureModal';
