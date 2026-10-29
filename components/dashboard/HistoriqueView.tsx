@@ -238,7 +238,7 @@ export const HistoriqueView: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
-      
+
       {/* Top Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
@@ -260,11 +260,10 @@ export const HistoriqueView: React.FC = () => {
       <div className="flex items-center gap-3 border-b border-slate-200 pb-2">
         <button
           onClick={() => setActiveTab('locataires')}
-          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${
-            activeTab === 'locataires'
+          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${activeTab === 'locataires'
               ? 'bg-blue-600 text-white shadow-md'
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
+            }`}
         >
           <Users className="w-4 h-4" />
           <span>Historique des Locataires ({tenantsHistory.length})</span>
@@ -272,11 +271,10 @@ export const HistoriqueView: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('contrats')}
-          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${
-            activeTab === 'contrats'
+          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${activeTab === 'contrats'
               ? 'bg-blue-600 text-white shadow-md'
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
+            }`}
         >
           <FileText className="w-4 h-4" />
           <span>Historique des Contrats de Bail ({contracts.length})</span>
@@ -345,11 +343,10 @@ export const HistoriqueView: React.FC = () => {
           {!isLoading && !loadError && filteredTenants.map((t) => (
             <div
               key={t.id}
-              className={`bg-white dark:bg-slate-900 rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${
-                t.is_active
+              className={`bg-white dark:bg-slate-900 rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${t.is_active
                   ? 'border-slate-200 dark:border-slate-800 hover:border-blue-400'
                   : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40'
-              }`}
+                }`}
             >
               {/* 1. Personne (Avatar, Nom, Téléphone, Badge statut) */}
               <div className="flex items-center gap-3.5 min-w-[250px] shrink-0">
@@ -493,84 +490,84 @@ export const HistoriqueView: React.FC = () => {
                   )}
 
                   {!loadError && filteredContracts.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-12 text-center">
-                      <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
-                        <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
-                          <FileText className="w-6 h-6" />
+                    <tr>
+                      <td colSpan={6} className="p-12 text-center">
+                        <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                          <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
+                            <FileText className="w-6 h-6" />
+                          </div>
+                          <span className="text-slate-800 font-bold text-sm">
+                            {searchQuery ? "Aucun contrat trouvé" : "Aucun contrat de bail enregistré pour le moment"}
+                          </span>
+                          <p className="text-slate-400 text-xs mt-1 text-center">
+                            {searchQuery
+                              ? "Aucun document ne correspond à votre recherche."
+                              : "Dès qu'un bail est finalisé, il sera archivé ici avec son certificat officiel et son QR Code."}
+                          </p>
                         </div>
-                        <span className="text-slate-800 font-bold text-sm">
-                          {searchQuery ? "Aucun contrat trouvé" : "Aucun contrat de bail enregistré pour le moment"}
-                        </span>
-                        <p className="text-slate-400 text-xs mt-1 text-center">
-                          {searchQuery
-                            ? "Aucun document ne correspond à votre recherche."
-                            : "Dès qu'un bail est finalisé, il sera archivé ici avec son certificat officiel et son QR Code."}
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                )}
+                      </td>
+                    </tr>
+                  )}
 
-                {!isLoading && !loadError && filteredContracts.map((c) => (
-                  <tr
-                    key={c.id}
-                    onClick={() => setSelectedContractId(c.contract_number)}
-                    className="hover:bg-blue-50/60 cursor-pointer transition-colors group"
-                  >
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
-                          <FileText className="w-5 h-5" />
+                  {!isLoading && !loadError && filteredContracts.map((c) => (
+                    <tr
+                      key={c.id}
+                      onClick={() => setSelectedContractId(c.contract_number)}
+                      className="hover:bg-blue-50/60 cursor-pointer transition-colors group"
+                    >
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="font-extrabold text-slate-900 group-hover:text-blue-600 text-sm">
+                              {c.contract_number}
+                            </span>
+                            <span className="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
+                              <QrCode className="w-3 h-3 text-emerald-600" /> Certifié LocaTrust
+                            </span>
+                          </div>
                         </div>
+                      </td>
+
+                      <td className="p-4">
                         <div className="flex flex-col">
-                          <span className="font-extrabold text-slate-900 group-hover:text-blue-600 text-sm">
-                            {c.contract_number}
-                          </span>
-                          <span className="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
-                            <QrCode className="w-3 h-3 text-emerald-600" /> Certifié LocaTrust
+                          <span className="font-bold text-slate-900">{c.tenant?.full_name || 'Locataire'}</span>
+                          <span className="text-[11px] text-slate-400">{c.tenant?.phone || ''}</span>
+                        </div>
+                      </td>
+
+                      <td className="p-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-900">{c.property?.title}</span>
+                          <span className="text-[11px] text-slate-400">{c.property?.city}, {c.property?.commune}</span>
+                        </div>
+                      </td>
+
+                      <td className="p-4 font-black text-slate-900 text-sm">
+                        {formatFCFA(c.rent)}
+                      </td>
+
+                      <td className="p-4">
+                        <div className="flex flex-col gap-1">
+                          <span className="font-bold text-slate-900">{formatFCFA(c.caution)}</span>
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-extrabold w-fit">
+                            Reçu DEP-2026-CI-00109
                           </span>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="p-4">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-900">{c.tenant?.full_name || 'Locataire'}</span>
-                        <span className="text-[11px] text-slate-400">{c.tenant?.phone || ''}</span>
-                      </div>
-                    </td>
-
-                    <td className="p-4">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-900">{c.property?.title}</span>
-                        <span className="text-[11px] text-slate-400">{c.property?.city}, {c.property?.commune}</span>
-                      </div>
-                    </td>
-
-                    <td className="p-4 font-black text-slate-900 text-sm">
-                      {formatFCFA(c.rent)}
-                    </td>
-
-                    <td className="p-4">
-                      <div className="flex flex-col gap-1">
-                        <span className="font-bold text-slate-900">{formatFCFA(c.caution)}</span>
-                        <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-extrabold w-fit">
-                          Reçu DEP-2026-CI-00109
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="p-4 text-center">
-                      <button className="px-3 py-1.5 rounded-xl bg-slate-100 group-hover:bg-blue-600 group-hover:text-white font-extrabold text-xs transition-all flex items-center gap-1 mx-auto">
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Ouvrir Contrat</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            )}
+                      <td className="p-4 text-center">
+                        <button className="px-3 py-1.5 rounded-xl bg-slate-100 group-hover:bg-blue-600 group-hover:text-white font-extrabold text-xs transition-all flex items-center gap-1 mx-auto">
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Ouvrir Contrat</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              )}
             </table>
           </div>
         </div>
@@ -580,7 +577,7 @@ export const HistoriqueView: React.FC = () => {
       {selectedTenant && (
         <div className="fixed inset-0 z-50 bg-slate-900/65 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn font-sans">
           <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[92vh] overflow-y-auto p-6 shadow-2xl border border-slate-200 flex flex-col gap-6">
-            
+
             {/* Header */}
             <div className="flex items-center justify-between border-b pb-4">
               <div className="flex items-center gap-4">
@@ -613,7 +610,7 @@ export const HistoriqueView: React.FC = () => {
 
             {/* Lease & Deposit Summary Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              
+
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-2 text-xs">
                 <div className="flex items-center gap-2 font-black text-slate-900">
                   <FileText className="w-4 h-4 text-blue-600" />
@@ -748,7 +745,7 @@ export const HistoriqueView: React.FC = () => {
         return (
           <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
             <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
-              
+
               <div className="flex items-center justify-between border-b pb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-black">
@@ -769,7 +766,7 @@ export const HistoriqueView: React.FC = () => {
 
               {/* Document Body */}
               <div className="p-4 sm:p-6 rounded-2xl bg-white border border-slate-200 flex flex-col gap-4 text-xs font-sans text-slate-800 shadow-sm">
-                
+
                 {/* Header Branding */}
                 <div className="flex items-start justify-between border-b border-slate-200 pb-3">
                   <div className="flex flex-col">
@@ -940,7 +937,7 @@ export const HistoriqueView: React.FC = () => {
 
                 {/* SIGNATURES & DYNAMIC SCANNABLE QR CODE CONTAINER */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-200 items-center">
-                  
+
                   {/* Propriétaire Signature */}
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center text-center">
                     <span className="text-[10px] font-extrabold text-slate-500 uppercase">Signature du propriétaire</span>
@@ -1032,11 +1029,10 @@ export const HistoriqueView: React.FC = () => {
                       handleDownloadReceiptPDF(previewReceipt.receipt, previewReceipt.tenant);
                     }}
                     disabled={!hasBothSignatures}
-                    className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-md flex items-center gap-1.5 transition-all ${
-                      hasBothSignatures
+                    className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-md flex items-center gap-1.5 transition-all ${hasBothSignatures
                         ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
                         : 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed opacity-75'
-                    }`}
+                      }`}
                   >
                     {hasBothSignatures ? <Download className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
                     <span>{hasBothSignatures ? "Télécharger PDF (Officiel)" : "Télécharger PDF (Signatures requises)"}</span>

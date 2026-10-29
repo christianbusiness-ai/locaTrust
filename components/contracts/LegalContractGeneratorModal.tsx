@@ -1069,7 +1069,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               amount_paid: Number(effectiveCautionAmount || 0),
               status: 'caution_a_confirmer'
             });
-          } catch {}
+          } catch { }
 
           try {
             broadcastLiveEvent('CONTRACT_FINALIZED', {
@@ -1079,7 +1079,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               propertyId: finalPropId,
               data: { contractNumber, rent, caution: effectiveCautionAmount }
             });
-          } catch {}
+          } catch { }
         }
       }
     } catch (dbErr) {
@@ -1088,21 +1088,21 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
     // 4. Inscription dans le registre des contrats (locatrust_contracts)
     try {
-        const contractsRaw = localStorage.getItem('locatrust_contracts');
-        const existingContracts = contractsRaw ? JSON.parse(contractsRaw) : [];
-        const newContractRecord = {
-          id: generatedContractUuid,
-          contract_number: contractNumber,
-          property_id: finalPropId || (initialData as any)?.propertyId || (initialData as any)?.property_id,
-          tenant_id: finalTenantId || targetTenantId,
-          owner_id: finalOwnerId || targetOwnerId,
-          lease_type: normalizedLegalLeaseType,
-          usage_destination: leaseType,
-          deposit_amount: effectiveCautionAmount,
-          deposit_months: effectiveCautionMonths,
-          deposit_configuration_mode: depositMode,
-          deposit_currency: 'FCFA',
-          deposit_rules_version: '2019-576-v1',
+      const contractsRaw = localStorage.getItem('locatrust_contracts');
+      const existingContracts = contractsRaw ? JSON.parse(contractsRaw) : [];
+      const newContractRecord = {
+        id: generatedContractUuid,
+        contract_number: contractNumber,
+        property_id: finalPropId || (initialData as any)?.propertyId || (initialData as any)?.property_id,
+        tenant_id: finalTenantId || targetTenantId,
+        owner_id: finalOwnerId || targetOwnerId,
+        lease_type: normalizedLegalLeaseType,
+        usage_destination: leaseType,
+        deposit_amount: effectiveCautionAmount,
+        deposit_months: effectiveCautionMonths,
+        deposit_configuration_mode: depositMode,
+        deposit_currency: 'FCFA',
+        deposit_rules_version: '2019-576-v1',
         property: {
           id: (initialData as any)?.propertyId || (initialData as any)?.property_id || `prop_${Date.now()}`,
           title: propertyTitle,
@@ -1168,7 +1168,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               localStorage.setItem('locatrust_properties', JSON.stringify(uList));
             }
           }
-        } catch {}
+        } catch { }
         broadcastLiveEvent('PROPERTY_RENTED', { propertyId: activePropId, data: { status: 'loue' } });
       }
 
@@ -1289,12 +1289,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       }}
     >
       <div
-        className={`bg-white rounded-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-5 text-slate-800 transition-all ${
-          currentStep === 'preview' ? 'max-w-4xl' : currentStep === 'success' ? 'max-w-lg' : 'max-w-2xl'
-        }`}
+        className={`bg-white rounded-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-5 text-slate-800 transition-all ${currentStep === 'preview' ? 'max-w-4xl' : currentStep === 'success' ? 'max-w-lg' : 'max-w-2xl'
+          }`}
         onClick={(e) => e.stopPropagation()}
       >
-        
+
         {/* Header Modal */}
         <div className="flex items-center justify-between border-b pb-4">
           <div className="flex items-center gap-3">
@@ -1322,7 +1321,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         {/* STEP 1: PREPARATION FORM WITH ALL CLAUSE INPUTS */}
         {currentStep === 'form' && (
           <form onSubmit={handleFormSubmit} className="flex flex-col gap-6 text-xs">
-            
+
             {/* Parties & Property Details */}
             {/* 1. Identification des Parties & du Bien Immobilier */}
             <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-3 sm:gap-4">
@@ -1348,22 +1347,20 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   <button
                     type="button"
                     onClick={() => setLeaseType('habitation')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
-                      leaseType === 'habitation'
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${leaseType === 'habitation'
                         ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-600/20'
                         : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     Bail d'Habitation (Loi CI 2019-576)
                   </button>
                   <button
                     type="button"
                     onClick={() => setLeaseType('professionnel')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
-                      leaseType === 'professionnel'
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${leaseType === 'professionnel'
                         ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-600/20'
                         : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'
-                    }`}
+                      }`}
                   >
                     Bail Professionnel (OHADA)
                   </button>
@@ -1539,11 +1536,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                           key={m}
                           type="button"
                           onClick={() => setDurationMonths(m)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all ${
-                            durationMonths === m
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all ${durationMonths === m
                               ? 'bg-amber-600 text-white shadow-xs'
                               : 'bg-amber-100/70 text-amber-950 hover:bg-amber-200/70 border border-amber-300'
-                          }`}
+                            }`}
                         >
                           {m === 12 ? '12 mois (1 an)' : m === 24 ? '24 mois (2 ans)' : m === 36 ? '36 mois (3 ans)' : `${m} mois`}
                         </button>
@@ -1625,11 +1621,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     max={leaseType === 'habitation' ? 2 : undefined}
                     value={advanceMonths}
                     onChange={(e) => setAdvanceMonths(Number(e.target.value))}
-                    className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
-                      leaseType === 'habitation' && advanceMonths > 2
+                    className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${leaseType === 'habitation' && advanceMonths > 2
                         ? 'border-rose-500 text-rose-900 bg-rose-50'
                         : 'border-amber-300 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500'
-                    }`}
+                      }`}
                   />
                 </div>
                 <div className="flex flex-col">
@@ -1670,11 +1665,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     <button
                       type="button"
                       onClick={() => setDepositMode('MONTHS')}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
-                        depositMode === 'MONTHS'
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${depositMode === 'MONTHS'
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                        }`}
                     >
                       En nombre de mois
                     </button>
@@ -1686,11 +1680,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                           setCustomDepositAmount(rent * cautionMonths);
                         }
                       }}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${
-                        depositMode === 'CUSTOM_AMOUNT'
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition-all ${depositMode === 'CUSTOM_AMOUNT'
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                        }`}
                     >
                       Montant personnalisé (FCFA)
                     </button>
@@ -1715,11 +1708,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                           setCautionMonths(val);
                           setCustomDepositAmount(Math.round(rent * val));
                         }}
-                        className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
-                          leaseType === 'habitation' && cautionMonths > 2
+                        className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${leaseType === 'habitation' && cautionMonths > 2
                             ? 'border-rose-500 text-rose-900 bg-rose-50 focus:ring-2 focus:ring-rose-500/20'
                             : 'border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
-                        }`}
+                          }`}
                         placeholder={leaseType === 'habitation' ? 'Ex: 2 mois' : 'Ex: 3 mois'}
                       />
                     </div>
@@ -1740,11 +1732,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                             setCautionMonths(Number((val / rent).toFixed(2)));
                           }
                         }}
-                        className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${
-                          leaseType === 'habitation' && customDepositAmount > rent * 2
+                        className={`w-full h-10 px-3 rounded-xl border font-bold text-xs bg-white outline-none ${leaseType === 'habitation' && customDepositAmount > rent * 2
                             ? 'border-rose-500 text-rose-900 bg-rose-50 focus:ring-2 focus:ring-rose-500/20'
                             : 'border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
-                        }`}
+                          }`}
                         placeholder="Ex: 1 500 000"
                       />
                     </div>
@@ -1811,11 +1802,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   <button
                     type="button"
                     onClick={() => handleToggleVoiceInput('owner')}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${
-                      listeningField === 'owner'
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${listeningField === 'owner'
                         ? 'bg-rose-600 text-white animate-pulse shadow-rose-500/30'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
-                    }`}
+                      }`}
                     title="Parler au micro pour dicter vos conditions (retranscription automatique)"
                   >
                     {listeningField === 'owner' ? (
@@ -1886,11 +1876,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   <button
                     type="button"
                     onClick={() => handleToggleVoiceInput('tenant')}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${
-                      listeningField === 'tenant'
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${listeningField === 'tenant'
                         ? 'bg-rose-600 text-white animate-pulse shadow-rose-500/30'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
-                    }`}
+                      }`}
                     title="Parler au micro pour dicter les demandes du locataire"
                   >
                     {listeningField === 'tenant' ? (
@@ -1961,11 +1950,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   <button
                     type="button"
                     onClick={() => handleToggleVoiceInput('property')}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${
-                      listeningField === 'property'
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all shadow-sm shrink-0 self-start sm:self-auto ${listeningField === 'property'
                         ? 'bg-rose-600 text-white animate-pulse shadow-rose-500/30'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
-                    }`}
+                      }`}
                     title="Parler au micro pour dicter les règles spécifiques au bien"
                   >
                     {listeningField === 'property' ? (
@@ -2090,19 +2078,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       {reorganizationReport.logs.map((log, idx) => (
                         <div
                           key={idx}
-                          className={`p-2.5 rounded-lg border text-[11px] flex flex-col gap-1 ${
-                            log.isCorrectedAbuse
+                          className={`p-2.5 rounded-lg border text-[11px] flex flex-col gap-1 ${log.isCorrectedAbuse
                               ? 'bg-amber-50/70 border-amber-200 text-amber-900'
                               : 'bg-slate-50 border-slate-200 text-slate-800'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-center justify-between">
                             <span className="font-extrabold text-slate-700">
                               {log.assignedField === 'owner'
                                 ? '→ Conditions Propriétaire'
                                 : log.assignedField === 'tenant'
-                                ? '→ Demandes Locataire'
-                                : '→ Règles Copropriété'}
+                                  ? '→ Demandes Locataire'
+                                  : '→ Règles Copropriété'}
                             </span>
                             {log.legalCitation && (
                               <span className="text-[10px] text-blue-700 font-bold">
@@ -2144,7 +2131,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
             {/* 4. MODULE D'ANALYSE JURIDIQUE LOCATRUST (Sections 5 à 14) */}
             <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-4">
-              
+
               {/* En-tête de l'analyse avec régime et sources */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200">
                 <div className="flex flex-col gap-1">
@@ -2443,11 +2430,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               <button
                 type="submit"
                 disabled={!analysisReport.isGlobalCompliant}
-                className={`px-6 py-3 rounded-xl text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-2 transition-all ${
-                  !analysisReport.isGlobalCompliant
+                className={`px-6 py-3 rounded-xl text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-2 transition-all ${!analysisReport.isGlobalCompliant
                     ? 'bg-slate-400 cursor-not-allowed opacity-75'
                     : 'bg-blue-600 hover:bg-blue-500 cursor-pointer shadow-blue-500/25'
-                }`}
+                  }`}
               >
                 {analysisReport.isGlobalCompliant ? (
                   <>
@@ -2470,7 +2456,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         {currentStep === 'verification' && (
           <div className="flex flex-col gap-6 text-xs">
             <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-6">
-              
+
               <div className="flex items-center justify-between border-b pb-4">
                 <div className="flex flex-col">
                   <span className="text-base font-black text-slate-900">Rapport de Conformité LocaTrust</span>
@@ -2551,7 +2537,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           <div className="flex flex-col gap-6 text-xs">
             {/* The Document Sheet */}
             <div className="p-6 sm:p-10 rounded-3xl border border-slate-200 bg-white font-sans text-slate-800 shadow-xl flex flex-col gap-6 relative">
-              
+
               {/* Header Banner inside Document */}
               <div className="flex items-start justify-between border-b pb-6">
                 <div>
@@ -2569,7 +2555,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     <Logo size="md" variant="light" showSubtitle={true} />
                   )}
                 </div>
-                
+
                 <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3.5">
                   <div className="flex flex-col items-end gap-1 text-right">
                     <span className="text-lg sm:text-xl font-black text-blue-900 tracking-tight">CONTRAT DE BAIL</span>
@@ -2696,7 +2682,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
               {/* ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES (AVEC PILLS ORANGE EXACTES) */}
               <div className="flex flex-col gap-3">
-                
+
                 {/* Article 3 : Loyer */}
                 <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex items-center justify-between gap-4">
                   <div className="flex flex-col gap-0.5">
@@ -2838,7 +2824,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               {/* SIGNATURES SECTION WITH EXACT GOLDEN SEAL & SIGNATURES */}
               <div className="pt-6 border-t border-slate-200 flex flex-col gap-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 items-center">
-                  
+
                   {/* Bailleur / Agence Signature */}
                   <div className="flex flex-col gap-2 p-5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
                     <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
