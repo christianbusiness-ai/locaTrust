@@ -17,6 +17,13 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getActiveUser } from '@/lib/authStore';
+import { isNotificationRead } from '@/lib/messagingStore';
+import {
+  deduplicateAndNormalizeNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead
+} from '@/lib/waitingListNotifications';
 
 export interface TenantNotification {
   id: string;
@@ -36,39 +43,67 @@ interface LocataireNotificationsViewProps {
 export const LocataireNotificationsView: React.FC<LocataireNotificationsViewProps> = ({
   onNavigateTab,
 }) => {
-  const [notifications, setNotifications] = useState<TenantNotification[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_tenant_notifications');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      } catch (e) {
-        console.warn('Error reading notifications', e);
-      }
+  const activeUser = typeof window !== 'undefined' ? getActiveUser() : null;
+  const userId = activeUser?.id || '';
+
+  const loadTenantNotifications = (): TenantNotification[] => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const globalRaw = localStorage.getItem('locatrust_notifications');
+      const tenantRaw = localStorage.getItem('locatrust_tenant_notifications');
+      const globalArr = globalRaw ? JSON.parse(globalRaw) : [];
+      const tenantArr = tenantRaw ? JSON.parse(tenantRaw) : [];
+      const combined = [...(Array.isArray(globalArr) ? globalArr : []), ...(Array.isArray(tenantArr) ? tenantArr : [])];
+      const filtered = combined.filter((n: any) => {
+        if (!n) return false;
+        if (n.senderUserId && (n.senderUserId === userId || n.senderUserId === 'usr_tenant')) return false;
+        if (n.targetUserId && userId && n.targetUserId !== userId && n.targetUserId !== 'usr_tenant') return false;
+        if (n.targetRole && n.targetRole !== 'locataire') return false;
+        return true;
+      });
+      const normalized = deduplicateAndNormalizeNotifications(filtered, userId);
+      return normalized.map((n: any) => ({
+        id: String(n.id),
+        title: n.title || 'Notification',
+        description: n.description || n.content || n.message || '',
+        category: (['paiement', 'quittance', 'contrat', 'caution', 'maintenance', 'rappel'].includes(n.category) ? n.category : 'rappel') as TenantNotification['category'],
+        timestamp: n.timestamp || n.time || 'Récent',
+        read: isNotificationRead(n, userId),
+        actionText: n.actionText,
+        targetTab: n.targetTab
+      }));
+    } catch (e) {
+      return [];
     }
-    return [];
-  });
+  };
+
+  const [notifications, setNotifications] = useState<TenantNotification[]>(loadTenantNotifications);
 
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [filterUnreadOnly, setFilterUnreadOnly] = useState<boolean>(false);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(notifications));
-    }
-  }, [notifications]);
+    const handleSync = () => {
+      setNotifications(loadTenantNotifications());
+    };
+    window.addEventListener('locatrust:notifications-updated', handleSync);
+    return () => window.removeEventListener('locatrust:notifications-updated', handleSync);
+  }, [userId]);
 
   const markAllAsRead = () => {
+    markAllNotificationsAsRead(userId);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 
   const markAsRead = (id: string) => {
+    const target = notifications.find((n) => n.id === id) || id;
+    markNotificationAsRead(target, userId);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
   };
 
   const deleteNotification = (id: string) => {
+    const target = notifications.find((n) => n.id === id) || id;
+    markNotificationAsRead(target, userId);
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 

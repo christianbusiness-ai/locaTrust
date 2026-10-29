@@ -21,7 +21,9 @@ export type LiveEventType =
   | 'AVATAR_UPDATED'
   | 'ACCOUNTING_YEAR_UPDATED'
   | 'NEW_MESSAGE'
+  | 'MESSAGES_READ'
   | 'NOTIFICATION_CREATED'
+  | 'NOTIFICATION_READ'
   | 'CALL_INCOMING'
   | 'CALL_ACCEPTED'
   | 'CALL_OFFER'
@@ -895,29 +897,71 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               } catch {}
             }
 
-            // 4. Notification in-app ciblée pour le destinataire
-            try {
-              const notifsRaw = localStorage.getItem('locatrust_notifications');
-              const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
-              const notifId = `notif_msg_${incomingMsg.id || Date.now()}`;
-              if (!curNotifs.some((n: any) => n.id === notifId)) {
+            // 4. Notification in-app ciblée EXCLUSIVEMENT pour le destinataire (jamais pour l'expéditeur)
+            if (senderId !== receiverId && (!currentActiveUserId || senderId !== currentActiveUserId)) {
+              try {
+                const notifsRaw = localStorage.getItem('locatrust_notifications');
+                const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+                const notifId = incomingMsg.notificationId || `notif_msg_${incomingMsg.id || Date.now()}`;
                 const senderDisplayName = incomingMsg.sender_name || 'Correspondant';
-                const newNotif = {
-                  id: notifId,
-                  title: `Nouveau message de ${senderDisplayName}`,
-                  description: (incomingMsg.text || '').length > 70 ? `${(incomingMsg.text || '').slice(0, 70)}...` : (incomingMsg.text || 'Message reçu'),
-                  timestamp: "À l'instant",
-                  category: 'demande' as const,
-                  read: false,
-                  targetTab: 'messages',
-                  targetUserId: receiverId,
-                  senderUserId: senderId
-                };
-                const mergedNotifs = [newNotif, ...curNotifs.slice(0, 49)];
-                localStorage.setItem('locatrust_notifications', JSON.stringify(mergedNotifs));
-                window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedNotifs } }));
-              }
-            } catch {}
+                const descText = (incomingMsg.text || '').length > 70 ? `${(incomingMsg.text || '').slice(0, 70)}...` : (incomingMsg.text || 'Message reçu');
+                const nowIso = incomingMsg.created_at || new Date().toISOString();
+                const exists = curNotifs.some(
+                  (n: any) =>
+                    n &&
+                    (n.id === notifId ||
+                      (n.targetUserId === receiverId &&
+                        n.senderUserId === senderId &&
+                        n.description === descText &&
+                        n.created_at &&
+                        n.created_at.slice(0, 16) === nowIso.slice(0, 16)))
+                );
+                if (!exists) {
+                  const newNotif = {
+                    id: notifId,
+                    title: `Nouveau message de ${senderDisplayName}`,
+                    description: descText,
+                    timestamp: "À l'instant",
+                    created_at: nowIso,
+                    category: 'demande' as const,
+                    read: false,
+                    is_read: false,
+                    unread: true,
+                    targetTab: 'messages',
+                    targetUserId: receiverId,
+                    senderUserId: senderId,
+                    payload: {
+                      contactId: senderId,
+                      messageId: incomingMsg.id
+                    }
+                  };
+                  const mergedNotifs = [newNotif, ...curNotifs.slice(0, 49)];
+                  localStorage.setItem('locatrust_notifications', JSON.stringify(mergedNotifs));
+                  window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedNotifs } }));
+                }
+              } catch {}
+            }
+          }
+          window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
+        }
+        break;
+
+      case 'MESSAGES_READ':
+        if (typeof window !== 'undefined') {
+          const readerId = payload?.data?.readerId || payload?.actorId;
+          const contactId = payload?.data?.contactId;
+          const messageIds: string[] = Array.isArray(payload?.data?.messageIds) ? payload.data.messageIds : [];
+          if (readerId && (!currentActiveUserId || readerId === currentActiveUserId)) {
+            import('@/lib/messagingStore')
+              .then((m) => {
+                if (contactId === '__all__') {
+                  m.markAllMessagesAsReadForUser(readerId);
+                } else if (contactId) {
+                  m.markMessagesAsRead(contactId, readerId, messageIds);
+                }
+              })
+              .catch(() => {});
           }
           window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
@@ -926,6 +970,24 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
       case 'NOTIFICATION_CREATED':
         if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: payload }));
+        }
+        break;
+
+      case 'NOTIFICATION_READ':
+        if (typeof window !== 'undefined') {
+          const actorId = payload?.actorId || payload?.targetUserId;
+          if (!currentActiveUserId || actorId === currentActiveUserId) {
+            import('@/lib/waitingListNotifications')
+              .then((w) => {
+                if (payload?.data?.all) {
+                  w.markAllNotificationsAsRead(actorId);
+                } else if (payload?.data?.notificationId) {
+                  w.markNotificationAsRead(payload.data.notificationId, actorId);
+                }
+              })
+              .catch(() => {});
+          }
           window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: payload }));
         }
         break;

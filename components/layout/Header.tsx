@@ -42,7 +42,21 @@ import {
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
 import { supabase } from '@/src/lib/supabase';
-import { getUnreadMessagesCountForUser, markAllMessagesAsReadForUser, markMessagesAsRead, isValidUuid } from '@/lib/messagingStore';
+import {
+  getUnreadMessagesCountForUser,
+  markAllMessagesAsReadForUser,
+  markMessagesAsRead,
+  isValidUuid,
+  isNotificationRead,
+  mergeServerReadState,
+  ensureCounterV2Migration,
+  safeUpdateSupabaseNotificationRead
+} from '@/lib/messagingStore';
+import {
+  deduplicateAndNormalizeNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead
+} from '@/lib/waitingListNotifications';
 import { runBackgroundRentScheduleAudit } from '@/lib/dateSystem';
 
 interface NotificationItem {
@@ -170,7 +184,11 @@ export const Header: React.FC<HeaderProps> = ({
 
     updateUnread();
     window.addEventListener('locatrust:messages_updated', updateUnread);
-    return () => window.removeEventListener('locatrust:messages_updated', updateUnread);
+    window.addEventListener('locatrust:messages-updated', updateUnread);
+    return () => {
+      window.removeEventListener('locatrust:messages_updated', updateUnread);
+      window.removeEventListener('locatrust:messages-updated', updateUnread);
+    };
   }, [currentUser]);
 
   // Audit complet et silencieux du calendrier des loyers en arrière-plan (connecté à la base de données)
@@ -270,6 +288,10 @@ export const Header: React.FC<HeaderProps> = ({
 
     const loadStoredNotifs = async () => {
       try {
+        const userId = currentUser.id || '';
+        const userRole = currentUser.role || 'proprietaire';
+        ensureCounterV2Migration(userId);
+
         let parsed: any[] = [];
         const raw = localStorage.getItem('locatrust_notifications');
         if (raw) {
@@ -281,9 +303,12 @@ export const Header: React.FC<HeaderProps> = ({
 
         // Récupérer également les notifications du serveur central /api/sync
         try {
-          const syncRes = await fetch('/api/sync');
+          const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(userRole)}`);
           if (syncRes.ok) {
             const syncJson = await syncRes.json();
+            if (syncJson?.success && syncJson.data?.readState) {
+              mergeServerReadState(userId, syncJson.data.readState);
+            }
             if (syncJson?.success && Array.isArray(syncJson.data?.notifications)) {
               const existingIds = new Set(parsed.map((n) => n.id));
               syncJson.data.notifications.forEach((sn: any) => {
@@ -298,7 +323,6 @@ export const Header: React.FC<HeaderProps> = ({
         }
 
         // Récupérer également les notifications persistantes en base Supabase
-        const userId = currentUser.id || '';
         if (userId && isValidUuid(userId)) {
           try {
             const { data: dbNotifs } = await supabase
@@ -310,14 +334,18 @@ export const Header: React.FC<HeaderProps> = ({
 
             if (dbNotifs && Array.isArray(dbNotifs)) {
               const existingIds = new Set(parsed.map((n) => n.id));
-              dbNotifs.forEach((dbN) => {
+              dbNotifs.forEach((dbN: any) => {
+                const dbRead = Boolean(dbN.read || dbN.is_read);
                 if (!existingIds.has(dbN.id)) {
                   parsed.unshift({
                     id: dbN.id,
                     title: dbN.title,
-                    description: dbN.content,
-                    time: new Date(dbN.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-                    unread: !dbN.read,
+                    description: dbN.content || dbN.message || dbN.title,
+                    created_at: dbN.created_at,
+                    timestamp: dbN.created_at ? new Date(dbN.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'Récent',
+                    read: dbRead,
+                    is_read: dbRead,
+                    unread: !dbRead,
                     type: dbN.type,
                     targetUserId: dbN.user_id,
                     payload: dbN.payload
@@ -332,7 +360,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         if (parsed.length > 0) {
           // Filtrer les fausses notifications mock générées ou résiduelles + filtrage strict destinataire vs expéditeur
-          const userRole = currentUser.role || 'proprietaire';
           const userEmail = (currentUser.email || '').toLowerCase();
 
           const isNotificationForMe = (n: any) => {
@@ -372,22 +399,25 @@ export const Header: React.FC<HeaderProps> = ({
             return true;
           };
 
-          const cleaned = parsed.filter(isNotificationForMe).map((n: any) => {
+          const cleanedRaw = parsed.filter(isNotificationForMe).map((n: any) => {
             const isWaveNov = n.payload?.reference === 'WAV-2026-NOV-781920' || n.description?.includes('WAV-2026-NOV-781920') || n.content?.includes('WAV-2026-NOV-781920');
             const isDeclaredNotice = n.title?.includes('déclaré') || n.description?.includes('déclaré') || !n.description?.trim();
             const shouldBeMarkedRead = isWaveNov && isDeclaredNotice;
 
             const title = (n.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
-            const description = (n.description || n.content || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+            const description = (n.description || n.content || n.message || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+            const read = shouldBeMarkedRead ? true : isNotificationRead(n, userId);
 
             return {
               ...n,
               title,
               description,
-              read: shouldBeMarkedRead ? true : n.read,
-              unread: shouldBeMarkedRead ? false : n.unread
+              read,
+              is_read: read,
+              unread: !read
             };
           });
+          const cleaned = deduplicateAndNormalizeNotifications(cleanedRaw, userId);
           setNotifications(cleaned);
           return;
         }
@@ -404,7 +434,7 @@ export const Header: React.FC<HeaderProps> = ({
         const userId = currentUser.id || '';
         const userEmail = (currentUser.email || '').toLowerCase();
 
-        const cleaned = e.detail.notifications.filter((n: any) => {
+        const cleanedRaw = e.detail.notifications.filter((n: any) => {
           if (!n) return false;
           const id = String(n.id || '');
           if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
@@ -445,16 +475,19 @@ export const Header: React.FC<HeaderProps> = ({
           const shouldBeMarkedRead = isWaveNov && isDeclaredNotice;
 
           const title = (n.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
-          const description = (n.description || n.content || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+          const description = (n.description || n.content || n.message || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+          const read = shouldBeMarkedRead ? true : isNotificationRead(n, userId);
 
           return {
             ...n,
             title,
             description,
-            read: shouldBeMarkedRead ? true : n.read,
-            unread: shouldBeMarkedRead ? false : n.unread
+            read,
+            is_read: read,
+            unread: !read
           };
         });
+        const cleaned = deduplicateAndNormalizeNotifications(cleanedRaw, userId);
         setNotifications(cleaned);
       } else {
         loadStoredNotifs();
@@ -466,7 +499,7 @@ export const Header: React.FC<HeaderProps> = ({
       window.removeEventListener('locatrust:avatar_updated', handleAvatarUpdated);
       window.removeEventListener('locatrust:notifications-updated', handleNotifsUpdated);
     };
-  }, []);
+  }, [currentUser.id, currentUser.role]);
 
   const toggleDarkMode = () => {
     const nextMode = !isDarkMode;
@@ -494,35 +527,17 @@ export const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const unreadCount = notifications.filter((n) => !n.read && n.unread !== false && !n.is_read).length;
+  // Section 14 : Ne jamais conserver les notifications déjà consultées/traitées dans la cloche ni dans le compteur
+  const unreadNotifications = notifications.filter((n) => !isNotificationRead(n, currentUser?.id));
+  const unreadCount = unreadNotifications.length;
 
   const markAllAsRead = () => {
-    setNotifications((prev) => {
-      const updated = prev.map((n) => ({ ...n, read: true, is_read: true, unread: false }));
-      try {
-        localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
-        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
-      } catch (e) {
-        console.warn(e);
-      }
-      return updated;
-    });
-
-    if (currentUser?.id && isValidUuid(currentUser.id)) {
-      supabase.from('notifications').update({ read: true, is_read: true }).eq('user_id', currentUser.id).then();
-    }
-
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'mark_notification_read',
-        userId: currentUser?.id
-      })
-    }).catch(() => {});
+    markAllNotificationsAsRead(currentUser?.id);
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true, is_read: true, unread: false })));
   };
 
   const clearAllNotifications = () => {
+    markAllNotificationsAsRead(currentUser?.id);
     setNotifications([]);
     try {
       localStorage.setItem('locatrust_notifications', JSON.stringify([]));
@@ -535,33 +550,11 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  const handleNotificationClick = (item: NotificationItem) => {
-    setNotifications((prev) => {
-      const updated = prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n));
-      try {
-        localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
-        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
-      } catch (e) {
-        console.warn(e);
-      }
-      return updated;
-    });
-
-    if (item.id && isValidUuid(item.id)) {
-      supabase.from('notifications').update({ read: true, is_read: true }).eq('id', item.id).then();
-    }
-
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'mark_notification_read',
-        notificationId: item.id
-      })
-    }).catch(() => {});
+  const handleNotificationClick = (item: any) => {
+    markNotificationAsRead(item, currentUser?.id);
+    setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n)));
 
     setShowNotifications(false);
-    setSelectedNotification(item);
 
     // Redirection directe contextuelle selon la notification
     if (item.type === 'quittance_signature_requise' || item.payload?.action === 'sign_receipt') {
@@ -599,6 +592,8 @@ export const Header: React.FC<HeaderProps> = ({
       }
     } else if (item.targetTab && onNavigateTab) {
       onNavigateTab(item.targetTab);
+    } else {
+      setSelectedNotification(item);
     }
   };
 
@@ -685,8 +680,6 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => {
               setShowNotifications(false);
               setSelectedNotification(null);
-              markAllMessagesAsReadForUser(currentUser?.id);
-              setUnreadMessagesCount(0);
               if (onOpenMessages) onOpenMessages();
               if (onNavigateTab) onNavigateTab('messages');
             }}
@@ -706,11 +699,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={() => {
-                const nextState = !showNotifications;
-                setShowNotifications(nextState);
-                if (nextState) {
-                  markAllAsRead();
-                }
+                setShowNotifications(!showNotifications);
               }}
               className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"
               title="Notifications"
@@ -742,7 +731,7 @@ export const Header: React.FC<HeaderProps> = ({
                         Tout marquer comme lu
                       </button>
                     )}
-                    {notifications.length > 0 && (
+                    {unreadNotifications.length > 0 && (
                       <button
                         onClick={clearAllNotifications}
                         className="text-[10px] font-extrabold text-rose-500 hover:text-rose-700 dark:hover:text-rose-400 hover:underline flex items-center gap-1 cursor-pointer"
@@ -756,24 +745,20 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-                  {notifications.length === 0 ? (
+                  {unreadNotifications.length === 0 ? (
                     <div className="p-8 text-center flex flex-col items-center justify-center gap-2">
                       <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center">
                         <Bell className="w-5 h-5" />
                       </div>
-                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Aucune notification</p>
-                      <span className="text-[11px] text-slate-400">Vos alertes de baux, loyers et documents apparaîtront ici.</span>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Aucune notification non lue</p>
+                      <span className="text-[11px] text-slate-400">Toutes vos alertes de baux, loyers et messages ont été consultées.</span>
                     </div>
                   ) : (
-                    notifications.map((item) => (
+                    unreadNotifications.map((item: any) => (
                     <div
                       key={item.id}
                       onClick={() => handleNotificationClick(item)}
-                      className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors ${
-                        item.read
-                          ? 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                          : 'bg-blue-50/50 dark:bg-blue-950/20 hover:bg-blue-50 dark:hover:bg-blue-950/40'
-                      }`}
+                      className="p-3.5 flex items-start gap-3 cursor-pointer transition-colors bg-blue-50/50 dark:bg-blue-950/20 hover:bg-blue-50 dark:hover:bg-blue-950/40"
                     >
                       {item.senderAvatar ? (
                         <img
@@ -790,15 +775,16 @@ export const Header: React.FC<HeaderProps> = ({
                           {item.category === 'caution' && <ShieldCheck className="w-4 h-4" />}
                           {item.category === 'maintenance' && <Wrench className="w-4 h-4" />}
                           {item.category === 'abonnement' && <AlertTriangle className="w-4 h-4" />}
+                          {!['demande', 'visite', 'paiement', 'contrat', 'caution', 'maintenance', 'abonnement'].includes(item.category) && <Bell className="w-4 h-4" />}
                         </div>
                       )}
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <span className={`text-xs ${item.read ? 'font-bold text-slate-800 dark:text-slate-200' : 'font-black text-blue-900 dark:text-blue-300'}`}>
+                          <span className="text-xs font-black text-blue-900 dark:text-blue-300">
                             {(item.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian')}
                           </span>
-                          <span className="text-[9px] text-slate-400 shrink-0 ml-2">{item.timestamp}</span>
+                          <span className="text-[9px] text-slate-400 shrink-0 ml-2">{item.timestamp || item.time || 'Récent'}</span>
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight mt-0.5">
                           {(item.description || '').replace(/christian\s+yao\s+koffi/gi, 'Christian')}

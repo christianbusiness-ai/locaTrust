@@ -115,6 +115,9 @@ export interface ChatMessage {
   reminderContractNumber?: string;
   attachment?: ChatAttachment;
   status?: 'sent' | 'delivered' | 'read';
+  is_read?: boolean;
+  read?: boolean;
+  read_at?: string | null;
 }
 
 export interface ChatContact {
@@ -141,29 +144,354 @@ export const DEFAULT_MESSAGES: ChatMessage[] = [];
 
 const STORAGE_KEY = 'locatrust_chat_messages_v4';
 const RECEIPTS_STORAGE_KEY = 'locatrust_tenant_receipts_v2';
+const READ_MSG_IDS_KEY = 'locatrust_read_msg_ids_v2';
+const READ_NOTIF_IDS_KEY = 'locatrust_read_notif_ids_v2';
+const CONV_READ_AT_PREFIX = 'locatrust_conv_read_at_v2_';
+const COUNTER_V2_MIGRATION_PREFIX = 'locatrust_counter_v2_clean_';
+
+export function getReadMessageIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(READ_MSG_IDS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr.map(String)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function addReadMessageIds(ids: string[]) {
+  if (typeof window === 'undefined' || !Array.isArray(ids) || ids.length === 0) return;
+  try {
+    const set = getReadMessageIds();
+    let added = false;
+    for (const id of ids) {
+      if (id && !set.has(String(id))) {
+        set.add(String(id));
+        added = true;
+      }
+    }
+    if (added) {
+      const list = Array.from(set).slice(-2000);
+      localStorage.setItem(READ_MSG_IDS_KEY, JSON.stringify(list));
+    }
+  } catch {}
+}
+
+export function getReadNotificationIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(READ_NOTIF_IDS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr.map(String)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function getNotificationFingerprint(n: any): string {
+  if (!n) return '';
+  const target = String(n.targetUserId || n.user_id || '').trim().toLowerCase();
+  const title = String(n.title || '').trim().toLowerCase();
+  const desc = String(n.description || n.content || n.message || '').trim().toLowerCase().slice(0, 80);
+  return `fp:${target}::${title}::${desc}`;
+}
+
+export function addReadNotificationIds(idsOrNotifs: Array<string | any>) {
+  if (typeof window === 'undefined' || !Array.isArray(idsOrNotifs) || idsOrNotifs.length === 0) return;
+  try {
+    const set = getReadNotificationIds();
+    let added = false;
+    for (const item of idsOrNotifs) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        if (!set.has(item)) {
+          set.add(item);
+          added = true;
+        }
+      } else if (typeof item === 'object') {
+        if (item.id && !set.has(String(item.id))) {
+          set.add(String(item.id));
+          added = true;
+        }
+        const fp = getNotificationFingerprint(item);
+        if (fp && !set.has(fp)) {
+          set.add(fp);
+          added = true;
+        }
+      }
+    }
+    if (added) {
+      const list = Array.from(set).slice(-2000);
+      localStorage.setItem(READ_NOTIF_IDS_KEY, JSON.stringify(list));
+    }
+  } catch {}
+}
+
+export function getConvLastReadMap(userId?: string): Record<string, number> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const key = `${CONV_READ_AT_PREFIX}${userId || 'global'}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function setConvLastReadAt(userId: string | undefined, contactId: string, timestampMs?: number) {
+  if (typeof window === 'undefined' || !contactId) return;
+  try {
+    const ts = timestampMs || Date.now();
+    const keysToUpdate = [userId || 'global', 'global'];
+    for (const uid of Set.prototype ? Array.from(new Set(keysToUpdate)) : keysToUpdate) {
+      const key = `${CONV_READ_AT_PREFIX}${uid}`;
+      const map = getConvLastReadMap(uid);
+      map[contactId] = Math.max(map[contactId] || 0, ts);
+      map[contactId.toLowerCase()] = Math.max(map[contactId.toLowerCase()] || 0, ts);
+      localStorage.setItem(key, JSON.stringify(map));
+    }
+  } catch {}
+}
+
+export function mergeServerReadState(
+  userId: string,
+  readState?: { readMessageIds?: string[]; readNotifIds?: string[]; convLastReadAt?: Record<string, number> }
+) {
+  if (typeof window === 'undefined' || !readState) return;
+  try {
+    if (Array.isArray(readState.readMessageIds) && readState.readMessageIds.length > 0) {
+      addReadMessageIds(readState.readMessageIds);
+    }
+    if (Array.isArray(readState.readNotifIds) && readState.readNotifIds.length > 0) {
+      addReadNotificationIds(readState.readNotifIds);
+    }
+    if (readState.convLastReadAt && typeof readState.convLastReadAt === 'object') {
+      Object.entries(readState.convLastReadAt).forEach(([cid, ts]) => {
+        if (cid && typeof ts === 'number' && ts > 0) {
+          setConvLastReadAt(userId, cid, ts);
+        }
+      });
+    }
+  } catch {}
+}
+
+/**
+ * Migration initiale unique v2 : nettoie les anciens compteurs fantômes bloqués
+ * avant l'introduction du registre de lecture persistant (messages/notifications historiques > 30s).
+ */
+export function ensureCounterV2Migration(userId?: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const migKey = `${COUNTER_V2_MIGRATION_PREFIX}${userId || 'global'}`;
+    if (localStorage.getItem(migKey) === 'done') return;
+
+    const cutoffMs = Date.now() - 30000;
+    setConvLastReadAt(userId, '__all__', cutoffMs);
+    setConvLastReadAt(userId, '__notifs_all__', cutoffMs);
+
+    // Marquer les messages locaux existants antérieurs au cutoff comme lus
+    try {
+      const rawMsgs = localStorage.getItem(STORAGE_KEY);
+      if (rawMsgs) {
+        const parsed = JSON.parse(rawMsgs);
+        if (Array.isArray(parsed)) {
+          const readIds: string[] = [];
+          const updated = parsed.map((m: any) => {
+            if (!m) return m;
+            const ts = m.created_at ? new Date(m.created_at).getTime() : 0;
+            if (!ts || ts <= cutoffMs) {
+              if (m.id) readIds.push(m.id);
+              return { ...m, status: 'read', is_read: true, read: true };
+            }
+            return m;
+          });
+          addReadMessageIds(readIds);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+        }
+      }
+    } catch {}
+
+    // Marquer les notifications locales existantes antérieures au cutoff comme lues
+    try {
+      const rawNotifs = localStorage.getItem('locatrust_notifications');
+      if (rawNotifs) {
+        const parsed = JSON.parse(rawNotifs);
+        if (Array.isArray(parsed)) {
+          const readItems: any[] = [];
+          const updated = parsed.map((n: any) => {
+            if (!n) return n;
+            const ts = n.created_at || n.timestamp ? new Date(n.created_at || n.timestamp).getTime() : 0;
+            if (!ts || isNaN(ts) || ts <= cutoffMs) {
+              readItems.push(n);
+              return { ...n, read: true, is_read: true, unread: false };
+            }
+            return n;
+          });
+          addReadNotificationIds(readItems);
+          localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
+        }
+      }
+    } catch {}
+
+    localStorage.setItem(migKey, 'done');
+  } catch {}
+}
+
+export function isMessageRead(msg: ChatMessage, currentUserId?: string, allMessages?: ChatMessage[]): boolean {
+  if (!msg) return true;
+  if (msg.status === 'read' || msg.is_read === true || msg.read === true || Boolean(msg.read_at)) {
+    return true;
+  }
+  const readIds = getReadMessageIds();
+  if (msg.id && readIds.has(msg.id)) {
+    return true;
+  }
+
+  ensureCounterV2Migration(currentUserId);
+
+  const map = {
+    ...getConvLastReadMap('global'),
+    ...(currentUserId ? getConvLastReadMap(currentUserId) : {})
+  };
+
+  const msgTs = msg.created_at ? new Date(msg.created_at).getTime() : 0;
+  const senderKey = (msg.sender_id || '').toLowerCase();
+  const contactReadAt = Math.max(map[msg.sender_id] || 0, map[senderKey] || 0, map.__all__ || 0);
+
+  if (msgTs > 0 && contactReadAt > 0 && msgTs <= contactReadAt) {
+    return true;
+  }
+
+  // Si l'utilisateur connecté a déjà répondu dans cette conversation après ce message, ce message a forcément été vu
+  if (currentUserId && msgTs > 0 && Array.isArray(allMessages)) {
+    const hasRepliedAfter = allMessages.some(
+      (other) =>
+        other &&
+        other.sender_id === currentUserId &&
+        other.receiver_id === msg.sender_id &&
+        other.created_at &&
+        new Date(other.created_at).getTime() >= msgTs
+    );
+    if (hasRepliedAfter) return true;
+  }
+
+  return false;
+}
+
+export function isNotificationRead(n: any, currentUserId?: string): boolean {
+  if (!n) return true;
+  if (n.read === true || n.is_read === true || n.unread === false || n.processed === true || Boolean(n.read_at)) {
+    return true;
+  }
+  ensureCounterV2Migration(currentUserId);
+  const readNotifs = getReadNotificationIds();
+  if (n.id && readNotifs.has(String(n.id))) return true;
+  const fp = getNotificationFingerprint(n);
+  if (fp && readNotifs.has(fp)) return true;
+
+  const map = {
+    ...getConvLastReadMap('global'),
+    ...(currentUserId ? getConvLastReadMap(currentUserId) : {})
+  };
+
+  const rawDate = n.created_at || (n.timestamp && n.timestamp !== "À l'instant" ? n.timestamp : null);
+  const notifTs = rawDate ? new Date(rawDate).getTime() : 0;
+  if (notifTs > 0 && !isNaN(notifTs)) {
+    if (map.__notifs_all__ && notifTs <= map.__notifs_all__) {
+      return true;
+    }
+    const senderId = n.senderUserId || n.payload?.contactId || n.payload?.sender_id;
+    const isMsgNotif = n.targetTab === 'messages' || String(n.title || '').toLowerCase().includes('message');
+    if (isMsgNotif && senderId) {
+      const contactWatermark = Math.max(map[senderId] || 0, map[String(senderId).toLowerCase()] || 0, map.__all__ || 0);
+      if (contactWatermark > 0 && notifTs <= contactWatermark) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export function safeUpdateSupabaseNotificationRead(userId?: string, notifId?: string) {
+  try {
+    if (notifId && isValidUuid(notifId)) {
+      supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notifId)
+        .then(({ error }) => {
+          if (error) {
+            supabase.from('notifications').update({ read: true }).eq('id', notifId).then();
+          }
+        });
+    } else if (userId && isValidUuid(userId)) {
+      supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', userId)
+        .then(({ error }) => {
+          if (error) {
+            supabase.from('notifications').update({ read: true }).eq('user_id', userId).then();
+          }
+        });
+    }
+  } catch {}
+}
 
 export function deduplicateMessageList(list: ChatMessage[]): ChatMessage[] {
   if (!Array.isArray(list)) return [];
-  const seenIds = new Set<string>();
-  const seenFingerprints = new Set<string>();
+  const byId = new Map<string, ChatMessage>();
+  const byFp = new Map<string, ChatMessage>();
   const clean: ChatMessage[] = [];
+  const readSet = getReadMessageIds();
 
-  for (const m of list) {
-    if (!m) continue;
-    if (seenIds.has(m.id)) continue;
-    seenIds.add(m.id);
+  for (const rawMsg of list) {
+    if (!rawMsg) continue;
+    const alreadyRead =
+      rawMsg.status === 'read' ||
+      rawMsg.is_read === true ||
+      rawMsg.read === true ||
+      Boolean(rawMsg.read_at) ||
+      (rawMsg.id && readSet.has(rawMsg.id));
+
+    const m: ChatMessage = alreadyRead
+      ? { ...rawMsg, status: 'read', is_read: true, read: true }
+      : rawMsg;
+
+    if (m.id && byId.has(m.id)) {
+      const existing = byId.get(m.id)!;
+      if (m.status === 'read' && existing.status !== 'read') {
+        existing.status = 'read';
+        existing.is_read = true;
+        existing.read = true;
+        existing.read_at = existing.read_at || m.read_at || new Date().toISOString();
+      }
+      continue;
+    }
 
     const timeMinute = m.created_at ? m.created_at.slice(0, 16) : '';
     const textTrimmed = (m.text || '').trim();
     const fp = `${m.sender_id}::${textTrimmed}::${timeMinute}`;
 
-    if (textTrimmed && seenFingerprints.has(fp)) {
-      // Doublon détecté (même expéditeur, même texte et même minute)
+    if (textTrimmed && byFp.has(fp)) {
+      const existing = byFp.get(fp)!;
+      if (m.status === 'read' && existing.status !== 'read') {
+        existing.status = 'read';
+        existing.is_read = true;
+        existing.read = true;
+        existing.read_at = existing.read_at || m.read_at || new Date().toISOString();
+      }
       continue;
     }
-    if (textTrimmed) {
-      seenFingerprints.add(fp);
-    }
+
+    if (m.id) byId.set(m.id, m);
+    if (textTrimmed) byFp.set(fp, m);
     clean.push(m);
   }
   return clean;
@@ -268,8 +596,10 @@ export async function syncMessageToSupabase(
       } catch {}
     }
 
+    const notifDeterministicId = (newMsg as any).notificationId || `notif_msg_${newMsg.id}`;
     const enrichedMessage = {
       ...newMsg,
+      notificationId: notifDeterministicId,
       senderId,
       receiverId,
       sender_name: senderName,
@@ -450,28 +780,45 @@ export async function syncMessageToSupabase(
 
         // Mettre à jour l'ID local avec le vrai UUID Supabase pour éliminer tout doublon futur
         if (insertedMsg?.id) {
+          if (getReadMessageIds().has(newMsg.id)) {
+            addReadMessageIds([insertedMsg.id]);
+          }
           const current = getStoredMessages();
           const reconciled = current.map((m) => (m.id === newMsg.id ? { ...m, id: insertedMsg.id } : m));
           saveStoredMessages(reconciled);
         }
 
-        // Persistance de la notification en BDD
-        const notifTitle = newMsg.declaration
-          ? (newMsg.declaration.type === 'caution' ? '💰 Paiement de caution déclaré' : '💳 Paiement de loyer déclaré')
-          : newMsg.contract
-          ? `Bail officiel reçu (N° ${newMsg.contract.contractNumber})`
-          : newMsg.quittance
-          ? `Quittance émise (N° ${newMsg.quittance.receiptNumber})`
-          : 'Nouveau message reçu';
+        // Persistance de la notification en BDD (uniquement pour le destinataire, jamais pour soi-même)
+        if (finalReceiverId !== finalSenderId) {
+          const notifTitle = newMsg.declaration
+            ? (newMsg.declaration.type === 'caution' ? '💰 Paiement de caution déclaré' : '💳 Paiement de loyer déclaré')
+            : newMsg.contract
+            ? `Bail officiel reçu (N° ${newMsg.contract.contractNumber})`
+            : newMsg.quittance
+            ? `Quittance émise (N° ${newMsg.quittance.receiptNumber})`
+            : `Nouveau message de ${senderName || 'Correspondant'}`;
 
-        await supabase.from('notifications').insert({
-          user_id: finalReceiverId,
-          title: notifTitle,
-          content: text.length > 100 ? `${text.slice(0, 97)}...` : text,
-          type: newMsg.declaration ? 'caution' : newMsg.contract ? 'contrat' : newMsg.quittance ? 'quittance' : 'info',
-          read: false,
-          payload: newMsg.declaration ? { declaration: newMsg.declaration } : undefined
-        });
+          const notifContent = text.length > 100 ? `${text.slice(0, 97)}...` : text;
+          const notifType = newMsg.declaration ? 'caution' : newMsg.contract ? 'contrat' : newMsg.quittance ? 'quittance' : 'info';
+
+          const { error: nErr } = await supabase.from('notifications').insert({
+            user_id: finalReceiverId,
+            title: notifTitle,
+            message: notifContent,
+            type: notifType,
+            is_read: false
+          });
+          if (nErr) {
+            await supabase.from('notifications').insert({
+              user_id: finalReceiverId,
+              title: notifTitle,
+              content: notifContent,
+              type: notifType,
+              read: false,
+              payload: newMsg.declaration ? { declaration: newMsg.declaration } : undefined
+            });
+          }
+        }
 
         return { success: true };
       }
@@ -487,16 +834,31 @@ export function sendChatMessage(
   senderId: string,
   receiverId: string,
   text: string,
-  options?: { propertyId?: string; propertyTitle?: string; attachment?: any; contract?: any; quittance?: any; restitution?: any }
+  options?: {
+    propertyId?: string;
+    propertyTitle?: string;
+    attachment?: any;
+    contract?: any;
+    quittance?: any;
+    restitution?: any;
+    skipSync?: boolean;
+  }
 ): ChatMessage {
   const current = getStoredMessages();
-  const newMsg: ChatMessage = {
-    id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const notifId = `notif_msg_${msgId}`;
+  const nowIso = new Date().toISOString();
+  const newMsg: ChatMessage & { notificationId?: string } = {
+    id: msgId,
+    notificationId: notifId,
     sender_id: senderId,
     receiver_id: receiverId,
     text,
-    created_at: new Date().toISOString(),
+    created_at: nowIso,
     status: 'delivered',
+    is_read: false,
+    read: false,
+    read_at: null,
     attachment: options?.attachment,
     contract: options?.contract,
     quittance: options?.quittance,
@@ -505,31 +867,64 @@ export function sendChatMessage(
   const updated = [...current, newMsg];
   saveStoredMessages(updated);
 
-  // Synchronisation BDD & Realtime
-  syncMessageToSupabase(newMsg, senderId, receiverId, text, options?.propertyId);
+  // Quand j'envoie un message dans cette conversation, tous les messages précédents reçus de ce correspondant ont été vus
+  if (senderId && receiverId && senderId !== receiverId) {
+    setConvLastReadAt(senderId, receiverId, Date.now());
+  }
 
-  // Émission d'une notification push in-app pour le destinataire
-  if (typeof window !== 'undefined') {
+  // Synchronisation BDD & Realtime (sauf si gérée par sendRealChatMessage pour éviter tout double appel)
+  if (!options?.skipSync) {
+    syncMessageToSupabase(newMsg, senderId, receiverId, text, options?.propertyId);
+  }
+
+  // Émission d'une notification push in-app EXCLUSIVEMENT pour le destinataire (jamais pour l'expéditeur)
+  if (typeof window !== 'undefined' && senderId !== receiverId) {
     try {
       const notifsRaw = localStorage.getItem('locatrust_notifications');
       const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
       let senderName = 'Correspondant';
-      const contactRaw = localStorage.getItem(`locatrust_contact_${senderId}`);
-      if (contactRaw) {
-        try { senderName = JSON.parse(contactRaw).name || senderName; } catch {}
+      const uRaw = localStorage.getItem('locatrust_user');
+      if (uRaw) {
+        try {
+          const pu = JSON.parse(uRaw);
+          if (pu?.id === senderId && (pu.full_name || pu.name)) {
+            senderName = pu.full_name || pu.name;
+          }
+        } catch {}
       }
+      if (senderName === 'Correspondant') {
+        const contactRaw = localStorage.getItem(`locatrust_contact_${senderId}`);
+        if (contactRaw) {
+          try { senderName = JSON.parse(contactRaw).name || senderName; } catch {}
+        }
+      }
+      const descText = text.length > 70 ? `${text.slice(0, 70)}...` : text;
       const notifItem = {
-        id: `notif_msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: notifId,
         title: `Nouveau message de ${senderName}`,
-        description: text.length > 70 ? `${text.slice(0, 70)}...` : text,
+        description: descText,
         timestamp: "À l'instant",
+        created_at: nowIso,
         category: 'demande' as const,
         read: false,
+        is_read: false,
+        unread: true,
         targetTab: 'messages',
         targetUserId: receiverId,
-        senderUserId: senderId
+        senderUserId: senderId,
+        payload: {
+          contactId: senderId,
+          messageId: msgId,
+          propertyId: options?.propertyId
+        }
       };
-      const combinedNotifs = [notifItem, ...currentNotifs.slice(0, 49)];
+      const filteredExisting = (Array.isArray(currentNotifs) ? currentNotifs : []).filter(
+        (n: any) =>
+          n &&
+          n.id !== notifId &&
+          !(n.targetUserId === receiverId && n.senderUserId === senderId && n.description === descText && n.created_at && n.created_at.slice(0, 16) === nowIso.slice(0, 16))
+      );
+      const combinedNotifs = [notifItem, ...filteredExisting.slice(0, 49)];
       localStorage.setItem('locatrust_notifications', JSON.stringify(combinedNotifs));
       window.dispatchEvent(
         new CustomEvent('locatrust:notifications-updated', {
@@ -550,8 +945,9 @@ export async function sendRealChatMessage(
   text: string,
   options?: { propertyId?: string; propertyTitle?: string; attachment?: any; contract?: any; quittance?: any; restitution?: any }
 ): Promise<ChatMessage> {
-  const msg = sendChatMessage(senderId, receiverId, text, options);
-  // Synchronisation réelle avec Supabase
+  // Crée le message localement SANS lancer syncMessageToSupabase une première fois
+  const msg = sendChatMessage(senderId, receiverId, text, { ...options, skipSync: true });
+  // Synchronisation unique et réelle avec Supabase + Realtime + /api/sync
   const result = await syncMessageToSupabase(msg, senderId, receiverId, text, options?.propertyId);
   if (!result.success) {
     throw new Error(result.error || "Impossible d'enregistrer le message sur les serveurs.");
@@ -559,8 +955,18 @@ export async function sendRealChatMessage(
   return msg;
 }
 
-export function markMessagesAsRead(contactId: string, currentUserId?: string): boolean {
-  if (typeof window === 'undefined') return false;
+export function markMessagesAsRead(
+  contactId: string,
+  currentUserId?: string,
+  extraMessageIds?: string[]
+): boolean {
+  if (typeof window === 'undefined' || !contactId) return false;
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
+  // Toujours enregistrer le watermark de lecture de cette conversation
+  setConvLastReadAt(currentUserId, contactId, nowMs);
+
   const current = getStoredMessages();
   let changed = false;
 
@@ -570,22 +976,69 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
     `tenant_${contactId}`,
     `owner_${contactId}`
   ]);
+  const extraIdSet = new Set(Array.isArray(extraMessageIds) ? extraMessageIds : []);
+  const newlyReadIds: string[] = [];
 
   const updated = current.map((m) => {
-    // Tout message reçu de ce contact ou de ses alias
-    const isFromContact = contactAliases.has(m.sender_id) || m.sender_id === contactId;
+    const isFromContact =
+      contactAliases.has(m.sender_id) ||
+      m.sender_id === contactId ||
+      (extraIdSet.has(m.id) && m.sender_id !== currentUserId);
 
-    if (isFromContact && m.status !== 'read') {
-      changed = true;
-      return { ...m, status: 'read' as const, is_read: true, read_at: new Date().toISOString() };
+    if (isFromContact) {
+      newlyReadIds.push(m.id);
+      if (m.status !== 'read' || !m.is_read) {
+        changed = true;
+        return { ...m, status: 'read' as const, is_read: true, read: true, read_at: m.read_at || nowIso };
+      }
     }
     return m;
   });
 
+  extraIdSet.forEach((id) => {
+    if (id && !newlyReadIds.includes(id)) newlyReadIds.push(id);
+  });
+
+  if (newlyReadIds.length > 0) {
+    addReadMessageIds(newlyReadIds);
+  }
+
+  // Marquer également les notifications de messages provenant de ce contact comme lues
+  let notifsChanged = false;
+  const readNotifIds: string[] = [];
+  try {
+    const notifsRaw = localStorage.getItem('locatrust_notifications');
+    if (notifsRaw) {
+      const notifs = JSON.parse(notifsRaw);
+      if (Array.isArray(notifs)) {
+        const updatedNotifs = notifs.map((n: any) => {
+          if (!n) return n;
+          const isMsgNotifFromContact =
+            (n.senderUserId === contactId || n.payload?.contactId === contactId) &&
+            (!currentUserId || !n.targetUserId || n.targetUserId === currentUserId) &&
+            (n.targetTab === 'messages' || String(n.title || '').toLowerCase().includes('message'));
+          if (isMsgNotifFromContact) {
+            if (n.id) readNotifIds.push(String(n.id));
+            addReadNotificationIds([n]);
+            if (!n.read || !n.is_read || n.unread !== false) {
+              notifsChanged = true;
+              return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
+            }
+          }
+          return n;
+        });
+        if (notifsChanged) {
+          localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+        }
+      }
+    }
+  } catch {}
+
   if (changed) {
     saveStoredMessages(updated);
+  }
 
-    // Synchronisation en tâche de fond avec Supabase et /api/sync
+  if (changed || notifsChanged || newlyReadIds.length > 0) {
     if (currentUserId) {
       try {
         fetch('/api/sync', {
@@ -594,24 +1047,54 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
           body: JSON.stringify({
             action: 'mark_messages_read',
             contactId,
-            currentUserId
+            currentUserId,
+            messageIds: newlyReadIds,
+            readAt: nowIso
           })
         }).catch(() => {});
       } catch {}
 
-      if (isValidUuid(currentUserId) && isValidUuid(contactId)) {
+      // Mise à jour directe de la table messages dans Supabase
+      const uuidMsgIds = newlyReadIds.filter(isValidUuid);
+      if (uuidMsgIds.length > 0) {
         try {
           supabase
-            .from('notifications')
-            .update({ read: true, is_read: true })
-            .eq('user_id', currentUserId)
+            .from('messages')
+            .update({ status: 'read' })
+            .in('id', uuidMsgIds)
+            .then();
+        } catch {}
+      } else if (isValidUuid(contactId)) {
+        try {
+          supabase
+            .from('messages')
+            .update({ status: 'read' })
             .eq('sender_id', contactId)
+            .neq('status', 'read')
             .then();
         } catch {}
       }
+
+      // Mise à jour des notifications correspondantes dans Supabase
+      readNotifIds.filter(isValidUuid).forEach((nid) => {
+        safeUpdateSupabaseNotificationRead(currentUserId, nid);
+      });
+
+      // Diffusion Realtime multi-appareils (PC ↔ Mobile)
+      try {
+        broadcastLiveEvent('MESSAGES_READ' as any, {
+          actorId: currentUserId,
+          targetUserId: contactId,
+          data: {
+            contactId,
+            readerId: currentUserId,
+            messageIds: newlyReadIds,
+            readAt: nowIso
+          }
+        });
+      } catch {}
     }
 
-    // Émettre les événements pour rafraîchir les compteurs et les vues en temps réel
     window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
     window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
     window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
@@ -622,44 +1105,147 @@ export function markMessagesAsRead(contactId: string, currentUserId?: string): b
 
 export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   if (typeof window === 'undefined') return false;
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
+  setConvLastReadAt(currentUserId, '__all__', nowMs);
+
   const current = getStoredMessages();
   let changed = false;
+  const newlyReadIds: string[] = [];
 
   const updated = current.map((m) => {
     const isFromMe = Boolean(currentUserId && m.sender_id === currentUserId);
-    if (!isFromMe && m.status !== 'read') {
-      changed = true;
-      return { ...m, status: 'read' as const, is_read: true, read_at: new Date().toISOString() };
+    if (!isFromMe) {
+      if (m.id) newlyReadIds.push(m.id);
+      if (m.sender_id) setConvLastReadAt(currentUserId, m.sender_id, nowMs);
+      if (m.status !== 'read' || !m.is_read) {
+        changed = true;
+        return { ...m, status: 'read' as const, is_read: true, read: true, read_at: m.read_at || nowIso };
+      }
     }
     return m;
   });
 
+  if (newlyReadIds.length > 0) {
+    addReadMessageIds(newlyReadIds);
+  }
+
+  // Marquer également les notifications de messagerie comme lues
+  try {
+    const notifsRaw = localStorage.getItem('locatrust_notifications');
+    if (notifsRaw) {
+      const notifs = JSON.parse(notifsRaw);
+      if (Array.isArray(notifs)) {
+        const updatedNotifs = notifs.map((n: any) => {
+          if (!n) return n;
+          const isMsgNotif =
+            (!currentUserId || !n.targetUserId || n.targetUserId === currentUserId) &&
+            (n.targetTab === 'messages' || String(n.title || '').toLowerCase().includes('message'));
+          if (isMsgNotif) {
+            addReadNotificationIds([n]);
+            return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
+          }
+          return n;
+        });
+        localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+      }
+    }
+  } catch {}
+
   if (changed) {
     saveStoredMessages(updated);
-    if (currentUserId && isValidUuid(currentUserId)) {
+  }
+
+  if (currentUserId) {
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'mark_messages_read',
+          contactId: '__all__',
+          currentUserId,
+          messageIds: newlyReadIds,
+          readAt: nowIso
+        })
+      }).catch(() => {});
+    } catch {}
+
+    const uuidMsgIds = newlyReadIds.filter(isValidUuid);
+    if (uuidMsgIds.length > 0) {
       try {
         supabase
-          .from('notifications')
-          .update({ read: true, is_read: true })
-          .eq('user_id', currentUserId)
+          .from('messages')
+          .update({ status: 'read' })
+          .in('id', uuidMsgIds)
           .then();
       } catch {}
     }
-    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
-    window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
-    window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-    return true;
+
+    try {
+      broadcastLiveEvent('MESSAGES_READ' as any, {
+        actorId: currentUserId,
+        targetUserId: currentUserId,
+        data: {
+          contactId: '__all__',
+          readerId: currentUserId,
+          messageIds: newlyReadIds,
+          readAt: nowIso
+        }
+      });
+    } catch {}
   }
-  return false;
+
+  window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+  window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+  window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+  return true;
+}
+
+const FICTIONAL_OR_GENERIC_IDS = new Set([
+  'usr_owner_1',
+  'usr_tenant_1',
+  'usr_candidate',
+  'usr_support',
+  'usr_contact'
+]);
+
+export function getUnreadCountForConversation(
+  messages: ChatMessage[],
+  currentUserId: string,
+  myAliases: Set<string>,
+  contactId: string,
+  contactAliases: Set<string>
+): number {
+  if (!Array.isArray(messages) || !contactId) return 0;
+  ensureCounterV2Migration(currentUserId);
+
+  let count = 0;
+  for (const m of messages) {
+    if (!m || !m.sender_id) continue;
+    if (FICTIONAL_OR_GENERIC_IDS.has(m.sender_id) || m.sender_id.startsWith('candidate_')) continue;
+    if (myAliases.has(m.sender_id) || m.sender_id === currentUserId) continue;
+
+    const isFromThisContact = contactAliases.has(m.sender_id) || m.sender_id === contactId;
+    const isForMe = myAliases.has(m.receiver_id) || m.receiver_id === currentUserId;
+
+    if (isFromThisContact && isForMe && !isMessageRead(m, currentUserId, messages)) {
+      count++;
+    }
+  }
+  return count;
 }
 
 export function getUnreadMessagesCountForUser(user?: { id?: string; email?: string; role?: string } | null): number {
   if (typeof window === 'undefined') return 0;
-  const messages = getStoredMessages();
-  if (!Array.isArray(messages) || messages.length === 0) return 0;
-
   const userId = user?.id || '';
   const userEmail = (user?.email || '').toLowerCase();
+
+  ensureCounterV2Migration(userId);
+
+  const messages = getStoredMessages();
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
 
   // Identifiants appartenant strictement à l'utilisateur connecté
   const myIds = new Set<string>();
@@ -668,25 +1254,29 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
 
   if (myIds.size === 0) return 0;
 
-  // Règle produit impérative : Le compteur doit représenter UNIQUEMENT
-  // le nombre de CONVERSATIONS contenant des messages réellement non lus pour l'utilisateur
-  const unreadSenders = new Set<string>();
+  const hasRealUuid = isValidUuid(userId);
+  let unreadMessagesCount = 0;
 
-  messages.forEach((m) => {
-    // Message déjà lu
-    if (m.status === 'read' || (m as any).is_read) return;
+  for (const m of messages) {
+    if (!m || !m.sender_id || !m.receiver_id) continue;
+
+    // Ignorer tout identifiant fictif ou générique obsolète
+    if (FICTIONAL_OR_GENERIC_IDS.has(m.sender_id) || m.sender_id.startsWith('candidate_')) continue;
+    if (hasRealUuid && (m.sender_id === 'usr_owner' || m.sender_id === 'usr_agency' || m.sender_id === 'usr_tenant')) continue;
 
     // Ne JAMAIS compter ses propres messages envoyés
-    if (myIds.has(m.sender_id)) return;
+    if (myIds.has(m.sender_id)) continue;
 
     // Le message doit être adressé à l'utilisateur connecté
-    const isForMe = myIds.has(m.receiver_id);
-    if (isForMe && m.sender_id) {
-      unreadSenders.add(m.sender_id);
-    }
-  });
+    if (!myIds.has(m.receiver_id)) continue;
 
-  return unreadSenders.size;
+    // Vérifier le statut lu/non lu via le registre persistant multi-couches
+    if (isMessageRead(m, userId, messages)) continue;
+
+    unreadMessagesCount++;
+  }
+
+  return unreadMessagesCount;
 }
 
 export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, senderId?: string, receiverId?: string): ChatMessage {
@@ -1151,6 +1741,11 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
     convs.forEach((c) => convMap.set(c.id, c));
 
     const currentLocal = getStoredMessages();
+    const localById = new Map<string, ChatMessage>();
+    currentLocal.forEach((lm) => {
+      if (lm?.id) localById.set(lm.id, lm);
+    });
+
     let localReconciled = false;
     const reconciledLocal = currentLocal.map((local) => {
       if (local.id.startsWith('msg_') || local.id.startsWith('call_')) {
@@ -1162,6 +1757,9 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         );
         if (matchingDbMsg) {
           localReconciled = true;
+          if (isMessageRead(local, userId)) {
+            addReadMessageIds([matchingDbMsg.id]);
+          }
           return { ...local, id: matchingDbMsg.id };
         }
       }
@@ -1199,13 +1797,29 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         }
       } catch {}
 
-      const formatted: ChatMessage = {
+      const existingLocal = localById.get(m.id);
+      const tempCandidate: ChatMessage = {
         id: m.id,
         sender_id: m.sender_id,
         receiver_id: receiverId,
         text: displayText,
         created_at: m.created_at,
         status: m.status || 'delivered',
+        is_read: m.is_read || m.status === 'read'
+      };
+      const alreadyRead =
+        (existingLocal && isMessageRead(existingLocal, userId)) ||
+        isMessageRead(tempCandidate, userId);
+
+      const formatted: ChatMessage = {
+        id: m.id,
+        sender_id: m.sender_id,
+        receiver_id: receiverId,
+        text: displayText,
+        created_at: m.created_at,
+        status: alreadyRead ? 'read' : (m.status || 'delivered'),
+        is_read: alreadyRead,
+        read: alreadyRead,
         contract: parsedContract,
         quittance: parsedQuittance,
         restitution: parsedRestitution,

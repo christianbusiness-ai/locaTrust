@@ -1,7 +1,18 @@
 'use client';
 
-import { getStoredMessages, saveStoredMessages, ChatMessage } from '@/lib/messagingStore';
+import {
+  getStoredMessages,
+  saveStoredMessages,
+  ChatMessage,
+  addReadNotificationIds,
+  isNotificationRead,
+  getNotificationFingerprint,
+  setConvLastReadAt,
+  safeUpdateSupabaseNotificationRead,
+  isValidUuid
+} from '@/lib/messagingStore';
 import { supabase } from '@/src/lib/supabase';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 export interface WaitingListCandidateNotification {
   candidateId: string;
@@ -194,37 +205,235 @@ export function notifyWaitingListCandidatesOnLeaseFinalized({
   return notificationsGenerated;
 }
 
+export function deduplicateAndNormalizeNotifications(list: any[], userId?: string): any[] {
+  if (!Array.isArray(list)) return [];
+  const byId = new Map<string, any>();
+  const byFp = new Map<string, any>();
+  const result: any[] = [];
+
+  for (const raw of list) {
+    if (!raw) continue;
+    const isRead = isNotificationRead(raw, userId);
+    const title = String(raw.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+    const description = String(raw.description || raw.content || raw.message || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+    const normalized = {
+      ...raw,
+      title,
+      description,
+      timestamp: raw.timestamp || raw.time || "À l'instant",
+      time: raw.time || raw.timestamp || "À l'instant",
+      read: isRead,
+      is_read: isRead,
+      unread: !isRead
+    };
+
+    const idKey = normalized.id ? String(normalized.id) : '';
+    const fpKey = getNotificationFingerprint(normalized);
+
+    if (idKey && byId.has(idKey)) {
+      const existing = byId.get(idKey)!;
+      if (isRead && !existing.read) {
+        existing.read = true;
+        existing.is_read = true;
+        existing.unread = false;
+      }
+      continue;
+    }
+
+    if (fpKey && byFp.has(fpKey)) {
+      const existing = byFp.get(fpKey)!;
+      if (isRead && !existing.read) {
+        existing.read = true;
+        existing.is_read = true;
+        existing.unread = false;
+      }
+      if (idKey) byId.set(idKey, existing);
+      continue;
+    }
+
+    if (idKey) byId.set(idKey, normalized);
+    if (fpKey) byFp.set(fpKey, normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+export function markNotificationAsRead(notifOrId: any, userId?: string) {
+  if (typeof window === 'undefined' || !notifOrId) return;
+  const nowIso = new Date().toISOString();
+  const targetId = typeof notifOrId === 'string' ? notifOrId : String(notifOrId.id || '');
+  const targetFp = typeof notifOrId === 'object' ? getNotificationFingerprint(notifOrId) : '';
+
+  addReadNotificationIds([notifOrId]);
+
+  try {
+    const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const matchedItems: any[] = [];
+        const updated = list.map((n: any) => {
+          if (!n) return n;
+          const nFp = getNotificationFingerprint(n);
+          if (String(n.id) === targetId || (targetFp && nFp === targetFp)) {
+            matchedItems.push(n);
+            return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
+          }
+          return n;
+        });
+        addReadNotificationIds(matchedItems);
+        localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+      }
+    }
+  } catch {}
+
+  try {
+    const tRaw = localStorage.getItem('locatrust_tenant_notifications');
+    if (tRaw) {
+      const tList = JSON.parse(tRaw);
+      if (Array.isArray(tList)) {
+        const updatedT = tList.map((n: any) =>
+          n && (String(n.id) === targetId || (targetFp && getNotificationFingerprint(n) === targetFp))
+            ? { ...n, read: true, is_read: true, unread: false }
+            : n
+        );
+        localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(updatedT));
+      }
+    }
+  } catch {}
+
+  safeUpdateSupabaseNotificationRead(userId, targetId);
+
+  try {
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'mark_notification_read',
+        notificationId: targetId,
+        userId
+      })
+    }).catch(() => {});
+  } catch {}
+
+  try {
+    broadcastLiveEvent('NOTIFICATION_READ' as any, {
+      actorId: userId,
+      targetUserId: userId,
+      data: { notificationId: targetId, fingerprint: targetFp }
+    });
+  } catch {}
+}
+
+export function markAllNotificationsAsRead(userId?: string) {
+  if (typeof window === 'undefined') return;
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+
+  setConvLastReadAt(userId, '__notifs_all__', nowMs);
+
+  const allIds: string[] = [];
+  try {
+    const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        addReadNotificationIds(list);
+        const updated = list.map((n: any) => {
+          if (n?.id) allIds.push(String(n.id));
+          return n ? { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso } : n;
+        });
+        localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+      }
+    }
+  } catch {}
+
+  try {
+    const tRaw = localStorage.getItem('locatrust_tenant_notifications');
+    if (tRaw) {
+      const tList = JSON.parse(tRaw);
+      if (Array.isArray(tList)) {
+        addReadNotificationIds(tList);
+        const updatedT = tList.map((n: any) => (n ? { ...n, read: true, is_read: true, unread: false } : n));
+        localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(updatedT));
+      }
+    }
+  } catch {}
+
+  safeUpdateSupabaseNotificationRead(userId);
+
+  try {
+    fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'mark_notification_read',
+        notificationIds: allIds,
+        userId
+      })
+    }).catch(() => {});
+  } catch {}
+
+  try {
+    broadcastLiveEvent('NOTIFICATION_READ' as any, {
+      actorId: userId,
+      targetUserId: userId,
+      data: { all: true, notificationIds: allIds }
+    });
+  } catch {}
+}
+
 /**
  * Envoie une notification officielle en temps réel dans le centre de notifications (Header Bell)
  */
 export function pushGlobalNotification(notif: {
+  id?: string;
   title: string;
   description: string;
-  category: 'demande' | 'visite' | 'paiement' | 'contrat' | 'caution' | 'maintenance' | 'abonnement';
+  category: 'demande' | 'visite' | 'paiement' | 'contrat' | 'caution' | 'maintenance' | 'abonnement' | 'candidature';
   targetTab?: string;
   targetUserId?: string;
   targetRole?: 'proprietaire' | 'locataire' | 'agence';
   senderUserId?: string;
   senderAvatar?: string;
+  payload?: any;
 }) {
   if (typeof window === 'undefined') return;
+  // Règle absolue : L'expéditeur ne reçoit JAMAIS sa propre notification
+  if (notif.senderUserId && notif.targetUserId && notif.senderUserId === notif.targetUserId) {
+    return;
+  }
   try {
     const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
     const currentNotifs: GlobalNotificationItem[] = raw ? JSON.parse(raw) : [];
-    const newNotif: GlobalNotificationItem = {
-      id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    const notifId = notif.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+    const nowIso = new Date().toISOString();
+    const newNotif: any = {
+      id: notifId,
       title: notif.title,
       description: notif.description,
       timestamp: "À l'instant",
-      category: notif.category,
+      time: "À l'instant",
+      created_at: nowIso,
+      category: notif.category === 'candidature' ? 'demande' : notif.category,
       read: false,
-      targetTab: notif.targetTab || (notif.category === 'demande' ? 'applications' : 'contracts'),
+      is_read: false,
+      unread: true,
+      targetTab: notif.targetTab || (notif.category === 'demande' || notif.category === 'candidature' ? 'applications' : 'contracts'),
       targetUserId: notif.targetUserId,
       targetRole: notif.targetRole,
       senderUserId: notif.senderUserId,
-      senderAvatar: notif.senderAvatar
+      senderAvatar: notif.senderAvatar,
+      payload: notif.payload
     };
-    const combined = [newNotif, ...currentNotifs.slice(0, 49)];
+    const fp = getNotificationFingerprint(newNotif);
+    const filtered = (Array.isArray(currentNotifs) ? currentNotifs : []).filter(
+      (n: any) => n && n.id !== notifId && getNotificationFingerprint(n) !== fp
+    );
+    const combined = [newNotif, ...filtered.slice(0, 49)];
     localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(combined));
     window.dispatchEvent(
       new CustomEvent('locatrust:notifications-updated', {
@@ -244,17 +453,35 @@ export function pushGlobalNotification(notif: {
       }).catch(() => {});
     } catch {}
 
-    // Inscription directe dans la table notifications Supabase
-    if (notif.targetUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(notif.targetUserId)) {
+    // Inscription directe dans la table notifications Supabase avec le même UUID
+    if (notif.targetUserId && isValidUuid(notif.targetUserId)) {
+      const dbNotifId = isValidUuid(notifId) ? notifId : crypto.randomUUID();
       try {
-        supabase.from('notifications').insert({
-          id: crypto.randomUUID(),
-          user_id: notif.targetUserId,
-          title: notif.title,
-          content: notif.description,
-          type: notif.category,
-          read: false
-        }).then();
+        supabase
+          .from('notifications')
+          .insert({
+            id: dbNotifId,
+            user_id: notif.targetUserId,
+            title: notif.title,
+            message: notif.description,
+            type: notif.category,
+            is_read: false
+          })
+          .then(({ error }) => {
+            if (error) {
+              supabase
+                .from('notifications')
+                .insert({
+                  id: dbNotifId,
+                  user_id: notif.targetUserId,
+                  title: notif.title,
+                  content: notif.description,
+                  type: notif.category,
+                  read: false
+                })
+                .then();
+            }
+          });
       } catch {}
     }
   } catch (e) {

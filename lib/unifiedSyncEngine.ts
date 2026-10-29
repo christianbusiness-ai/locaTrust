@@ -3,6 +3,14 @@
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { getContracts, getMaintenanceTickets } from '@/src/lib/db';
+import {
+  isMessageRead,
+  isNotificationRead,
+  deduplicateMessageList,
+  mergeServerReadState,
+  ensureCounterV2Migration
+} from '@/lib/messagingStore';
+import { deduplicateAndNormalizeNotifications } from '@/lib/waitingListNotifications';
 
 export const isValidUuid = (str?: string): boolean =>
   Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
@@ -34,6 +42,8 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
   isSyncing = true;
   lastSyncTimestamp = now;
 
+  ensureCounterV2Migration(userId);
+
   try {
     // 0. SYNCHRONISATION SERVEUR CENTRAL (/api/sync) — MULTI-APPAREILS ISOLÉE PAR UTILISATEUR
     try {
@@ -42,6 +52,10 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         const syncJson = await syncRes.json();
         if (syncJson?.success && syncJson?.data) {
           if (typeof window !== 'undefined') {
+            if (syncJson.data.readState) {
+              mergeServerReadState(userId, syncJson.data.readState);
+            }
+
             const isMine = (x: any) =>
               x &&
               (x.owner_id === userId ||
@@ -50,6 +64,16 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                 x.user_id === userId ||
                 x.targetUserId === userId ||
                 x.senderUserId === userId);
+
+            // Règle stricte pour les notifications : uniquement celles où l'utilisateur est DESTINATAIRE (jamais expéditeur)
+            const isNotificationForMe = (n: any) =>
+              n &&
+              n.senderUserId !== userId &&
+              (n.targetUserId === userId ||
+                n.user_id === userId ||
+                n.payload?.agencyId === userId ||
+                n.payload?.ownerId === userId ||
+                (!n.targetUserId && !n.user_id && n.targetRole === role));
 
             // A. Paiements
             if (Array.isArray(syncJson.data.payments)) {
@@ -103,20 +127,42 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               } catch {}
             }
 
-            // D. Notifications
+            // D. Notifications (filtrées strictement pour le destinataire et préservant le statut lu)
             if (Array.isArray(syncJson.data.notifications)) {
               try {
-                const srvNotifications = syncJson.data.notifications.filter(isMine);
+                const srvNotifications = syncJson.data.notifications.filter(isNotificationForMe);
                 const rawN = localStorage.getItem('locatrust_notifications');
                 const localN = rawN ? JSON.parse(rawN) : [];
-                const validLocalN = localN.filter(isMine);
-                const srvNIds = new Set(srvNotifications.map((n: any) => n.id));
-                const mergedN = [
-                  ...srvNotifications,
-                  ...validLocalN.filter((ln: any) => !srvNIds.has(ln.id))
-                ];
+                const validLocalN = (Array.isArray(localN) ? localN : []).filter(isNotificationForMe);
+                const mergedN = deduplicateAndNormalizeNotifications(
+                  [...srvNotifications, ...validLocalN],
+                  userId
+                );
                 localStorage.setItem('locatrust_notifications', JSON.stringify(mergedN));
                 window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedN } }));
+              } catch {}
+            }
+
+            // D-bis. Messages issus de /api/sync (préservant le statut lu)
+            if (Array.isArray(syncJson.data.messages) && syncJson.data.messages.length > 0) {
+              try {
+                const rawLocalM = localStorage.getItem('locatrust_chat_messages_v4');
+                const localMsgs = rawLocalM ? JSON.parse(rawLocalM) : [];
+                const srvMsgs = syncJson.data.messages
+                  .filter((m: any) => m && (m.sender_id === userId || m.receiver_id === userId))
+                  .map((m: any) => {
+                    const alreadyRead = isMessageRead(m, userId, localMsgs);
+                    return {
+                      ...m,
+                      status: alreadyRead ? 'read' : (m.status || 'delivered'),
+                      is_read: alreadyRead,
+                      read: alreadyRead
+                    };
+                  });
+                const mergedMsgs = deduplicateMessageList([...srvMsgs, ...(Array.isArray(localMsgs) ? localMsgs : [])]);
+                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify(mergedMsgs));
+                window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: mergedMsgs } }));
+                window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: mergedMsgs } }));
               } catch {}
             }
 
@@ -383,12 +429,35 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     }
 
     // 6. SYNCHRONISATION DES MESSAGES & CONVERSATIONS (MESSAGES)
-    const { data: userConvs, error: convErr } = await supabase
-      .from('conversations')
-      .select('id, participant_a, participant_b, property_id')
-      .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
+    let userConvs: Array<{ id: string; participant_a: string; participant_b: string; property_id?: string }> = [];
+    try {
+      const { data: c1 } = await supabase
+        .from('conversations')
+        .select('id, participant_a, participant_b, property_id')
+        .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
+      if (Array.isArray(c1) && c1.length > 0) {
+        userConvs = c1;
+      }
+    } catch {}
 
-    if (!convErr && Array.isArray(userConvs) && userConvs.length > 0) {
+    if (userConvs.length === 0) {
+      try {
+        const { data: c2 } = await supabase
+          .from('conversations')
+          .select('id, tenant_id, owner_id, property_id')
+          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+        if (Array.isArray(c2) && c2.length > 0) {
+          userConvs = c2.map((c: any) => ({
+            id: c.id,
+            participant_a: c.tenant_id,
+            participant_b: c.owner_id,
+            property_id: c.property_id
+          }));
+        }
+      } catch {}
+    }
+
+    if (userConvs.length > 0) {
       const convIds = userConvs.map(c => c.id);
       const { data: serverMessages, error: msgErr } = await supabase
         .from('messages')
@@ -400,20 +469,41 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         if (typeof window !== 'undefined') {
           try {
             const rawLocal = localStorage.getItem('locatrust_chat_messages_v4');
-            const localMsgs = rawLocal ? JSON.parse(rawLocal) : [];
-            const serverMsgIds = new Set(serverMessages.map(m => m.id));
+            const localMsgs: any[] = rawLocal ? JSON.parse(rawLocal) : [];
+            const localMap = new Map<string, any>();
+            if (Array.isArray(localMsgs)) {
+              localMsgs.forEach((lm: any) => {
+                if (lm?.id) localMap.set(lm.id, lm);
+              });
+            }
 
-            // Décoder le contenu structuré des messages si présent
+            // Décoder le contenu structuré des messages et PRÉSERVER impérativement le statut lu
             const normalizedMsgs = serverMessages.map(m => {
               let parsedContent: any = null;
               if (typeof m.content === 'string' && (m.content.trim().startsWith('{') || m.content.trim().startsWith('['))) {
                 try {
                   parsedContent = JSON.parse(m.content.trim());
+                  if (Array.isArray(parsedContent)) parsedContent = parsedContent[0];
                 } catch {}
               }
 
               const conv = userConvs.find(c => c.id === m.conversation_id);
               const receiverId = conv ? (conv.participant_a === m.sender_id ? conv.participant_b : conv.participant_a) : '';
+              const existingLocal = localMap.get(m.id);
+
+              const candidateMsg: any = {
+                id: m.id,
+                sender_id: m.sender_id,
+                receiver_id: receiverId,
+                text: parsedContent?.text || m.content,
+                created_at: m.created_at,
+                status: m.status || 'delivered',
+                is_read: Boolean(m.is_read || m.read || m.status === 'read')
+              };
+
+              const alreadyRead =
+                (existingLocal && isMessageRead(existingLocal, userId, localMsgs)) ||
+                isMessageRead(candidateMsg, userId, localMsgs);
 
               return {
                 id: m.id,
@@ -422,6 +512,10 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                 text: parsedContent?.text || m.content,
                 media_url: m.attachment_url,
                 created_at: m.created_at,
+                status: alreadyRead ? ('read' as const) : ((m.status as any) || 'delivered'),
+                is_read: alreadyRead,
+                read: alreadyRead,
+                read_at: existingLocal?.read_at || (alreadyRead ? m.created_at : null),
                 contract: parsedContent?.contract,
                 quittance: parsedContent?.quittance,
                 restitution: parsedContent?.restitution,
@@ -430,13 +524,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               };
             });
 
-            const mergedMsgs = [
+            const mergedMsgs = deduplicateMessageList([
               ...normalizedMsgs,
-              ...localMsgs.filter((lm: any) => lm?.id && !serverMsgIds.has(lm.id))
-            ];
+              ...(Array.isArray(localMsgs) ? localMsgs : [])
+            ]);
 
             localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify(mergedMsgs));
             window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: mergedMsgs } }));
+            window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: mergedMsgs } }));
           } catch {}
         }
       }
@@ -454,22 +549,40 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         try {
           const rawLocal = localStorage.getItem('locatrust_notifications');
           const localNotifs = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverNotifIds = new Set(serverNotifs.map(n => n.id));
 
-          const normalizedNotifs = serverNotifs.map(n => ({
-            id: n.id,
-            title: n.title,
-            description: n.content || n.title,
-            unread: !n.read,
-            time: n.created_at ? new Date(n.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : "À l'instant",
-            type: n.type || 'info',
-            payload: n.payload
-          }));
+          const normalizedNotifs = serverNotifs.map(n => {
+            const candidate = {
+              id: n.id,
+              title: n.title,
+              description: n.content || n.message || n.title,
+              created_at: n.created_at,
+              read: Boolean(n.read || n.is_read),
+              is_read: Boolean(n.read || n.is_read),
+              targetUserId: n.user_id || userId
+            };
+            const isRead = isNotificationRead(candidate, userId);
+            return {
+              id: n.id,
+              title: n.title,
+              description: n.content || n.message || n.title,
+              read: isRead,
+              is_read: isRead,
+              unread: !isRead,
+              created_at: n.created_at,
+              timestamp: n.created_at ? new Date(n.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : "À l'instant",
+              time: n.created_at ? new Date(n.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : "À l'instant",
+              type: n.type || 'info',
+              category: n.type === 'caution' ? 'caution' : n.type === 'contrat' ? 'contrat' : n.type === 'paiement' ? 'paiement' : 'demande',
+              targetTab: n.type === 'caution' ? 'guarantees' : n.type === 'contrat' ? 'contracts' : n.type === 'paiement' ? 'payments' : (String(n.title || '').toLowerCase().includes('message') ? 'messages' : 'applications'),
+              targetUserId: n.user_id || userId,
+              payload: n.payload
+            };
+          });
 
-          const mergedNotifs = [
-            ...normalizedNotifs,
-            ...localNotifs.filter((ln: any) => ln?.id && !serverNotifIds.has(ln.id))
-          ];
+          const mergedNotifs = deduplicateAndNormalizeNotifications(
+            [...normalizedNotifs, ...(Array.isArray(localNotifs) ? localNotifs : [])],
+            userId
+          );
 
           localStorage.setItem('locatrust_notifications', JSON.stringify(mergedNotifs));
           window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedNotifs } }));

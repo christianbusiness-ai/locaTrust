@@ -66,6 +66,8 @@ import {
   markMessagesAsRead,
   markAllMessagesAsReadForUser,
   getUnreadMessagesCountForUser,
+  getUnreadCountForConversation,
+  isMessageRead,
   downloadQuittancePdfFromAttachment,
   sendRealChatMessage,
   fetchSupabaseMessages,
@@ -425,6 +427,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
     return false;
   });
+  const [userConsultedContactId, setUserConsultedContactId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('locatrust_active_chat_contact');
+    }
+    return null;
+  });
 
   // Écouter l'événement d'ouverture immédiate d'un chat (desktop et mobile)
   useEffect(() => {
@@ -432,12 +440,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       const contactId = e.detail?.contactId;
       if (contactId) {
         setSelectedContactId(contactId);
+        setUserConsultedContactId(contactId);
         setShowMobileChat(true);
+        if (currentUserId) {
+          markMessagesAsRead(contactId, currentUserId);
+        }
       }
     };
     window.addEventListener('locatrust:open_chat', handleOpenChat);
     return () => window.removeEventListener('locatrust:open_chat', handleOpenChat);
-  }, []);
+  }, [currentUserId]);
 
   // Nettoyage impératif de toutes les pistes audio/vidéo résiduelles dès que l'appel prend fin
   useEffect(() => {
@@ -647,13 +659,6 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   const activeContact = roleContacts.find((c) => c.id === selectedContactId) || roleContacts[0] || null;
 
-  // Marquer immédiatement les messages du contact actif comme lus
-  useEffect(() => {
-    if (activeContact?.id && currentUserId) {
-      markMessagesAsRead(activeContact.id, currentUserId);
-    }
-  }, [activeContact?.id, currentUserId, messages.length]);
-
   // Filter messages between current user and active contact with intelligent deduplication
   const currentConversationMessages = React.useMemo(() => {
     if (!activeContact?.id) return [];
@@ -729,6 +734,22 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     return clean;
   }, [messages, activeContact?.id, activeContact?.name, activeContact?.propertyTitle, myAliases]);
+
+  // Marquer les messages du contact actif comme lus uniquement lorsque l'utilisateur a effectivement ouvert/consulté cette conversation
+  useEffect(() => {
+    if (
+      activeContact?.id &&
+      currentUserId &&
+      userConsultedContactId === activeContact.id &&
+      (typeof document === 'undefined' || document.hasFocus())
+    ) {
+      const msgIds = currentConversationMessages.map((m) => m.id);
+      markMessagesAsRead(activeContact.id, currentUserId, msgIds);
+      if (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_chat_contact') === activeContact.id) {
+        localStorage.removeItem('locatrust_active_chat_contact');
+      }
+    }
+  }, [activeContact?.id, currentUserId, currentConversationMessages.length, userConsultedContactId]);
 
   // Filter contacts by search
   const filteredContacts = roleContacts.filter(
@@ -1158,14 +1179,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     });
   };
 
-  // Handle Send Message (persistance réelle et temps réel)
+  // Handle Send Message (persistance réelle et temps réel, sans doublon)
   const handleSendMessage = () => {
     if (!inputMessage.trim() || !activeContact) return;
 
     const sentText = inputMessage.trim();
-    sendChatMessage(currentUserId, activeContact.id, sentText, {
-      propertyTitle: activeContact.propertyTitle
-    });
+    setUserConsultedContactId(activeContact.id);
+    markMessagesAsRead(
+      activeContact.id,
+      currentUserId,
+      currentConversationMessages.map((m) => m.id)
+    );
     sendRealChatMessage(currentUserId, activeContact.id, sentText, {
       propertyTitle: activeContact.propertyTitle
     }).catch((err) => {
@@ -1584,21 +1608,27 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               );
               const lastMsg = contactMsgs[contactMsgs.length - 1];
 
-              // Nombre de messages non lus spécifiquement reçus de ce contact
-              const contactUnreadCount = (messages || []).filter(
-                (m) =>
-                  (contactAliases.has(m.sender_id) || m.sender_id === contact.id) &&
-                  myAliases.has(m.receiver_id) &&
-                  m.status !== 'read'
-              ).length;
+              // Nombre exact de messages non lus spécifiquement reçus de ce contact
+              const contactUnreadCount = getUnreadCountForConversation(
+                messages || [],
+                currentUserId,
+                myAliases,
+                contact.id,
+                contactAliases
+              );
 
               return (
                 <div
                   key={contact.id}
                   onClick={() => {
                     setSelectedContactId(contact.id);
+                    setUserConsultedContactId(contact.id);
                     setShowMobileChat(true);
-                    markMessagesAsRead(contact.id, currentUserId);
+                    markMessagesAsRead(
+                      contact.id,
+                      currentUserId,
+                      contactMsgs.map((m) => m.id)
+                    );
                     refreshMessages();
                   }}
                   className={`p-3.5 flex items-center gap-3 cursor-pointer transition-all ${
@@ -1659,6 +1689,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
         {/* RIGHT COLUMN: Active Chat Thread (Scrollable independently) */}
         <div
+          onClick={() => {
+            if (activeContact?.id && currentUserId) {
+              setUserConsultedContactId(activeContact.id);
+              markMessagesAsRead(
+                activeContact.id,
+                currentUserId,
+                currentConversationMessages.map((m) => m.id)
+              );
+            }
+          }}
           className={`${
             showMobileChat ? 'flex' : 'hidden md:flex'
           } flex-1 flex flex-col bg-slate-100/70 dark:bg-slate-900 h-full min-w-0 relative`}

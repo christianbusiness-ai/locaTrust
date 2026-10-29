@@ -308,6 +308,7 @@ let SERVER_STORE = {
   messages: [],
   conversations: [],
   contacts: {},
+  readState: {},
   applications: [
     {
       id: 'app_christian_maison_daloa',
@@ -428,12 +429,54 @@ export default async function handler(req, res) {
         const userProperties = SERVER_STORE.properties.filter(
           (pr) => pr.owner_id === cleanUserId || pr.agency_id === cleanUserId
         );
-        const userNotifications = SERVER_STORE.notifications.filter(
-          (n) => n.targetUserId === cleanUserId || n.senderUserId === cleanUserId || n.payload?.agencyId === cleanUserId || n.payload?.ownerId === cleanUserId
-        );
-        const userMessages = SERVER_STORE.messages.filter(
-          (m) => m.sender_id === cleanUserId || m.receiver_id === cleanUserId
-        );
+        const userReadState = SERVER_STORE.readState[cleanUserId] || {
+          readMessageIds: [],
+          readNotifIds: [],
+          convLastReadAt: {}
+        };
+        const readMsgSet = new Set(userReadState.readMessageIds || []);
+        const readNotifSet = new Set(userReadState.readNotifIds || []);
+        const convReadMap = userReadState.convLastReadAt || {};
+
+        const userNotifications = SERVER_STORE.notifications
+          .filter(
+            (n) =>
+              n &&
+              n.senderUserId !== cleanUserId &&
+              (n.targetUserId === cleanUserId ||
+                n.user_id === cleanUserId ||
+                n.payload?.agencyId === cleanUserId ||
+                n.payload?.ownerId === cleanUserId)
+          )
+          .map((n) => {
+            const isRead = Boolean(n.read || n.is_read || n.unread === false || readNotifSet.has(n.id));
+            return {
+              ...n,
+              read: isRead,
+              is_read: isRead,
+              unread: !isRead
+            };
+          });
+
+        const userMessages = SERVER_STORE.messages
+          .filter((m) => m && (m.sender_id === cleanUserId || m.receiver_id === cleanUserId))
+          .map((m) => {
+            const msgTs = m.created_at ? new Date(m.created_at).getTime() : 0;
+            const senderWatermark = convReadMap[m.sender_id] || 0;
+            const allWatermark = convReadMap.__all__ || 0;
+            const isReadByRecipient =
+              m.status === 'read' ||
+              m.is_read === true ||
+              m.read === true ||
+              readMsgSet.has(m.id) ||
+              (m.receiver_id === cleanUserId && msgTs > 0 && (msgTs <= senderWatermark || msgTs <= allWatermark));
+            return {
+              ...m,
+              status: isReadByRecipient ? 'read' : (m.status || 'delivered'),
+              is_read: isReadByRecipient,
+              read: isReadByRecipient
+            };
+          });
         const userConversations = SERVER_STORE.conversations.filter(
           (c) => c.participant_a === cleanUserId || c.participant_b === cleanUserId || c.tenant_id === cleanUserId || c.owner_id === cleanUserId
         );
@@ -459,6 +502,7 @@ export default async function handler(req, res) {
             messages: userMessages,
             conversations: userConversations,
             contacts: SERVER_STORE.contacts,
+            readState: userReadState,
             applications: userApplications,
             timestamp: new Date().toISOString()
           }
@@ -847,12 +891,23 @@ export default async function handler(req, res) {
             ...message,
             id: mid,
             created_at: message.created_at || new Date().toISOString(),
-            status: message.status || 'delivered'
+            status: message.status || 'delivered',
+            is_read: false,
+            read: false,
+            read_at: null
           };
-          // Éviter tout doublon
+          // Éviter tout doublon par ID ou empreinte (sender + receiver + text + minute)
+          const msgMin = normalizedMsg.created_at.slice(0, 16);
+          const msgTextTrim = (normalizedMsg.text || '').trim();
           SERVER_STORE.messages = [
             normalizedMsg,
-            ...SERVER_STORE.messages.filter(m => m.id !== mid)
+            ...SERVER_STORE.messages.filter(m => {
+              if (m.id === mid) return false;
+              if (msgTextTrim && m.sender_id === normalizedMsg.sender_id && m.receiver_id === normalizedMsg.receiver_id && (m.text || '').trim() === msgTextTrim && (m.created_at || '').slice(0, 16) === msgMin) {
+                return false;
+              }
+              return true;
+            })
           ];
 
           // Sauvegarde ou mise à jour de la conversation
@@ -892,32 +947,44 @@ export default async function handler(req, res) {
             SERVER_STORE.contacts[contactInfo.id] = contactInfo;
           }
 
-          // Génération de la notification ciblée pour le destinataire
-          const notifId = `notif_msg_${Date.now()}`;
-          const senderName = contactInfo?.name || 'Un utilisateur';
-          const notifMsg = {
-            id: notifId,
-            title: `Nouveau message de ${senderName}`,
-            description: message.text?.length > 80 ? `${message.text.slice(0, 80)}...` : message.text,
-            time: "À l'instant",
-            timestamp: new Date().toISOString(),
-            unread: true,
-            read: false,
-            category: 'demande',
-            type: 'info',
-            targetTab: 'messages',
-            targetUserId: message.receiver_id,
-            senderUserId: message.sender_id,
-            payload: {
-              contactId: message.sender_id,
-              propertyId: message.propertyId
-            }
-          };
+          // Génération de la notification ciblée EXCLUSIVEMENT pour le destinataire (jamais pour l'expéditeur)
+          if (message.sender_id !== message.receiver_id) {
+            const notifId = message.notificationId || body.notification?.id || `notif_msg_${mid}`;
+            const senderName = message.sender_name || contactInfo?.name || 'Correspondant';
+            const rawText = message.text || message.content || 'Nouveau message';
+            const descText = rawText.length > 80 ? `${rawText.slice(0, 80)}...` : rawText;
+            const notifMsg = {
+              id: notifId,
+              title: `Nouveau message de ${senderName}`,
+              description: descText,
+              time: "À l'instant",
+              timestamp: normalizedMsg.created_at,
+              unread: true,
+              read: false,
+              is_read: false,
+              category: 'demande',
+              type: 'info',
+              targetTab: 'messages',
+              targetUserId: message.receiver_id,
+              senderUserId: message.sender_id,
+              payload: {
+                contactId: message.sender_id,
+                messageId: mid,
+                propertyId: message.propertyId
+              }
+            };
 
-          SERVER_STORE.notifications = [
-            notifMsg,
-            ...SERVER_STORE.notifications.filter(n => n.id !== notifId)
-          ];
+            SERVER_STORE.notifications = [
+              notifMsg,
+              ...SERVER_STORE.notifications.filter(n => {
+                if (n.id === notifId) return false;
+                if (n.targetUserId === message.receiver_id && n.senderUserId === message.sender_id && n.description === descText && n.timestamp && n.timestamp.slice(0, 16) === msgMin) {
+                  return false;
+                }
+                return true;
+              })
+            ];
+          }
 
           return res.status(200).json({
             success: true,
@@ -930,21 +997,60 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, error: 'Données de message incomplètes.' });
       }
 
-      // 6quinquies. Marquage des messages d'un contact comme lus
+      // 6quinquies. Marquage des messages d'un contact (ou de tous les contacts) comme lus
       if (action === 'mark_messages_read') {
-        const { contactId, currentUserId } = body;
-        if (contactId && currentUserId) {
+        const { contactId, currentUserId, messageIds, readAt } = body;
+        if (currentUserId) {
+          const nowIso = readAt || new Date().toISOString();
+          const nowMs = new Date(nowIso).getTime() || Date.now();
+          const msgIdSet = new Set(Array.isArray(messageIds) ? messageIds : []);
+
+          if (!SERVER_STORE.readState[currentUserId]) {
+            SERVER_STORE.readState[currentUserId] = {
+              readMessageIds: [],
+              readNotifIds: [],
+              convLastReadAt: {}
+            };
+          }
+          const userReadState = SERVER_STORE.readState[currentUserId];
+
+          if (contactId === '__all__') {
+            userReadState.convLastReadAt.__all__ = nowMs;
+          } else if (contactId) {
+            userReadState.convLastReadAt[contactId] = nowMs;
+          }
+
           SERVER_STORE.messages = SERVER_STORE.messages.map(m => {
-            if (m.sender_id === contactId && m.receiver_id === currentUserId) {
-              return { ...m, status: 'read', read: true, is_read: true };
+            const isTargetMsg =
+              (contactId === '__all__' && m.receiver_id === currentUserId) ||
+              (contactId && m.sender_id === contactId && m.receiver_id === currentUserId) ||
+              msgIdSet.has(m.id);
+            if (isTargetMsg) {
+              if (!userReadState.readMessageIds.includes(m.id)) {
+                userReadState.readMessageIds.push(m.id);
+              }
+              return { ...m, status: 'read', read: true, is_read: true, read_at: m.read_at || nowIso };
             }
             return m;
           });
 
-          // Marquer également les notifications de ce sender comme lues
+          msgIdSet.forEach(id => {
+            if (id && !userReadState.readMessageIds.includes(id)) {
+              userReadState.readMessageIds.push(id);
+            }
+          });
+
+          // Marquer également les notifications de messages correspondantes comme lues
           SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
-            if (n.senderUserId === contactId && n.targetUserId === currentUserId) {
-              return { ...n, read: true, unread: false };
+            const isTargetNotif =
+              n.targetUserId === currentUserId &&
+              ((contactId === '__all__' && (n.targetTab === 'messages' || (n.title || '').toLowerCase().includes('message'))) ||
+                (contactId && (n.senderUserId === contactId || n.payload?.contactId === contactId) && (n.targetTab === 'messages' || (n.title || '').toLowerCase().includes('message'))));
+            if (isTargetNotif) {
+              if (!userReadState.readNotifIds.includes(n.id)) {
+                userReadState.readNotifIds.push(n.id);
+              }
+              return { ...n, read: true, unread: false, is_read: true, read_at: n.read_at || nowIso };
             }
             return n;
           });
@@ -952,7 +1058,8 @@ export default async function handler(req, res) {
           return res.status(200).json({
             success: true,
             messages: SERVER_STORE.messages,
-            notifications: SERVER_STORE.notifications
+            notifications: SERVER_STORE.notifications,
+            readState: userReadState
           });
         }
       }
@@ -1048,25 +1155,67 @@ export default async function handler(req, res) {
 
       // 6octies. Marquage des notifications comme lues
       if (action === 'mark_notification_read') {
-        const { notificationId, userId } = body;
-        if (notificationId) {
+        const { notificationId, notificationIds, userId, targetTab } = body;
+        const nowIso = new Date().toISOString();
+        const idSet = new Set(Array.isArray(notificationIds) ? notificationIds : []);
+        if (notificationId) idSet.add(notificationId);
+
+        if (userId) {
+          if (!SERVER_STORE.readState[userId]) {
+            SERVER_STORE.readState[userId] = {
+              readMessageIds: [],
+              readNotifIds: [],
+              convLastReadAt: {}
+            };
+          }
+          idSet.forEach(id => {
+            if (id && !SERVER_STORE.readState[userId].readNotifIds.includes(id)) {
+              SERVER_STORE.readState[userId].readNotifIds.push(id);
+            }
+          });
+        }
+
+        if (idSet.size > 0) {
           SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
-            if (n.id === notificationId) {
-              return { ...n, read: true, unread: false, is_read: true };
+            if (idSet.has(n.id)) {
+              const ownerUser = userId || n.targetUserId;
+              if (ownerUser) {
+                if (!SERVER_STORE.readState[ownerUser]) {
+                  SERVER_STORE.readState[ownerUser] = { readMessageIds: [], readNotifIds: [], convLastReadAt: {} };
+                }
+                if (!SERVER_STORE.readState[ownerUser].readNotifIds.includes(n.id)) {
+                  SERVER_STORE.readState[ownerUser].readNotifIds.push(n.id);
+                }
+              }
+              return { ...n, read: true, unread: false, is_read: true, read_at: n.read_at || nowIso };
+            }
+            return n;
+          });
+        } else if (userId && targetTab) {
+          SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
+            if ((n.targetUserId === userId || n.payload?.agencyId === userId || n.payload?.ownerId === userId) && n.targetTab === targetTab) {
+              if (!SERVER_STORE.readState[userId].readNotifIds.includes(n.id)) {
+                SERVER_STORE.readState[userId].readNotifIds.push(n.id);
+              }
+              return { ...n, read: true, unread: false, is_read: true, read_at: n.read_at || nowIso };
             }
             return n;
           });
         } else if (userId) {
           SERVER_STORE.notifications = SERVER_STORE.notifications.map(n => {
-            if (n.targetUserId === userId) {
-              return { ...n, read: true, unread: false, is_read: true };
+            if (n.targetUserId === userId || n.payload?.agencyId === userId || n.payload?.ownerId === userId) {
+              if (!SERVER_STORE.readState[userId].readNotifIds.includes(n.id)) {
+                SERVER_STORE.readState[userId].readNotifIds.push(n.id);
+              }
+              return { ...n, read: true, unread: false, is_read: true, read_at: n.read_at || nowIso };
             }
             return n;
           });
         }
         return res.status(200).json({
           success: true,
-          notifications: SERVER_STORE.notifications
+          notifications: SERVER_STORE.notifications,
+          readState: userId ? SERVER_STORE.readState[userId] : undefined
         });
       }
 
@@ -1110,8 +1259,18 @@ export default async function handler(req, res) {
         }
         if (Array.isArray(clientMessages)) {
           for (const msg of clientMessages) {
-            if (msg && msg.id && !SERVER_STORE.messages.some(sm => sm.id === msg.id)) {
+            if (!msg || !msg.id) continue;
+            const existingIdx = SERVER_STORE.messages.findIndex(sm => sm.id === msg.id);
+            if (existingIdx === -1) {
               SERVER_STORE.messages.push(msg);
+            } else if (msg.status === 'read' || msg.is_read || msg.read) {
+              SERVER_STORE.messages[existingIdx] = {
+                ...SERVER_STORE.messages[existingIdx],
+                status: 'read',
+                is_read: true,
+                read: true,
+                read_at: SERVER_STORE.messages[existingIdx].read_at || msg.read_at || new Date().toISOString()
+              };
             }
           }
         }

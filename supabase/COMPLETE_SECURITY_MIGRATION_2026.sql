@@ -455,9 +455,18 @@ DROP POLICY IF EXISTS "notifications_select_own" ON public.notifications;
 CREATE POLICY "notifications_select_own" ON public.notifications
   FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
 
+DROP POLICY IF EXISTS "notifications_insert_authenticated" ON public.notifications;
+CREATE POLICY "notifications_insert_authenticated" ON public.notifications
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated' OR public.is_admin());
+
 DROP POLICY IF EXISTS "notifications_update_own" ON public.notifications;
 CREATE POLICY "notifications_update_own" ON public.notifications
-  FOR UPDATE USING (user_id = auth.uid() OR public.is_admin());
+  FOR UPDATE USING (user_id = auth.uid() OR public.is_admin())
+  WITH CHECK (user_id = auth.uid() OR public.is_admin());
+
+DROP POLICY IF EXISTS "notifications_delete_own" ON public.notifications;
+CREATE POLICY "notifications_delete_own" ON public.notifications
+  FOR DELETE USING (user_id = auth.uid() OR public.is_admin());
 
 -- -----------------------------------------------------------------------------
 -- POLICIES : SUBSCRIPTIONS & PAIEMENTS
@@ -506,4 +515,25 @@ CREATE POLICY "messages_send_own" ON public.messages
       WHERE c.id = messages.conversation_id
       AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
     )
+  );
+
+DROP POLICY IF EXISTS "messages_update_participate" ON public.messages;
+CREATE POLICY "messages_update_participate" ON public.messages
+  FOR UPDATE USING (
+    sender_id = auth.uid() OR
+    EXISTS (
+      SELECT 1 FROM public.conversations c
+      WHERE c.id = messages.conversation_id
+      AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
+    ) OR
+    public.is_admin()
+  )
+  WITH CHECK (
+    sender_id = auth.uid() OR
+    EXISTS (
+      SELECT 1 FROM public.conversations c
+      WHERE c.id = messages.conversation_id
+      AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
+    ) OR
+    public.is_admin()
   );

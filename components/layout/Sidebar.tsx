@@ -189,11 +189,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     window.addEventListener('locatrust:applications-updated', updateCounts);
     window.addEventListener('locatrust:contracts-updated', updateCounts);
     window.addEventListener('locatrust:messages_updated', updateCounts);
+    window.addEventListener('locatrust:messages-updated', updateCounts);
     window.addEventListener('locatrust:cautions_updated', updateCounts);
     return () => {
       window.removeEventListener('locatrust:applications-updated', updateCounts);
       window.removeEventListener('locatrust:contracts-updated', updateCounts);
       window.removeEventListener('locatrust:messages_updated', updateCounts);
+      window.removeEventListener('locatrust:messages-updated', updateCounts);
       window.removeEventListener('locatrust:cautions_updated', updateCounts);
     };
   }, [user, isLocataire, isProprietaire, isAgence]);
@@ -337,10 +339,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     if (item.id === 'support' && onOpenSupport) {
                       onOpenSupport();
                     } else {
-                      if (item.id === 'messages') {
-                        markAllMessagesAsReadForUser(user?.id);
-                        setMsgCount(0);
-                      }
                       onSelectTab?.(item.id);
                     }
                   }}
@@ -409,10 +407,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     key={item.id}
                     onClick={() => {
-                      if (item.id === 'messages') {
-                        markAllMessagesAsReadForUser(user?.id);
-                        setMsgCount(0);
-                      }
                       onSelectTab?.(item.id);
                     }}
                     className={`flex items-center justify-between px-3 py-2.5 rounded-xl font-medium text-xs transition-all duration-150 whitespace-nowrap ${isActive
