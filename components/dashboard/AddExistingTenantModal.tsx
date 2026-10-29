@@ -25,13 +25,16 @@ import {
   DollarSign,
   Key,
   Home,
-  UserCheck
+  UserCheck,
+  MapPin
 } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import { formatFCFA } from '@/lib/utils';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { UserAvatar } from '@/components/common/UserAvatar';
+import { IVORIAN_CITIES } from '@/lib/legalAnalysisEngine';
+import { createProperty } from '@/lib/supabase/services';
 
 export interface ExistingTenantData {
   id: string;
@@ -51,6 +54,10 @@ export interface ExistingRentalData {
   propertyCity: string;
   propertyCommune: string;
   propertyType: string;
+  propertyRooms?: number;
+  propertyBedrooms?: number;
+  propertyBathrooms?: number;
+  propertySurface?: number;
   leaseType: 'habitation' | 'professionnel';
   entryDate: string;
   monthlyRent: number;
@@ -98,6 +105,85 @@ function maskPhone(phone: string): string {
   return `${clean.slice(0, 3)} •• •• ${clean.slice(-2)}`;
 }
 
+/**
+ * Composant de saisie monétaire naturelle (Section 13, 14, 15, 16, 17)
+ * Permet d'écrire naturellement sans être bloqué par le 0 initial.
+ * Si la valeur est 0 et qu'on tape 1 -> devient 1 (et non 01).
+ */
+interface NaturalCurrencyInputProps {
+  value: number;
+  onChange: (val: number) => void;
+  placeholder?: string;
+  className?: string;
+  required?: boolean;
+  id?: string;
+}
+
+const NaturalCurrencyInput: React.FC<NaturalCurrencyInputProps> = ({
+  value,
+  onChange,
+  placeholder = '0',
+  className = '',
+  required = false,
+  id
+}) => {
+  const [text, setText] = useState<string>(() => (value === 0 ? '0' : String(value)));
+
+  useEffect(() => {
+    const num = Number(text.replace(/\s/g, ''));
+    if (!Number.isNaN(num) && num !== value) {
+      setText(value === 0 ? '0' : String(value));
+    }
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+
+    if (raw === '') {
+      setText('');
+      onChange(0);
+      return;
+    }
+
+    const digits = raw.replace(/[^0-9]/g, '');
+
+    if (digits === '') {
+      setText('');
+      onChange(0);
+      return;
+    }
+
+    // Supprime les zéros surnuméraires en tête : '0' + '1' -> '1', '0' + '25000' -> '25000'
+    const cleaned = digits.replace(/^0+(?=\d)/, '');
+    const parsed = Number(cleaned);
+
+    setText(cleaned);
+    onChange(Number.isNaN(parsed) ? 0 : parsed);
+  };
+
+  const handleBlur = () => {
+    if (text === '' || text.trim() === '') {
+      setText('0');
+      onChange(0);
+    }
+  };
+
+  return (
+    <input
+      id={id}
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      required={required}
+      value={text}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+};
+
 export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
   isOpen,
   onClose,
@@ -113,13 +199,21 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
   const [foundTenant, setFoundTenant] = useState<ExistingTenantData | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Properties list of current owner/agency
-  const [properties, setProperties] = useState<any[]>([]);
-  const [activeContracts, setActiveContracts] = useState<any[]>([]);
-  const [isLoadingProps, setIsLoadingProps] = useState(false);
+  // Form state : INFORMATIONS DU LOGEMENT (Section 9 & 10 - saisie directe du logement)
+  const [propertyTitle, setPropertyTitle] = useState('Logement 3 pièces');
+  const [propertyType, setPropertyType] = useState('appartement');
+  const [customPropertyType, setCustomPropertyType] = useState('');
+  const [propertyCountry, setPropertyCountry] = useState("Côte d'Ivoire");
+  const [propertyCity, setPropertyCity] = useState('Abidjan');
+  const [propertyCommune, setPropertyCommune] = useState('Cocody');
+  const [propertyQuartier, setPropertyQuartier] = useState('');
+  const [propertyAddress, setPropertyAddress] = useState('');
+  const [propertyRooms, setPropertyRooms] = useState<number>(3);
+  const [propertyBedrooms, setPropertyBedrooms] = useState<number>(2);
+  const [propertyBathrooms, setPropertyBathrooms] = useState<number>(1);
+  const [propertySurface, setPropertySurface] = useState<number>(75);
 
-  // Form state
-  const [selectedPropertyId, setSelectedPropertyId] = useState<string>('');
+  // Form state : CONDITIONS DU BAIL (Section 11)
   const [leaseType, setLeaseType] = useState<'habitation' | 'professionnel'>('habitation');
   const [entryDate, setEntryDate] = useState<string>(() => {
     // Par défaut date du 1er du mois en cours
@@ -127,9 +221,9 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
     d.setDate(1);
     return d.toISOString().split('T')[0];
   });
-  const [monthlyRent, setMonthlyRent] = useState<number>(150000);
+  const [monthlyRent, setMonthlyRent] = useState<number>(25000);
   const [chargesAmount, setChargesAmount] = useState<number>(0);
-  const [cautionAmount, setCautionAmount] = useState<number>(300000); // 2 mois par défaut (Loi 2019-576 Art. 414)
+  const [cautionAmount, setCautionAmount] = useState<number>(50000); // 2 mois par défaut (Loi 2019-576 Art. 414)
   const [paymentFrequency, setPaymentFrequency] = useState<'mensuel' | 'trimestriel'>('mensuel');
   const [dueDay, setDueDay] = useState<number>(5);
   const [durationMonths, setDurationMonths] = useState<number>(12);
@@ -150,105 +244,12 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Charger les biens appartenant strictement au propriétaire ou à l'agence connectée
-  useEffect(() => {
-    if (!isOpen || !user?.id) return;
-
-    async function fetchOwnerProperties() {
-      setIsLoadingProps(true);
-      try {
-        // 1. Charger les propriétés de l'utilisateur
-        const { data: propsData } = await supabase
-          .from('properties')
-          .select('*')
-          .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`)
-          .order('created_at', { ascending: false });
-
-        // 2. Charger les contrats actifs pour détecter les logements occupés
-        const { data: cntData } = await supabase
-          .from('contracts')
-          .select('id, contract_number, property_id, tenant_id, status, monthly_rent, caution_amount')
-          .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`)
-          .in('status', ['actif', 'contrat_actif']);
-
-        setProperties(propsData || []);
-        setActiveContracts(cntData || []);
-
-        if (propsData && propsData.length > 0 && !selectedPropertyId) {
-          // Présélectionner le premier bien
-          const firstProp = propsData[0];
-          setSelectedPropertyId(firstProp.id);
-          if (firstProp.rent) setMonthlyRent(Number(firstProp.rent));
-          if (firstProp.charges) setChargesAmount(Number(firstProp.charges));
-          if (firstProp.caution) {
-            setCautionAmount(Number(firstProp.caution));
-          } else if (firstProp.rent) {
-            setCautionAmount(Number(firstProp.rent) * 2);
-          }
-          if (firstProp.usage_destination === 'professionnel') {
-            setLeaseType('professionnel');
-          }
-        }
-      } catch (err) {
-        console.warn('Erreur chargement biens propriétaire:', err);
-      } finally {
-        setIsLoadingProps(false);
-      }
-    }
-
-    fetchOwnerProperties();
-  }, [isOpen, user?.id]);
-
-  // Détection du bien sélectionné
-  const selectedProperty = useMemo(() => {
-    return properties.find((p) => p.id === selectedPropertyId) || null;
-  }, [properties, selectedPropertyId]);
-
-  // Vérification de conflit sur le bien sélectionné (Section 20 & 21)
-  const propertyConflict = useMemo(() => {
-    if (!selectedPropertyId) return null;
-    const existingContract = activeContracts.find(
-      (c) => c.property_id === selectedPropertyId
-    );
-    if (!existingContract) return null;
-
-    if (foundTenant && existingContract.tenant_id === foundTenant.id) {
-      return {
-        type: 'same_tenant',
-        message: 'Ce locataire possède déjà un contrat actif pour ce logement.'
-      };
-    }
-
-    return {
-      type: 'different_tenant',
-      message: 'Ce logement possède déjà un contrat actif avec un autre locataire. Vérifiez la situation avant d\'ajouter un nouveau locataire.'
-    };
-  }, [selectedPropertyId, activeContracts, foundTenant]);
-
-  // Recalculer le loyer et la caution lors du changement de bien
-  const handlePropertyChange = (propId: string) => {
-    setSelectedPropertyId(propId);
-    setFormError(null);
-    const prop = properties.find((p) => p.id === propId);
-    if (prop) {
-      const rent = Number(prop.rent || prop.price || 150000);
-      setMonthlyRent(rent);
-      setChargesAmount(Number(prop.charges || 0));
-      // Plafond légal 2 mois Art. 414 Loi 2019-576
-      const caution = prop.caution ? Number(prop.caution) : rent * 2;
-      setCautionAmount(caution);
-      if (prop.usage_destination === 'professionnel') {
-        setLeaseType('professionnel');
-      }
-    }
-  };
-
-  // RECHERCHE DU LOCATAIRE (Section 4)
+  // RECHERCHE DU LOCATAIRE (Section 2, 3, 4, 5, 6, 7)
   const handleSearchTenant = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const query = searchQuery.trim();
     if (!query) {
-      setSearchError('Veuillez saisir un identifiant LocaTrust, une adresse e-mail ou un numéro de téléphone.');
+      setSearchError('Veuillez saisir un nom, prénom, e-mail, numéro de téléphone ou identifiant LocaTrust.');
       return;
     }
 
@@ -263,7 +264,6 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         .select('id, full_name, email, phone, cni_number, avatar_url, verification_status, account_type')
         .eq('account_type', 'locataire');
 
-      // Détecter le type de recherche
       const isEmail = query.includes('@');
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query);
 
@@ -272,40 +272,47 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
       } else if (isEmail) {
         sbQuery = sbQuery.ilike('email', query.toLowerCase());
       } else {
-        // Recherche par téléphone ou début d'identifiant
         const digitsOnly = query.replace(/[^0-9]/g, '');
         if (digitsOnly.length >= 8) {
-          sbQuery = sbQuery.ilike('phone', `%${digitsOnly}%`);
+          sbQuery = sbQuery.or(`phone.ilike.%${digitsOnly}%,cni_number.ilike.%${query}%`);
         } else {
-          sbQuery = sbQuery.or(`id.ilike.%${query}%,full_name.ilike.%${query}%`);
+          // Découpage multi-tokens pour correspondre dans n'importe quel ordre
+          // Ex: "Zouzoua laurence" retrouve le profil avec full_name "Laurence Zouzoua"
+          const tokens = query.split(/\s+/).filter(Boolean);
+          for (const token of tokens) {
+            sbQuery = sbQuery.ilike('full_name', `%${token}%`);
+          }
         }
       }
 
-      const { data, error } = await sbQuery.limit(1).maybeSingle();
+      const { data, error } = await sbQuery.limit(5);
 
       if (error) {
-        setSearchError('Erreur lors de la recherche. Veuillez vérifier votre saisie.');
+        console.error('Erreur technique recherche profil locataire:', error);
+        setSearchError('Impossible d\'effectuer la recherche pour le moment. Veuillez réessayer.');
         return;
       }
 
-      if (!data) {
-        // Aucun locataire trouvé -> Proposition d'invitation (Section 17)
+      if (!data || data.length === 0) {
+        // Aucun compte correspondant trouvé (Section 6)
         setFoundTenant(null);
         return;
       }
 
-      // Locataire trouvé (Section 5)
+      // Locataire trouvé (Section 5 & 8)
+      const matched = data[0];
       setFoundTenant({
-        id: data.id,
-        fullName: data.full_name || 'Locataire LocaTrust',
-        email: data.email || '',
-        phone: data.phone || '',
-        cniNumber: data.cni_number || '',
-        avatarUrl: data.avatar_url || '',
-        verificationStatus: data.verification_status || 'non_verifie'
+        id: matched.id,
+        fullName: matched.full_name || 'Locataire LocaTrust',
+        email: matched.email || '',
+        phone: matched.phone || '',
+        cniNumber: matched.cni_number || '',
+        avatarUrl: matched.avatar_url || '',
+        verificationStatus: matched.verification_status || 'non_verifie'
       });
     } catch (err: any) {
-      setSearchError(err?.message || 'Erreur imprévue lors de la recherche.');
+      console.error('Exception imprévue lors de la recherche:', err);
+      setSearchError('Impossible d\'effectuer la recherche pour le moment. Veuillez réessayer.');
     } finally {
       setIsSearching(false);
     }
@@ -315,11 +322,11 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
   const invitationMessage = useMemo(() => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://locatrust.ci';
     const registerUrl = `${origin}/register?role=locataire`;
-    const ownerDisplayName = profile?.full_name || user?.user_metadata?.full_name || 'Votre bailleur';
-    const propTitle = selectedProperty?.title || 'notre logement';
+    const ownerDisplayName = profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Votre agence immobilière' : 'Votre bailleur');
+    const propTitle = propertyTitle.trim() || 'notre logement';
 
     return `Bonjour ${inviteeName.trim() || 'cher locataire'},\n\nDans le cadre de la gestion et de la sécurisation officielle de votre bail pour ${propTitle} sur la plateforme LocaTrust, merci de créer votre compte locataire gratuit en cliquant sur le lien suivant :\n${registerUrl}\n\nUne fois votre compte créé, transmettez-moi simplement votre e-mail ou votre identifiant LocaTrust afin que je puisse formaliser votre contrat officiel avec QR Code certifié.\n\nCordialement,\n${ownerDisplayName}`;
-  }, [inviteeName, selectedProperty, profile, user]);
+  }, [inviteeName, propertyTitle, profile, user, isAgency]);
 
   const handleCopyInvitation = () => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -329,20 +336,16 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
     }
   };
 
-  // SOUMISSION ET REDIRECTION VERS LE CONTRAT (Sections 9, 10, 11)
+  // SOUMISSION ET REDIRECTION VERS LE CONTRAT (Sections 9, 10, 11, 18, 19, 20, 21)
   const handleContinueToContract = async () => {
     if (!foundTenant) {
       setFormError('Veuillez d\'abord rechercher et sélectionner un locataire existant.');
       return;
     }
 
-    if (!selectedPropertyId) {
-      setFormError('Veuillez sélectionner le bien immobilier concerné.');
-      return;
-    }
-
-    if (propertyConflict && propertyConflict.type === 'different_tenant') {
-      setFormError(propertyConflict.message);
+    const trimmedTitle = propertyTitle.trim();
+    if (!trimmedTitle) {
+      setFormError('Veuillez renseigner la désignation ou le nom du logement.');
       return;
     }
 
@@ -361,21 +364,94 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
     setFormError(null);
 
     const ownerDisplayName = profile?.full_name || user?.user_metadata?.full_name || (isAgency ? 'Agence Immobilière' : 'Bailleur Propriétaire');
-    const propTitle = selectedProperty?.title || 'Bien immobilier';
-    const propAddress = selectedProperty?.address || `${selectedProperty?.commune || ''} ${selectedProperty?.city || 'Abidjan'}`.trim();
+    const finalPropertyType = propertyType === 'autre' ? (customPropertyType.trim() || 'Logement') : propertyType;
+    const computedFullAddress = propertyAddress.trim() || `${propertyQuartier ? propertyQuartier.trim() + ', ' : ''}${propertyCommune}, ${propertyCity}`.trim();
 
     try {
-      // 1. Enregistrement en base de données Supabase (table rental_applications)
-      // pour inscrire la relation existante de manière sécurisée et persistante
+      // 1. Enregistrement / Persistance réelle du logement en base de données Supabase
+      const newPropertyId = crypto.randomUUID();
+      const currentPublisherId = user?.id || profile?.id || 'owner_default';
+
+      const propertyPayload = {
+        id: newPropertyId,
+        owner_id: currentPublisherId,
+        agency_id: isAgency ? currentPublisherId : null,
+        type: finalPropertyType,
+        title: trimmedTitle,
+        description: `Logement existant occupé par ${foundTenant.fullName} depuis le ${entryDate}`,
+        country: propertyCountry.trim() || "Côte d'Ivoire",
+        city: propertyCity.trim() || 'Abidjan',
+        commune: propertyCommune.trim() || 'Cocody',
+        quartier: propertyQuartier.trim() || 'Centre',
+        address: computedFullAddress,
+        surface: propertySurface > 0 ? propertySurface : null,
+        rooms: propertyRooms > 0 ? propertyRooms : 1,
+        bedrooms: propertyBedrooms >= 0 ? propertyBedrooms : 1,
+        bathrooms: propertyBathrooms >= 0 ? propertyBathrooms : 1,
+        rent: monthlyRent,
+        caution: cautionAmount,
+        charges: chargesAmount,
+        status: 'loue', // Logement déjà occupé par le locataire existant
+        usage_destination: leaseType,
+        owner_name: ownerDisplayName,
+        owner_phone: profile?.phone || user?.phone || ''
+      };
+
+      // Insertion en base Supabase (table properties)
+      let savedPropertyId = newPropertyId;
+      try {
+        const { data: createdProp, error: propErr } = await createProperty(propertyPayload);
+        if (createdProp && createdProp.id) {
+          savedPropertyId = createdProp.id;
+        } else if (propErr) {
+          console.warn('Persistance Supabase properties notice:', propErr);
+        }
+      } catch (propDbErr) {
+        console.warn('Erreur création bien Supabase:', propDbErr);
+      }
+
+      // Synchronisation immédiate dans locatrust_properties (localStorage + customEvent)
+      if (typeof window !== 'undefined') {
+        try {
+          const rawProps = localStorage.getItem('locatrust_properties');
+          const existingPropsList = rawProps ? JSON.parse(rawProps) : [];
+          const completeLocalProp = {
+            ...propertyPayload,
+            id: savedPropertyId,
+            created_at: new Date().toISOString(),
+            owner: {
+              id: currentPublisherId,
+              full_name: ownerDisplayName,
+              phone: profile?.phone || '',
+              account_type: isAgency ? 'agence' : 'proprietaire'
+            },
+            location: {
+              city: propertyCity,
+              commune: propertyCommune,
+              quartier: propertyQuartier || 'Centre'
+            },
+            pricing: {
+              monthly_rent: monthlyRent,
+              deposit_months: Math.round(cautionAmount / (monthlyRent || 1)) || 2
+            }
+          };
+          localStorage.setItem('locatrust_properties', JSON.stringify([completeLocalProp, ...(Array.isArray(existingPropsList) ? existingPropsList : [])]));
+          window.dispatchEvent(new CustomEvent('locatrust:properties_updated'));
+        } catch (localErr) {
+          console.warn('Erreur sync local properties:', localErr);
+        }
+      }
+
+      // 2. Enregistrement en base de données Supabase (table rental_applications)
       const appPayload: Record<string, any> = {
-        property_id: selectedPropertyId,
+        property_id: savedPropertyId,
         tenant_name: foundTenant.fullName,
         tenant_phone: foundTenant.phone,
         tenant_email: foundTenant.email,
         tenant_cni: foundTenant.cniNumber || '',
         tenant_avatar: foundTenant.avatarUrl || '',
-        property_title: propTitle,
-        property_address: propAddress,
+        property_title: trimmedTitle,
+        property_address: computedFullAddress,
         rent_amount: monthlyRent,
         caution_amount: cautionAmount,
         status: 'dossier_valide',
@@ -407,41 +483,25 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
       }
 
       try {
-        const { data: existingApp } = await supabase
-          .from('rental_applications')
-          .select('id')
-          .eq('property_id', selectedPropertyId)
-          .eq('tenant_id', foundTenant.id)
-          .maybeSingle();
-
-        if (existingApp?.id) {
-          await supabase
-            .from('rental_applications')
-            .update(appPayload)
-            .eq('id', existingApp.id);
-        } else {
-          await supabase
-            .from('rental_applications')
-            .insert([appPayload]);
-        }
+        await supabase.from('rental_applications').insert([appPayload]);
       } catch (dbErr) {
         console.warn('Persistance Supabase rental_applications notice:', dbErr);
       }
 
-      // 2. Persistance de la notification dans la table Supabase 'notifications' (Section 15)
+      // 3. Persistance de la notification dans la table Supabase 'notifications' (Section 15)
       try {
         await supabase.from('notifications').insert([{
           id: crypto.randomUUID(),
           user_id: foundTenant.id,
           title: 'Nouvelle relation locative',
-          message: `Le bailleur ${ownerDisplayName} souhaite vous associer au logement "${propTitle}" et prépare votre contrat de location officiel.`,
-          description: `Le bailleur ${ownerDisplayName} souhaite vous associer au logement "${propTitle}" et prépare votre contrat de location officiel.`,
+          message: `Le bailleur ${ownerDisplayName} souhaite vous associer au logement "${trimmedTitle}" et prépare votre contrat de location officiel.`,
+          description: `Le bailleur ${ownerDisplayName} souhaite vous associer au logement "${trimmedTitle}" et prépare votre contrat de location officiel.`,
           category: 'contrat',
           type: 'contrat',
           is_read: false,
           read: false,
           data: {
-            property_id: selectedPropertyId,
+            property_id: savedPropertyId,
             owner_id: user?.id,
             targetTab: 'contrats'
           }
@@ -450,11 +510,11 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         console.warn('Persistance notification Supabase notice:', notifDbErr);
       }
 
-      // 3. Notification locale et broadcast Realtime
+      // 4. Notification locale et broadcast Realtime
       const tenantNotif = {
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         title: 'Nouvelle relation locative',
-        description: `Le bailleur ${ownerDisplayName} souhaite vous associer au logement "${propTitle}" et prépare votre contrat de location officiel.`,
+        description: `Le bailleur ${ownerDisplayName} souhaite vous associer au logement "${trimmedTitle}" et prépare votre contrat de location officiel.`,
         timestamp: new Date().toISOString(),
         read: false,
         unread: true,
@@ -481,15 +541,19 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         notification: tenantNotif
       });
 
-      // 4. Préparation des données d'importation locative pour préremplir le contrat
+      // 5. Préparation des données d'importation locative pour préremplir le contrat
       const rentalData: ExistingRentalData = {
         tenant: foundTenant,
-        propertyId: selectedPropertyId,
-        propertyTitle: propTitle,
-        propertyAddress: propAddress,
-        propertyCity: selectedProperty?.city || 'Abidjan',
-        propertyCommune: selectedProperty?.commune || 'Cocody',
-        propertyType: selectedProperty?.type || 'appartement',
+        propertyId: savedPropertyId,
+        propertyTitle: trimmedTitle,
+        propertyAddress: computedFullAddress,
+        propertyCity: propertyCity.trim() || 'Abidjan',
+        propertyCommune: propertyCommune.trim() || 'Cocody',
+        propertyType: finalPropertyType,
+        propertyRooms,
+        propertyBedrooms,
+        propertyBathrooms,
+        propertySurface,
         leaseType,
         entryDate,
         monthlyRent,
@@ -505,7 +569,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         historicalNotes: showHistoricalFields ? historicalNotes : undefined
       };
 
-      // 5. Fermer ce modal et rediriger vers le workflow contractuel certifié existant
+      // 6. Fermer ce modal et rediriger vers le workflow contractuel certifié existant
       onClose();
       onContinueToContract(rentalData);
     } finally {
@@ -595,7 +659,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                     setSearchQuery(e.target.value);
                     if (searchError) setSearchError(null);
                   }}
-                  placeholder="Saisir l'adresse e-mail, téléphone ou identifiant LocaTrust..."
+                  placeholder="Saisir le nom complet (ex: Zouzoua Laurence), e-mail ou téléphone..."
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all placeholder:text-slate-400"
                 />
               </div>
@@ -679,7 +743,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                 <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
                   <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
                   <h4 className="text-xs font-black">
-                    Ce locataire ne possède pas encore de compte LocaTrust.
+                    Aucun compte LocaTrust correspondant n'a été trouvé.
                   </h4>
                 </div>
 
@@ -735,7 +799,8 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
           </div>
 
           {/* ============================================================== */}
-          {/* ÉTAPE 2 : SÉLECTION DU LOGEMENT & SITUATION LOCATIVE           */}
+          {/* ÉTAPE 2 : INFORMATIONS DU LOGEMENT & SITUATION LOCATIVE        */}
+          {/* (Section 9 & 10 - Renseignement direct du logement existant)   */}
           {/* ============================================================== */}
           <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-4">
             <div className="flex items-center justify-between">
@@ -748,57 +813,199 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                 </h3>
               </div>
               <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                Bien du bailleur ou de l'agence
+                Saisie directe du bien existant
               </span>
             </div>
 
-            {/* SÉLECTEUR DE BIEN */}
-            <div>
-              <label className="block text-xs font-black text-slate-700 dark:text-slate-300 mb-1.5">
-                Logement / Bien occupé par le locataire <span className="text-red-500">*</span>
-              </label>
+            {/* A. CARACTÉRISTIQUES DU LOGEMENT DIRECTEMENT RENSEIGNABLES */}
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-3.5">
+              <div className="flex items-center gap-2 text-xs font-black text-blue-700 dark:text-blue-400">
+                <Home className="w-4 h-4" />
+                <span>Caractéristiques du logement occupé</span>
+              </div>
 
-              {isLoadingProps ? (
-                <div className="p-3 text-xs text-slate-500 flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  <span>Chargement de votre parc immobilier...</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {/* Désignation du logement */}
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Désignation du logement / Référence <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={propertyTitle}
+                    onChange={(e) => setPropertyTitle(e.target.value)}
+                    placeholder="Ex: Appartement 3 pièces standing - Résidence Les Palmiers"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600"
+                  />
                 </div>
-              ) : properties.length === 0 ? (
-                <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs">
-                  Aucun bien immobilier enregistré dans votre compte. Veuillez d'abord créer un bien dans l'onglet « Biens » avant d'ajouter un locataire existant.
-                </div>
-              ) : (
-                <select
-                  value={selectedPropertyId}
-                  onChange={(e) => handlePropertyChange(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600"
-                >
-                  <option value="">-- Sélectionnez le logement concerné --</option>
-                  {properties.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title} — {p.commune ? `${p.commune}, ${p.city || 'Abidjan'}` : p.city || 'Abidjan'} ({formatFCFA(p.rent || 0)}/mois)
-                    </option>
-                  ))}
-                </select>
-              )}
 
-              {/* DÉTECTION DE CONFLIT / OCCUPATION (Section 20 & 21) */}
-              {propertyConflict && (
-                <div className={`mt-2 p-3 rounded-xl text-xs flex items-start gap-2 ${
-                  propertyConflict.type === 'different_tenant'
-                    ? 'bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-200'
-                    : 'bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200'
-                }`}>
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div>
-                    <strong>Attention :</strong> {propertyConflict.message}
+                {/* Type de bien */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Type de bien <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={propertyType}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPropertyType(val);
+                      if (val === 'bureau' || val === 'magasin' || val === 'boutique' || val === 'entrepot') {
+                        setLeaseType('professionnel');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  >
+                    <option value="appartement">Appartement</option>
+                    <option value="maison">Maison</option>
+                    <option value="studio">Studio</option>
+                    <option value="villa">Villa</option>
+                    <option value="duplex">Duplex</option>
+                    <option value="chambre-salon">Chambre-salon</option>
+                    <option value="entree-coucher">Entrée-coucher</option>
+                    <option value="bureau">Bureau</option>
+                    <option value="magasin">Magasin</option>
+                    <option value="boutique">Boutique</option>
+                    <option value="entrepot">Entrepôt</option>
+                    <option value="autre">Autre (préciser)</option>
+                  </select>
+                </div>
+
+                {propertyType === 'autre' && (
+                  <div className="sm:col-span-3">
+                    <label className="block text-[11px] font-black text-blue-700 dark:text-blue-400 mb-1">
+                      Précisez le type personnalisé <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={customPropertyType}
+                      onChange={(e) => setCustomPropertyType(e.target.value)}
+                      placeholder="Ex: Hangar commercial, Local polyvalent..."
+                      className="w-full px-3 py-2 rounded-xl border border-blue-300 dark:border-blue-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                    />
                   </div>
+                )}
+
+                {/* Ville */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Ville <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    list="ivorian-cities-list-add-tenant"
+                    value={propertyCity}
+                    onChange={(e) => setPropertyCity(e.target.value)}
+                    placeholder="Ex: Abidjan, Bouaké, Yamoussoukro, Daloa..."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                  <datalist id="ivorian-cities-list-add-tenant">
+                    {IVORIAN_CITIES.map((c) => (
+                      <option key={c.name} value={c.name} />
+                    ))}
+                  </datalist>
                 </div>
-              )}
+
+                {/* Commune */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Commune <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={propertyCommune}
+                    onChange={(e) => setPropertyCommune(e.target.value)}
+                    placeholder="Ex: Cocody, Yopougon, Marcory..."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                {/* Quartier */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Quartier
+                  </label>
+                  <input
+                    type="text"
+                    value={propertyQuartier}
+                    onChange={(e) => setPropertyQuartier(e.target.value)}
+                    placeholder="Ex: Angré 8e Tranche, Riviera 3..."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                {/* Adresse précise */}
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Adresse précise / Situation
+                  </label>
+                  <input
+                    type="text"
+                    value={propertyAddress}
+                    onChange={(e) => setPropertyAddress(e.target.value)}
+                    placeholder="Ex: Rue L12, Immeuble Grace, Porte B3"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                {/* Surface */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Surface (m²)
+                  </label>
+                  <NaturalCurrencyInput
+                    value={propertySurface}
+                    onChange={setPropertySurface}
+                    placeholder="75"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                {/* Pièces */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Nombre de pièces
+                  </label>
+                  <NaturalCurrencyInput
+                    value={propertyRooms}
+                    onChange={setPropertyRooms}
+                    placeholder="3"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                {/* Chambres */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Chambres
+                  </label>
+                  <NaturalCurrencyInput
+                    value={propertyBedrooms}
+                    onChange={setPropertyBedrooms}
+                    placeholder="2"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+
+                {/* Salles d'eau */}
+                <div>
+                  <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
+                    Salles d'eau
+                  </label>
+                  <NaturalCurrencyInput
+                    value={propertyBathrooms}
+                    onChange={setPropertyBathrooms}
+                    placeholder="1"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* GRILLE DES PARAMÈTRES LOCATIFS */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-2">
+            {/* B. PARAMÈTRES LOCATIFS & CHAMPS MONÉTAIRES NATURELS (Section 11, 13, 14, 15) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
               
               {/* Type de bail */}
               <div>
@@ -844,42 +1051,36 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                 </select>
               </div>
 
-              {/* Loyer mensuel */}
+              {/* Loyer mensuel (Composant monétaire naturel) */}
               <div>
                 <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
                   Loyer mensuel hors charges (FCFA) <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={5000}
+                <NaturalCurrencyInput
                   value={monthlyRent}
-                  onChange={(e) => {
-                    const r = Number(e.target.value);
+                  onChange={(r) => {
                     setMonthlyRent(r);
-                    // Mettre à jour la caution suggérée si non personnalisée
                     if (leaseType === 'habitation') setCautionAmount(r * 2);
                   }}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-bold outline-none"
+                  placeholder="25000"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-bold outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600"
                 />
               </div>
 
-              {/* Charges locatives */}
+              {/* Charges locatives (Composant monétaire naturel) */}
               <div>
                 <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
                   Charges locatives mensuelles (FCFA)
                 </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
+                <NaturalCurrencyInput
                   value={chargesAmount}
-                  onChange={(e) => setChargesAmount(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
+                  onChange={setChargesAmount}
+                  placeholder="0"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600"
                 />
               </div>
 
-              {/* Montant de la caution */}
+              {/* Montant de la caution (Composant monétaire naturel) */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[11px] font-black text-slate-700 dark:text-slate-300">
@@ -889,13 +1090,11 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                     Max 2 mois (Art. 414)
                   </span>
                 </div>
-                <input
-                  type="number"
-                  min={0}
-                  step={5000}
+                <NaturalCurrencyInput
                   value={cautionAmount}
-                  onChange={(e) => setCautionAmount(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-bold outline-none"
+                  onChange={setCautionAmount}
+                  placeholder="50000"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-bold outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600"
                 />
               </div>
 
@@ -969,12 +1168,10 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                     <label className="block text-[11px] font-black text-slate-700 dark:text-slate-300 mb-1">
                       Caution déjà versée au bailleur (FCFA)
                     </label>
-                    <input
-                      type="number"
-                      min={0}
+                    <NaturalCurrencyInput
                       value={historicalCautionPaid}
-                      onChange={(e) => setHistoricalCautionPaid(Number(e.target.value))}
-                      placeholder="Ex: 300000"
+                      onChange={setHistoricalCautionPaid}
+                      placeholder="300000"
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold outline-none"
                     />
                   </div>
@@ -1053,7 +1250,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
 
             <button
               type="button"
-              disabled={!foundTenant || !selectedPropertyId || (propertyConflict?.type === 'different_tenant') || isSaving}
+              disabled={!foundTenant || !propertyTitle.trim() || isSaving}
               onClick={handleContinueToContract}
               className="flex-1 sm:flex-initial px-4 sm:px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-600/30 text-center"
             >

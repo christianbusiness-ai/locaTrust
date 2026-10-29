@@ -109,6 +109,8 @@ interface LegalContractGeneratorModalProps {
     authorizedActivity?: string;
     propertyType?: string;
     ownerDestinationAuthorized?: boolean;
+    dueDay?: number;
+    paymentFrequency?: 'mensuel' | 'trimestriel';
     mandantName?: string;
     ownerSignatureUrl?: string | null;
     tenantSignatureUrl?: string | null;
@@ -332,6 +334,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (initialData.propertyAddress) setPropertyAddress(initialData.propertyAddress);
         if (typeof initialData.rentAmount === 'number') setRent(initialData.rentAmount);
         if (typeof initialData.cautionAmount === 'number') setCautionPaidAmount(initialData.cautionAmount);
+        if (typeof initialData.dueDay === 'number') setDueDay(initialData.dueDay);
         if (typeof initialData.chargesAmount === 'number') setChargesAmount(initialData.chargesAmount);
         if (typeof initialData.durationMonths === 'number') setDurationMonths(initialData.durationMonths);
         if (initialData.startDate) setStartDate(initialData.startDate);
@@ -414,6 +417,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.rentAmount,
     initialData?.cautionAmount,
     initialData?.chargesAmount,
+    initialData?.dueDay,
     initialData?.durationMonths,
     initialData?.startDate,
     initialData?.leaseType,
