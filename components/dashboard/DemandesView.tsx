@@ -864,11 +864,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         equipments: matchedProperty?.equipments,
         amenities: matchedProperty?.equipments,
         propertyDescription: matchedProperty?.description,
-        durationMonths: 12,
+        durationMonths: app.duration_months || matchedProperty?.duration_months || (leaseType === 'professionnel' ? 24 : 12),
         startDate: app.signed_date || (app.signed_at ? new Date(app.signed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         rent: app.rent_amount,
-        cautionMonths: 2,
-        chargesAmount: matchedProperty?.charges ?? 10000,
+        cautionMonths: matchedProperty?.caution_months || (leaseType === 'professionnel' ? 3 : 2),
+        chargesAmount: matchedProperty?.charges !== undefined && matchedProperty?.charges !== null ? Number(matchedProperty.charges) : 0,
         dueDay: 5,
         ownerSignatureUrl: resolved.ownerSignatureUrl,
         tenantSignatureUrl: resolved.tenantSignatureUrl,
@@ -1107,6 +1107,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       const candidateId = app.tenant_id || `tenant_${app.id}`;
                       if (typeof window !== 'undefined') {
                         setActiveChatPartnerForUser(user?.id, candidateId);
+                        localStorage.setItem('locatrust_active_chat_contact', candidateId);
                         saveUserScopedContact(user?.id, {
                           id: candidateId,
                           name: app.tenant_name,

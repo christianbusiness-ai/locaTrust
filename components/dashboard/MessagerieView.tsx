@@ -110,6 +110,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   }, [user?.id, profile?.id, currentUserId]);
 
   const [dbContacts, setDbContacts] = useState<ChatContact[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   const roleContacts = React.useMemo(() => {
     // RÈGLE STRICTE D'ISOLATION PAR COMPTE :
@@ -152,7 +155,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           return (
             app.tenant_id === currentUserId ||
             app.owner_id === currentUserId ||
-            app.agency_id === currentUserId
+            app.agency_id === currentUserId ||
+            (app.owner as any)?.id === currentUserId ||
+            (app.agency as any)?.id === currentUserId ||
+            (userRole === 'agence' && Boolean(app.agency_name || app.is_agency || app.agency_id))
           );
         });
 
@@ -258,7 +264,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
         // 3. Si l'utilisateur courant a explicitement cliqué sur "Message" / "Contacter" pour ouvrir une discussion
         // avec un interlocuteur spécifique dans sa session (activePartnerId), l'inclure pour permettre le 1er message
-        const activePartnerId = getActiveChatPartnerForUser(currentUserId);
+        const activePartnerId =
+          getActiveChatPartnerForUser(currentUserId) ||
+          (typeof window !== 'undefined' ? localStorage.getItem('locatrust_active_chat_contact') : null);
         if (
           activePartnerId &&
           activePartnerId !== currentUserId &&
@@ -267,7 +275,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         ) {
           const scopedPartner = scopedContactsMap[activePartnerId];
           const appMatch = myApps.find(
-            (a: any) => a.tenant_id === activePartnerId || a.owner_id === activePartnerId || a.agency_id === activePartnerId
+            (a: any) =>
+              a.tenant_id === activePartnerId ||
+              `tenant_${a.id}` === activePartnerId ||
+              a.id === activePartnerId ||
+              a.owner_id === activePartnerId ||
+              a.agency_id === activePartnerId
           );
 
           if (scopedPartner && scopedPartner.id && scopedPartner.name) {
@@ -355,26 +368,31 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
   const [selectedContactId, setSelectedContactId] = useState<string>(() => {
     if (typeof window !== 'undefined' && currentUserId) {
-      const active = getActiveChatPartnerForUser(currentUserId);
+      const active =
+        getActiveChatPartnerForUser(currentUserId) ||
+        localStorage.getItem('locatrust_active_chat_contact');
       if (active) return active;
     }
     return '';
   });
-  const [inputMessage, setInputMessage] = useState<string>('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [previewingQuittance, setPreviewingQuittance] = useState<ChatQuittanceAttachment | null>(null);
   const [previewingContract, setPreviewingContract] = useState<ChatContractAttachment | null>(null);
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [showMobileChat, setShowMobileChat] = useState<boolean>(() => {
     if (typeof window !== 'undefined' && currentUserId) {
-      return Boolean(getActiveChatPartnerForUser(currentUserId));
+      return Boolean(
+        getActiveChatPartnerForUser(currentUserId) ||
+        localStorage.getItem('locatrust_active_chat_contact')
+      );
     }
     return false;
   });
   const [userConsultedContactId, setUserConsultedContactId] = useState<string | null>(() => {
     if (typeof window !== 'undefined' && currentUserId) {
-      return getActiveChatPartnerForUser(currentUserId);
+      return (
+        getActiveChatPartnerForUser(currentUserId) ||
+        localStorage.getItem('locatrust_active_chat_contact')
+      );
     }
     return null;
   });
@@ -384,6 +402,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     const handleOpenChat = (e: any) => {
       const contactId = e.detail?.contactId;
       if (contactId) {
+        if (currentUserId) {
+          setActiveChatPartnerForUser(currentUserId, contactId);
+        }
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_active_chat_contact', contactId);
+        }
         setSelectedContactId(contactId);
         setUserConsultedContactId(contactId);
         setShowMobileChat(true);

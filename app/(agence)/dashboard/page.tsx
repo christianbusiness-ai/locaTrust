@@ -34,6 +34,7 @@ import { PaymentAccountsView } from '@/components/dashboard/PaymentAccountsView'
 import { DocumentsView } from '@/components/dashboard/DocumentsView';
 import { ReceiptsQuittancesView } from '@/components/dashboard/ReceiptsQuittancesView';
 import { TenantsListView } from '@/components/dashboard/TenantsListView';
+import { setActiveChatPartnerForUser } from '@/lib/messagingStore';
 
 // Shared modals
 import {
@@ -257,6 +258,9 @@ export default function AgencyDashboardPage({
                 <DemandesView
                   onOpenMessages={(contactId?: string) => {
                     if (contactId && typeof window !== 'undefined') {
+                      if (currentUser?.id) {
+                        setActiveChatPartnerForUser(currentUser.id, contactId);
+                      }
                       localStorage.setItem('locatrust_active_chat_contact', contactId);
                       window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
                     }

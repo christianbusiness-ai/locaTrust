@@ -31,6 +31,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ShieldAlert, ArrowRight } from 'lucide-react';
 import { UserRole } from '@/types/database.types';
 import { initAccentTheme } from '@/lib/themeHelper';
+import { setActiveChatPartnerForUser } from '@/lib/messagingStore';
 
 // Shared interactive modals
 import {
@@ -283,6 +284,9 @@ export default function ProprietaireDashboardPage({
                 <DemandesView
                   onOpenMessages={(contactId?: string) => {
                     if (contactId && typeof window !== 'undefined') {
+                      if (currentUser?.id) {
+                        setActiveChatPartnerForUser(currentUser.id, contactId);
+                      }
                       localStorage.setItem('locatrust_active_chat_contact', contactId);
                       window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
                     }

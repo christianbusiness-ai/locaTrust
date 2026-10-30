@@ -278,6 +278,53 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.setTextColor(100, 116, 139);
     doc.text('Il a été arrêté et convenu ce qui suit :', 15, 65.5);
 
+    // Helper d'impression avec retour à la ligne automatique strict et respect des marges (Point 8)
+    const printWrapped = (
+      text: string,
+      x: number,
+      y: number,
+      maxWidth: number = 175,
+      lineHeight: number = 2.9
+    ): number => {
+      const lines: string[] = doc.splitTextToSize(text, maxWidth);
+      doc.text(lines, x, y);
+      return y + (lines.length - 1) * lineHeight;
+    };
+
+    // Parties réelles et désignations dynamiques (Point 4)
+    const cleanOwnerName = (ownerName || '').trim() || (isAgency ? 'L\'agence mandataire' : 'Le bailleur');
+    const cleanTenantName = (tenantName || '').trim() || 'Le preneur';
+    const bailleurDesignation = isAgency && mandantName
+      ? `${cleanOwnerName} (agissant en qualité d'agence mandataire pour le compte de ${mandantName}), ci-après désigné comme le bailleur`
+      : `${cleanOwnerName}, ci-après désigné comme le bailleur`;
+    const preneurDesignation = isProfessional && tenantRccm
+      ? `${cleanTenantName} (immatriculée au RCCM sous le N° ${tenantRccm}), ci-après désigné comme le preneur`
+      : `${cleanTenantName}, ci-après désigné comme le preneur`;
+
+    // Caractéristiques réelles du bien sans invention de données (Point 5)
+    const surfaceText = surface && Number(surface) > 0
+      ? `${surface} m²`
+      : 'Information non renseignée';
+
+    const roomParts: string[] = [];
+    if (rooms && Number(rooms) > 0) roomParts.push(`${rooms} pièce(s)`);
+    if (bedrooms && Number(bedrooms) > 0) roomParts.push(`${bedrooms} chambre(s)`);
+    if (bathrooms && Number(bathrooms) > 0) roomParts.push(`${bathrooms} salle(s) d'eau`);
+    const roomsCompositionText = roomParts.length > 0 ? roomParts.join(' • ') : 'Non renseigné';
+
+    let equipmentsRealText = 'Aucun équipement spécifique renseigné';
+    if (Array.isArray(rawEquipments)) {
+      const validEq = rawEquipments.filter((e) => typeof e === 'string' && e.trim().length > 0);
+      if (validEq.length > 0) equipmentsRealText = validEq.join(', ');
+    } else if (typeof rawEquipments === 'string' && rawEquipments.trim().length > 0) {
+      equipmentsRealText = rawEquipments.trim();
+    }
+
+    // Durée contractuelle réelle dynamique (Point 6)
+    const effectiveDurationMonths = data.durationMonths && Number(data.durationMonths) > 0
+      ? Number(data.durationMonths)
+      : (isProfessional ? 24 : 12);
+
     // ========================================================================
     // CORPS DU CONTRAT : DEUX MODÈLES DISTINCTS (HABITATION vs PROFESSIONNEL)
     // ========================================================================
@@ -289,42 +336,35 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 1 : DÉSIGNATION DU LOCAL & CONSISTANCE RÉELLE (OHADA AUDCG)', 15, 70);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(51, 65, 85);
-      doc.text('Le bailleur donne à bail à usage professionnel au preneur les locaux décrits ci-dessous :', 15, 73.5);
-
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 75, 175, 17, 2, 2, 'FD');
-
-      const surfaceProText = surface ? `${surface} m²` : 'Conforme au descriptif';
-      const roomsProList = [
-        rooms ? `${rooms} pièce(s)/bureau(x)` : null,
-        bathrooms ? `${bathrooms} point(s) d'eau` : null
-      ].filter(Boolean).join(' • ');
-
+      doc.text('ARTICLE 1 : DÉSIGNATION DU LOCAL & CONSISTANCE RÉELLE (OHADA AUDCG)', 15, 69.5);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.4);
+      doc.setTextColor(51, 65, 85);
+
+      const article1ProIntro = `${bailleurDesignation}, donne à bail à usage professionnel à ${preneurDesignation} qui accepte, les locaux professionnels désignés ci-après :`;
+      printWrapped(article1ProIntro, 15, 73, 175, 2.7);
+
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(15, 76.5, 175, 17, 2, 2, 'FD');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.3);
       doc.setTextColor(30, 41, 59);
-      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 78.8);
-      doc.text(`• Consistance réelle : Superficie exploitable : ${surfaceProText} | Agencement : ${roomsProList || 'Locaux professionnels aménagés'}`, 18, 82.5);
-      doc.text(`• Équipements & Installations : ${equipmentsList || 'Compteurs dédiés, installations électriques, réseau, sanitaires conformes ERP'}`, 18, 86.2);
-      doc.text(`• Activité contractuelle autorisée (Art. 101/103 AUDCG) : ${authorizedActivity || 'Bureaux administratifs, commerciaux et exploitation'}.`, 18, 89.8);
+      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 80);
+      doc.text(`• Consistance réelle : Superficie exploitable : ${surfaceText} | Agencement : ${roomsCompositionText}`, 18, 83.7);
+      doc.text(`• Équipements & Installations : ${equipmentsRealText}`, 18, 87.4);
+      doc.text(`• Activité contractuelle autorisée (Art. 101/103 AUDCG) : ${authorizedActivity || 'Bureaux administratifs, commerciaux et exploitation'}.`, 18, 91);
 
       // ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (Art. 104 AUDCG)
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (ART. 104 AUDCG)', 15, 96);
+      doc.text('ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (ART. 104 AUDCG)', 15, 96.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
+      doc.setFontSize(6.6);
       doc.setTextColor(51, 65, 85);
-      doc.text(
-        `Le bail est conclu pour une durée ferme de ${durationMonths} mois, prenant effet le ${startDate}. Il est régi par les stipulations de l'Article 104 de l'AUDCG.`,
-        15,
-        100
-      );
+      const article2ProText = `Le bail est conclu pour une durée ferme de ${effectiveDurationMonths} mois, prenant effet le ${startDate}. Il est régi par les stipulations de l'Article 104 de l'AUDCG.`;
+      printWrapped(article2ProText, 15, 100, 175, 2.8);
 
       // ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES COMMERCIALES (OHADA Art. 116)
       doc.roundedRect(15, 104, 175, 11, 2, 2, 'D');
@@ -333,7 +373,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(15, 23, 42);
       doc.text('ARTICLE 3 : LOYER COMMERCIAL (ART. 116 AUDCG)', 18, 109);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(6.4);
       doc.text(`Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois par Virement bancaire ou Mobile Money certifié.`, 18, 113);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
@@ -351,7 +391,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(15, 23, 42);
       doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE COMMERCIAL', 18, 122);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(6.4);
       doc.setTextColor(51, 65, 85);
       doc.text(`Garantie commerciale convenue entre les parties (${cautionMonths} mois) en couverture des obligations locatives.`, 18, 126);
       doc.setFillColor(254, 243, 199);
@@ -362,24 +402,30 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(180, 83, 9);
       doc.text(formatFCFA(effectiveCautionAmount), 149, 123.5);
 
-      // Article 5 : Charges d'exploitation
+      // Article 5 : Charges d'exploitation (Point 7)
       doc.setDrawColor(226, 232, 240);
       doc.roundedRect(15, 130, 175, 11, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES D\'EXPLOITATION' : 'ARTICLE 5 : CHARGES D\'EXPLOITATION (AUCUNE PROVISION)', 18, 135);
+      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES D\'EXPLOITATION' : 'ARTICLE 5 : CHARGES D\'EXPLOITATION', 18, 135);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(6.4);
       doc.setTextColor(51, 65, 85);
-      doc.text(chargesAmount > 0 ? `Charges communes, eau, électricité et gardiennage liées à l'activité professionnelle.` : `Aucune provision exigée : charges d'exploitation incluses ou abonnements directs.`, 18, 139);
+      doc.text(
+        chargesAmount > 0
+          ? `Provision mensuelle sur charges : ${formatFCFA(chargesAmount)} (charges communes, gardiennage et entretien).`
+          : 'Aucune provision exigée.',
+        18,
+        139
+      );
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
       doc.roundedRect(145, 131.5, 42, 7.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(chargesAmount > 0 ? 8 : 6.8);
       doc.setTextColor(180, 83, 9);
-      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : '0 FCFA (Incluses)', 147, 136.5);
+      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : 'Aucune provision exigée', 147, 136.5);
 
       // ARTICLES 6 & 7 : OBLIGATIONS ET RÉPARATIONS COMMERCIALES (2 COLONNES)
       doc.setDrawColor(226, 232, 240);
@@ -415,32 +461,26 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.text('• Délivrer les quittances de paiement régulières certifiées.', 108, 169.5);
       doc.text('• Respecter le droit d\'ordre public au renouvellement commercial.', 108, 173.5);
 
-      // ARTICLES 8 & 9 : RENOUVELLEMENT, RÉSILIATION ET EXPULSION PROFESSIONNELLE
+      // ARTICLES 8 & 9 : RENOUVELLEMENT, RÉSILIATION ET EXPULSION PROFESSIONNELLE (Auto-wrapped, sans débordement)
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 8 : DROIT AU RENOUVELLEMENT D\'ORDRE PUBLIC (ART. 123 & 134 AUDCG)', 15, 183);
+      doc.text('ARTICLE 8 : DROIT AU RENOUVELLEMENT D\'ORDRE PUBLIC (ART. 123 & 134 AUDCG)', 15, 182.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
+      doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
-      doc.text(
-        'Le droit au renouvellement est acquis au preneur justifiant d\'au moins 2 ans d\'exploitation conforme. Aucune clause ne peut y déroger (Art. 134).',
-        15,
-        187
-      );
+      const art8ProText = 'Le droit au renouvellement est acquis au preneur justifiant d\'au moins 2 ans d\'exploitation conforme. Aucune clause contractuelle ne peut déroger à cette disposition d\'ordre public (Art. 134).';
+      printWrapped(art8ProText, 15, 186, 175, 2.7);
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 9 : RÉSILIATION JUDICIAIRE & EXPULSION (ART. 133 AUDCG & LOI 2025-221 ART. 14)', 15, 193);
+      doc.text('ARTICLE 9 : RÉSILIATION JUDICIAIRE & EXPULSION (ART. 133 AUDCG & LOI 2025-221 ART. 14)', 15, 193.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
+      doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
-      doc.text(
-        'Toute résiliation requiert une mise en demeure d\'au moins 1 mois (Art. 133). Expulsion soumise à l\'Article 14 de la Loi ivoirienne N° 2025-221 (ministère d\'un Commissaire de Justice sur titre exécutoire, voies de fait prohibées).',
-        15,
-        197
-      );
+      const art9ProText = 'Toute résiliation requiert une mise en demeure d\'au moins 1 mois (Art. 133). Expulsion soumise à l\'Article 14 de la Loi ivoirienne N° 2025-221 (ministère exclusif d\'un Commissaire de Justice sur titre exécutoire, voies de fait et expulsions de fait prohibées).';
+      printWrapped(art9ProText, 15, 197, 175, 2.7);
     } else {
       // ----------------------------------------------------------------------
       // MODEL 1 : BAIL À USAGE D'HABITATION (LOI 2019-576 & LOI 2025-221)
@@ -451,14 +491,15 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(29, 78, 216);
       doc.text('ARTICLE 1 : DÉSIGNATION DU BIEN & CONSISTANCE RÉELLE (LOI N° 2019-576)', 15, 70);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(6.3);
       doc.setTextColor(51, 65, 85);
-      doc.text('Le bailleur donne en location au preneur qui accepte, le bien immobilier dont la consistance réelle est désignée ci-après :', 15, 73.5);
+      const article1HabIntro = `${bailleurDesignation}, donne en location à ${preneurDesignation}, qui accepte, le bien immobilier dont la consistance réelle est désignée ci-après :`;
+      printWrapped(article1HabIntro, 15, 73.2, 175, 2.7);
 
       doc.setFillColor(248, 250, 252);
       doc.roundedRect(15, 75, 175, 17, 2, 2, 'FD');
 
-      const surfaceHabText = surface ? `${surface} m²` : 'Conforme au descriptif';
+      const surfaceHabText = surface ? `${surface} m²` : 'Information non renseignée';
       const roomsHabList = [
         rooms ? `${rooms} pièce(s)` : null,
         bedrooms ? `${bedrooms} chambre(s)` : null,
@@ -469,8 +510,8 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.4);
       doc.setTextColor(30, 41, 59);
       doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 78.8);
-      doc.text(`• Consistance réelle : Surface habitable : ${surfaceHabText} | Composition : ${roomsHabList || 'Logement complet aménagé'}`, 18, 82.5);
-      doc.text(`• Équipements réels : ${equipmentsList || 'Compteurs CIE & SODECI individuels, sanitaires, cuisine, installations conformes'}`, 18, 86.2);
+      doc.text(`• Consistance réelle : Surface habitable : ${surfaceHabText} | Composition : ${roomsHabList || 'Information non renseignée'}`, 18, 82.5);
+      doc.text(`• Équipements réels : ${equipmentsList || 'Aucun équipement spécifique renseigné'}`, 18, 86.2);
       doc.text('• Destination exclusive : Logement d\'habitation principale (Art. 409 & 410 Loi 2019-576). Exploitation commerciale prohibée.', 18, 89.8);
 
       // ARTICLE 2 : DURÉE
@@ -481,11 +522,8 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.8);
       doc.setTextColor(51, 65, 85);
-      doc.text(
-        `Le présent contrat est conclu pour une durée de ${durationMonths} mois, commençant le ${startDate}, renouvelable tacitement par période de même durée.`,
-        15,
-        100
-      );
+      const article2HabText = `Le présent contrat est conclu pour une durée de ${effectiveDurationMonths} mois, commençant le ${startDate}, renouvelable tacitement par période de même durée.`;
+      printWrapped(article2HabText, 15, 100, 175, 3.2);
 
       // ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES (LOI 2019-576 ART. 415 & 416)
       doc.roundedRect(15, 104, 175, 11, 2, 2, 'D');
@@ -548,7 +586,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(180, 83, 9);
-      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : '0 FCFA (Incluses)', 147, 136.5);
+      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : 'Aucune provision exigée', 147, 136.5);
 
       // ARTICLE 6 & 7 : OBLIGATIONS (2 COLONNES)
       doc.setDrawColor(226, 232, 240);
@@ -590,13 +628,10 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(29, 78, 216);
       doc.text('ARTICLE 8 : ÉTAT DES LIEUX CONTRADICTOIRE & ENREGISTREMENT FISCAL DGI OBLIGATOIRE (ART. 414 & 416)', 15, 183);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
+      doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
-      doc.text(
-        'État des lieux contradictoire écrit obligatoire à l\'entrée et à la sortie (Art. 416). Enregistrement fiscal obligatoire à la Direction Générale des Impôts (DGI) conformément à l\'Article 414 de la Loi 2019-576.',
-        15,
-        187
-      );
+      const art8HabText = 'État des lieux contradictoire écrit obligatoire à l\'entrée et à la sortie (Art. 416). Enregistrement fiscal obligatoire à la Direction Générale des Impôts (DGI) conformément à l\'Article 414 de la Loi 2019-576.';
+      printWrapped(art8HabText, 15, 186.5, 175, 2.7);
 
       // ARTICLE 9 : RÉSILIATION ET EXPULSION LÉGALE (LOI 2019-576 & LOI 2025-221)
       doc.setFont('helvetica', 'bold');
@@ -604,13 +639,10 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(29, 78, 216);
       doc.text('ARTICLE 9 : RÉSILIATION & PROCÉDURE LÉGALE D\'EXPULSION (LOI N° 2025-221 & ART. 450)', 15, 193);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
+      doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
-      doc.text(
-        'Résiliation après mise en demeure (Art. 450). Expulsion strictement encadrée par la Loi n° 2025-221 du 28 mars 2025 (commandement de libérer les lieux et intervention exclusive du Commissaire de Justice, coupures d\'eau et de courant pénalement prohibées).',
-        15,
-        197
-      );
+      const art9HabText = 'Résiliation après mise en demeure (Art. 450). Expulsion strictement encadrée par la Loi n° 2025-221 du 28 mars 2025 (commandement de libérer les lieux et intervention exclusive du Commissaire de Justice sur titre exécutoire, voies de fait et expulsions de fait prohibées).';
+      printWrapped(art9HabText, 15, 197, 175, 2.7);
     }
 
     // SIGNATURES DES PARTIES
