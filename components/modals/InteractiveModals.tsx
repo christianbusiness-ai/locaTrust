@@ -456,19 +456,6 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         };
         list.unshift(propToSave);
 
-        // Sauvegarder également les coordonnées du publieur dans locatrust_contact_ pour la messagerie
-        try {
-          localStorage.setItem(`locatrust_contact_${currentPublisherId}`, JSON.stringify({
-            id: currentPublisherId,
-            name: currentPublisherName,
-            phone: currentPublisherPhone,
-            role: isAgency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
-            propertyTitle: finalTitle,
-            avatar: currentPublisherAvatar,
-            online: true
-          }));
-        } catch {}
-
         try {
           localStorage.setItem('locatrust_properties', JSON.stringify(list));
         } catch (quotaErr) {

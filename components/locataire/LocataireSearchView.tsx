@@ -36,6 +36,7 @@ import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 
 export interface LocataireSearchViewProps {
   activeTab?: string;
@@ -528,32 +529,26 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           });
         }
 
-        // Stocker les coordonnées des deux interlocuteurs pour la messagerie
-        localStorage.setItem('locatrust_active_chat_contact', primaryRecipientId);
-        localStorage.setItem(
-          'locatrust_contact_' + primaryRecipientId,
-          JSON.stringify({
-            id: primaryRecipientId,
-            name: newApp.owner_name,
-            phone: newApp.owner_phone,
-            role: newApp.is_agency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
-            propertyTitle: selectedProperty.title,
-            avatar: newApp.owner_avatar,
-            online: true,
-          })
-        );
-        localStorage.setItem(
-          'locatrust_contact_' + applicantId,
-          JSON.stringify({
-            id: applicantId,
-            name: applicantName,
-            phone: applicantPhone,
-            role: 'Candidat Locataire',
-            propertyTitle: selectedProperty.title,
-            avatar: newApp.tenant_avatar,
-            online: true,
-          })
-        );
+        // Stocker les coordonnées des deux interlocuteurs uniquement dans leurs espaces respectifs
+        setActiveChatPartnerForUser(applicantId, primaryRecipientId);
+        saveUserScopedContact(applicantId, {
+          id: primaryRecipientId,
+          name: newApp.owner_name,
+          phone: newApp.owner_phone,
+          role: newApp.is_agency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
+          propertyTitle: selectedProperty.title,
+          avatar: newApp.owner_avatar,
+          online: true,
+        });
+        saveUserScopedContact(primaryRecipientId, {
+          id: applicantId,
+          name: applicantName,
+          phone: applicantPhone,
+          role: 'Locataire',
+          propertyTitle: selectedProperty.title,
+          avatar: newApp.tenant_avatar,
+          online: true,
+        });
       } catch (err) {
         console.warn('LocalStorage error:', err);
       }

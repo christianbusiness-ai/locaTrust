@@ -53,7 +53,8 @@ import {
   isNotificationRead,
   mergeServerReadState,
   ensureCounterV2Migration,
-  safeUpdateSupabaseNotificationRead
+  safeUpdateSupabaseNotificationRead,
+  setActiveChatPartnerForUser
 } from '@/lib/messagingStore';
 import {
   deduplicateAndNormalizeNotifications,
@@ -590,7 +591,7 @@ export const Header: React.FC<HeaderProps> = ({
     ) {
       const contactId = item.senderUserId || item.payload?.contactId || item.payload?.sender_id;
       if (contactId && typeof window !== 'undefined') {
-        localStorage.setItem('locatrust_active_chat_contact', contactId);
+        setActiveChatPartnerForUser(currentUser?.id, contactId);
         window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
         markMessagesAsRead(contactId, currentUser?.id);
       }

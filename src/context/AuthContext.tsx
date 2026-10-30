@@ -4,6 +4,7 @@ import { supabase } from '@/src/lib/supabase';
 import { syncUserData } from '@/lib/unifiedSyncEngine';
 import { subscribeToLiveSync, unsubscribeFromLiveSync } from '@/lib/supabaseRealtime';
 import { startBackgroundQuotaWorker, stopBackgroundQuotaWorker } from '@/lib/quotaEngine';
+import { setActiveMessagingUser } from '@/lib/messagingStore';
 import {
   clearSecuritySession,
   recordUserActivity,
@@ -79,16 +80,49 @@ export const clearLocatrustUserDataCache = () => {
     'locatrust_accounting_reports_v2',
     'locatrust_accounting_reports',
     'locatrust_active_user',
+    'locatrust_active_user_id',
     'locatrust_registered_role',
     'locatrust_user_avatar',
     'locatrust_tenant_active_tab',
-    'locatrust_active_chat_contact'
+    'locatrust_active_chat_contact',
+    'locatrust_read_msg_ids_v2',
+    'locatrust_read_notif_ids_v2'
   ];
   userKeys.forEach((k) => {
     try {
       localStorage.removeItem(k);
     } catch {}
   });
+
+  // Purger également toutes les clés dynamiques non scopées ou résiduelles
+  try {
+    const keysToDelete: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (
+        k &&
+        (k.startsWith('locatrust_contact_') ||
+          k.startsWith('locatrust_active_chat_contact') ||
+          k.startsWith('locatrust_conv_read_at_v2_'))
+      ) {
+        keysToDelete.push(k);
+      }
+    }
+    keysToDelete.forEach((k) => localStorage.removeItem(k));
+  } catch {}
+};
+
+const ensureSessionScopedToUser = (userId: string) => {
+  if (typeof window === 'undefined' || !userId) return;
+  try {
+    const lastUserId = localStorage.getItem('locatrust_last_auth_user_id');
+    if (lastUserId && lastUserId !== userId) {
+      // Un compte différent était connecté sur ce navigateur : purger les données partagées du compte précédent
+      clearLocatrustUserDataCache();
+    }
+    localStorage.setItem('locatrust_last_auth_user_id', userId);
+    setActiveMessagingUser(userId);
+  } catch {}
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -191,6 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       recordUserActivity();
+      ensureSessionScopedToUser(verifiedUser.id);
       const { data: { session: initialSession } } = await supabase.auth.getSession();
       setSession(initialSession);
       setUser(verifiedUser);
@@ -231,6 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (event === 'SIGNED_OUT' || !newSession?.user || isLoggingOutInProgress()) {
         unsubscribeFromLiveSync();
         stopBackgroundQuotaWorker();
+        setActiveMessagingUser(null);
         setSession(null);
         setUser(null);
         setProfile(null);
@@ -238,6 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      ensureSessionScopedToUser(newSession.user.id);
       setSession(newSession);
       setUser(newSession.user);
 

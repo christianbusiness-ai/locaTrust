@@ -279,8 +279,10 @@ CREATE TABLE IF NOT EXISTS public.subscription_payments (
 -- Conversations
 CREATE TABLE IF NOT EXISTS public.conversations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tenant_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  owner_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  tenant_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  participant_a UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  participant_b UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
   property_id UUID REFERENCES public.properties(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
@@ -484,15 +486,44 @@ CREATE POLICY "sub_payments_select_own" ON public.subscription_payments
   FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
 
 -- -----------------------------------------------------------------------------
--- POLICIES : CONVERSATIONS & MESSAGES
+-- POLICIES : CONVERSATIONS & MESSAGES (ISOLATION STRICTE PAR COMPTE)
 -- -----------------------------------------------------------------------------
 DROP POLICY IF EXISTS "conversations_participate" ON public.conversations;
 CREATE POLICY "conversations_participate" ON public.conversations
-  FOR SELECT USING (tenant_id = auth.uid() OR owner_id = auth.uid() OR public.is_admin());
+  FOR SELECT USING (
+    auth.uid() = tenant_id OR
+    auth.uid() = owner_id OR
+    auth.uid() = participant_a OR
+    auth.uid() = participant_b OR
+    public.is_admin()
+  );
 
 DROP POLICY IF EXISTS "conversations_create" ON public.conversations;
 CREATE POLICY "conversations_create" ON public.conversations
-  FOR INSERT WITH CHECK (tenant_id = auth.uid() OR owner_id = auth.uid() OR public.is_admin());
+  FOR INSERT WITH CHECK (
+    auth.uid() = tenant_id OR
+    auth.uid() = owner_id OR
+    auth.uid() = participant_a OR
+    auth.uid() = participant_b OR
+    public.is_admin()
+  );
+
+DROP POLICY IF EXISTS "conversations_update" ON public.conversations;
+CREATE POLICY "conversations_update" ON public.conversations
+  FOR UPDATE USING (
+    auth.uid() = tenant_id OR
+    auth.uid() = owner_id OR
+    auth.uid() = participant_a OR
+    auth.uid() = participant_b OR
+    public.is_admin()
+  )
+  WITH CHECK (
+    auth.uid() = tenant_id OR
+    auth.uid() = owner_id OR
+    auth.uid() = participant_a OR
+    auth.uid() = participant_b OR
+    public.is_admin()
+  );
 
 DROP POLICY IF EXISTS "messages_select_participate" ON public.messages;
 CREATE POLICY "messages_select_participate" ON public.messages
@@ -501,7 +532,12 @@ CREATE POLICY "messages_select_participate" ON public.messages
     EXISTS (
       SELECT 1 FROM public.conversations c
       WHERE c.id = messages.conversation_id
-      AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
+      AND (
+        c.tenant_id = auth.uid() OR
+        c.owner_id = auth.uid() OR
+        c.participant_a = auth.uid() OR
+        c.participant_b = auth.uid()
+      )
     ) OR
     public.is_admin()
   );
@@ -513,7 +549,12 @@ CREATE POLICY "messages_send_own" ON public.messages
     EXISTS (
       SELECT 1 FROM public.conversations c
       WHERE c.id = messages.conversation_id
-      AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
+      AND (
+        c.tenant_id = auth.uid() OR
+        c.owner_id = auth.uid() OR
+        c.participant_a = auth.uid() OR
+        c.participant_b = auth.uid()
+      )
     )
   );
 
@@ -524,7 +565,12 @@ CREATE POLICY "messages_update_participate" ON public.messages
     EXISTS (
       SELECT 1 FROM public.conversations c
       WHERE c.id = messages.conversation_id
-      AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
+      AND (
+        c.tenant_id = auth.uid() OR
+        c.owner_id = auth.uid() OR
+        c.participant_a = auth.uid() OR
+        c.participant_b = auth.uid()
+      )
     ) OR
     public.is_admin()
   )
@@ -533,7 +579,12 @@ CREATE POLICY "messages_update_participate" ON public.messages
     EXISTS (
       SELECT 1 FROM public.conversations c
       WHERE c.id = messages.conversation_id
-      AND (c.tenant_id = auth.uid() OR c.owner_id = auth.uid())
+      AND (
+        c.tenant_id = auth.uid() OR
+        c.owner_id = auth.uid() OR
+        c.participant_a = auth.uid() OR
+        c.participant_b = auth.uid()
+      )
     ) OR
     public.is_admin()
   );

@@ -40,7 +40,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { createRentalApplication } from '@/lib/supabase/services';
-import { sendChatMessage, sendRealChatMessage } from '@/lib/messagingStore';
+import { sendChatMessage, sendRealChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 interface LocataireFeedViewProps {
@@ -276,21 +276,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         });
       }
 
-      // Stocker les coordonnées du propriétaire ou de l'agence pour la messagerie
+      // Stocker les coordonnées du propriétaire ou de l'agence uniquement pour le locataire courant
       if (typeof window !== 'undefined') {
-        localStorage.setItem('locatrust_active_chat_contact', primaryRecipientId);
-        localStorage.setItem(
-          'locatrust_contact_' + primaryRecipientId,
-          JSON.stringify({
-            id: primaryRecipientId,
-            name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur',
-            phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-            role: selectedRental.roleBadge || (isAgencyProp ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
-            propertyTitle: selectedRental.title,
-            avatar: selectedRental.authorAvatar || '',
-            online: true,
-          })
-        );
+        setActiveChatPartnerForUser(applicantId, primaryRecipientId);
+        saveUserScopedContact(applicantId, {
+          id: primaryRecipientId,
+          name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur',
+          phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
+          role: selectedRental.roleBadge || (isAgencyProp ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
+          propertyTitle: selectedRental.title,
+          avatar: selectedRental.authorAvatar || '',
+          online: true,
+        });
       }
 
       // 2. Envoi message automatique dans la messagerie du propriétaire / agence
@@ -382,7 +379,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Christian';
         const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
         const myAvatar = profile?.avatar_url || (user as any)?.avatar_url || localStorage.getItem('locatrust_user_avatar') || '';
-        localStorage.setItem(`locatrust_contact_${applicantId}`, JSON.stringify({
+        saveUserScopedContact(targetOwnerId, {
           id: applicantId,
           name: myName,
           phone: myPhone,
@@ -390,9 +387,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           propertyTitle: selectedRental.title || 'Bien immobilier',
           avatar: myAvatar,
           online: true
-        }));
+        });
 
-        localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
+        setActiveChatPartnerForUser(applicantId, targetOwnerId);
         const contactInfo = {
           id: targetOwnerId,
           name: selectedRental.authorName || selectedRental.ownerName || 'Bailleur',
@@ -402,7 +399,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           avatar: selectedRental.authorAvatar || '',
           online: true
         };
-        localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify(contactInfo));
+        saveUserScopedContact(applicantId, contactInfo);
         window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
       }
 

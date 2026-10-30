@@ -143,11 +143,111 @@ export const CHAT_CONTACTS: ChatContact[] = [];
 export const DEFAULT_MESSAGES: ChatMessage[] = [];
 
 const STORAGE_KEY = 'locatrust_chat_messages_v4';
+const CONTACTS_MAP_PREFIX = 'locatrust_contacts_v4_';
+const ACTIVE_CHAT_CONTACT_PREFIX = 'locatrust_active_chat_contact_';
+const ACTIVE_USER_ID_KEY = 'locatrust_active_user_id';
 const RECEIPTS_STORAGE_KEY = 'locatrust_tenant_receipts_v2';
 const READ_MSG_IDS_KEY = 'locatrust_read_msg_ids_v2';
 const READ_NOTIF_IDS_KEY = 'locatrust_read_notif_ids_v2';
 const CONV_READ_AT_PREFIX = 'locatrust_conv_read_at_v2_';
 const COUNTER_V2_MIGRATION_PREFIX = 'locatrust_counter_v2_clean_';
+
+let currentActiveMessagingUserId: string | null = null;
+
+export function setActiveMessagingUser(userId?: string | null) {
+  currentActiveMessagingUserId = userId ? String(userId).trim() : null;
+  if (typeof window === 'undefined') return;
+  try {
+    if (currentActiveMessagingUserId) {
+      localStorage.setItem(ACTIVE_USER_ID_KEY, currentActiveMessagingUserId);
+      // Nettoyer les anciennes clés globales locatrust_contact_* non scopées pour éviter toute fuite inter-comptes
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('locatrust_contact_')) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => {
+        try { localStorage.removeItem(k); } catch {}
+      });
+    } else {
+      localStorage.removeItem(ACTIVE_USER_ID_KEY);
+    }
+  } catch {}
+}
+
+export function getActiveMessagingUser(): string | null {
+  if (currentActiveMessagingUserId) return currentActiveMessagingUserId;
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = localStorage.getItem(ACTIVE_USER_ID_KEY);
+    if (stored && stored !== 'null' && stored !== 'undefined') {
+      currentActiveMessagingUserId = stored;
+      return stored;
+    }
+  } catch {}
+  return null;
+}
+
+export function getUserScopedContactsMap(userId?: string): Record<string, ChatContact> {
+  if (typeof window === 'undefined') return {};
+  const uid = userId || getActiveMessagingUser();
+  if (!uid) return {};
+  try {
+    const raw = localStorage.getItem(`${CONTACTS_MAP_PREFIX}${uid}`);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveUserScopedContact(userId: string | undefined, contact: Partial<ChatContact> & { id: string }) {
+  if (typeof window === 'undefined' || !contact?.id) return;
+  const uid = userId || getActiveMessagingUser();
+  if (!uid || contact.id === uid) return;
+  try {
+    const map = getUserScopedContactsMap(uid);
+    const existing = map[contact.id] || ({} as ChatContact);
+    map[contact.id] = {
+      id: contact.id,
+      name: contact.name || existing.name || 'Utilisateur Certifié',
+      phone: contact.phone || existing.phone || '+225 07 00 00 00 00',
+      role: contact.role || existing.role || 'Correspondant',
+      propertyTitle: contact.propertyTitle || existing.propertyTitle || 'Échange direct',
+      avatar: contact.avatar || existing.avatar || '',
+      online: contact.online ?? existing.online ?? true
+    };
+    localStorage.setItem(`${CONTACTS_MAP_PREFIX}${uid}`, JSON.stringify(map));
+  } catch {}
+}
+
+export function getActiveChatPartnerForUser(userId?: string): string | null {
+  if (typeof window === 'undefined') return null;
+  const uid = userId || getActiveMessagingUser();
+  if (!uid) return null;
+  try {
+    return localStorage.getItem(`${ACTIVE_CHAT_CONTACT_PREFIX}${uid}`);
+  } catch {
+    return null;
+  }
+}
+
+export function setActiveChatPartnerForUser(userId: string | undefined, contactId: string | null) {
+  if (typeof window === 'undefined') return;
+  const uid = userId || getActiveMessagingUser();
+  if (!uid) return;
+  try {
+    if (contactId && contactId !== uid) {
+      localStorage.setItem(`${ACTIVE_CHAT_CONTACT_PREFIX}${uid}`, contactId);
+    } else {
+      localStorage.removeItem(`${ACTIVE_CHAT_CONTACT_PREFIX}${uid}`);
+    }
+    localStorage.removeItem('locatrust_active_chat_contact');
+  } catch {}
+}
 
 export function getReadMessageIds(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -497,10 +597,52 @@ export function deduplicateMessageList(list: ChatMessage[]): ChatMessage[] {
   return clean;
 }
 
-export function getStoredMessages(): ChatMessage[] {
+const GENERIC_DEMO_IDS = new Set([
+  'usr_tenant_1',
+  'usr_owner_1',
+  'usr_tenant',
+  'usr_owner',
+  'usr_agency',
+  'usr_candidate',
+  'usr_support',
+  'usr_contact'
+]);
+
+export function getStoredMessages(explicitUserId?: string): ChatMessage[] {
   if (typeof window === 'undefined') return [];
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
+    const uid = (explicitUserId || getActiveMessagingUser() || '').trim();
+    if (!uid) {
+      return [];
+    }
+
+    const userStorageKey = `${STORAGE_KEY}_${uid}`;
+    let data = localStorage.getItem(userStorageKey);
+
+    // Migration unique depuis l'ancienne clé globale en filtrant STRICTEMENT pour uid
+    if (!data || data === 'null' || data === 'undefined') {
+      const legacyData = localStorage.getItem(STORAGE_KEY);
+      if (legacyData && legacyData !== 'null' && legacyData !== 'undefined') {
+        try {
+          const legacyParsed = JSON.parse(legacyData);
+          if (Array.isArray(legacyParsed)) {
+            const strictlyMine = legacyParsed.filter(
+              (m: any) =>
+                m &&
+                m.sender_id &&
+                m.receiver_id &&
+                m.sender_id !== m.receiver_id &&
+                (m.sender_id === uid || m.receiver_id === uid) &&
+                !GENERIC_DEMO_IDS.has(m.sender_id) &&
+                !GENERIC_DEMO_IDS.has(m.receiver_id)
+            );
+            localStorage.setItem(userStorageKey, JSON.stringify(strictlyMine));
+            data = JSON.stringify(strictlyMine);
+          }
+        } catch {}
+      }
+    }
+
     if (!data || data === 'null' || data === 'undefined') {
       return [];
     }
@@ -508,38 +650,45 @@ export function getStoredMessages(): ChatMessage[] {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    // Nettoyage automatique des messages de démonstration fictifs (Kouassi Jean-Philippe, Awa Touré, usr_tenant_1, usr_owner_1)
-    const cleaned = parsed.filter((m: any) => {
-      if (!m) return false;
-      if (m.sender_id === 'usr_tenant_1' || m.receiver_id === 'usr_tenant_1') return false;
-      if (m.sender_id === 'usr_owner_1' || m.receiver_id === 'usr_owner_1') return false;
-      if (m.text && (m.text.includes('Kouassi Jean-Philippe') || m.text.includes('Awa Touré'))) return false;
-      return true;
-    }).map((m: any) => {
-      if (!m) return m;
-      let textStr = m.text;
-      if (typeof textStr === 'string' && (textStr.trim().startsWith('{') || textStr.trim().startsWith('[')) && textStr.includes('"type":')) {
-        try {
-          const rawParsed = JSON.parse(textStr.trim());
-          const item = Array.isArray(rawParsed) ? rawParsed[0] : rawParsed;
-          if (item && typeof item === 'object') {
-            return {
-              ...m,
-              text: item.text || m.text,
-              contract: m.contract || item.contract,
-              quittance: m.quittance || item.quittance,
-              restitution: m.restitution || item.restitution,
-              declaration: m.declaration || item.declaration,
-              attachment: m.attachment || item.attachment
-            };
-          }
-        } catch {}
-      }
-      return m;
-    });
+
+    // Filtrage strict par utilisateur connecté + suppression de toute donnée fictive ou générique
+    const cleaned = parsed
+      .filter((m: any) => {
+        if (!m || !m.sender_id || !m.receiver_id) return false;
+        if (m.sender_id === m.receiver_id) return false;
+        if (GENERIC_DEMO_IDS.has(m.sender_id) || GENERIC_DEMO_IDS.has(m.receiver_id)) return false;
+        if (String(m.sender_id).startsWith('candidate_') || String(m.receiver_id).startsWith('candidate_')) return false;
+        if (m.text && (m.text.includes('Kouassi Jean-Philippe') || m.text.includes('Awa Touré'))) return false;
+        // L'utilisateur connecté DOIT être expéditeur ou destinataire réel
+        if (m.sender_id !== uid && m.receiver_id !== uid) return false;
+        return true;
+      })
+      .map((m: any) => {
+        if (!m) return m;
+        let textStr = m.text;
+        if (typeof textStr === 'string' && (textStr.trim().startsWith('{') || textStr.trim().startsWith('[')) && textStr.includes('"type":')) {
+          try {
+            const rawParsed = JSON.parse(textStr.trim());
+            const item = Array.isArray(rawParsed) ? rawParsed[0] : rawParsed;
+            if (item && typeof item === 'object') {
+              return {
+                ...m,
+                text: item.text || m.text,
+                contract: m.contract || item.contract,
+                quittance: m.quittance || item.quittance,
+                restitution: m.restitution || item.restitution,
+                declaration: m.declaration || item.declaration,
+                attachment: m.attachment || item.attachment
+              };
+            }
+          } catch {}
+        }
+        return m;
+      });
 
     const deduplicated = deduplicateMessageList(cleaned);
     if (deduplicated.length !== parsed.length) {
+      localStorage.setItem(userStorageKey, JSON.stringify(deduplicated));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(deduplicated));
     }
     return deduplicated;
@@ -548,10 +697,21 @@ export function getStoredMessages(): ChatMessage[] {
   }
 }
 
-export function saveStoredMessages(messages: ChatMessage[]) {
+export function saveStoredMessages(messages: ChatMessage[], explicitUserId?: string) {
   if (typeof window === 'undefined') return;
   try {
-    const deduplicated = deduplicateMessageList(messages);
+    const uid = (explicitUserId || getActiveMessagingUser() || '').trim();
+    const filtered = (Array.isArray(messages) ? messages : []).filter((m: any) => {
+      if (!m || !m.sender_id || !m.receiver_id) return false;
+      if (m.sender_id === m.receiver_id) return false;
+      if (GENERIC_DEMO_IDS.has(m.sender_id) || GENERIC_DEMO_IDS.has(m.receiver_id)) return false;
+      if (uid && m.sender_id !== uid && m.receiver_id !== uid) return false;
+      return true;
+    });
+    const deduplicated = deduplicateMessageList(filtered);
+    if (uid) {
+      localStorage.setItem(`${STORAGE_KEY}_${uid}`, JSON.stringify(deduplicated));
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(deduplicated));
     window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
   } catch (e) {
@@ -585,9 +745,9 @@ export async function syncMessageToSupabase(
           senderRole = pu.account_type || pu.role || '';
           senderAvatar = pu.avatar_url || localStorage.getItem('locatrust_user_avatar') || '';
         }
-        const c = localStorage.getItem('locatrust_contact_' + senderId);
-        if (c) {
-          const pc = JSON.parse(c);
+        const scopedContacts = getUserScopedContactsMap(senderId);
+        const pc = scopedContacts[senderId];
+        if (pc) {
           if (!senderName) senderName = pc.name || '';
           if (!senderAvatar) senderAvatar = pc.avatar || '';
           if (!senderRole) senderRole = pc.role || '';
@@ -631,48 +791,11 @@ export async function syncMessageToSupabase(
       } catch {}
     }
 
-    // 2. Persistance BDD : résolution automatique des identifiants réels si alias génériques
-    let finalSenderId = senderId;
-    let finalReceiverId = receiverId;
+    // 2. Persistance BDD : utiliser exclusivement les UUID réels des participants
+    const finalSenderId = senderId;
+    const finalReceiverId = receiverId;
 
-    const resolveUuidByHint = async (id: string, defaultRole: 'locataire' | 'owner_or_agency') => {
-      if (isValidUuid(id)) return id;
-      try {
-        const isTenantHint = id.includes('tenant') || id.includes('locataire') || defaultRole === 'locataire';
-        if (isTenantHint) {
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('account_type', 'locataire')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (prof?.id && isValidUuid(prof.id)) return prof.id;
-        } else {
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('id')
-            .in('account_type', ['agence', 'proprietaire'])
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (prof?.id && isValidUuid(prof.id)) return prof.id;
-        }
-      } catch {}
-      return id;
-    };
-
-    if (!isValidUuid(finalSenderId)) {
-      const isSenderTenant = senderId.includes('tenant') || senderId.includes('locataire');
-      finalSenderId = await resolveUuidByHint(finalSenderId, isSenderTenant ? 'locataire' : 'owner_or_agency');
-    }
-
-    if (!isValidUuid(finalReceiverId)) {
-      const isReceiverOwner = receiverId.includes('owner') || receiverId.includes('agency') || receiverId.includes('agence') || receiverId.includes('bailleur');
-      finalReceiverId = await resolveUuidByHint(finalReceiverId, isReceiverOwner ? 'owner_or_agency' : 'locataire');
-    }
-
-    if (isValidUuid(finalSenderId) && isValidUuid(finalReceiverId)) {
+    if (isValidUuid(finalSenderId) && isValidUuid(finalReceiverId) && finalSenderId !== finalReceiverId) {
       // Trouver ou créer la conversation (support transparent des colonnes tenant_id/owner_id ET participant_a/b)
       let convId: string | null = null;
 
@@ -1240,17 +1363,16 @@ export function getUnreadCountForConversation(
 export function getUnreadMessagesCountForUser(user?: { id?: string; email?: string; role?: string } | null): number {
   if (typeof window === 'undefined') return 0;
   const userId = user?.id || '';
-  const userEmail = (user?.email || '').toLowerCase();
+  if (!userId) return 0;
 
   ensureCounterV2Migration(userId);
 
-  const messages = getStoredMessages();
+  const messages = getStoredMessages(userId);
   if (!Array.isArray(messages) || messages.length === 0) return 0;
 
   // Identifiants appartenant strictement à l'utilisateur connecté
   const myIds = new Set<string>();
-  if (userId) myIds.add(userId);
-  if (userEmail) myIds.add(userEmail);
+  myIds.add(userId);
 
   if (myIds.size === 0) return 0;
 
@@ -1342,23 +1464,23 @@ export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, sender
     }
   } catch {}
 
-  // Enregistrer les fiches de contact pour que la conversation apparaisse immédiatement
+  // Enregistrer les fiches de contact scopées par utilisateur pour que la conversation apparaisse immédiatement chez les deux participants
   try {
     if (typeof window !== 'undefined') {
-      localStorage.setItem(`locatrust_contact_${finalSender}`, JSON.stringify({
+      saveUserScopedContact(finalReceiver, {
         id: finalSender,
-        name: quittance.ownerName || 'kk (Agence Agréée)',
-        role: 'Agence Immobilière Agréée',
+        name: quittance.ownerName || 'Bailleur Propriétaire',
+        role: 'Propriétaire Bailleur',
         propertyTitle: quittance.propertyTitle,
         phone: quittance.ownerPhone
-      }));
-      localStorage.setItem(`locatrust_contact_${finalReceiver}`, JSON.stringify({
+      });
+      saveUserScopedContact(finalSender, {
         id: finalReceiver,
-        name: quittance.tenantName || 'christian',
+        name: quittance.tenantName || 'Locataire Preneur',
         role: 'Locataire',
         propertyTitle: quittance.propertyTitle,
         phone: quittance.tenantPhone
-      }));
+      });
       window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
       window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
     }
@@ -1442,10 +1564,10 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
   saveStoredMessages(updated);
   syncMessageToSupabase(newMsg, declaration.tenantId, targetOwnerId, newMsg.text);
 
-  // Enregistrer immédiatement les fiches contact pour que le fil apparaisse dans la liste des conversations
+  // Enregistrer immédiatement les fiches contact scopées par utilisateur
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem(`locatrust_contact_${declaration.tenantId}`, JSON.stringify({
+      saveUserScopedContact(targetOwnerId, {
         id: declaration.tenantId,
         name: declaration.tenantName,
         phone: '+225 05 00 00 00 00',
@@ -1453,20 +1575,16 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
         propertyTitle: declaration.propertyTitle,
         avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(declaration.tenantName)}&background=059669&color=fff`,
         online: true
-      }));
-
-      const existingOwner = localStorage.getItem(`locatrust_contact_${targetOwnerId}`);
-      if (!existingOwner) {
-        localStorage.setItem(`locatrust_contact_${targetOwnerId}`, JSON.stringify({
-          id: targetOwnerId,
-          name: 'Bailleur / Agence',
-          phone: '+225 07 00 00 00 00',
-          role: 'Bailleur Propriétaire',
-          propertyTitle: declaration.propertyTitle,
-          avatar: getDefaultRealisticAvatar('Bailleur Propriétaire', 'Propriétaire Bailleur'),
-          online: true
-        }));
-      }
+      });
+      saveUserScopedContact(declaration.tenantId, {
+        id: targetOwnerId,
+        name: 'Bailleur / Agence',
+        phone: '+225 07 00 00 00 00',
+        role: 'Bailleur Propriétaire',
+        propertyTitle: declaration.propertyTitle,
+        avatar: getDefaultRealisticAvatar('Bailleur Propriétaire', 'Propriétaire Bailleur'),
+        online: true
+      });
     } catch {}
   }
 
@@ -1558,14 +1676,14 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
   // Synchronisation Supabase & Realtime pour le contrat
   syncMessageToSupabase(newMsg, finalSenderId, tenantId, newMsg.text);
 
-  // Sauvegarder immédiatement les contacts dans le localStorage pour que la conversation apparaisse des deux côtés
+  // Sauvegarder immédiatement les contacts dans le stockage scopé par utilisateur
   if (typeof window !== 'undefined') {
     try {
       const storedUserAvatar = localStorage.getItem('locatrust_user_avatar');
-      const existingOwnerContact = localStorage.getItem(`locatrust_contact_${finalSenderId}`);
-      const parsedOwner = existingOwnerContact ? JSON.parse(existingOwnerContact) : null;
-      const existingTenantContact = localStorage.getItem(`locatrust_contact_${tenantId}`);
-      const parsedTenant = existingTenantContact ? JSON.parse(existingTenantContact) : null;
+      const ownerScopedMap = getUserScopedContactsMap(tenantId);
+      const parsedOwner = ownerScopedMap[finalSenderId] || null;
+      const tenantScopedMap = getUserScopedContactsMap(finalSenderId);
+      const parsedTenant = tenantScopedMap[tenantId] || null;
 
       const ownerAvatar =
         parsedOwner?.avatar && !parsedOwner.avatar.includes('ui-avatars.com')
@@ -1574,7 +1692,7 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
           ? storedUserAvatar
           : getDefaultRealisticAvatar(contract.ownerName, contract.ownerName.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur');
 
-      localStorage.setItem(`locatrust_contact_${finalSenderId}`, JSON.stringify({
+      saveUserScopedContact(tenantId, {
         id: finalSenderId,
         name: contract.ownerName,
         phone: '+225 07 00 00 00 00',
@@ -1582,17 +1700,17 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
         propertyTitle: contract.propertyTitle,
         avatar: ownerAvatar,
         online: true
-      }));
+      });
 
-      localStorage.setItem(`locatrust_contact_${tenantId}`, JSON.stringify({
+      saveUserScopedContact(finalSenderId, {
         id: tenantId,
         name: contract.tenantName,
         phone: '+225 05 00 00 00 00',
         role: 'Locataire Preneur',
         propertyTitle: contract.propertyTitle,
-        avatar: parsedTenant?.avatar || (contract.tenantName.toLowerCase().includes('chris') ? (storedUserAvatar || undefined) : undefined) || `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.tenantName)}&background=059669&color=fff`,
+        avatar: parsedTenant?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(contract.tenantName)}&background=059669&color=fff`,
         online: true
-      }));
+      });
 
       // Notification push in-app ciblée EXCLUSIVEMENT pour le locataire
       const notifsRaw = localStorage.getItem('locatrust_notifications');
@@ -1698,7 +1816,7 @@ export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachm
 export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage[]> {
   if (!isValidUuid(userId) || typeof window === 'undefined') return [];
   try {
-    let convs: Array<{ id: string; participant_a: string; participant_b: string }> = [];
+    const convMapById = new Map<string, { id: string; participant_a: string; participant_b: string }>();
 
     // Essai 1 : participant_a / participant_b
     try {
@@ -1706,27 +1824,45 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
         .from('conversations')
         .select('id, participant_a, participant_b')
         .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
-      if (c1 && c1.length > 0) convs = c1;
+      if (Array.isArray(c1)) {
+        c1.forEach((c: any) => {
+          if (c?.id && (c.participant_a === userId || c.participant_b === userId) && c.participant_a !== c.participant_b) {
+            convMapById.set(c.id, {
+              id: c.id,
+              participant_a: c.participant_a,
+              participant_b: c.participant_b
+            });
+          }
+        });
+      }
     } catch {}
 
     // Essai 2 : tenant_id / owner_id
-    if (convs.length === 0) {
-      try {
-        const { data: c2 } = await supabase
-          .from('conversations')
-          .select('id, tenant_id, owner_id')
-          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
-        if (c2 && c2.length > 0) {
-          convs = c2.map((c: any) => ({
-            id: c.id,
-            participant_a: c.tenant_id,
-            participant_b: c.owner_id
-          }));
-        }
-      } catch {}
-    }
+    try {
+      const { data: c2 } = await supabase
+        .from('conversations')
+        .select('id, tenant_id, owner_id')
+        .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      if (Array.isArray(c2)) {
+        c2.forEach((c: any) => {
+          if (c?.id && (c.tenant_id === userId || c.owner_id === userId) && c.tenant_id !== c.owner_id && !convMapById.has(c.id)) {
+            convMapById.set(c.id, {
+              id: c.id,
+              participant_a: c.tenant_id,
+              participant_b: c.owner_id
+            });
+          }
+        });
+      }
+    } catch {}
 
-    if (!convs || convs.length === 0) return [];
+    const convs = Array.from(convMapById.values());
+    if (convs.length === 0) {
+      // Aucun échange sur Supabase pour cet utilisateur : nettoyer les éventuels résidus étrangers
+      const currentLocal = getStoredMessages(userId);
+      saveStoredMessages(currentLocal, userId);
+      return currentLocal;
+    }
 
     const convIds = convs.map((c) => c.id);
     const { data: msgs, error: msgErr } = await supabase
@@ -1735,12 +1871,12 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
       .in('conversation_id', convIds)
       .order('created_at', { ascending: true });
 
-    if (msgErr || !msgs) return [];
+    if (msgErr || !msgs) return getStoredMessages(userId);
 
     const convMap = new Map<string, { participant_a: string; participant_b: string }>();
     convs.forEach((c) => convMap.set(c.id, c));
 
-    const currentLocal = getStoredMessages();
+    const currentLocal = getStoredMessages(userId);
     const localById = new Map<string, ChatMessage>();
     currentLocal.forEach((lm) => {
       if (lm?.id) localById.set(lm.id, lm);
@@ -1771,9 +1907,12 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
 
     msgs.forEach((m: any) => {
       const conv = convMap.get(m.conversation_id);
+      if (!conv) return;
       const isSender = m.sender_id === userId;
-      const otherId = conv ? (conv.participant_a === userId ? conv.participant_b : conv.participant_a) : 'usr_contact';
+      const otherId = conv.participant_a === userId ? conv.participant_b : conv.participant_a;
+      if (!otherId || otherId === userId || !isValidUuid(otherId)) return;
       const receiverId = isSender ? otherId : userId;
+      if (m.sender_id !== userId && m.sender_id !== otherId) return;
 
       let parsedContract: any = undefined;
       let parsedQuittance: any = undefined;
@@ -1852,7 +1991,7 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
 
     if (newFromDb.length > 0 || localReconciled) {
       const merged = deduplicateMessageList([...reconciledLocal, ...newFromDb]);
-      saveStoredMessages(merged);
+      saveStoredMessages(merged, userId);
       return merged;
     }
   } catch (err) {
@@ -1863,12 +2002,13 @@ export async function fetchSupabaseMessages(userId: string): Promise<ChatMessage
 
 /**
  * Récupère les vraies conversations et profils associés depuis Supabase
- * et les retourne sous forme de ChatContact avec noms et photos réels
+ * et les retourne sous forme de ChatContact avec noms et photos réels.
+ * Seules les conversations appartenant réellement à userId ET ayant au moins un message réel sont retournées.
  */
 export async function fetchSupabaseConversationsWithProfiles(userId: string): Promise<ChatContact[]> {
   if (!isValidUuid(userId) || typeof window === 'undefined') return [];
   try {
-    let convs: Array<{ id: string; participant_a: string; participant_b: string; property_id?: string; properties?: any }> = [];
+    const convMapById = new Map<string, { id: string; participant_a: string; participant_b: string; property_id?: string; properties?: any }>();
 
     // Essai 1 : participant_a / participant_b
     try {
@@ -1877,34 +2017,68 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
         .select('id, participant_a, participant_b, property_id, properties:properties(id, title, city, commune)')
         .or(`participant_a.eq.${userId},participant_b.eq.${userId}`)
         .order('created_at', { ascending: false });
-      if (c1 && c1.length > 0) convs = c1;
+      if (Array.isArray(c1)) {
+        c1.forEach((c: any) => {
+          if (c?.id && (c.participant_a === userId || c.participant_b === userId) && c.participant_a !== c.participant_b) {
+            convMapById.set(c.id, {
+              id: c.id,
+              participant_a: c.participant_a,
+              participant_b: c.participant_b,
+              property_id: c.property_id,
+              properties: c.properties
+            });
+          }
+        });
+      }
     } catch {}
 
     // Essai 2 : tenant_id / owner_id
-    if (convs.length === 0) {
-      try {
-        const { data: c2 } = await supabase
-          .from('conversations')
-          .select('id, tenant_id, owner_id, property_id, properties:properties(id, title, city, commune)')
-          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
-          .order('created_at', { ascending: false });
-        if (c2 && c2.length > 0) {
-          convs = c2.map((c: any) => ({
-            id: c.id,
-            participant_a: c.tenant_id,
-            participant_b: c.owner_id,
-            property_id: c.property_id,
-            properties: c.properties
-          }));
-        }
-      } catch {}
+    try {
+      const { data: c2 } = await supabase
+        .from('conversations')
+        .select('id, tenant_id, owner_id, property_id, properties:properties(id, title, city, commune)')
+        .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
+        .order('created_at', { ascending: false });
+      if (Array.isArray(c2)) {
+        c2.forEach((c: any) => {
+          if (c?.id && (c.tenant_id === userId || c.owner_id === userId) && c.tenant_id !== c.owner_id && !convMapById.has(c.id)) {
+            convMapById.set(c.id, {
+              id: c.id,
+              participant_a: c.tenant_id,
+              participant_b: c.owner_id,
+              property_id: c.property_id,
+              properties: c.properties
+            });
+          }
+        });
+      }
+    } catch {}
+
+    const allConvs = Array.from(convMapById.values());
+    if (allConvs.length === 0) return [];
+
+    // Vérifier que la conversation possède au moins un message réel dans public.messages
+    const allConvIds = allConvs.map((c) => c.id);
+    const { data: existingMsgs } = await supabase
+      .from('messages')
+      .select('conversation_id, sender_id')
+      .in('conversation_id', allConvIds);
+
+    const activeConvIdsWithMessages = new Set<string>();
+    if (Array.isArray(existingMsgs)) {
+      existingMsgs.forEach((m: any) => {
+        if (m?.conversation_id) activeConvIdsWithMessages.add(m.conversation_id);
+      });
     }
 
-    if (!convs || convs.length === 0) return [];
+    const convs = allConvs.filter((c) => activeConvIdsWithMessages.has(c.id));
+    if (convs.length === 0) return [];
 
     const otherUserIds = Array.from(
       new Set(
-        convs.map((c) => (c.participant_a === userId ? c.participant_b : c.participant_a)).filter(isValidUuid)
+        convs
+          .map((c) => (c.participant_a === userId ? c.participant_b : c.participant_a))
+          .filter((id) => isValidUuid(id) && id !== userId)
       )
     );
 
@@ -1924,6 +2098,7 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
 
     convs.forEach((c) => {
       const otherId = c.participant_a === userId ? c.participant_b : c.participant_a;
+      if (!otherId || otherId === userId) return;
       const prof = profMap.get(otherId);
       if (!prof) return;
 
@@ -1943,29 +2118,17 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
           : (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${prof.id}`) : null);
 
       if (!realContacts.some((rc) => rc.id === prof.id)) {
-        realContacts.push({
+        const contactObj: ChatContact = {
           id: prof.id,
           name: prof.full_name || 'Utilisateur Certifié',
           phone: prof.phone || '+225 07 00 00 00 00',
           role: roleLabel,
           propertyTitle: propTitle,
-          avatar: avatarUrl || undefined,
+          avatar: avatarUrl || '',
           online: true
-        });
-
-        // Mémorisation dans le stockage local pour affichage instantané
-        localStorage.setItem(
-          `locatrust_contact_${prof.id}`,
-          JSON.stringify({
-            id: prof.id,
-            name: prof.full_name || 'Utilisateur Certifié',
-            phone: prof.phone || '+225 07 00 00 00 00',
-            role: roleLabel,
-            propertyTitle: propTitle,
-            avatar: avatarUrl || undefined,
-            online: true
-          })
-        );
+        };
+        realContacts.push(contactObj);
+        saveUserScopedContact(userId, contactObj);
       }
     });
 

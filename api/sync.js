@@ -521,7 +521,14 @@ export default async function handler(req, res) {
           });
 
         const userMessages = SERVER_STORE.messages
-          .filter((m) => m && (m.sender_id === cleanUserId || m.receiver_id === cleanUserId))
+          .filter(
+            (m) =>
+              m &&
+              m.sender_id &&
+              m.receiver_id &&
+              m.sender_id !== m.receiver_id &&
+              (m.sender_id === cleanUserId || m.receiver_id === cleanUserId)
+          )
           .map((m) => {
             const msgTs = m.created_at ? new Date(m.created_at).getTime() : 0;
             const senderWatermark = convReadMap[m.sender_id] || 0;
@@ -540,15 +547,37 @@ export default async function handler(req, res) {
             };
           });
         const userConversations = SERVER_STORE.conversations.filter(
-          (c) => c.participant_a === cleanUserId || c.participant_b === cleanUserId || c.tenant_id === cleanUserId || c.owner_id === cleanUserId
+          (c) =>
+            c &&
+            (c.participant_a === cleanUserId ||
+              c.participant_b === cleanUserId ||
+              c.tenant_id === cleanUserId ||
+              c.owner_id === cleanUserId)
         );
+        const allowedPartnerIds = new Set();
+        userMessages.forEach((m) => {
+          const otherId = m.sender_id === cleanUserId ? m.receiver_id : m.sender_id;
+          if (otherId && otherId !== cleanUserId) allowedPartnerIds.add(otherId);
+        });
+        userConversations.forEach((c) => {
+          const pA = c.participant_a || c.tenant_id;
+          const pB = c.participant_b || c.owner_id;
+          const otherId = pA === cleanUserId ? pB : pA;
+          if (otherId && otherId !== cleanUserId) allowedPartnerIds.add(otherId);
+        });
+        const userContacts = {};
+        allowedPartnerIds.forEach((pid) => {
+          if (SERVER_STORE.contacts && SERVER_STORE.contacts[pid]) {
+            userContacts[pid] = SERVER_STORE.contacts[pid];
+          }
+        });
         const userApplications = SERVER_STORE.applications.filter(
           (a) =>
-            a.owner_id === cleanUserId ||
-            a.agency_id === cleanUserId ||
-            a.mandant_id === cleanUserId ||
-            a.tenant_id === cleanUserId ||
-            (!cleanUserId && (a.owner_id === 'usr_owner' || a.agency_id === 'usr_agency' || a.owner_id === 'usr_agency' || a.tenant_id === 'usr_tenant'))
+            a &&
+            (a.owner_id === cleanUserId ||
+              a.agency_id === cleanUserId ||
+              a.mandant_id === cleanUserId ||
+              a.tenant_id === cleanUserId)
         );
 
         const userQuota = role === 'agence'
@@ -567,7 +596,7 @@ export default async function handler(req, res) {
             properties: userProperties,
             messages: userMessages,
             conversations: userConversations,
-            contacts: SERVER_STORE.contacts,
+            contacts: userContacts,
             readState: userReadState,
             applications: userApplications,
             quota: userQuota,

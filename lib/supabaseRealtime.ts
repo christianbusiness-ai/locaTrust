@@ -449,28 +449,37 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           const q = payload?.data?.quittance;
           const incomingDeposit = payload?.data?.deposit;
           const depId = payload?.depositId || incomingDeposit?.id;
-          const senderId = payload?.actorId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
-          const receiverId = payload?.targetUserId || incomingDeposit?.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
-          
-          let actor = payload?.data?.actorName || q?.ownerName || 'kk';
+          const senderId = payload?.actorId || incomingDeposit?.owner_id || '';
+          const receiverId = payload?.targetUserId || incomingDeposit?.tenant_id || '';
+
+          // Isolation stricte : ignorer si l'événement ne concerne pas l'utilisateur connecté
+          if (currentActiveUserId && senderId !== currentActiveUserId && receiverId !== currentActiveUserId) {
+            break;
+          }
+
+          let actor = payload?.data?.actorName || q?.ownerName || 'Bailleur Propriétaire';
           if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(actor) || actor.startsWith('usr_')) {
-            actor = 'kk';
+            actor = 'Bailleur Propriétaire';
           }
 
           const amount = payload?.data?.amount || q?.amount || incomingDeposit?.amount_paid || incomingDeposit?.amount_requested || 0;
           const amountFormatted = amount ? `${Number(amount).toLocaleString('fr-FR')} FCFA` : 'garantie';
 
-          // 0. Stocker immédiatement la fiche de contact du bailleur pour éviter tout affichage d'UUID
-          try {
-            localStorage.setItem(`locatrust_contact_${senderId}`, JSON.stringify({
-              id: senderId,
-              name: actor,
-              phone: q?.ownerPhone || '0500552141',
-              role: 'Bailleur Propriétaire',
-              propertyTitle: q?.propertyTitle || 'appartement',
-              online: true
-            }));
-          } catch {}
+          // 0. Stocker la fiche de contact dans l'espace scopé du destinataire
+          if (currentActiveUserId && senderId && senderId !== currentActiveUserId) {
+            import('@/lib/messagingStore')
+              .then((m) => {
+                m.saveUserScopedContact(currentActiveUserId, {
+                  id: senderId,
+                  name: actor,
+                  phone: q?.ownerPhone || '+225 07 00 00 00 00',
+                  role: 'Bailleur Propriétaire',
+                  propertyTitle: q?.propertyTitle || 'Logement',
+                  online: true
+                });
+              })
+              .catch(() => {});
+          }
 
           // 1. Ingestion directe dans le registre des reçus du locataire
           if (q && q.receiptNumber) {
@@ -657,27 +666,33 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
             }
           } catch {}
 
-          // 5. Cartes de contacts bidirectionnelles
+          // 5. Cartes de contacts bidirectionnelles scopées par utilisateur
           try {
-            if (q) {
-              const ownerCard = {
-                id: senderId,
-                name: q.ownerName || actor || 'kk',
-                role: 'Propriétaire Bailleur',
-                propertyTitle: q.propertyTitle,
-                phone: q.ownerPhone || '+225 07 00 00 00 00',
-                online: true
-              };
-              const tenantCard = {
-                id: receiverId,
-                name: q.tenantName || 'christian',
-                role: 'Locataire',
-                propertyTitle: q.propertyTitle,
-                phone: q.tenantPhone || '+225 05 00 00 00 00',
-                online: true
-              };
-              localStorage.setItem(`locatrust_contact_${senderId}`, JSON.stringify(ownerCard));
-              localStorage.setItem(`locatrust_contact_${receiverId}`, JSON.stringify(tenantCard));
+            if (q && currentActiveUserId) {
+              import('@/lib/messagingStore')
+                .then((m) => {
+                  if (senderId && senderId !== currentActiveUserId) {
+                    m.saveUserScopedContact(currentActiveUserId, {
+                      id: senderId,
+                      name: q.ownerName || actor || 'Bailleur Propriétaire',
+                      role: 'Propriétaire Bailleur',
+                      propertyTitle: q.propertyTitle,
+                      phone: q.ownerPhone || '+225 07 00 00 00 00',
+                      online: true
+                    });
+                  }
+                  if (receiverId && receiverId !== currentActiveUserId) {
+                    m.saveUserScopedContact(currentActiveUserId, {
+                      id: receiverId,
+                      name: q.tenantName || 'Locataire',
+                      role: 'Locataire',
+                      propertyTitle: q.propertyTitle,
+                      phone: q.tenantPhone || '+225 05 00 00 00 00',
+                      online: true
+                    });
+                  }
+                })
+                .catch(() => {});
             }
           } catch {}
 
@@ -838,56 +853,69 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
             const senderId = incomingMsg.sender_id || incomingMsg.senderId || payload?.actorId;
             const receiverId = incomingMsg.receiver_id || incomingMsg.receiverId || payload?.targetUserId;
 
-            // 1. Sauvegarder immédiatement la fiche de contact de l'expéditeur sur le terminal destinataire
-            if (senderId) {
-              try {
-                const existingContactRaw = localStorage.getItem(`locatrust_contact_${senderId}`);
-                const existingContact = existingContactRaw ? JSON.parse(existingContactRaw) : null;
-                const contactName = incomingMsg.sender_name || existingContact?.name;
-                const contactAvatar = incomingMsg.sender_avatar || existingContact?.avatar;
-                const contactRole = incomingMsg.sender_role || existingContact?.role || 'Locataire';
-                const propertyTitle = incomingMsg.property_title || existingContact?.propertyTitle || 'Échange direct';
+            // ISOLATION STRICTE : si l'utilisateur actif n'est ni l'expéditeur ni le destinataire, ignorer totalement
+            if (!currentActiveUserId || (senderId !== currentActiveUserId && receiverId !== currentActiveUserId)) {
+              break;
+            }
+            if (!senderId || !receiverId || senderId === receiverId) {
+              break;
+            }
 
-                localStorage.setItem(`locatrust_contact_${senderId}`, JSON.stringify({
-                  id: senderId,
-                  name: contactName || (contactRole.toLowerCase().includes('proprietaire') ? 'Propriétaire Bailleur' : contactRole.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Locataire'),
-                  role: contactRole,
-                  propertyTitle: propertyTitle,
-                  avatar: contactAvatar || undefined,
-                  online: true
-                }));
+            // 1. Sauvegarder la fiche de contact de l'interlocuteur dans le registre scopé de l'utilisateur actif
+            if (senderId !== currentActiveUserId) {
+              try {
+                const contactName = incomingMsg.sender_name;
+                const contactAvatar = incomingMsg.sender_avatar;
+                const contactRole = incomingMsg.sender_role || 'Locataire';
+                const propertyTitle = incomingMsg.property_title || 'Échange direct';
+
+                import('@/lib/messagingStore')
+                  .then((m) => {
+                    m.saveUserScopedContact(currentActiveUserId, {
+                      id: senderId,
+                      name: contactName || (contactRole.toLowerCase().includes('proprietaire') ? 'Propriétaire Bailleur' : contactRole.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Locataire'),
+                      role: contactRole,
+                      propertyTitle: propertyTitle,
+                      avatar: contactAvatar || '',
+                      online: true
+                    });
+                  })
+                  .catch(() => {});
               } catch {}
             }
 
-            // 2. Ingestion du message dans locatrust_chat_messages_v4
+            // 2. Ingestion du message dans le stockage scopé de l'utilisateur actif
             try {
-              const msgsRaw = localStorage.getItem('locatrust_chat_messages_v4');
-              const curMsgs = msgsRaw ? JSON.parse(msgsRaw) : [];
-              const exists = curMsgs.some(
-                (m: any) =>
-                  m.id === incomingMsg.id ||
-                  (m.sender_id === senderId &&
-                    m.text === incomingMsg.text &&
-                    Math.abs(new Date(m.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 60000)
-              );
-              if (!exists) {
-                const formattedMsg = {
-                  id: incomingMsg.id || `msg_${Date.now()}`,
-                  sender_id: senderId,
-                  receiver_id: receiverId,
-                  text: incomingMsg.text || '',
-                  created_at: incomingMsg.created_at || new Date().toISOString(),
-                  status: incomingMsg.status || 'delivered',
-                  quittance: incomingMsg.quittance,
-                  contract: incomingMsg.contract,
-                  declaration: incomingMsg.declaration
-                };
-                localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify([...curMsgs, formattedMsg]));
-              }
+              import('@/lib/messagingStore')
+                .then((m) => {
+                  const curMsgs = m.getStoredMessages(currentActiveUserId);
+                  const exists = curMsgs.some(
+                    (existing: any) =>
+                      existing.id === incomingMsg.id ||
+                      (existing.sender_id === senderId &&
+                        existing.text === incomingMsg.text &&
+                        Math.abs(new Date(existing.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 60000)
+                  );
+                  if (!exists) {
+                    const formattedMsg = {
+                      id: incomingMsg.id || `msg_${Date.now()}`,
+                      sender_id: senderId,
+                      receiver_id: receiverId,
+                      text: incomingMsg.text || '',
+                      created_at: incomingMsg.created_at || new Date().toISOString(),
+                      status: incomingMsg.status || 'delivered',
+                      quittance: incomingMsg.quittance,
+                      contract: incomingMsg.contract,
+                      declaration: incomingMsg.declaration
+                    };
+                    m.saveStoredMessages([...curMsgs, formattedMsg], currentActiveUserId);
+                  }
+                })
+                .catch(() => {});
             } catch {}
 
             // 3. Si le message transporte une quittance ou un reçu de caution
-            if (incomingMsg.quittance && incomingMsg.quittance.receiptNumber) {
+            if (incomingMsg.quittance && incomingMsg.quittance.receiptNumber && receiverId === currentActiveUserId) {
               try {
                 const curRaw = localStorage.getItem('locatrust_tenant_receipts_v2');
                 const cur = curRaw ? JSON.parse(curRaw) : [];
@@ -898,7 +926,7 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
             }
 
             // 4. Notification in-app ciblée EXCLUSIVEMENT pour le destinataire (jamais pour l'expéditeur)
-            if (senderId !== receiverId && (!currentActiveUserId || senderId !== currentActiveUserId)) {
+            if (senderId !== receiverId && receiverId === currentActiveUserId && senderId !== currentActiveUserId) {
               try {
                 const notifsRaw = localStorage.getItem('locatrust_notifications');
                 const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
@@ -1036,20 +1064,22 @@ function initSharedChannel() {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (payload: any) => {
-        if (payload?.new?.avatar_url) {
-          try { localStorage.setItem('locatrust_user_avatar', payload.new.avatar_url); } catch {}
-          window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: payload.new.avatar_url } }));
-          window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: payload.new }));
-        }
-        if (payload?.new?.accounting_year) {
-          const yr = payload.new.accounting_year;
-          try {
-            localStorage.setItem('locatrust_current_accounting_year', yr);
-            localStorage.setItem('locatrust_reference_accounting_year', yr);
-          } catch {}
-          window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
-            detail: { year: yr, isTemporary: false, currentYear: yr }
-          }));
+        if (payload?.new?.id && currentActiveUserId && payload.new.id === currentActiveUserId) {
+          if (payload?.new?.avatar_url) {
+            try { localStorage.setItem('locatrust_user_avatar', payload.new.avatar_url); } catch {}
+            window.dispatchEvent(new CustomEvent('locatrust:avatar_updated', { detail: { avatarUrl: payload.new.avatar_url } }));
+            window.dispatchEvent(new CustomEvent('locatrust:profile_updated', { detail: payload.new }));
+          }
+          if (payload?.new?.accounting_year) {
+            const yr = payload.new.accounting_year;
+            try {
+              localStorage.setItem('locatrust_current_accounting_year', yr);
+              localStorage.setItem('locatrust_reference_accounting_year', yr);
+            } catch {}
+            window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
+              detail: { year: yr, isTemporary: false, currentYear: yr }
+            }));
+          }
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rent_payments' }, () => {

@@ -8,7 +8,10 @@ import {
   isNotificationRead,
   deduplicateMessageList,
   mergeServerReadState,
-  ensureCounterV2Migration
+  ensureCounterV2Migration,
+  setActiveMessagingUser,
+  getStoredMessages,
+  saveStoredMessages
 } from '@/lib/messagingStore';
 import { deduplicateAndNormalizeNotifications } from '@/lib/waitingListNotifications';
 import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
@@ -442,34 +445,48 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       } catch {}
     }
 
-    // 6. SYNCHRONISATION DES MESSAGES & CONVERSATIONS (MESSAGES)
-    let userConvs: Array<{ id: string; participant_a: string; participant_b: string; property_id?: string }> = [];
+    // 6. SYNCHRONISATION DES MESSAGES & CONVERSATIONS (ISOLATION STRICTE PAR UTILISATEUR)
+    setActiveMessagingUser(userId);
+    const convMapById = new Map<string, { id: string; participant_a: string; participant_b: string; property_id?: string }>();
     try {
       const { data: c1 } = await supabase
         .from('conversations')
         .select('id, participant_a, participant_b, property_id')
         .or(`participant_a.eq.${userId},participant_b.eq.${userId}`);
-      if (Array.isArray(c1) && c1.length > 0) {
-        userConvs = c1;
+      if (Array.isArray(c1)) {
+        c1.forEach((c: any) => {
+          if (c?.id && (c.participant_a === userId || c.participant_b === userId) && c.participant_a !== c.participant_b) {
+            convMapById.set(c.id, {
+              id: c.id,
+              participant_a: c.participant_a,
+              participant_b: c.participant_b,
+              property_id: c.property_id
+            });
+          }
+        });
       }
     } catch {}
 
-    if (userConvs.length === 0) {
-      try {
-        const { data: c2 } = await supabase
-          .from('conversations')
-          .select('id, tenant_id, owner_id, property_id')
-          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
-        if (Array.isArray(c2) && c2.length > 0) {
-          userConvs = c2.map((c: any) => ({
-            id: c.id,
-            participant_a: c.tenant_id,
-            participant_b: c.owner_id,
-            property_id: c.property_id
-          }));
-        }
-      } catch {}
-    }
+    try {
+      const { data: c2 } = await supabase
+        .from('conversations')
+        .select('id, tenant_id, owner_id, property_id')
+        .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      if (Array.isArray(c2)) {
+        c2.forEach((c: any) => {
+          if (c?.id && (c.tenant_id === userId || c.owner_id === userId) && c.tenant_id !== c.owner_id && !convMapById.has(c.id)) {
+            convMapById.set(c.id, {
+              id: c.id,
+              participant_a: c.tenant_id,
+              participant_b: c.owner_id,
+              property_id: c.property_id
+            });
+          }
+        });
+      }
+    } catch {}
+
+    const userConvs = Array.from(convMapById.values());
 
     if (userConvs.length > 0) {
       const convIds = userConvs.map(c => c.id);
@@ -482,8 +499,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       if (!msgErr && Array.isArray(serverMessages)) {
         if (typeof window !== 'undefined') {
           try {
-            const rawLocal = localStorage.getItem('locatrust_chat_messages_v4');
-            const localMsgs: any[] = rawLocal ? JSON.parse(rawLocal) : [];
+            const localMsgs: any[] = getStoredMessages(userId);
             const localMap = new Map<string, any>();
             if (Array.isArray(localMsgs)) {
               localMsgs.forEach((lm: any) => {
@@ -492,63 +508,78 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             }
 
             // Décoder le contenu structuré des messages et PRÉSERVER impérativement le statut lu
-            const normalizedMsgs = serverMessages.map(m => {
-              let parsedContent: any = null;
-              if (typeof m.content === 'string' && (m.content.trim().startsWith('{') || m.content.trim().startsWith('['))) {
-                try {
-                  parsedContent = JSON.parse(m.content.trim());
-                  if (Array.isArray(parsedContent)) parsedContent = parsedContent[0];
-                } catch {}
-              }
+            const normalizedMsgs = serverMessages
+              .map(m => {
+                const conv = userConvs.find(c => c.id === m.conversation_id);
+                if (!conv) return null;
+                const otherId = conv.participant_a === userId ? conv.participant_b : conv.participant_a;
+                if (!otherId || otherId === userId || !isValidUuid(otherId)) return null;
+                const receiverId = m.sender_id === userId ? otherId : userId;
+                if (m.sender_id !== userId && m.sender_id !== otherId) return null;
 
-              const conv = userConvs.find(c => c.id === m.conversation_id);
-              const receiverId = conv ? (conv.participant_a === m.sender_id ? conv.participant_b : conv.participant_a) : '';
-              const existingLocal = localMap.get(m.id);
+                let parsedContent: any = null;
+                if (typeof m.content === 'string' && (m.content.trim().startsWith('{') || m.content.trim().startsWith('['))) {
+                  try {
+                    parsedContent = JSON.parse(m.content.trim());
+                    if (Array.isArray(parsedContent)) parsedContent = parsedContent[0];
+                  } catch {}
+                }
 
-              const candidateMsg: any = {
-                id: m.id,
-                sender_id: m.sender_id,
-                receiver_id: receiverId,
-                text: parsedContent?.text || m.content,
-                created_at: m.created_at,
-                status: m.status || 'delivered',
-                is_read: Boolean(m.is_read || m.read || m.status === 'read')
-              };
+                const existingLocal = localMap.get(m.id);
 
-              const alreadyRead =
-                (existingLocal && isMessageRead(existingLocal, userId, localMsgs)) ||
-                isMessageRead(candidateMsg, userId, localMsgs);
+                const candidateMsg: any = {
+                  id: m.id,
+                  sender_id: m.sender_id,
+                  receiver_id: receiverId,
+                  text: parsedContent?.text || m.content,
+                  created_at: m.created_at,
+                  status: m.status || 'delivered',
+                  is_read: Boolean(m.is_read || m.read || m.status === 'read')
+                };
 
-              return {
-                id: m.id,
-                sender_id: m.sender_id,
-                receiver_id: receiverId,
-                text: parsedContent?.text || m.content,
-                media_url: m.attachment_url,
-                created_at: m.created_at,
-                status: alreadyRead ? ('read' as const) : ((m.status as any) || 'delivered'),
-                is_read: alreadyRead,
-                read: alreadyRead,
-                read_at: existingLocal?.read_at || (alreadyRead ? m.created_at : null),
-                contract: parsedContent?.contract,
-                quittance: parsedContent?.quittance,
-                restitution: parsedContent?.restitution,
-                declaration: parsedContent?.declaration,
-                attachment: parsedContent?.attachment
-              };
-            });
+                const alreadyRead =
+                  (existingLocal && isMessageRead(existingLocal, userId, localMsgs)) ||
+                  isMessageRead(candidateMsg, userId, localMsgs);
+
+                return {
+                  id: m.id,
+                  sender_id: m.sender_id,
+                  receiver_id: receiverId,
+                  text: parsedContent?.text || m.content,
+                  media_url: m.attachment_url,
+                  created_at: m.created_at,
+                  status: alreadyRead ? ('read' as const) : ((m.status as any) || 'delivered'),
+                  is_read: alreadyRead,
+                  read: alreadyRead,
+                  read_at: existingLocal?.read_at || (alreadyRead ? m.created_at : null),
+                  contract: parsedContent?.contract,
+                  quittance: parsedContent?.quittance,
+                  restitution: parsedContent?.restitution,
+                  declaration: parsedContent?.declaration,
+                  attachment: parsedContent?.attachment
+                };
+              })
+              .filter(Boolean) as any[];
 
             const mergedMsgs = deduplicateMessageList([
               ...normalizedMsgs,
               ...(Array.isArray(localMsgs) ? localMsgs : [])
             ]);
 
-            localStorage.setItem('locatrust_chat_messages_v4', JSON.stringify(mergedMsgs));
+            saveStoredMessages(mergedMsgs, userId);
             window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: mergedMsgs } }));
             window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: mergedMsgs } }));
           } catch {}
         }
       }
+    } else if (typeof window !== 'undefined') {
+      // Aucun fil de conversation sur Supabase pour ce compte : garantir que seuls ses éventuels messages locaux légitimes subsistent
+      try {
+        const localMsgs = getStoredMessages(userId);
+        saveStoredMessages(localMsgs, userId);
+        window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: localMsgs } }));
+        window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: localMsgs } }));
+      } catch {}
     }
 
     // 7. SYNCHRONISATION DES NOTIFICATIONS

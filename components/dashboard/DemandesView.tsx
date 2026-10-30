@@ -31,7 +31,7 @@ import { resolveContractParties, persistOwnerSignature, getStoredOwnerSignature 
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { notifyWaitingListCandidatesOnLeaseFinalized, pushGlobalNotification } from '@/lib/waitingListNotifications';
-import { sendChatMessage } from '@/lib/messagingStore';
+import { sendChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
@@ -1106,19 +1106,16 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                     onClick={() => {
                       const candidateId = app.tenant_id || `tenant_${app.id}`;
                       if (typeof window !== 'undefined') {
-                        localStorage.setItem('locatrust_active_chat_contact', candidateId);
-                        localStorage.setItem(
-                          `locatrust_contact_${candidateId}`,
-                          JSON.stringify({
-                            id: candidateId,
-                            name: app.tenant_name,
-                            phone: app.tenant_phone || '+225 07 00 00 00 00',
-                            role: 'Candidat Locataire',
-                            propertyTitle: app.property_title || 'Candidature',
-                            avatar: app.tenant_avatar || '',
-                            online: true,
-                          })
-                        );
+                        setActiveChatPartnerForUser(user?.id, candidateId);
+                        saveUserScopedContact(user?.id, {
+                          id: candidateId,
+                          name: app.tenant_name,
+                          phone: app.tenant_phone || '+225 07 00 00 00 00',
+                          role: 'Locataire',
+                          propertyTitle: app.property_title || 'Candidature',
+                          avatar: app.tenant_avatar || '',
+                          online: true,
+                        });
                         window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: candidateId } }));
                       }
                       onOpenMessages(candidateId);

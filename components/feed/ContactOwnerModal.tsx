@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Property } from '@/types/database.types';
 import { Send, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/src/context/AuthContext';
-import { sendRealChatMessage } from '@/lib/messagingStore';
+import { sendRealChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
 
 interface ContactOwnerModalProps {
@@ -61,38 +61,32 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
         propertyTitle: property.title
       });
 
-      // 2. Sauvegarder les métadonnées de contact pour la messagerie
+      // 2. Sauvegarder les métadonnées de contact strictement pour l'utilisateur courant
       if (typeof window !== 'undefined') {
         const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Locataire Certifié';
         const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
         const myAvatar = profile?.avatar_url || (user as any)?.avatar_url || localStorage.getItem('locatrust_user_avatar') || undefined;
 
-        localStorage.setItem(
-          'locatrust_contact_' + applicantId,
-          JSON.stringify({
-            id: applicantId,
-            name: myName,
-            phone: myPhone,
-            role: 'Locataire Preneur',
-            propertyTitle: property.title || 'Bien immobilier',
-            avatar: myAvatar,
-            online: true,
-          })
-        );
+        saveUserScopedContact(targetOwnerId, {
+          id: applicantId,
+          name: myName,
+          phone: myPhone,
+          role: 'Locataire Preneur',
+          propertyTitle: property.title || 'Bien immobilier',
+          avatar: myAvatar,
+          online: true,
+        });
 
-        localStorage.setItem('locatrust_active_chat_contact', targetOwnerId);
-        localStorage.setItem(
-          'locatrust_contact_' + targetOwnerId,
-          JSON.stringify({
-            id: targetOwnerId,
-            name: ownerFullName,
-            phone: property.owner?.phone || '+225 07 00 00 00 00',
-            role: Boolean((property as any).is_agency || property.agency_id || property.owner?.role === 'agence' || (property.owner as any)?.account_type === 'agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
-            propertyTitle: property.title || 'Bien immobilier',
-            avatar: property.owner?.avatar_url || undefined,
-            online: true,
-          })
-        );
+        setActiveChatPartnerForUser(applicantId, targetOwnerId);
+        saveUserScopedContact(applicantId, {
+          id: targetOwnerId,
+          name: ownerFullName,
+          phone: property.owner?.phone || '+225 07 00 00 00 00',
+          role: Boolean((property as any).is_agency || property.agency_id || property.owner?.role === 'agence' || (property.owner as any)?.account_type === 'agence') ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
+          propertyTitle: property.title || 'Bien immobilier',
+          avatar: property.owner?.avatar_url || undefined,
+          online: true,
+        });
         window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
       }
 

@@ -73,7 +73,12 @@ import {
   fetchSupabaseMessages,
   fetchSupabaseConversationsWithProfiles,
   isValidUuid,
-  updateDeclarationMessageStatus
+  updateDeclarationMessageStatus,
+  setActiveMessagingUser,
+  getUserScopedContactsMap,
+  saveUserScopedContact,
+  getActiveChatPartnerForUser,
+  setActiveChatPartnerForUser
 } from '@/lib/messagingStore';
 import { confirmCautionReceipt, sendCautionReceiptToTenant, signCautionReceipt, getStoredDeposits } from '@/lib/cautionsStore';
 import { supabase } from '@/src/lib/supabase';
@@ -99,21 +104,27 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const myAliases = React.useMemo(() => {
     const s = new Set<string>();
     if (user?.id) s.add(user.id);
-    if (user?.email) s.add(user.email.toLowerCase());
-    if (profile?.id) s.add(profile.id);
+    if (profile?.id && profile.id === user?.id) s.add(profile.id);
     if (currentUserId) s.add(currentUserId);
     return s;
-  }, [user?.id, user?.email, profile?.id, currentUserId]);
+  }, [user?.id, profile?.id, currentUserId]);
 
   const [dbContacts, setDbContacts] = useState<ChatContact[]>([]);
 
   const roleContacts = React.useMemo(() => {
-    const list: ChatContact[] = [];
+    // RÈGLE STRICTE D'ISOLATION PAR COMPTE :
+    // Si aucun utilisateur authentifié avec un UUID valide n'est actif, retourner une liste vide.
+    if (!currentUserId || !isValidUuid(currentUserId)) {
+      return [];
+    }
 
-    // Intégrer les contacts réels chargés directement depuis Supabase
+    const list: ChatContact[] = [];
+    const scopedContactsMap = getUserScopedContactsMap(currentUserId);
+
+    // 1. Intégrer les contacts issus de vraies conversations Supabase où currentUserId est participant
     if (dbContacts && dbContacts.length > 0) {
       dbContacts.forEach((dc) => {
-        if (!list.some((existing) => existing.id === dc.id)) {
+        if (dc && dc.id && dc.id !== currentUserId && !myAliases.has(dc.id) && !list.some((existing) => existing.id === dc.id)) {
           list.push(dc);
         }
       });
@@ -122,121 +133,57 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     if (typeof window !== 'undefined') {
       try {
         const appsRaw = localStorage.getItem('locatrust_rental_applications');
-        let apps: any[] = [];
+        let allApps: any[] = [];
         if (appsRaw) {
-          try { apps = JSON.parse(appsRaw); } catch {}
-        }
-        if (Array.isArray(apps)) {
-          apps.forEach((app: any) => {
-            // Ignorer strictement les démos fictives
-            if (
-              !app ||
-              app.id === 'app_demo_1' ||
-              app.id === 'app_demo_2' ||
-              app.tenant_name === 'Kouassi Jean-Philippe' ||
-              app.tenant_name === 'Awa Touré'
-            ) {
-              return;
-            }
-
-            if (userRole === 'locataire') {
-              // Vérifier si cette candidature concerne le locataire connecté
-              const isMyApplication =
-                !user?.id ||
-                myAliases.has(app.tenant_id) ||
-                app.tenant_id === 'usr_tenant' ||
-                (user?.email && app.tenant_email?.toLowerCase() === user.email.toLowerCase());
-
-              if (!isMyApplication) return;
-
-              const ownerName = app.agency_name || app.owner_name || (app.owner as any)?.full_name || 'Bailleur Propriétaire';
-              const ownerId = app.agency_id || app.owner_id || `owner_${app.property_id || app.id}`;
-              const ownerRole = app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur';
-              const isAgencyRole = Boolean(app.agency_name || app.is_agency || (app.owner as any)?.account_type === 'agence' || ownerId.includes('agency'));
-              let ownerAvatar =
-                (app.owner_avatar && !app.owner_avatar.includes('ui-avatars.com') && !app.owner_avatar.includes('unsplash.com') ? app.owner_avatar : null) ||
-                ((app.owner as any)?.avatar_url && !(app.owner as any).avatar_url.includes('ui-avatars.com') && !(app.owner as any).avatar_url.includes('unsplash.com') ? (app.owner as any).avatar_url : null) ||
-                (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${ownerId}`) : null) ||
-                undefined;
-
-              if (!list.some((c) => c.id === ownerId || c.name.toLowerCase() === ownerName.toLowerCase())) {
-                list.push({
-                  id: ownerId,
-                  name: ownerName,
-                  phone: app.owner_phone || '+225 07 00 00 00 00',
-                  role: ownerRole,
-                  propertyTitle: app.property_title || 'Logement',
-                  avatar: ownerAvatar,
-                  online: true
-                });
-              }
-            } else {
-              // Propriétaire ou Agence : uniquement les candidatures de ses propres biens
-              const isMyPropertyApplication =
-                !user?.id ||
-                myAliases.has(app.owner_id) ||
-                myAliases.has(app.agency_id) ||
-                app.owner_id === 'usr_owner' ||
-                app.agency_id === 'usr_agency';
-
-              if (!isMyPropertyApplication) return;
-
-              const tenantId = app.tenant_id || `tenant_${app.id}`;
-              const tenantName = (app.tenant_name || '').trim();
-
-              // Ne jamais créer de contact générique fictif "Candidat Locataire"
-              if (
-                !tenantName ||
-                tenantName.toLowerCase().includes('candidat') ||
-                tenantName.toLowerCase() === 'locataire candidat' ||
-                tenantName.toLowerCase() === 'candidat locataire'
-              ) {
-                return;
-              }
-
-              const tenantAvatar =
-                (app.tenant_avatar && !app.tenant_avatar.includes('ui-avatars.com') && !app.tenant_avatar.includes('unsplash.com') ? app.tenant_avatar : null) ||
-                (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${tenantId}`) : null) ||
-                undefined;
-
-              if (!list.some((c) => c.id === tenantId || c.name.toLowerCase() === tenantName.toLowerCase())) {
-                list.push({
-                  id: tenantId,
-                  name: tenantName,
-                  phone: app.tenant_phone || '+225 05 00 00 00 00',
-                  role: 'Locataire',
-                  propertyTitle: app.property_title || 'Bien immobilier',
-                  avatar: tenantAvatar,
-                  online: true
-                });
-              }
-            }
-          });
+          try { allApps = JSON.parse(appsRaw); } catch {}
         }
 
-        // Intégration dynamique depuis l'historique des messages réels
-        const storedMsgs = getStoredMessages();
+        // Filtrer strictement les candidatures appartenant réellement à currentUserId
+        const myApps = (Array.isArray(allApps) ? allApps : []).filter((app: any) => {
+          if (
+            !app ||
+            app.id === 'app_demo_1' ||
+            app.id === 'app_demo_2' ||
+            app.tenant_name === 'Kouassi Jean-Philippe' ||
+            app.tenant_name === 'Awa Touré'
+          ) {
+            return false;
+          }
+          return (
+            app.tenant_id === currentUserId ||
+            app.owner_id === currentUserId ||
+            app.agency_id === currentUserId
+          );
+        });
+
+        // 2. Intégration dynamique depuis l'historique des messages réels de currentUserId
+        const storedMsgs = getStoredMessages(currentUserId);
         storedMsgs.forEach((m) => {
-          // L'utilisateur connecté doit obligatoirement être impliqué (expéditeur ou destinataire)
-          const involvesMe = myAliases.has(m.sender_id) || myAliases.has(m.receiver_id);
+          const involvesMe = m.sender_id === currentUserId || m.receiver_id === currentUserId;
           if (!involvesMe) return;
 
-          const otherId = myAliases.has(m.sender_id) ? m.receiver_id : m.sender_id;
+          const otherId = m.sender_id === currentUserId ? m.receiver_id : m.sender_id;
 
           if (
             otherId &&
+            otherId !== currentUserId &&
             !myAliases.has(otherId) &&
+            otherId !== 'usr_owner' &&
+            otherId !== 'usr_tenant' &&
+            otherId !== 'usr_agency' &&
             otherId !== 'usr_owner_1' &&
             otherId !== 'usr_tenant_1' &&
             otherId !== 'usr_candidate' &&
             !otherId.startsWith('candidate_')
           ) {
-            const matchingApp = apps.find(
-              (a: any) => a.tenant_id === otherId || a.owner_id === otherId || `tenant_${a.id}` === otherId
+            const matchingApp = myApps.find(
+              (a: any) => a.tenant_id === otherId || a.owner_id === otherId || a.agency_id === otherId
             );
 
+            const scopedContact = scopedContactsMap[otherId];
+
             let contactName = matchingApp
-              ? (userRole === 'locataire' ? matchingApp.owner_name : matchingApp.tenant_name)
+              ? (userRole === 'locataire' ? (matchingApp.agency_name || matchingApp.owner_name) : matchingApp.tenant_name)
               : undefined;
 
             let contractObj = m.contract;
@@ -258,11 +205,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               contactName = userRole === 'locataire' ? quittanceObj.ownerName : quittanceObj.tenantName;
             }
 
-            if (!contactName) {
-              const savedContactRaw = localStorage.getItem(`locatrust_contact_${otherId}`);
-              if (savedContactRaw) {
-                try { contactName = JSON.parse(savedContactRaw).name; } catch {}
-              }
+            if (!contactName && scopedContact?.name) {
+              contactName = scopedContact.name;
             }
 
             if (!contactName) {
@@ -272,79 +216,79 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               }
             }
 
-            if (!contactName) {
+            if (!contactName && m.sender_id === otherId) {
               const fromMsg = (m as any).sender_name || (m as any).senderName;
               if (fromMsg) contactName = fromMsg;
             }
 
-            // Ne jamais bloquer une vraie conversation si un message réel existe
             if (!contactName) {
               contactName = userRole === 'locataire' ? 'Propriétaire Bailleur' : 'Locataire Preneur';
             }
 
-            // Éviter les doublons par ID
             if (list.some((c) => c.id === otherId)) {
               return;
             }
 
             const isAgencyRole = contactName.toLowerCase().includes('agence') || otherId.includes('agency');
-            const contactRole = userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire';
+            const contactRole =
+              scopedContact?.role ||
+              (userRole === 'locataire' ? (isAgencyRole ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire');
             
             const dbMatch = dbContacts.find((c) => c.id === otherId);
             let contactAvatar =
               (matchingApp?.tenant_avatar && !matchingApp.tenant_avatar.includes('ui-avatars.com') && !matchingApp.tenant_avatar.includes('unsplash.com') ? matchingApp.tenant_avatar : null) ||
               (matchingApp?.owner_avatar && !matchingApp.owner_avatar.includes('ui-avatars.com') && !matchingApp.owner_avatar.includes('unsplash.com') ? matchingApp.owner_avatar : null) ||
+              (scopedContact?.avatar && !scopedContact.avatar.includes('ui-avatars.com') && !scopedContact.avatar.includes('unsplash.com') ? scopedContact.avatar : null) ||
               (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${otherId}`) : null) ||
-              ((m as any).sender_avatar && !(m as any).sender_avatar.includes('ui-avatars.com') && !(m as any).sender_avatar.includes('unsplash.com') ? (m as any).sender_avatar : null) ||
+              ((m as any).sender_avatar && m.sender_id === otherId && !(m as any).sender_avatar.includes('ui-avatars.com') && !(m as any).sender_avatar.includes('unsplash.com') ? (m as any).sender_avatar : null) ||
               (dbMatch?.avatar && !dbMatch.avatar.includes('ui-avatars.com') && !dbMatch.avatar.includes('unsplash.com') ? dbMatch.avatar : null) ||
               undefined;
 
             list.push({
               id: otherId,
               name: contactName,
-              phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || '+225 07 00 00 00 00',
+              phone: matchingApp?.tenant_phone || matchingApp?.owner_phone || scopedContact?.phone || '+225 07 00 00 00 00',
               role: contactRole,
-              propertyTitle: matchingApp?.property_title || contractObj?.propertyTitle || (m as any).property_title || 'Échange direct',
+              propertyTitle: matchingApp?.property_title || contractObj?.propertyTitle || scopedContact?.propertyTitle || (m as any).property_title || 'Échange direct',
               avatar: contactAvatar,
               online: true
             });
           }
         });
 
-        // Nettoyer automatiquement les contacts génériques en doublon stockés localement
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.removeItem('locatrust_contact_usr_owner');
-            localStorage.removeItem('locatrust_contact_usr_agency');
-          } catch {}
-        }
+        // 3. Si l'utilisateur courant a explicitement cliqué sur "Message" / "Contacter" pour ouvrir une discussion
+        // avec un interlocuteur spécifique dans sa session (activePartnerId), l'inclure pour permettre le 1er message
+        const activePartnerId = getActiveChatPartnerForUser(currentUserId);
+        if (
+          activePartnerId &&
+          activePartnerId !== currentUserId &&
+          !myAliases.has(activePartnerId) &&
+          !list.some((c) => c.id === activePartnerId)
+        ) {
+          const scopedPartner = scopedContactsMap[activePartnerId];
+          const appMatch = myApps.find(
+            (a: any) => a.tenant_id === activePartnerId || a.owner_id === activePartnerId || a.agency_id === activePartnerId
+          );
 
-        // Charger tout contact directement sauvegardé suite à un message ou une candidature
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith('locatrust_contact_')) {
-            try {
-              const rawContact = localStorage.getItem(key);
-              if (rawContact) {
-                const c = JSON.parse(rawContact);
-                if (!c || typeof c !== 'object') continue;
-                const isGenericOwner = c.name === 'Bailleur Propriétaire' || c.id === 'usr_owner' || c.id === 'usr_agency';
-                const hasRealOwner = list.some((existing) => existing && existing.id !== 'usr_support' && (existing.name || '').toLowerCase() !== 'bailleur propriétaire');
-                if (isGenericOwner && hasRealOwner) continue;
-
-                if (c && c.id && !myAliases.has(c.id) && !list.some((existing) => existing && (existing.id === c.id || (existing.name || '').toLowerCase() === (c.name || '').toLowerCase()))) {
-                  const safeAvatar =
-                    c.avatar && !c.avatar.includes('ui-avatars.com') && !c.avatar.includes('unsplash.com')
-                      ? c.avatar
-                      : (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${c.id}`) : null) || undefined;
-                  list.push({
-                    ...c,
-                    name: c.name || 'Contact',
-                    avatar: safeAvatar
-                  });
-                }
-              }
-            } catch {}
+          if (scopedPartner && scopedPartner.id && scopedPartner.name) {
+            list.push({
+              ...scopedPartner,
+              online: true
+            });
+          } else if (appMatch) {
+            const isLoc = userRole === 'locataire';
+            const partnerName = isLoc
+              ? (appMatch.agency_name || appMatch.owner_name || 'Propriétaire Bailleur')
+              : (appMatch.tenant_name || 'Locataire');
+            list.push({
+              id: activePartnerId,
+              name: partnerName,
+              phone: (isLoc ? appMatch.owner_phone : appMatch.tenant_phone) || '+225 07 00 00 00 00',
+              role: isLoc ? (appMatch.agency_name ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur') : 'Locataire',
+              propertyTitle: appMatch.property_title || 'Échange direct',
+              avatar: isLoc ? appMatch.owner_avatar : appMatch.tenant_avatar,
+              online: true
+            });
           }
         }
       } catch (e) {}
@@ -352,7 +296,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     // Déduplication finale et garantie d'avatar réaliste
     const uniqueContacts: ChatContact[] = [];
-    const seenNames = new Set<string>();
+    const seenIds = new Set<string>();
     const hasNamedOwner = list.some(
       (c) => c && c.id !== 'usr_support' && (c.name || '').toLowerCase() !== 'bailleur propriétaire' && (c.name || '').toLowerCase() !== 'locataire candidat'
     );
@@ -361,6 +305,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     for (const c of list) {
       if (!c || !c.id) continue;
+      if (c.id === currentUserId || myAliases.has(c.id)) continue;
+
       const lower = (c.name || '').trim().toLowerCase();
 
       // Ignorer tout contact candidat fictif
@@ -379,14 +325,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         continue;
       }
 
-      if (seenNames.has(lower)) continue;
-      seenNames.add(lower);
+      if (seenIds.has(c.id)) continue;
+      seenIds.add(c.id);
 
-      const isMe = c.id === currentUserId || myAliases.has(c.id);
       let finalAvatar = c.avatar;
 
       // Si ce n'est pas moi et que l'avatar est identique à mon propre avatar, le réinitialiser
-      if (!isMe && myStoredAvatar && finalAvatar === myStoredAvatar) {
+      if (myStoredAvatar && finalAvatar === myStoredAvatar) {
         finalAvatar = undefined;
       }
 
@@ -395,7 +340,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           (typeof window !== 'undefined' ? localStorage.getItem(`locatrust_user_avatar_${c.id}`) : null) || undefined;
       }
 
-      if (!isMe && myStoredAvatar && finalAvatar === myStoredAvatar) {
+      if (myStoredAvatar && finalAvatar === myStoredAvatar) {
         finalAvatar = undefined;
       }
 
@@ -406,14 +351,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
 
     return uniqueContacts;
-  }, [userRole, currentUserId, user?.id, user?.email, dbContacts]);
+  }, [userRole, currentUserId, user?.id, dbContacts, messages.length, myAliases]);
 
   const [selectedContactId, setSelectedContactId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const active = localStorage.getItem('locatrust_active_chat_contact');
+    if (typeof window !== 'undefined' && currentUserId) {
+      const active = getActiveChatPartnerForUser(currentUserId);
       if (active) return active;
     }
-    return roleContacts[0]?.id || '';
+    return '';
   });
   const [inputMessage, setInputMessage] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -422,14 +367,14 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const [previewingContract, setPreviewingContract] = useState<ChatContractAttachment | null>(null);
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [showMobileChat, setShowMobileChat] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return Boolean(localStorage.getItem('locatrust_active_chat_contact'));
+    if (typeof window !== 'undefined' && currentUserId) {
+      return Boolean(getActiveChatPartnerForUser(currentUserId));
     }
     return false;
   });
   const [userConsultedContactId, setUserConsultedContactId] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('locatrust_active_chat_contact');
+    if (typeof window !== 'undefined' && currentUserId) {
+      return getActiveChatPartnerForUser(currentUserId);
     }
     return null;
   });
@@ -472,8 +417,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   // Sync selectedContactId if role contacts change
   useEffect(() => {
     if (!roleContacts.some((c) => c.id === selectedContactId)) {
-      if (typeof window !== 'undefined') {
-        const active = localStorage.getItem('locatrust_active_chat_contact');
+      if (typeof window !== 'undefined' && currentUserId) {
+        const active = getActiveChatPartnerForUser(currentUserId);
         if (active && roleContacts.some((c) => c.id === active)) {
           setSelectedContactId(active);
           return;
@@ -481,7 +426,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       }
       setSelectedContactId(roleContacts[0]?.id || '');
     }
-  }, [roleContacts, selectedContactId]);
+  }, [roleContacts, selectedContactId, currentUserId]);
 
   const [isSignatureModalOpen, setIsSignatureModalOpen] = useState<boolean>(false);
   const [signingTarget, setSigningTarget] = useState<{
@@ -530,9 +475,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const prevContactIdRef = useRef<string>(selectedContactId);
   const prevMessagesCountRef = useRef<number>(0);
 
-  // Load stored messages
+  // Load stored messages strictly scoped to currentUserId
   const refreshMessages = () => {
-    const list = getStoredMessages();
+    if (!currentUserId || !isValidUuid(currentUserId)) {
+      setMessages([]);
+      return;
+    }
+    const list = getStoredMessages(currentUserId);
     const cleanList = Array.isArray(list) ? list : [];
     setMessages([...cleanList]);
   };
@@ -560,33 +509,41 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   };
 
   useEffect(() => {
+    // Réinitialiser immédiatement l'état local lors d'un changement d'utilisateur
+    setActiveMessagingUser(currentUserId || null);
+    setDbContacts([]);
     refreshMessages();
 
     // Charger les messages et conversations réels depuis Supabase dès l'ouverture
-    if (currentUserId) {
+    if (currentUserId && isValidUuid(currentUserId)) {
       fetchSupabaseMessages(currentUserId).then((newMsgs) => {
-        if (newMsgs && newMsgs.length > 0) {
+        if (newMsgs) {
           refreshMessages();
         }
       }).catch(() => {});
 
       fetchSupabaseConversationsWithProfiles(currentUserId).then((realContacts) => {
-        if (realContacts && realContacts.length > 0) {
-          setDbContacts(realContacts);
-        }
-      }).catch(() => {});
+        setDbContacts(Array.isArray(realContacts) ? realContacts : []);
+      }).catch(() => {
+        setDbContacts([]);
+      });
     }
 
     const handleMessagesUpdated = (e?: any) => {
       const incoming = e?.detail?.data;
-      if (incoming && incoming.id) {
+      if (
+        incoming &&
+        incoming.id &&
+        currentUserId &&
+        (incoming.sender_id === currentUserId || incoming.receiver_id === currentUserId)
+      ) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === incoming.id)) return prev;
           return [...prev, incoming];
         });
       }
       refreshMessages();
-      if (currentUserId) {
+      if (currentUserId && isValidUuid(currentUserId)) {
         fetchSupabaseMessages(currentUserId).then(() => refreshMessages()).catch(() => {});
       }
     };
@@ -594,6 +551,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     const handleStorage = (e: StorageEvent) => {
       if (
         e.key === 'locatrust_chat_messages_v4' ||
+        (currentUserId && e.key === `locatrust_chat_messages_v4_${currentUserId}`) ||
         e.key === 'locatrust_tenant_receipts_v2' ||
         e.key === 'locatrust_rental_applications' ||
         e.key === 'locatrust_contracts'
@@ -745,8 +703,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     ) {
       const msgIds = currentConversationMessages.map((m) => m.id);
       markMessagesAsRead(activeContact.id, currentUserId, msgIds);
-      if (typeof window !== 'undefined' && localStorage.getItem('locatrust_active_chat_contact') === activeContact.id) {
-        localStorage.removeItem('locatrust_active_chat_contact');
+      if (typeof window !== 'undefined' && getActiveChatPartnerForUser(currentUserId) === activeContact.id) {
+        setActiveChatPartnerForUser(currentUserId, null);
       }
     }
   }, [activeContact?.id, currentUserId, currentConversationMessages.length, userConsultedContactId]);
@@ -1589,8 +1547,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
                   <MessageSquare className="w-6 h-6 text-slate-400" />
                 </div>
-                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Aucune conversation</p>
-                <p className="text-[11px] text-slate-400 mt-1">Vous n'avez encore reçu aucun message.</p>
+                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Aucune conversation pour le moment</p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Vos conversations apparaîtront ici lorsque vous échangerez avec un propriétaire, un locataire ou une agence.
+                </p>
               </div>
             ) : (
               filteredContacts.map((contact) => {
@@ -1708,9 +1668,9 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 shadow-inner">
                 <MessageSquare className="w-8 h-8" />
               </div>
-              <h3 className="text-base font-black text-slate-800 dark:text-white mb-1">Aucune conversation</h3>
+              <h3 className="text-base font-black text-slate-800 dark:text-white mb-1">Aucune conversation pour le moment</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm">
-                Vous n'avez encore reçu aucun message.
+                Vos conversations apparaîtront ici lorsque vous échangerez avec un propriétaire, un locataire ou une agence.
               </p>
             </div>
           ) : (
