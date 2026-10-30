@@ -20,7 +20,7 @@ export type ContractStatus = 'actif' | 'termine' | 'resilie';
 export type CautionStatus = 'partiel' | 'complet' | 'restitue' | 'retenu';
 export type RentPaymentStatus = 'declare' | 'confirme' | 'refuse' | 'en_attente_signature_locataire';
 export type DisputeStatus = 'ouvert' | 'resolu_locataire' | 'resolu_proprietaire';
-export type SubscriptionTier = '1_bien' | '2_10_biens' | '11_20_biens' | '20plus_biens';
+export type SubscriptionTier = '0_bien' | '1_bien' | '2_10_biens' | '11_20_biens' | '20plus_biens';
 
 export interface User {
   id: string;

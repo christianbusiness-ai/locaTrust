@@ -368,6 +368,68 @@ let SERVER_STORE = {
   ]
 };
 
+// ============================================================================
+// MOTEUR CENTRALISÉ DE CALCUL DES QUOTAS CÔTÉ SERVEUR (SOURCE OFFICIELLE)
+// ============================================================================
+function getQuotaPrice(billablePropertyCount) {
+  const count = Math.max(0, Math.floor(Number(billablePropertyCount) || 0));
+  if (count === 0) {
+    return { tier: '0_bien', price: 0, amount: 0, tierName: 'Aucun quota actif', label: 'Aucun bien actif (0 FCFA)' };
+  }
+  if (count === 1) {
+    return { tier: '1_bien', price: 500, amount: 500, tierName: 'Formule 1 Bien Actif', label: 'Starter (1 bien actif)' };
+  }
+  if (count <= 10) {
+    return { tier: '2_10_biens', price: 2000, amount: 2000, tierName: 'Formule 2 à 10 Biens Actifs', label: 'Standard (2 à 10 biens actifs)' };
+  }
+  if (count <= 20) {
+    return { tier: '11_20_biens', price: 5000, amount: 5000, tierName: 'Formule 11 à 20 Biens Actifs', label: 'Pro (11 à 20 biens actifs)' };
+  }
+  return { tier: '20plus_biens', price: 10000, amount: 10000, tierName: 'Formule Plus de 20 Biens Actifs', label: 'Entreprise (+20 biens actifs)' };
+}
+
+function isServerContractActive(contract, now = new Date()) {
+  if (!contract || typeof contract !== 'object') return false;
+  if (contract.deleted_at || contract.terminated_at || contract.cancelled_at || contract.resiliated_at) return false;
+
+  const propId = contract.property_id || contract.propertyId || contract.property?.id;
+  if (!propId) return false;
+
+  const status = String(contract.status || '').trim().toLowerCase();
+  if (!['actif', 'contrat_actif', 'active', 'bail_actif', 'en_cours'].includes(status)) return false;
+  if (contract.tenant_signed === false || contract.owner_signed === false) return false;
+
+  if (contract.end_date || contract.endDate) {
+    const endTs = new Date(contract.end_date || contract.endDate).getTime();
+    if (!Number.isNaN(endTs) && endTs < now.getTime()) return false;
+  }
+  return true;
+}
+
+function getBillablePropertyCount(ownerId) {
+  if (!ownerId) return { managedPropertiesCount: 0, activeContractsCount: 0, billablePropertiesCount: 0, quotaPrice: 0, tier: '0_bien' };
+  const myProps = SERVER_STORE.properties.filter(p => p && !p.deleted_at && (p.owner_id === ownerId || p.agency_id === ownerId));
+  const myContracts = SERVER_STORE.contracts.filter(c => c && (c.owner_id === ownerId || c.agency_id === ownerId));
+  const activeContracts = myContracts.filter(c => isServerContractActive(c));
+  const billableIds = new Set(activeContracts.map(c => String(c.property_id || c.propertyId || c.property?.id)).filter(Boolean));
+  const managedIds = new Set([...myProps.map(p => String(p.id)), ...Array.from(billableIds)]);
+  const priceInfo = getQuotaPrice(billableIds.size);
+  return {
+    managedPropertiesCount: managedIds.size,
+    activeContractsCount: activeContracts.length,
+    billablePropertiesCount: billableIds.size,
+    vacantPropertiesCount: Math.max(0, managedIds.size - billableIds.size),
+    quotaPrice: priceInfo.price,
+    tier: priceInfo.tier,
+    tierName: priceInfo.tierName,
+    label: priceInfo.label
+  };
+}
+
+function getAgencyBillablePropertyCount(agencyId) {
+  return getBillablePropertyCount(agencyId);
+}
+
 export default async function handler(req, res) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -489,6 +551,10 @@ export default async function handler(req, res) {
             (!cleanUserId && (a.owner_id === 'usr_owner' || a.agency_id === 'usr_agency' || a.owner_id === 'usr_agency' || a.tenant_id === 'usr_tenant'))
         );
 
+        const userQuota = role === 'agence'
+          ? getAgencyBillablePropertyCount(cleanUserId)
+          : getBillablePropertyCount(cleanUserId);
+
         return res.status(200).json({
           success: true,
           data: {
@@ -504,6 +570,7 @@ export default async function handler(req, res) {
             contacts: SERVER_STORE.contacts,
             readState: userReadState,
             applications: userApplications,
+            quota: userQuota,
             timestamp: new Date().toISOString()
           }
         });

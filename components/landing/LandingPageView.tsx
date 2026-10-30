@@ -950,7 +950,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       </section>
 
       {/* ========================================================================= */}
-      {/* 7. GRILLE DE TARIFS SAAS LOCATRUST (Zéro Bridage • Facturation au Parc) */}
+      {/* 7. GRILLE DE TARIFS SAAS LOCATRUST (Zéro Bridage • Facturation aux Logements Actifs) */}
       {/* ========================================================================= */}
       <section id="pricing" className="py-10 sm:py-14 lg:py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         
@@ -959,11 +959,31 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             TRANSPARENCE TARIFAIRE & ÉQUITÉ
           </span>
           <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-slate-900 tracking-tight">
-            100% des outils inclus pour tous. Facturation selon votre parc.
+            Vous payez uniquement pour les logements actuellement loués avec un contrat actif.
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 leading-relaxed font-medium">
-            Chez LocaTrust, aucune fonctionnalité n'est restreinte : propriétaire et agence bénéficient de l'intégralité du SaaS (baux IA 41-points, quittances QR Code, validation Mobile Money, exports comptables). Vous payez simplement selon le nombre réel de logements gérés.
+            Chez LocaTrust, aucune fonctionnalité n'est restreinte : propriétaire et agence bénéficient de l'intégralité du SaaS (baux IA 41-points, quittances QR Code, validation Mobile Money, exports comptables). Les logements vacants ne consomment aucun quota et ne sont jamais facturés.
           </p>
+        </div>
+
+        {/* Explication pédagogique sur la Landing Page (Section 20) */}
+        <div className="max-w-4xl mx-auto mb-6 p-5 sm:p-6 rounded-3xl bg-emerald-50/90 border border-emerald-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-emerald-950">
+                Zéro facturation sur vos logements vacants
+              </h4>
+              <p className="text-xs text-emerald-900 leading-relaxed mt-1 font-medium">
+                <em>Vous gérez 10 logements, mais seulement 3 sont actuellement loués avec un contrat actif ? Votre quota est calculé sur 3 logements, pas sur 10. Les logements vacants ne consomment aucun quota.</em>
+              </p>
+            </div>
+          </div>
+          <span className="px-3 py-1.5 rounded-full bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider shrink-0 shadow-xs">
+            0 FCFA si vacant
+          </span>
         </div>
 
         {/* Bannière explicative d'équité : Bailleur vs Agence */}
@@ -986,22 +1006,24 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           </span>
         </div>
 
-        {/* Sélecteur interactif rapide de parc immobilier */}
+        {/* Sélecteur interactif rapide de logements avec contrat actif */}
         <div className="max-w-3xl mx-auto mb-10 p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-md flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Simulez votre tarif selon vos biens</span>
-              <h4 className="text-sm sm:text-base font-extrabold text-slate-900">Combien de logements avez-vous en gestion ?</h4>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Simulateur de quota basé sur vos baux actifs</span>
+              <h4 className="text-sm sm:text-base font-extrabold text-slate-900">Combien de logements sont actuellement loués avec un contrat actif ?</h4>
             </div>
             <div className="flex items-baseline gap-1.5 bg-slate-100 px-3.5 py-1.5 rounded-2xl">
               <span className="text-xl sm:text-2xl font-black text-slate-900">{pricingPropertyCount}</span>
-              <span className="text-xs font-bold text-slate-500">{pricingPropertyCount > 1 ? 'biens gérés' : 'bien géré'}</span>
+              <span className="text-xs font-bold text-slate-500">
+                {pricingPropertyCount > 1 ? 'logements actifs' : 'logement actif'}
+              </span>
             </div>
           </div>
 
           <input
             type="range"
-            min={1}
+            min={0}
             max={35}
             step={1}
             value={pricingPropertyCount}
@@ -1009,18 +1031,32 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             className="w-full accent-slate-900 cursor-pointer h-2 bg-slate-200 rounded-lg"
           />
 
-          <div className="flex justify-between text-[10px] font-bold text-slate-400">
-            <span>1 bien (500 F)</span>
-            <span>2 à 10 biens (2 000 F)</span>
-            <span>11 à 20 biens (5 000 F)</span>
-            <span>20+ biens (10 000 F)</span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold text-slate-600">
+            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount === 1 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
+              <div>1 logement actif</div>
+              <div className="font-black">500 FCFA / mois</div>
+            </div>
+            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount >= 2 && pricingPropertyCount <= 10 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
+              <div>2 à 10 logements actifs</div>
+              <div className="font-black">2 000 FCFA / mois</div>
+            </div>
+            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount >= 11 && pricingPropertyCount <= 20 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
+              <div>11 à 20 logements actifs</div>
+              <div className="font-black">5 000 FCFA / mois</div>
+            </div>
+            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount > 20 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
+              <div>Plus de 20 logements actifs</div>
+              <div className="font-black">10 000 FCFA / mois</div>
+            </div>
           </div>
 
           <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
             <div>
-              <span className="text-xs font-bold text-amber-900">Tarif exact de votre abonnement mensuel :</span>
+              <span className="text-xs font-bold text-amber-900">Tarif mensuel correspondant à vos logements loués :</span>
               <div className="text-lg sm:text-xl font-black text-amber-950">
-                {pricingPropertyCount <= 1
+                {pricingPropertyCount === 0
+                  ? '0 FCFA / mois (Aucun contrat actif)'
+                  : pricingPropertyCount === 1
                   ? '500 FCFA / mois'
                   : pricingPropertyCount <= 10
                   ? '2 000 FCFA / mois'
@@ -1030,7 +1066,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               </div>
             </div>
             <span className="text-xs font-extrabold text-amber-800 bg-amber-200/60 px-3 py-1.5 rounded-xl">
-              100% des outils débloqués
+              Logements vacants = 0 FCFA
             </span>
           </div>
         </div>
@@ -1088,21 +1124,21 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black text-amber-300 uppercase tracking-wider">Bailleur Particulier</span>
-                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 font-bold text-[10px]">Selon parc</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 font-bold text-[10px]">Selon baux actifs</span>
               </div>
               <h3 className="text-lg font-extrabold text-white mt-1">Propriétaire Indépendant</h3>
               <div className="mt-3 flex items-baseline gap-1">
                 <span className="text-3xl sm:text-4xl font-black text-white">Dès 500 F</span>
-                <span className="text-xs font-bold text-slate-400">/ mois selon parc</span>
+                <span className="text-xs font-bold text-slate-400">/ mois (0 F si vacant)</span>
               </div>
               <p className="text-xs text-slate-300 mt-1.5">
-                1 bien : 500 F • 2-10 biens : 2 000 F • 11-20 biens : 5 000 F • 20+ : 10 000 F.
+                1 logement actif : 500 F • 2-10 actifs : 2 000 F • 11-20 actifs : 5 000 F • +20 actifs : 10 000 F.
               </p>
 
               <div className="space-y-2.5 pt-4 border-t border-slate-800 mt-5 text-xs text-slate-200 font-medium">
                 <div className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span><strong>100% des fonctionnalités ouvertes</strong></span>
+                  <span><strong>0 FCFA pour les biens vacants sans contrat</strong></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -1145,17 +1181,17 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               </div>
               <h3 className="text-lg font-extrabold text-slate-900 mt-1">Agence & Cabinet Immo</h3>
               <div className="mt-3 flex items-baseline gap-1">
-                <span className="text-3xl sm:text-4xl font-black text-slate-900">Dès 10 000 F</span>
-                <span className="text-xs font-bold text-slate-400">/ mois</span>
+                <span className="text-3xl sm:text-4xl font-black text-slate-900">Dès 500 F</span>
+                <span className="text-xs font-bold text-slate-400">/ mois selon lots actifs</span>
               </div>
               <p className="text-xs text-slate-500 mt-1.5">
-                Idéal pour les agences agréées et gestionnaires de portefeuilles multi-propriétaires.
+                Même grille tarifaire équitable (500 F à 10 000 F / mois) calculée uniquement sur les biens gérés ayant un contrat actif.
               </p>
 
               <div className="space-y-2.5 pt-4 border-t border-slate-100 mt-5 text-xs text-slate-700 font-medium">
                 <div className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span><strong>100% des fonctionnalités SaaS incluses</strong></span>
+                  <span><strong>0 FCFA sur les mandats et biens vacants</strong></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-blue-600 shrink-0" />

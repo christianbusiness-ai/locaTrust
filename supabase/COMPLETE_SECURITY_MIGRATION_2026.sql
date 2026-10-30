@@ -537,3 +537,58 @@ CREATE POLICY "messages_update_participate" ON public.messages
     ) OR
     public.is_admin()
   );
+
+-- -----------------------------------------------------------------------------
+-- FONCTIONS OFFICIELLES DE CALCUL DU QUOTA ET DU TARIF MENSUEL (BASE DE DONNÉES)
+-- Règle : Nombre de biens facturables = nombre de biens distincts (property_id)
+-- possédant actuellement un contrat de location actif (status = 'actif' ou 'contrat_actif').
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_quota_price(p_billable_count integer)
+RETURNS integer
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+BEGIN
+  IF COALESCE(p_billable_count, 0) <= 0 THEN
+    RETURN 0;
+  ELSIF p_billable_count = 1 THEN
+    RETURN 500;
+  ELSIF p_billable_count <= 10 THEN
+    RETURN 2000;
+  ELSIF p_billable_count <= 20 THEN
+    RETURN 5000;
+  ELSE
+    RETURN 10000;
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_billable_property_count(p_owner_id uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+AS $$
+  SELECT COUNT(DISTINCT c.property_id)::integer
+  FROM public.contracts c
+  WHERE c.owner_id = p_owner_id
+    AND c.property_id IS NOT NULL
+    AND LOWER(COALESCE(c.status, '')) IN ('actif', 'contrat_actif', 'active')
+    AND (c.end_date IS NULL OR c.end_date >= CURRENT_DATE);
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_agency_billable_property_count(p_agency_id uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+AS $$
+  SELECT COUNT(DISTINCT c.property_id)::integer
+  FROM public.contracts c
+  LEFT JOIN public.properties p ON p.id = c.property_id
+  WHERE (c.owner_id = p_agency_id OR p.owner_id = p_agency_id)
+    AND c.property_id IS NOT NULL
+    AND LOWER(COALESCE(c.status, '')) IN ('actif', 'contrat_actif', 'active')
+    AND (c.end_date IS NULL OR c.end_date >= CURRENT_DATE);
+$$;
+

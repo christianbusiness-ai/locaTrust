@@ -31,6 +31,7 @@ import { Link } from 'react-router-dom';
 import { getActiveReferenceYear, getAvailableYears } from '@/lib/reports/accountingHistoryStore';
 import { computePortfolioRentMetrics } from '@/lib/payments/rentScheduleEngine';
 import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
+import { calculateQuotaFromDataset, getQuotaPrice } from '@/lib/quotaEngine';
 
 interface ProprietaireDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -307,9 +308,20 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   // Calculs dynamiques unifiés basés sur computePortfolioRentMetrics (Règles 1 à 10)
   const portfolioMetrics = computePortfolioRentMetrics(realProps, realContracts, realPayments, new Date());
 
-  const totalProps = isDemo ? 12 : realProps.length;
-  const activeProps = isDemo ? 10 : realProps.filter(p => p.status === 'disponible' || p.status === 'loue').length;
-  const inactiveProps = isDemo ? 2 : realProps.filter(p => p.status === 'desactive').length;
+  // Calcul officiel du quota basé uniquement sur les biens distincts possédant un contrat actif
+  const quotaSummary = calculateQuotaFromDataset({
+    properties: realProps,
+    contracts: realContracts,
+    applications: realApplications,
+    ownerId: userRole === 'proprietaire' ? user?.id : undefined,
+    agencyId: userRole === 'agence' ? user?.id : undefined
+  });
+
+  const totalProps = isDemo ? 12 : quotaSummary.managedPropertiesCount;
+  const activeProps = isDemo ? 7 : quotaSummary.billablePropertiesCount;
+  const inactiveProps = isDemo ? 5 : quotaSummary.vacantPropertiesCount;
+  const activeContractsCount = isDemo ? 7 : quotaSummary.activeContractsCount;
+  const currentQuotaPrice = isDemo ? getQuotaPrice(7).price : quotaSummary.quotaPrice;
 
   const activeContracts = realContracts.filter(c => c.status === 'actif' || c.status === 'contrat_actif' || c.status === 'signe');
   const totalTenants = isDemo ? 7 : portfolioMetrics.totalTenantsCount;
@@ -543,13 +555,27 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           </div>
 
           <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-600 font-medium">Actifs :</span>
+            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1 rounded-lg">
+              <span className="text-slate-600 font-medium">Biens gérés :</span>
+              <strong className="text-slate-900 font-black">{totalProps}</strong>
+            </div>
+            <div className="flex items-center justify-between bg-blue-50/70 px-2.5 py-1 rounded-lg">
+              <span className="text-blue-900 font-medium">Contrats actifs :</span>
+              <strong className="text-blue-700 font-black">{activeContractsCount}</strong>
+            </div>
+            <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+              <span className="text-emerald-900 font-bold">Biens facturables :</span>
               <strong className="text-emerald-700 font-black">{activeProps}</strong>
             </div>
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-600 font-medium">Inactifs :</span>
-              <strong className="text-slate-600 font-black">{inactiveProps}</strong>
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigateTab('subscription');
+              }}
+              className="flex items-center justify-between bg-amber-50/90 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-200 transition-colors"
+            >
+              <span className="text-amber-900 font-bold">Quota actuel :</span>
+              <strong className="text-amber-950 font-black">{formatFCFA(currentQuotaPrice)} / mois</strong>
             </div>
           </div>
         </div>

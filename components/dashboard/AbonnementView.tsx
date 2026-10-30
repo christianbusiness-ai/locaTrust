@@ -21,8 +21,13 @@ import {
   Loader2
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
+import {
+  getBillablePropertyCount,
+  getAgencyBillablePropertyCount,
+  getQuotaPrice,
+  type QuotaComputationResult
+} from '@/lib/quotaEngine';
 import { useAuth } from '@/src/context/AuthContext';
-import { supabase } from '@/src/lib/supabase';
 import { SasPayService } from '@/src/lib/saspayService';
 import jsPDF from 'jspdf';
 import confetti from 'canvas-confetti';
@@ -41,7 +46,23 @@ const INITIAL_INVOICES: SubscriptionInvoice[] = [];
 
 export const AbonnementView: React.FC = () => {
   const { user, profile } = useAuth();
-  const [activePropertiesCount, setActivePropertiesCount] = useState<number>(0);
+  const [quotaMetrics, setQuotaMetrics] = useState<QuotaComputationResult>(() => ({
+    ownerOrAgencyId: '',
+    role: 'proprietaire',
+    managedPropertiesCount: 0,
+    activeContractsCount: 0,
+    billablePropertiesCount: 0,
+    vacantPropertiesCount: 0,
+    billablePropertyIds: [],
+    activeContractIds: [],
+    quotaPrice: 0,
+    tier: '0_bien',
+    tierName: 'Aucun quota actif',
+    label: 'Aucun bien actif (0 FCFA)',
+    rangeLabel: '0 bien actif',
+    hasActiveQuota: false,
+    calculatedAt: new Date().toISOString()
+  }));
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,56 +70,23 @@ export const AbonnementView: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      let totalCount = 0;
+      const userId = user?.id || '';
+      const role = profile?.role === 'agence' ? 'agence' : 'proprietaire';
 
-      // 1. Dénombrement de TOUS les biens enregistrés en base (quel que soit le statut actif/inactif/brouillon)
-      try {
-        let query = supabase
-          .from('properties')
-          .select('id', { count: 'exact', head: true });
+      const computed =
+        role === 'agence'
+          ? await getAgencyBillablePropertyCount(userId)
+          : await getBillablePropertyCount(userId);
 
-        if (user?.id) {
-          query = query.eq('owner_id', user.id);
-        }
-
-        const { count, error: qError } = await query;
-        if (!qError && count !== null) {
-          totalCount = Math.max(totalCount, count);
-        }
-      } catch (err) {
-        console.warn('Supabase count error:', err);
-      }
-
-      // 2. Dénombrement dans le stockage local pour prise en compte immédiate
-      if (typeof window !== 'undefined') {
-        const localPropsRaw = localStorage.getItem('locatrust_properties');
-        if (localPropsRaw) {
-          try {
-            const parsed = JSON.parse(localPropsRaw);
-            if (Array.isArray(parsed)) {
-              totalCount = Math.max(totalCount, parsed.length);
-            }
-          } catch {}
-        }
-
-        // Règle anti-contournement stricte : le forfait s'applique sur le maximum de biens enregistrés dans la période
-        // Désactiver ou masquer temporairement un bien avant la date de facturation ne réduit pas le palier contractuel
-        const peakStored = Number(localStorage.getItem('locatrust_peak_registered_properties') || '0');
-        if (totalCount > peakStored) {
-          localStorage.setItem('locatrust_peak_registered_properties', String(totalCount));
-        } else if (peakStored > totalCount) {
-          totalCount = peakStored;
-        }
-      }
-
-      setActivePropertiesCount(Math.max(1, totalCount));
+      setQuotaMetrics(computed);
     } catch (err: any) {
-      console.error('Erreur chargement nombre de biens:', err);
-      setActivePropertiesCount(1);
+      console.error('Erreur calcul du quota:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  const activePropertiesCount = quotaMetrics.billablePropertiesCount;
 
   const fetchSubscriptions = async () => {
     if (!user?.id) return;
@@ -110,7 +98,7 @@ export const AbonnementView: React.FC = () => {
           date: new Date(s.created_at).toLocaleDateString('fr-FR'),
           period: new Date(s.period_start).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
           amount: Number(s.amount),
-          propertiesCount: s.properties_count || 1,
+          propertiesCount: s.properties_count ?? 0,
           paymentMethod: s.payment_method,
           status: s.status === 'actif' ? 'Payé' : 'En attente'
         }));
@@ -129,7 +117,16 @@ export const AbonnementView: React.FC = () => {
     fetchPropertiesCount();
     fetchSubscriptions();
 
+    const handleLiveQuotaRefresh = () => {
+      fetchPropertiesCount();
+    };
+
     if (typeof window !== 'undefined') {
+      window.addEventListener('locatrust:properties-updated', handleLiveQuotaRefresh);
+      window.addEventListener('locatrust:contracts-updated', handleLiveQuotaRefresh);
+      window.addEventListener('locatrust:applications-updated', handleLiveQuotaRefresh);
+      window.addEventListener('locatrust:subscription_updated', handleLiveQuotaRefresh);
+
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('payment') === 'success' && user?.id) {
         const plan = urlParams.get('plan') || 'Abonnement LocaTrust';
@@ -152,35 +149,30 @@ export const AbonnementView: React.FC = () => {
         });
       }
     }
-  }, [user?.id]);
 
-  // STRICT AUTOMATIC TIER CALCULATION (Point 9)
-  // 1 property = 500 FCFA / month
-  // 2 to 10 properties = 2 000 FCFA / month
-  // 11 to 20 properties = 5 000 FCFA / month
-  // 20+ properties = 10 000 FCFA / month
-  const calculateSubscription = (count: number) => {
-    if (count <= 1) {
-      return {
-        amount: 500,
-        tierName: 'Formule 1 Bien'
-      };
-    }
-    if (count <= 10) {
-      return {
-        amount: 2000,
-        tierName: 'Formule Gestionnaire'
-      };
-    }
-    if (count <= 20) {
-      return {
-        amount: 5000,
-        tierName: 'Formule Multi-Propriétés'
-      };
-    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('locatrust:properties-updated', handleLiveQuotaRefresh);
+        window.removeEventListener('locatrust:contracts-updated', handleLiveQuotaRefresh);
+        window.removeEventListener('locatrust:applications-updated', handleLiveQuotaRefresh);
+        window.removeEventListener('locatrust:subscription_updated', handleLiveQuotaRefresh);
+      }
+    };
+  }, [user?.id, profile?.role]);
+
+  // CALCUL OFFICIEL DU TARIF BASÉ UNIQUEMENT SUR LES BIENS AVEC CONTRAT ACTIF
+  // 0 bien actif         = 0 FCFA / mois
+  // 1 bien actif         = 500 FCFA / mois
+  // 2 à 10 biens actifs  = 2 000 FCFA / mois
+  // 11 à 20 biens actifs = 5 000 FCFA / mois
+  // > 20 biens actifs    = 10 000 FCFA / mois
+  const calculateSubscription = (billableCount: number) => {
+    const info = getQuotaPrice(billableCount);
     return {
-      amount: 10000,
-      tierName: 'Formule Grand Parc'
+      amount: info.amount,
+      tierName: info.tierName,
+      rangeLabel: info.rangeLabel,
+      hasActiveQuota: info.hasActiveQuota
     };
   };
 
@@ -388,17 +380,22 @@ export const AbonnementView: React.FC = () => {
               Abonnement SaaS LocaTrust
             </h2>
             <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 text-xs font-black border border-blue-200">
-              Gestionnaire Bailleur
+              {profile?.role === 'agence' ? 'Agence Immobilière' : 'Gestionnaire Bailleur'}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-            Tarification unique calculée directement d'après le nombre réel de biens que vous gérez. Accès 100% complet à l'ensemble des fonctionnalités.
+            Vous payez uniquement pour les logements actuellement loués avec un contrat actif. Les logements vacants ne consomment aucun quota (0 FCFA).
           </p>
         </div>
 
         {/* Status indicator */}
         <div className="flex items-center gap-2.5">
-          {subscriptionStatus === 'actif' ? (
+          {activePropertiesCount === 0 ? (
+            <span className="px-3.5 py-2 rounded-2xl bg-slate-100 text-slate-800 text-xs font-black border border-slate-200 flex items-center gap-1.5 shadow-sm whitespace-nowrap">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Aucun quota actif (0 FCFA / mois)</span>
+            </span>
+          ) : subscriptionStatus === 'actif' ? (
             <span className="px-3.5 py-2 rounded-2xl bg-emerald-100 text-emerald-900 text-xs font-black border border-emerald-200 flex items-center gap-1.5 shadow-sm whitespace-nowrap">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>Abonnement actif ({daysRemaining}j restants)</span>
@@ -411,6 +408,51 @@ export const AbonnementView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* LES 4 INDICATEURS OFFICIELS DE QUOTA (Section 17) */}
+      {!loading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">1. Biens gérés</span>
+              <Building2 className="w-4 h-4 text-slate-400" />
+            </div>
+            <span className="text-2xl font-black text-slate-900">{quotaMetrics.managedPropertiesCount}</span>
+            <span className="text-[11px] text-slate-500">
+              Dont {quotaMetrics.vacantPropertiesCount} vacant(s) (0 FCFA)
+            </span>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">2. Contrats actifs</span>
+              <FileText className="w-4 h-4 text-blue-600" />
+            </div>
+            <span className="text-2xl font-black text-blue-700">{quotaMetrics.activeContractsCount}</span>
+            <span className="text-[11px] text-slate-500">Baux actuellement en cours</span>
+          </div>
+
+          <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 shadow-sm flex flex-col justify-between gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black text-emerald-800 uppercase tracking-wider">3. Biens facturables</span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            </div>
+            <span className="text-2xl font-black text-emerald-700">{quotaMetrics.billablePropertiesCount}</span>
+            <span className="text-[11px] text-emerald-800 font-semibold">
+              Biens distincts avec contrat actif
+            </span>
+          </div>
+
+          <div className="bg-amber-50/80 p-4 rounded-2xl border border-amber-200 shadow-sm flex flex-col justify-between gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black text-amber-900 uppercase tracking-wider">4. Quota actuel</span>
+              <CreditCard className="w-4 h-4 text-amber-700" />
+            </div>
+            <span className="text-xl font-black text-slate-900">{formatFCFA(currentPlan.amount)} / mois</span>
+            <span className="text-[11px] text-amber-800 font-bold">{currentPlan.rangeLabel}</span>
+          </div>
+        </div>
+      )}
 
       {paymentSuccessMsg && (
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2 shadow-sm animate-fadeIn">
@@ -473,7 +515,7 @@ export const AbonnementView: React.FC = () => {
       )}
 
       {/* GESTION DE L'ABONNEMENT EXPIRÉ (Règles non destructives) */}
-      {subscriptionStatus === 'expire' && (
+      {subscriptionStatus === 'expire' && activePropertiesCount > 0 && (
         <div className="p-6 rounded-3xl bg-amber-50/90 border-2 border-amber-300 flex flex-col md:flex-row md:items-center justify-between gap-5 animate-scaleUp shadow-sm">
           <div className="flex items-start gap-4">
             <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md">
@@ -495,7 +537,7 @@ export const AbonnementView: React.FC = () => {
 
           <button
             onClick={handleDirectSasPayPayment}
-            disabled={isProcessingPayment}
+            disabled={isProcessingPayment || currentPlan.amount === 0}
             className="px-6 py-3 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-lg shadow-amber-600/30 shrink-0 transition-all active:scale-95 whitespace-nowrap flex items-center gap-2 disabled:opacity-50"
           >
             {isProcessingPayment ? (
@@ -518,15 +560,15 @@ export const AbonnementView: React.FC = () => {
         </div>
       )}
 
-      {/* CLEAN SAAS SUBSCRIPTION CARD (Clean, modern, no internal tier breakdown) */}
+      {/* CLEAN SAAS SUBSCRIPTION CARD */}
       <div className="bg-gradient-to-br from-[#0B192C] via-blue-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-blue-900/60 flex flex-col md:flex-row md:items-center justify-between gap-6 sm:gap-8">
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 text-xs font-black uppercase tracking-wider shadow-sm">
-              Votre formule active
+              {currentPlan.tierName}
             </span>
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30">
-              Abonnement actif
+              {activePropertiesCount === 0 ? 'Aucun frais (0 bien loué)' : 'Abonnement actif'}
             </span>
           </div>
 
@@ -535,13 +577,15 @@ export const AbonnementView: React.FC = () => {
           </h3>
 
           <p className="text-xs text-slate-300 max-w-xl leading-relaxed">
-            Accès complet et illimité à l'ensemble des modules LocaTrust pour vos {activePropertiesCount} bien(s) en gestion active.
+            {activePropertiesCount === 0
+              ? `Vous avez ${quotaMetrics.managedPropertiesCount} bien(s) géré(s), mais aucun contrat de location actif pour le moment. Les logements vacants ne génèrent aucun frais d'abonnement.`
+              : `Calculé sur vos ${activePropertiesCount} bien(s) facturable(s) possédant un contrat actif (sur ${quotaMetrics.managedPropertiesCount} bien(s) géré(s) au total).`}
           </p>
 
           <div className="mt-2 p-3.5 rounded-2xl bg-blue-900/40 border border-blue-700/50 flex items-center gap-2.5 text-xs text-blue-100">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>
-              <strong>Tout inclus :</strong> Baux certifiés avec QR code, quittances avec signature numérique, séquestre des cautions, messagerie interactive et exports comptables.
+              <strong>Règle d'équité LocaTrust :</strong> Seuls les logements ayant un contrat actif entrent dans votre quota. 1 bien actif : 500 FCFA • 2 à 10 : 2 000 FCFA • 11 à 20 : 5 000 FCFA • +20 : 10 000 FCFA.
             </span>
           </div>
         </div>
@@ -550,9 +594,11 @@ export const AbonnementView: React.FC = () => {
         <div className="p-5 sm:p-6 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex flex-col gap-4 shrink-0 min-w-[260px] sm:min-w-[280px]">
           <div>
             <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
-              Patrimoine géré
+              Biens facturables (contrat actif)
             </span>
-            <span className="text-xl font-black text-white">{activePropertiesCount} bien(s) actif(s)</span>
+            <span className="text-xl font-black text-white">
+              {activePropertiesCount} bien(s) sur {quotaMetrics.managedPropertiesCount} géré(s)
+            </span>
           </div>
 
           <div>
@@ -561,18 +607,22 @@ export const AbonnementView: React.FC = () => {
             </span>
             <span className="text-base font-black text-amber-300 flex items-center gap-1.5 mt-0.5">
               <Calendar className="w-4 h-4" />
-              {nextDueDate}
+              {activePropertiesCount === 0 ? 'Aucune échéance (0 FCFA)' : nextDueDate}
             </span>
           </div>
 
           <div className="pt-2 border-t border-white/10 flex flex-col gap-2">
             <button
               onClick={handleDirectSasPayPayment}
-              disabled={isProcessingPayment}
-              className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+              disabled={isProcessingPayment || currentPlan.amount === 0}
+              className="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CreditCard className="w-4 h-4" />
-              <span>Régler mon abonnement ({formatFCFA(currentPlan.amount)})</span>
+              <span>
+                {currentPlan.amount === 0
+                  ? 'Aucun paiement requis (0 FCFA)'
+                  : `Régler mon abonnement (${formatFCFA(currentPlan.amount)})`}
+              </span>
             </button>
           </div>
         </div>

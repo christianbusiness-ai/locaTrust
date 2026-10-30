@@ -5,32 +5,26 @@ import { Header } from '@/components/layout/Header';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
 import { calculateSubscriptionTier, formatFCFA } from '@/lib/utils';
+import { getBillablePropertyCount, type QuotaComputationResult } from '@/lib/quotaEngine';
 import { StripePaymentGateway } from '@/lib/payments/stripe.gateway';
 import { CinetPayGateway } from '@/lib/payments/cinetpay.gateway';
 import { ShieldCheck, Check, CreditCard, Smartphone, Zap, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/src/context/AuthContext';
-import { supabase } from '@/src/lib/supabase';
 
 export default function SubscriptionPage() {
   const { user, profile } = useAuth();
-  const [activePropsCount, setActivePropsCount] = useState<number>(0);
+  const [quotaMetrics, setQuotaMetrics] = useState<QuotaComputationResult | null>(null);
   const [loadingProps, setLoadingProps] = useState<boolean>(true);
 
   useEffect(() => {
     const fetchCount = async () => {
       try {
         setLoadingProps(true);
-        let query = supabase.from('properties').select('id', { count: 'exact', head: true });
-        if (user?.id) {
-          query = query.eq('owner_id', user.id);
-        }
-        const { count, error } = await query;
-        if (!error && count !== null) {
-          setActivePropsCount(count);
-        }
+        const computed = await getBillablePropertyCount(user?.id || '');
+        setQuotaMetrics(computed);
       } catch (e) {
-        console.error('Erreur chargement biens pour abonnement:', e);
+        console.error('Erreur chargement quota pour abonnement:', e);
       } finally {
         setLoadingProps(false);
       }
@@ -38,6 +32,7 @@ export default function SubscriptionPage() {
     fetchCount();
   }, [user?.id]);
 
+  const activePropsCount = quotaMetrics?.billablePropertiesCount || 0;
   const tierInfo = calculateSubscriptionTier(activePropsCount);
 
   const currentUser = {

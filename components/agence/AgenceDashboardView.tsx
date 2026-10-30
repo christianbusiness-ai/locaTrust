@@ -18,6 +18,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
+import { getAgencyBillablePropertyCount, type QuotaComputationResult } from '@/lib/quotaEngine';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
@@ -41,17 +42,23 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
   onOpenAddOwner,
 }) => {
   const { user, profile } = useAuth();
-  const [totalProperties, setTotalProperties] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_properties');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) return parsed.length;
-        }
-      } catch {}
-    }
-    return 0;
+  const [totalProperties, setTotalProperties] = useState<number>(0);
+  const [agencyQuota, setAgencyQuota] = useState<QuotaComputationResult>({
+    ownerOrAgencyId: '',
+    role: 'agence',
+    managedPropertiesCount: 0,
+    activeContractsCount: 0,
+    billablePropertiesCount: 0,
+    vacantPropertiesCount: 0,
+    billablePropertyIds: [],
+    activeContractIds: [],
+    quotaPrice: 0,
+    tier: '0_bien',
+    tierName: 'Aucun quota actif',
+    label: 'Aucun bien actif (0 FCFA)',
+    rangeLabel: '0 bien actif',
+    hasActiveQuota: false,
+    calculatedAt: new Date().toISOString()
   });
   const [managedOwners, setManagedOwners] = useState<any[]>(() => {
     return user?.id ? getAgencyMandates(user.id) : [];
@@ -64,22 +71,15 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
     try {
       setError(null);
 
-      // Properties query
-      let propsQuery = supabase
-        .from('properties')
-        .select('id', { count: 'exact', head: true });
-      if (user?.id) {
-        propsQuery = propsQuery.or(`agency_id.eq.${user.id},owner_id.eq.${user.id}`);
-      }
-
       // Parallel execution for maximum speed
-      const [propsRes, paymentsRes] = await Promise.all([
-        propsQuery,
+      const [quotaRes, paymentsRes] = await Promise.all([
+        getAgencyBillablePropertyCount(user?.id || ''),
         supabase.from('rent_payments').select('amount, status')
       ]);
 
-      if (propsRes?.count !== undefined && propsRes.count !== null) {
-        setTotalProperties(propsRes.count);
+      if (quotaRes) {
+        setAgencyQuota(quotaRes);
+        setTotalProperties(quotaRes.managedPropertiesCount);
       }
 
       // Mandats réels strictement isolés à cette agence
@@ -105,6 +105,19 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
 
   useEffect(() => {
     fetchAgencyData();
+
+    const handleLiveUpdate = () => {
+      fetchAgencyData();
+    };
+    window.addEventListener('locatrust:properties-updated', handleLiveUpdate);
+    window.addEventListener('locatrust:contracts-updated', handleLiveUpdate);
+    window.addEventListener('locatrust:applications-updated', handleLiveUpdate);
+
+    return () => {
+      window.removeEventListener('locatrust:properties-updated', handleLiveUpdate);
+      window.removeEventListener('locatrust:contracts-updated', handleLiveUpdate);
+      window.removeEventListener('locatrust:applications-updated', handleLiveUpdate);
+    };
   }, [user?.id]);
 
   const agencyName = profile?.full_name || 'Agence Immobilière Agréée';
@@ -187,13 +200,18 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       {!loading && !error && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           
-          {/* Card 1: Parc Immobilier Géré */}
+          {/* Card 1: Parc Immobilier Géré & Quota */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-3">
             <div className="flex items-start justify-between">
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-slate-500">Parc Immobilier Agence</span>
                 <span className="text-2xl font-black text-slate-900 mt-1">{totalProperties} bien(s)</span>
-                <span className="text-[11px] text-slate-400">Sous mandat actif</span>
+                <span className="text-[11px] text-slate-400">
+                  Biens facturables : <strong className="text-emerald-700">{agencyQuota.billablePropertiesCount}</strong> • Contrats actifs : <strong className="text-blue-700">{agencyQuota.activeContractsCount}</strong>
+                </span>
+                <span className="text-[11px] font-bold text-amber-800 mt-0.5">
+                  Quota actuel : {formatFCFA(agencyQuota.quotaPrice)} / mois
+                </span>
               </div>
               <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
                 <Building2 className="w-5 h-5" />
