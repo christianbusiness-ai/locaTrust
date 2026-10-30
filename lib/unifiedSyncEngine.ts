@@ -11,6 +11,7 @@ import {
   ensureCounterV2Migration
 } from '@/lib/messagingStore';
 import { deduplicateAndNormalizeNotifications } from '@/lib/waitingListNotifications';
+import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
 
 export const isValidUuid = (str?: string): boolean =>
   Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
@@ -29,8 +30,8 @@ let lastSyncTimestamp = 0;
  * Cache local : LocalStorage + Événements DOM CustomEvent pour réactivité instantanée.
  */
 export async function syncUserData(userId: string, role?: string): Promise<{ success: boolean; error?: string }> {
-  if (!userId || !isValidUuid(userId)) {
-    return { success: false, error: 'UUID utilisateur invalide.' };
+  if (!userId || !isValidUuid(userId) || isLoggingOutInProgress()) {
+    return { success: false, error: 'UUID utilisateur invalide ou déconnexion en cours.' };
   }
 
   // Éviter les requêtes concurrentes en boucle
@@ -48,8 +49,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     // 0. SYNCHRONISATION SERVEUR CENTRAL (/api/sync) — MULTI-APPAREILS ISOLÉE PAR UTILISATEUR
     try {
       const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(role || '')}`);
+      if (isLoggingOutInProgress()) {
+        return { success: false };
+      }
       if (syncRes.ok) {
         const syncJson = await syncRes.json();
+        if (isLoggingOutInProgress()) {
+          return { success: false };
+        }
         if (syncJson?.success && syncJson?.data) {
           if (typeof window !== 'undefined') {
             if (syncJson.data.readState) {
@@ -220,7 +227,13 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         }
       }
     } catch (syncErr) {
-      console.warn('API /api/sync fetch error in unifiedSyncEngine:', syncErr);
+      if (!isLoggingOutInProgress()) {
+        console.warn('API /api/sync fetch error in unifiedSyncEngine:', syncErr);
+      }
+    }
+
+    if (isLoggingOutInProgress()) {
+      return { success: false };
     }
 
     // 1. SYNCHRONISATION DES LOGEMENTS (PROPERTIES) STRICTEMENT ISOLÉE PAR UTILISATEUR

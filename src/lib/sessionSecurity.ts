@@ -18,13 +18,33 @@ export const SESSION_KEYS = {
 };
 
 let lastThrottledRecord = 0;
+let loggingOutFlag = false;
+
+/**
+ * Indique si une déconnexion volontaire est en cours d'exécution.
+ * Empêche toute requête protégée, écriture de cache ou erreur transitoire pendant la transition.
+ */
+export function setLoggingOutFlag(active: boolean): void {
+  loggingOutFlag = active;
+  if (typeof window !== 'undefined') {
+    (window as any).__LOCATRUST_LOGGING_OUT__ = active;
+  }
+}
+
+export function isLoggingOutInProgress(): boolean {
+  if (loggingOutFlag) return true;
+  if (typeof window !== 'undefined' && (window as any).__LOCATRUST_LOGGING_OUT__) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Enregistre / active la session de navigation en cours (sessionStorage).
  * Throttlé à 5 secondes pour les événements fréquents (scroll, clic, touch).
  */
 export function recordUserActivity(force = false): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || isLoggingOutInProgress()) return;
   const now = Date.now();
   if (!force && now - lastThrottledRecord < 5000) return;
   lastThrottledRecord = now;

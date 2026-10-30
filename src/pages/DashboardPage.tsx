@@ -1,5 +1,7 @@
 import React, { Suspense, lazy } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
+import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
 
 function lazyDashboardWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
@@ -12,6 +14,9 @@ function lazyDashboardWithRetry<T extends React.ComponentType<any>>(
       sessionStorage.removeItem(key);
       return res;
     } catch (err) {
+      if (isLoggingOutInProgress()) {
+        return { default: (() => null) as unknown as T };
+      }
       console.warn(`[LocaTrust] Erreur chargement dashboard ${roleKey}:`, err);
       const hasRetried = sessionStorage.getItem(key);
       if (!hasRetried && typeof window !== 'undefined') {
@@ -41,6 +46,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 export const DashboardPage: React.FC = () => {
   const { user, profile, loading, signOut } = useAuth();
+  const navigate = useNavigate();
 
   const handleExitToLanding = async () => {
     try {
@@ -48,28 +54,27 @@ export const DashboardPage: React.FC = () => {
     } catch (e) {
       console.warn('SignOut error:', e);
     }
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('locatrust_active_user');
-      localStorage.removeItem('locatrust_registered_role');
-      localStorage.removeItem('locatrust_user_avatar');
-      localStorage.removeItem('locatrust_tenant_active_tab');
-      window.location.href = '/';
-    }
+    navigate('/login', { replace: true });
   };
 
+  // Si l'utilisateur est en cours de déconnexion ou n'est plus authentifié, rediriger proprement sans jamais tenter de charger un autre dashboard
+  if (isLoggingOutInProgress() || (!loading && !user)) {
+    return <Navigate to="/login" replace />;
+  }
+
   // Si le profil est encore en cours de chargement depuis Supabase, afficher le skeleton
-  if (loading || (!profile && user)) {
+  if (loading || !profile) {
     return <DashboardPageSkeleton />;
   }
 
   return (
     <ErrorBoundary>
       <Suspense fallback={<DashboardPageSkeleton />}>
-        {profile?.role === 'admin' ? (
+        {profile.role === 'admin' ? (
           <AdminDashboardPage currentRole="admin" onExitToLanding={handleExitToLanding} />
-        ) : profile?.account_type === 'proprietaire' ? (
+        ) : profile.account_type === 'proprietaire' ? (
           <ProprietaireDashboardPage currentRole="proprietaire" isDemo={false} onExitToLanding={handleExitToLanding} />
-        ) : profile?.account_type === 'agence' ? (
+        ) : profile.account_type === 'agence' ? (
           <AgencyDashboardPage currentRole="agence" isDemo={false} onExitToLanding={handleExitToLanding} />
         ) : (
           <TenantDashboardPage currentRole="locataire" isDemo={false} onExitToLanding={handleExitToLanding} />

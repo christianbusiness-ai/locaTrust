@@ -1116,16 +1116,33 @@ function initSharedChannel() {
 }
 
 /**
+ * Ferme proprement le canal Supabase Realtime lors de la déconnexion
+ */
+export function unsubscribeFromLiveSync() {
+  currentActiveUserId = undefined;
+  if (sharedLiveChannel) {
+    try {
+      supabase.removeChannel(sharedLiveChannel);
+    } catch {}
+    sharedLiveChannel = null;
+  }
+}
+
+/**
  * Initialise l'écouteur Supabase Realtime multi-appareils (Desktop ↔ Mobile)
  */
 export function subscribeToLiveSync(currentUserId?: string) {
   if (typeof window === 'undefined') return () => {};
+  if (!currentUserId || (window as any).__LOCATRUST_LOGGING_OUT__) {
+    unsubscribeFromLiveSync();
+    return () => {};
+  }
 
   currentActiveUserId = currentUserId;
   initSharedChannel();
 
   return () => {
-    // Garde le canal actif sans le détruire pour assurer la réactivité
+    // Garde le canal actif tant que l'utilisateur est connecté
   };
 }
 

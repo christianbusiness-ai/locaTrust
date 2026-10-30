@@ -2,8 +2,14 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
 import { syncUserData } from '@/lib/unifiedSyncEngine';
-import { subscribeToLiveSync } from '@/lib/supabaseRealtime';
-import { clearSecuritySession, recordUserActivity, isSessionExpired } from '@/src/lib/sessionSecurity';
+import { subscribeToLiveSync, unsubscribeFromLiveSync } from '@/lib/supabaseRealtime';
+import {
+  clearSecuritySession,
+  recordUserActivity,
+  isSessionExpired,
+  setLoggingOutFlag,
+  isLoggingOutInProgress
+} from '@/src/lib/sessionSecurity';
 
 export interface UserProfile {
   id: string;
@@ -73,7 +79,9 @@ export const clearLocatrustUserDataCache = () => {
     'locatrust_accounting_reports',
     'locatrust_active_user',
     'locatrust_registered_role',
-    'locatrust_user_avatar'
+    'locatrust_user_avatar',
+    'locatrust_tenant_active_tab',
+    'locatrust_active_chat_contact'
   ];
   userKeys.forEach((k) => {
     try {
@@ -89,6 +97,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true);
 
   const fetchProfile = async (userId: string): Promise<UserProfile | null> => {
+    if (!userId || isLoggingOutInProgress()) return null;
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -96,6 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq('id', userId)
         .maybeSingle();
 
+      if (isLoggingOutInProgress()) return null;
       if (error) {
         console.warn('Erreur chargement profil:', error.message);
         return null;
@@ -117,20 +127,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return data as UserProfile;
     } catch (err) {
-      console.warn('Exception chargement profil:', err);
+      if (!isLoggingOutInProgress()) {
+        console.warn('Exception chargement profil:', err);
+      }
       return null;
     }
   };
 
   const refreshProfile = async () => {
+    if (isLoggingOutInProgress()) return;
     try {
       const currentUserId = user?.id || (await supabase.auth.getSession()).data.session?.user?.id;
-      if (currentUserId) {
+      if (currentUserId && !isLoggingOutInProgress()) {
         const p = await fetchProfile(currentUserId);
-        if (p) setProfile(p);
+        if (p && !isLoggingOutInProgress()) setProfile(p);
       }
     } catch (e) {
-      console.warn('Erreur rafraîchissement profil:', e);
+      if (!isLoggingOutInProgress()) {
+        console.warn('Erreur rafraîchissement profil:', e);
+      }
     }
   };
 
@@ -210,55 +225,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
       cleanAuthUrlTokens();
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
 
-      if (newSession?.user) {
-        if (event === 'SIGNED_IN') {
-          recordUserActivity();
-        }
-        let p = await fetchProfile(newSession.user.id);
-        if (!p) {
-          const meta = newSession.user.user_metadata || {};
-          const fullName = meta.full_name || meta.name || newSession.user.email?.split('@')[0] || 'Utilisateur';
-          const avatarUrl = meta.avatar_url || meta.picture || '';
-          await supabase.from('profiles').insert({
-            id: newSession.user.id,
-            full_name: fullName,
-            phone: '',
-            account_type: 'locataire',
-            role: 'user',
-            avatar_url: avatarUrl,
-            verification_status: 'non_verifie',
-          });
-          p = await fetchProfile(newSession.user.id);
-        }
-        if (mounted) {
-          setProfile(p);
-          subscribeToLiveSync(newSession.user.id);
-          syncUserData(newSession.user.id, p?.account_type).catch(console.warn);
-        }
-      } else {
-        if (mounted) setProfile(null);
+      if (event === 'SIGNED_OUT' || !newSession?.user || isLoggingOutInProgress()) {
+        unsubscribeFromLiveSync();
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      setSession(newSession);
+      setUser(newSession.user);
+
+      if (event === 'SIGNED_IN') {
+        recordUserActivity();
+      }
+      let p = await fetchProfile(newSession.user.id);
+      if (!p && !isLoggingOutInProgress()) {
+        const meta = newSession.user.user_metadata || {};
+        const fullName = meta.full_name || meta.name || newSession.user.email?.split('@')[0] || 'Utilisateur';
+        const avatarUrl = meta.avatar_url || meta.picture || '';
+        await supabase.from('profiles').insert({
+          id: newSession.user.id,
+          full_name: fullName,
+          phone: '',
+          account_type: 'locataire',
+          role: 'user',
+          avatar_url: avatarUrl,
+          verification_status: 'non_verifie',
+        });
+        p = await fetchProfile(newSession.user.id);
+      }
+      if (mounted && !isLoggingOutInProgress()) {
+        setProfile(p);
+        subscribeToLiveSync(newSession.user.id);
+        syncUserData(newSession.user.id, p?.account_type).catch(console.warn);
       }
       if (mounted) setLoading(false);
     });
 
     // 3. Écoute réactive des mises à jour de profil (événements personnalisés & retour au premier plan)
     const handleProfileSync = () => {
-      if (mounted) {
+      if (mounted && !isLoggingOutInProgress()) {
         refreshProfile();
         supabase.auth.getUser().then(({ data: { user: curUser } }) => {
-          if (curUser) syncUserData(curUser.id).catch(console.warn);
+          if (curUser && !isLoggingOutInProgress()) syncUserData(curUser.id).catch(console.warn);
         }).catch(() => {});
       }
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && mounted) {
+      if (document.visibilityState === 'visible' && mounted && !isLoggingOutInProgress()) {
         refreshProfile();
         supabase.auth.getUser().then(({ data: { user: curUser } }) => {
-          if (curUser) syncUserData(curUser.id).catch(console.warn);
+          if (curUser && !isLoggingOutInProgress()) syncUserData(curUser.id).catch(console.warn);
         }).catch(() => {});
       }
     };
@@ -279,6 +300,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    setLoggingOutFlag(false);
     try {
       const trimmedEmail = email.trim();
       let { data, error } = await supabase.auth.signInWithPassword({
@@ -536,14 +558,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 
   const signOut = async () => {
+    setLoggingOutFlag(true);
     try {
-      await supabase.auth.signOut();
-    } finally {
+      // 1. Arrêter immédiatement tous les canaux Realtime et souscriptions en cours
+      unsubscribeFromLiveSync();
+      // 2. Nettoyer immédiatement la session de sécurité et les données locales en cache
       clearSecuritySession();
+      clearLocatrustUserDataCache();
+      // 3. Mettre à jour immédiatement l'état d'authentification React pour démonter proprement les vues protégées
       setUser(null);
       setSession(null);
       setProfile(null);
-      clearLocatrustUserDataCache();
+      setLoading(false);
+      // 4. Fermer la session Supabase sans bloquer ni lever d'erreur transitoire
+      await supabase.auth.signOut();
+    } catch {
+      // Ignorer silencieusement si la session était déjà fermée
+    } finally {
+      setTimeout(() => {
+        setLoggingOutFlag(false);
+      }, 300);
     }
   };
 

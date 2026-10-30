@@ -13,6 +13,8 @@ import { LandingPageView } from '@/components/landing/LandingPageView';
 import { UserRole } from '@/types/database.types';
 
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { LoginPage } from '@/src/pages/LoginPage';
+import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
 
 // Helper de chargement dynamique avec purge de cache automatique lors des déploiements
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -26,6 +28,9 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
       sessionStorage.removeItem(sessionKey);
       return res;
     } catch (err: any) {
+      if (isLoggingOutInProgress()) {
+        return { default: (() => null) as unknown as T };
+      }
       console.warn(`[LocaTrust] Erreur chargement bundle ${chunkName}:`, err);
       const hasRetried = sessionStorage.getItem(sessionKey);
       if (!hasRetried && typeof window !== 'undefined') {
@@ -43,8 +48,7 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
   });
 }
 
-// Code Splitting / Lazy Loading résistant aux rechargements sur mobile
-const LoginPage = lazyWithRetry(() => import('@/src/pages/LoginPage').then(m => ({ default: m.LoginPage })), 'login');
+// Code Splitting / Lazy Loading résistant aux rechargements sur mobile (LoginPage est statique pour transition instantanée 0ms à la déconnexion)
 const RegisterPage = lazyWithRetry(() => import('@/src/pages/RegisterPage').then(m => ({ default: m.RegisterPage })), 'register');
 const VerifyEmailPage = lazyWithRetry(() => import('@/src/pages/VerifyEmailPage').then(m => ({ default: m.VerifyEmailPage })), 'verifyEmail');
 const ForgotPasswordPage = lazyWithRetry(() => import('@/src/pages/ForgotPasswordPage').then(m => ({ default: m.ForgotPasswordPage })), 'forgotPw');
@@ -134,17 +138,23 @@ const HomePage: React.FC = () => {
   );
 };
 
-import { subscribeToLiveSync } from '@/lib/supabaseRealtime';
+import { subscribeToLiveSync, unsubscribeFromLiveSync } from '@/lib/supabaseRealtime';
 
 // Gestionnaire global de synchronisation Realtime multi-appareils (Desktop ↔ Mobile)
 const LiveSyncManager: React.FC = () => {
   const { user } = useAuth();
 
   useEffect(() => {
-    const unsubscribe = subscribeToLiveSync(user?.id);
+    if (!user?.id || isLoggingOutInProgress()) {
+      unsubscribeFromLiveSync();
+      return;
+    }
+
+    const unsubscribe = subscribeToLiveSync(user.id);
 
     const triggerGlobalSync = () => {
-      subscribeToLiveSync(user?.id);
+      if (!user?.id || isLoggingOutInProgress()) return;
+      subscribeToLiveSync(user.id);
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
       window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
@@ -155,7 +165,7 @@ const LiveSyncManager: React.FC = () => {
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !isLoggingOutInProgress()) {
         triggerGlobalSync();
       }
     };
@@ -180,12 +190,13 @@ const MobileBackButtonManager: React.FC = () => {
   const { user } = useAuth();
 
   useEffect(() => {
-    if (user && typeof window !== 'undefined') {
+    if (user && !isLoggingOutInProgress() && typeof window !== 'undefined') {
       try {
         window.history.pushState({ locatrustApp: true }, '', window.location.href);
       } catch {}
 
       const handlePopState = () => {
+        if (isLoggingOutInProgress()) return;
         // 1. Fermer les modales ouvertes en priorité
         const openModal = document.querySelector('.animate-scaleUp, [role="dialog"], .fixed.inset-0');
         if (openModal) {

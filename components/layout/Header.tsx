@@ -42,6 +42,9 @@ import {
 import { User as UserType } from '@/types/database.types';
 import { Logo } from '@/components/common/Logo';
 import { supabase } from '@/src/lib/supabase';
+import { useAuth } from '@/src/context/AuthContext';
+import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
+import { useNavigate } from 'react-router-dom';
 import {
   getUnreadMessagesCountForUser,
   markAllMessagesAsReadForUser,
@@ -94,6 +97,8 @@ export const Header: React.FC<HeaderProps> = ({
   onExitToLanding,
   showCreateAccountBtn = false,
 }) => {
+  const { signOut } = useAuth();
+  const navigate = useNavigate();
   // Dark mode state
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -287,9 +292,11 @@ export const Header: React.FC<HeaderProps> = ({
     }
 
     const loadStoredNotifs = async () => {
+      if (isLoggingOutInProgress()) return;
       try {
         const userId = currentUser.id || '';
         const userRole = currentUser.role || 'proprietaire';
+        if (!userId || userId === 'guest') return;
         ensureCounterV2Migration(userId);
 
         let parsed: any[] = [];
@@ -1068,28 +1075,21 @@ export const Header: React.FC<HeaderProps> = ({
                     type="button"
                     onClick={async () => {
                       setShowProfileMenu(false);
-                      try {
-                        await supabase.auth.signOut();
-                      } catch (e) {
-                        console.warn('SignOut error:', e);
-                      }
-                      if (typeof window !== 'undefined') {
-                        localStorage.removeItem('locatrust_active_user');
-                        localStorage.removeItem('locatrust_registered_role');
-                        localStorage.removeItem('locatrust_user_avatar');
-                        localStorage.removeItem('locatrust_tenant_active_tab');
-                        window.dispatchEvent(new CustomEvent('locatrust_exit_landing'));
-                      }
                       if (onExitToLanding) {
-                        onExitToLanding();
-                      } else if (typeof window !== 'undefined') {
-                        window.location.href = '/';
+                        await onExitToLanding();
+                      } else {
+                        try {
+                          await signOut();
+                        } catch (e) {
+                          console.warn('SignOut error:', e);
+                        }
+                        navigate('/login', { replace: true });
                       }
                     }}
                     className="w-full px-4 py-2 text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 font-bold flex items-center gap-2.5 transition-colors cursor-pointer"
                   >
                     <LogOut className="w-4 h-4 text-rose-600" />
-                    <span>Se déconnecter (Sortir vers la Landing Page)</span>
+                    <span>Déconnexion</span>
                   </button>
                 </div>
               </div>

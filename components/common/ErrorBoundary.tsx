@@ -2,6 +2,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
 
 interface Props {
   children: ReactNode;
@@ -20,15 +21,22 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   public static getDerivedStateFromError(error: Error): State {
+    if (isLoggingOutInProgress()) {
+      return { hasError: false, error: null };
+    }
     return { hasError: true, error };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    if (isLoggingOutInProgress()) {
+      this.setState({ hasError: false, error: null });
+      return;
+    }
     console.error('LocaTrust Uncaught Error caught by ErrorBoundary:', error, errorInfo);
   }
 
   public render() {
-    if (this.state.hasError) {
+    if (this.state.hasError && !isLoggingOutInProgress()) {
       return (
         <div className="p-8 my-6 max-w-xl mx-auto rounded-3xl bg-rose-50 border border-rose-200 text-slate-800 shadow-xl flex flex-col items-center text-center gap-4 animate-fadeIn">
           <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center font-black">
