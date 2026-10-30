@@ -1006,68 +1006,23 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           </span>
         </div>
 
-        {/* Sélecteur interactif rapide de logements avec contrat actif */}
-        <div className="max-w-3xl mx-auto mb-10 p-5 sm:p-6 rounded-3xl bg-white border border-slate-200/90 shadow-md flex flex-col gap-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Simulateur de quota basé sur vos baux actifs</span>
-              <h4 className="text-sm sm:text-base font-extrabold text-slate-900">Combien de logements sont actuellement loués avec un contrat actif ?</h4>
-            </div>
-            <div className="flex items-baseline gap-1.5 bg-slate-100 px-3.5 py-1.5 rounded-2xl">
-              <span className="text-xl sm:text-2xl font-black text-slate-900">{pricingPropertyCount}</span>
-              <span className="text-xs font-bold text-slate-500">
-                {pricingPropertyCount > 1 ? 'logements actifs' : 'logement actif'}
-              </span>
-            </div>
+        {/* Grille officielle des 4 tranches tarifaires automatiques */}
+        <div className="max-w-4xl mx-auto mb-10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-bold text-slate-700">
+          <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-xs text-center flex flex-col gap-1">
+            <span className="text-slate-500 text-[11px]">1 logement actif</span>
+            <span className="text-base sm:text-lg font-black text-slate-900">500 FCFA / mois</span>
           </div>
-
-          <input
-            type="range"
-            min={0}
-            max={35}
-            step={1}
-            value={pricingPropertyCount}
-            onChange={(e) => setPricingPropertyCount(Number(e.target.value))}
-            className="w-full accent-slate-900 cursor-pointer h-2 bg-slate-200 rounded-lg"
-          />
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold text-slate-600">
-            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount === 1 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
-              <div>1 logement actif</div>
-              <div className="font-black">500 FCFA / mois</div>
-            </div>
-            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount >= 2 && pricingPropertyCount <= 10 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
-              <div>2 à 10 logements actifs</div>
-              <div className="font-black">2 000 FCFA / mois</div>
-            </div>
-            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount >= 11 && pricingPropertyCount <= 20 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
-              <div>11 à 20 logements actifs</div>
-              <div className="font-black">5 000 FCFA / mois</div>
-            </div>
-            <div className={`p-2.5 rounded-xl border text-center ${pricingPropertyCount > 20 ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-slate-50'}`}>
-              <div>Plus de 20 logements actifs</div>
-              <div className="font-black">10 000 FCFA / mois</div>
-            </div>
+          <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-xs text-center flex flex-col gap-1">
+            <span className="text-slate-500 text-[11px]">2 à 10 logements actifs</span>
+            <span className="text-base sm:text-lg font-black text-slate-900">2 000 FCFA / mois</span>
           </div>
-
-          <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-            <div>
-              <span className="text-xs font-bold text-amber-900">Tarif mensuel correspondant à vos logements loués :</span>
-              <div className="text-lg sm:text-xl font-black text-amber-950">
-                {pricingPropertyCount === 0
-                  ? '0 FCFA / mois (Aucun contrat actif)'
-                  : pricingPropertyCount === 1
-                  ? '500 FCFA / mois'
-                  : pricingPropertyCount <= 10
-                  ? '2 000 FCFA / mois'
-                  : pricingPropertyCount <= 20
-                  ? '5 000 FCFA / mois'
-                  : '10 000 FCFA / mois'}
-              </div>
-            </div>
-            <span className="text-xs font-extrabold text-amber-800 bg-amber-200/60 px-3 py-1.5 rounded-xl">
-              Logements vacants = 0 FCFA
-            </span>
+          <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-xs text-center flex flex-col gap-1">
+            <span className="text-slate-500 text-[11px]">11 à 20 logements actifs</span>
+            <span className="text-base sm:text-lg font-black text-slate-900">5 000 FCFA / mois</span>
+          </div>
+          <div className="p-4 rounded-2xl border border-slate-200 bg-white shadow-xs text-center flex flex-col gap-1">
+            <span className="text-slate-500 text-[11px]">Plus de 20 logements actifs</span>
+            <span className="text-base sm:text-lg font-black text-slate-900">10 000 FCFA / mois</span>
           </div>
         </div>
 

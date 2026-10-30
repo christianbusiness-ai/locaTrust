@@ -569,10 +569,130 @@ async function computeLiveQuotaForEntity(
     } catch {}
   }
 
-  return calculateQuotaFromDataset({
+  const now = new Date();
+  const expiredContractIds: string[] = [];
+
+  for (const [key, contract] of contractsMap.entries()) {
+    const rawStatus = String(contract?.status || contract?.contract_status || '').trim().toLowerCase();
+    if (ACTIVE_CONTRACT_STATUSES.has(rawStatus) || rawStatus === 'signe') {
+      const endDateVal = contract?.end_date || contract?.endDate || contract?.expiration_date || contract?.expires_at;
+      if (endDateVal) {
+        const endTs = parseContractDateEndOfDay(endDateVal);
+        if (endTs !== null && endTs < now.getTime()) {
+          // Expiration automatique en arrière-plan
+          contractsMap.set(key, { ...contract, status: 'expire' });
+          expiredContractIds.push(String(contract.id || contract.contract_number || key));
+        }
+      }
+    }
+  }
+
+  // Persistance silencieuse en arrière-plan des contrats arrivés à expiration
+  if (expiredContractIds.length > 0) {
+    if (typeof window !== 'undefined') {
+      try {
+        const rawContracts = localStorage.getItem('locatrust_contracts');
+        if (rawContracts) {
+          const parsed = JSON.parse(rawContracts);
+          if (Array.isArray(parsed)) {
+            const expSet = new Set(expiredContractIds);
+            const updated = parsed.map((c: any) => {
+              if (c && (expSet.has(String(c.id)) || expSet.has(String(c.contract_number)))) {
+                return { ...c, status: 'expire' };
+              }
+              return c;
+            });
+            localStorage.setItem('locatrust_contracts', JSON.stringify(updated));
+          }
+        }
+      } catch {}
+    }
+
+    // Mise à jour asynchrone non bloquante vers Supabase et /api/sync
+    expiredContractIds.forEach((cid) => {
+      supabase
+        .from('contracts')
+        .update({ status: 'expire' })
+        .or(`id.eq.${cid},contract_number.eq.${cid}`)
+        .then(() => {})
+        .catch(() => {});
+    });
+  }
+
+  const computedResult = calculateQuotaFromDataset({
     properties: Array.from(propertiesMap.values()),
     contracts: Array.from(contractsMap.values()),
     applications: Array.from(applicationsMap.values()),
+    ownerId: role === 'proprietaire' ? cleanId : undefined,
+    agencyId: role === 'agence' ? cleanId : undefined,
+    referenceDate: now
+  });
+
+  // Mise en cache silencieuse et notification d'arrière-plan si le quota a évolué
+  if (typeof window !== 'undefined' && cleanId) {
+    try {
+      const cacheKey = `locatrust_quota_state_${cleanId}`;
+      const prevRaw = localStorage.getItem(cacheKey);
+      const prev = prevRaw ? JSON.parse(prevRaw) : null;
+      localStorage.setItem(cacheKey, JSON.stringify(computedResult));
+
+      const hasChanged =
+        !prev ||
+        prev.billablePropertiesCount !== computedResult.billablePropertiesCount ||
+        prev.quotaPrice !== computedResult.quotaPrice ||
+        prev.managedPropertiesCount !== computedResult.managedPropertiesCount ||
+        prev.activeContractsCount !== computedResult.activeContractsCount;
+
+      if (hasChanged) {
+        window.dispatchEvent(new CustomEvent('locatrust:quota-updated', { detail: computedResult }));
+      }
+    } catch {}
+  }
+
+  return computedResult;
+}
+
+/**
+ * Récupère instantanément (de manière synchrone) l'état du quota pré-calculé en arrière-plan
+ * afin d'éviter tout chargement manuel ou latence d'affichage.
+ */
+export function getCachedQuotaState(
+  entityId?: string,
+  role: 'proprietaire' | 'agence' = 'proprietaire'
+): QuotaComputationResult {
+  purgeLegacyPeakWatermark();
+  const cleanId = (entityId || '').trim();
+
+  if (typeof window !== 'undefined' && cleanId) {
+    try {
+      const cachedRaw = localStorage.getItem(`locatrust_quota_state_${cleanId}`);
+      if (cachedRaw) {
+        const parsed = JSON.parse(cachedRaw);
+        if (parsed && typeof parsed.billablePropertiesCount === 'number' && typeof parsed.quotaPrice === 'number') {
+          return parsed as QuotaComputationResult;
+        }
+      }
+    } catch {}
+
+    // Calcul synchrone immédiat depuis les données locales en attendant le rafraîchissement réseau
+    try {
+      const props = JSON.parse(localStorage.getItem('locatrust_properties') || '[]');
+      const contracts = JSON.parse(localStorage.getItem('locatrust_contracts') || '[]');
+      const apps = JSON.parse(localStorage.getItem('locatrust_rental_applications') || '[]');
+      return calculateQuotaFromDataset({
+        properties: Array.isArray(props) ? props : [],
+        contracts: Array.isArray(contracts) ? contracts : [],
+        applications: Array.isArray(apps) ? apps : [],
+        ownerId: role === 'proprietaire' ? cleanId : undefined,
+        agencyId: role === 'agence' ? cleanId : undefined
+      });
+    } catch {}
+  }
+
+  return calculateQuotaFromDataset({
+    properties: [],
+    contracts: [],
+    applications: [],
     ownerId: role === 'proprietaire' ? cleanId : undefined,
     agencyId: role === 'agence' ? cleanId : undefined
   });
@@ -590,5 +710,91 @@ export async function getBillablePropertyCount(ownerId: string): Promise<QuotaCo
  */
 export async function getAgencyBillablePropertyCount(agencyId: string): Promise<QuotaComputationResult> {
   return computeLiveQuotaForEntity(agencyId, 'agence');
+}
+
+/**
+ * Exécute silencieusement le calcul et la synchronisation du quota en arrière-plan.
+ */
+export async function syncQuotaInBackground(
+  entityId: string,
+  role?: 'proprietaire' | 'agence' | string
+): Promise<QuotaComputationResult | null> {
+  if (!entityId) return null;
+  const normalizedRole: 'proprietaire' | 'agence' = role === 'agence' ? 'agence' : 'proprietaire';
+  try {
+    return await computeLiveQuotaForEntity(entityId, normalizedRole);
+  } catch {
+    return null;
+  }
+}
+
+let bgQuotaInterval: ReturnType<typeof setInterval> | null = null;
+let bgQuotaListenerCleanup: (() => void) | null = null;
+let bgActiveEntityId: string | null = null;
+
+/**
+ * Démarre le démon autonome de calcul du quota en arrière-plan.
+ * Il surveille automatiquement les activations, résiliations et expirations de contrats
+ * et met à jour le quota du propriétaire ou de l'agence en temps réel sans intervention manuelle.
+ */
+export function startBackgroundQuotaWorker(
+  entityId: string,
+  role?: 'proprietaire' | 'agence' | string
+): void {
+  if (typeof window === 'undefined' || !entityId) return;
+  if (role === 'locataire') return;
+
+  const cleanId = entityId.trim();
+  if (!cleanId) return;
+
+  if (bgActiveEntityId === cleanId && bgQuotaInterval !== null) {
+    // Déclencher une synchronisation immédiate silencieuse
+    syncQuotaInBackground(cleanId, role).catch(() => {});
+    return;
+  }
+
+  stopBackgroundQuotaWorker();
+  bgActiveEntityId = cleanId;
+
+  // Exécution immédiate en arrière-plan
+  syncQuotaInBackground(cleanId, role).catch(() => {});
+
+  const handleDomainMutation = () => {
+    if (bgActiveEntityId) {
+      syncQuotaInBackground(bgActiveEntityId, role).catch(() => {});
+    }
+  };
+
+  window.addEventListener('locatrust:contracts-updated', handleDomainMutation);
+  window.addEventListener('locatrust:applications-updated', handleDomainMutation);
+  window.addEventListener('locatrust:properties-updated', handleDomainMutation);
+
+  bgQuotaListenerCleanup = () => {
+    window.removeEventListener('locatrust:contracts-updated', handleDomainMutation);
+    window.removeEventListener('locatrust:applications-updated', handleDomainMutation);
+    window.removeEventListener('locatrust:properties-updated', handleDomainMutation);
+  };
+
+  // Vérification périodique silencieuse en arrière-plan toutes les 15 secondes
+  bgQuotaInterval = setInterval(() => {
+    if (bgActiveEntityId) {
+      syncQuotaInBackground(bgActiveEntityId, role).catch(() => {});
+    }
+  }, 15000);
+}
+
+/**
+ * Arrête proprement le démon de calcul du quota lors de la déconnexion.
+ */
+export function stopBackgroundQuotaWorker(): void {
+  if (bgQuotaInterval !== null) {
+    clearInterval(bgQuotaInterval);
+    bgQuotaInterval = null;
+  }
+  if (bgQuotaListenerCleanup) {
+    bgQuotaListenerCleanup();
+    bgQuotaListenerCleanup = null;
+  }
+  bgActiveEntityId = null;
 }
 

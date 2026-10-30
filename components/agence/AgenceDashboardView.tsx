@@ -200,18 +200,13 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       {!loading && !error && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           
-          {/* Card 1: Parc Immobilier Géré & Quota */}
+          {/* Card 1: Parc Immobilier Géré */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-3">
             <div className="flex items-start justify-between">
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-slate-500">Parc Immobilier Agence</span>
                 <span className="text-2xl font-black text-slate-900 mt-1">{totalProperties} bien(s)</span>
-                <span className="text-[11px] text-slate-400">
-                  Biens facturables : <strong className="text-emerald-700">{agencyQuota.billablePropertiesCount}</strong> • Contrats actifs : <strong className="text-blue-700">{agencyQuota.activeContractsCount}</strong>
-                </span>
-                <span className="text-[11px] font-bold text-amber-800 mt-0.5">
-                  Quota actuel : {formatFCFA(agencyQuota.quotaPrice)} / mois
-                </span>
+                <span className="text-[11px] text-slate-400">Sous mandat actif</span>
               </div>
               <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
                 <Building2 className="w-5 h-5" />

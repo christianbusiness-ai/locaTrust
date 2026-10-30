@@ -592,3 +592,50 @@ AS $$
     AND (c.end_date IS NULL OR c.end_date >= CURRENT_DATE);
 $$;
 
+-- Fonction et trigger d'arrière-plan PostgreSQL :
+-- Expire automatiquement les contrats arrivés à échéance et met à jour les abonnements en arrière-plan
+CREATE OR REPLACE FUNCTION public.refresh_owner_quota_in_background()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_owner_id uuid;
+  v_billable_count integer;
+  v_quota_price integer;
+BEGIN
+  v_owner_id := COALESCE(NEW.owner_id, OLD.owner_id);
+  IF v_owner_id IS NULL THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  -- Clôturer silencieusement tout contrat dont la date de fin est dépassée
+  UPDATE public.contracts
+  SET status = 'expire'
+  WHERE owner_id = v_owner_id
+    AND LOWER(COALESCE(status, '')) IN ('actif', 'contrat_actif', 'active')
+    AND end_date IS NOT NULL
+    AND end_date < CURRENT_DATE;
+
+  -- Recalculer en arrière-plan le nombre de biens facturables et le tarif correspondant
+  v_billable_count := public.get_billable_property_count(v_owner_id);
+  v_quota_price := public.get_quota_price(v_billable_count);
+
+  UPDATE public.subscriptions
+  SET properties_count = v_billable_count,
+      amount = v_quota_price
+  WHERE user_id = v_owner_id
+    AND status = 'actif';
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_contracts_auto_quota_refresh ON public.contracts;
+CREATE TRIGGER trg_contracts_auto_quota_refresh
+  AFTER INSERT OR UPDATE OF status, end_date, property_id OR DELETE
+  ON public.contracts
+  FOR EACH ROW
+  EXECUTE FUNCTION public.refresh_owner_quota_in_background();
+
+

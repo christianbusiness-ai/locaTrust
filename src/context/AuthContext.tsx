@@ -3,6 +3,7 @@ import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
 import { syncUserData } from '@/lib/unifiedSyncEngine';
 import { subscribeToLiveSync, unsubscribeFromLiveSync } from '@/lib/supabaseRealtime';
+import { startBackgroundQuotaWorker, stopBackgroundQuotaWorker } from '@/lib/quotaEngine';
 import {
   clearSecuritySession,
   recordUserActivity,
@@ -215,6 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(p);
         setLoading(false);
         subscribeToLiveSync(verifiedUser.id);
+        startBackgroundQuotaWorker(verifiedUser.id, p?.account_type);
         syncUserData(verifiedUser.id, p?.account_type).catch(console.warn);
       }
     }).catch(() => {
@@ -228,6 +230,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (event === 'SIGNED_OUT' || !newSession?.user || isLoggingOutInProgress()) {
         unsubscribeFromLiveSync();
+        stopBackgroundQuotaWorker();
         setSession(null);
         setUser(null);
         setProfile(null);
@@ -260,6 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mounted && !isLoggingOutInProgress()) {
         setProfile(p);
         subscribeToLiveSync(newSession.user.id);
+        startBackgroundQuotaWorker(newSession.user.id, p?.account_type);
         syncUserData(newSession.user.id, p?.account_type).catch(console.warn);
       }
       if (mounted) setLoading(false);
@@ -562,6 +566,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // 1. Arrêter immédiatement tous les canaux Realtime et souscriptions en cours
       unsubscribeFromLiveSync();
+      stopBackgroundQuotaWorker();
       // 2. Nettoyer immédiatement la session de sécurité et les données locales en cache
       clearSecuritySession();
       clearLocatrustUserDataCache();

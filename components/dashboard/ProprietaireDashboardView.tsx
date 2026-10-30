@@ -555,27 +555,13 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           </div>
 
           <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1 rounded-lg">
-              <span className="text-slate-600 font-medium">Biens gérés :</span>
-              <strong className="text-slate-900 font-black">{totalProps}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-blue-50/70 px-2.5 py-1 rounded-lg">
-              <span className="text-blue-900 font-medium">Contrats actifs :</span>
-              <strong className="text-blue-700 font-black">{activeContractsCount}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
-              <span className="text-emerald-900 font-bold">Biens facturables :</span>
+            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+              <span className="text-slate-600 font-medium">Actifs :</span>
               <strong className="text-emerald-700 font-black">{activeProps}</strong>
             </div>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                onNavigateTab('subscription');
-              }}
-              className="flex items-center justify-between bg-amber-50/90 hover:bg-amber-100 px-2.5 py-1 rounded-lg border border-amber-200 transition-colors"
-            >
-              <span className="text-amber-900 font-bold">Quota actuel :</span>
-              <strong className="text-amber-950 font-black">{formatFCFA(currentQuotaPrice)} / mois</strong>
+            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+              <span className="text-slate-600 font-medium">Inactifs :</span>
+              <strong className="text-slate-600 font-black">{inactiveProps}</strong>
             </div>
           </div>
         </div>

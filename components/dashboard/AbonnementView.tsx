@@ -24,6 +24,7 @@ import { formatFCFA } from '@/lib/utils';
 import {
   getBillablePropertyCount,
   getAgencyBillablePropertyCount,
+  getCachedQuotaState,
   getQuotaPrice,
   type QuotaComputationResult
 } from '@/lib/quotaEngine';
@@ -46,29 +47,15 @@ const INITIAL_INVOICES: SubscriptionInvoice[] = [];
 
 export const AbonnementView: React.FC = () => {
   const { user, profile } = useAuth();
-  const [quotaMetrics, setQuotaMetrics] = useState<QuotaComputationResult>(() => ({
-    ownerOrAgencyId: '',
-    role: 'proprietaire',
-    managedPropertiesCount: 0,
-    activeContractsCount: 0,
-    billablePropertiesCount: 0,
-    vacantPropertiesCount: 0,
-    billablePropertyIds: [],
-    activeContractIds: [],
-    quotaPrice: 0,
-    tier: '0_bien',
-    tierName: 'Aucun quota actif',
-    label: 'Aucun bien actif (0 FCFA)',
-    rangeLabel: '0 bien actif',
-    hasActiveQuota: false,
-    calculatedAt: new Date().toISOString()
-  }));
-  const [loading, setLoading] = useState<boolean>(true);
+  const [quotaMetrics, setQuotaMetrics] = useState<QuotaComputationResult>(() =>
+    getCachedQuotaState(user?.id, profile?.role === 'agence' ? 'agence' : 'proprietaire')
+  );
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Calcul silencieux en arrière-plan (sans spinner bloquant)
   const fetchPropertiesCount = async () => {
     try {
-      setLoading(true);
       setError(null);
       const userId = user?.id || '';
       const role = profile?.role === 'agence' ? 'agence' : 'proprietaire';
@@ -80,7 +67,7 @@ export const AbonnementView: React.FC = () => {
 
       setQuotaMetrics(computed);
     } catch (err: any) {
-      console.error('Erreur calcul du quota:', err);
+      console.error('Erreur calcul du quota en arrière-plan:', err);
     } finally {
       setLoading(false);
     }
@@ -121,7 +108,16 @@ export const AbonnementView: React.FC = () => {
       fetchPropertiesCount();
     };
 
+    const handleBackgroundQuotaUpdated = (e: any) => {
+      if (e?.detail && typeof e.detail.billablePropertiesCount === 'number') {
+        setQuotaMetrics(e.detail);
+      } else {
+        fetchPropertiesCount();
+      }
+    };
+
     if (typeof window !== 'undefined') {
+      window.addEventListener('locatrust:quota-updated', handleBackgroundQuotaUpdated);
       window.addEventListener('locatrust:properties-updated', handleLiveQuotaRefresh);
       window.addEventListener('locatrust:contracts-updated', handleLiveQuotaRefresh);
       window.addEventListener('locatrust:applications-updated', handleLiveQuotaRefresh);
@@ -152,6 +148,7 @@ export const AbonnementView: React.FC = () => {
 
     return () => {
       if (typeof window !== 'undefined') {
+        window.removeEventListener('locatrust:quota-updated', handleBackgroundQuotaUpdated);
         window.removeEventListener('locatrust:properties-updated', handleLiveQuotaRefresh);
         window.removeEventListener('locatrust:contracts-updated', handleLiveQuotaRefresh);
         window.removeEventListener('locatrust:applications-updated', handleLiveQuotaRefresh);
@@ -409,51 +406,6 @@ export const AbonnementView: React.FC = () => {
         </div>
       </div>
 
-      {/* LES 4 INDICATEURS OFFICIELS DE QUOTA (Section 17) */}
-      {!loading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">1. Biens gérés</span>
-              <Building2 className="w-4 h-4 text-slate-400" />
-            </div>
-            <span className="text-2xl font-black text-slate-900">{quotaMetrics.managedPropertiesCount}</span>
-            <span className="text-[11px] text-slate-500">
-              Dont {quotaMetrics.vacantPropertiesCount} vacant(s) (0 FCFA)
-            </span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">2. Contrats actifs</span>
-              <FileText className="w-4 h-4 text-blue-600" />
-            </div>
-            <span className="text-2xl font-black text-blue-700">{quotaMetrics.activeContractsCount}</span>
-            <span className="text-[11px] text-slate-500">Baux actuellement en cours</span>
-          </div>
-
-          <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 shadow-sm flex flex-col justify-between gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-black text-emerald-800 uppercase tracking-wider">3. Biens facturables</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            </div>
-            <span className="text-2xl font-black text-emerald-700">{quotaMetrics.billablePropertiesCount}</span>
-            <span className="text-[11px] text-emerald-800 font-semibold">
-              Biens distincts avec contrat actif
-            </span>
-          </div>
-
-          <div className="bg-amber-50/80 p-4 rounded-2xl border border-amber-200 shadow-sm flex flex-col justify-between gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-black text-amber-900 uppercase tracking-wider">4. Quota actuel</span>
-              <CreditCard className="w-4 h-4 text-amber-700" />
-            </div>
-            <span className="text-xl font-black text-slate-900">{formatFCFA(currentPlan.amount)} / mois</span>
-            <span className="text-[11px] text-amber-800 font-bold">{currentPlan.rangeLabel}</span>
-          </div>
-        </div>
-      )}
-
       {paymentSuccessMsg && (
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2 shadow-sm animate-fadeIn">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
@@ -560,12 +512,12 @@ export const AbonnementView: React.FC = () => {
         </div>
       )}
 
-      {/* CLEAN SAAS SUBSCRIPTION CARD */}
+      {/* CLEAN SAAS SUBSCRIPTION CARD (Clean, modern, no internal tier breakdown) */}
       <div className="bg-gradient-to-br from-[#0B192C] via-blue-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-blue-900/60 flex flex-col md:flex-row md:items-center justify-between gap-6 sm:gap-8">
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 text-xs font-black uppercase tracking-wider shadow-sm">
-              {currentPlan.tierName}
+              Votre formule active
             </span>
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30">
               {activePropertiesCount === 0 ? 'Aucun frais (0 bien loué)' : 'Abonnement actif'}
@@ -577,15 +529,13 @@ export const AbonnementView: React.FC = () => {
           </h3>
 
           <p className="text-xs text-slate-300 max-w-xl leading-relaxed">
-            {activePropertiesCount === 0
-              ? `Vous avez ${quotaMetrics.managedPropertiesCount} bien(s) géré(s), mais aucun contrat de location actif pour le moment. Les logements vacants ne génèrent aucun frais d'abonnement.`
-              : `Calculé sur vos ${activePropertiesCount} bien(s) facturable(s) possédant un contrat actif (sur ${quotaMetrics.managedPropertiesCount} bien(s) géré(s) au total).`}
+            Accès complet et illimité à l'ensemble des modules LocaTrust pour vos {activePropertiesCount} bien(s) en location active.
           </p>
 
           <div className="mt-2 p-3.5 rounded-2xl bg-blue-900/40 border border-blue-700/50 flex items-center gap-2.5 text-xs text-blue-100">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>
-              <strong>Règle d'équité LocaTrust :</strong> Seuls les logements ayant un contrat actif entrent dans votre quota. 1 bien actif : 500 FCFA • 2 à 10 : 2 000 FCFA • 11 à 20 : 5 000 FCFA • +20 : 10 000 FCFA.
+              <strong>Tout inclus :</strong> Baux certifiés avec QR code, quittances avec signature numérique, séquestre des cautions, messagerie interactive et exports comptables.
             </span>
           </div>
         </div>
@@ -594,11 +544,9 @@ export const AbonnementView: React.FC = () => {
         <div className="p-5 sm:p-6 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex flex-col gap-4 shrink-0 min-w-[260px] sm:min-w-[280px]">
           <div>
             <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
-              Biens facturables (contrat actif)
+              Patrimoine actif
             </span>
-            <span className="text-xl font-black text-white">
-              {activePropertiesCount} bien(s) sur {quotaMetrics.managedPropertiesCount} géré(s)
-            </span>
+            <span className="text-xl font-black text-white">{activePropertiesCount} bien(s) actif(s)</span>
           </div>
 
           <div>

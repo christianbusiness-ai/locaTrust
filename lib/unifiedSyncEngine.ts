@@ -12,6 +12,7 @@ import {
 } from '@/lib/messagingStore';
 import { deduplicateAndNormalizeNotifications } from '@/lib/waitingListNotifications';
 import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
+import { syncQuotaInBackground } from '@/lib/quotaEngine';
 
 export const isValidUuid = (str?: string): boolean =>
   Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
@@ -605,6 +606,11 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     // 8. TENTATIVE DE MIGRATION VERS SUPABASE DES ENTITÉS LOCALES EN ATTENTE
     await pushPendingLocalDataToServer(userId);
+
+    // 9. CALCUL ET SYNCHRONISATION AUTOMATIQUE DU QUOTA EN ARRIÈRE-PLAN
+    if (role !== 'locataire') {
+      syncQuotaInBackground(userId, role).catch(() => {});
+    }
 
     return { success: true };
   } catch (err: any) {
