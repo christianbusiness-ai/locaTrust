@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Calendar,
   Clock,
@@ -15,34 +15,44 @@ import {
   User,
   Building2,
   Check,
-  X
+  X,
+  History,
+  Archive
 } from 'lucide-react';
+import { useAuth } from '@/src/context/AuthContext';
+import { supabase } from '@/src/lib/supabase';
 
 export interface VisitRequest {
   id: string;
+  tenant_id?: string;
   tenant_name: string;
   tenant_avatar: string;
   tenant_phone: string;
   tenant_email: string;
+  property_id?: string;
   property_title: string;
   property_address: string;
+  owner_id?: string;
+  agency_id?: string;
   request_date: string;
   preferred_date: string;
   preferred_time: string;
   comment: string;
   status: 'en_attente' | 'acceptee' | 'refusee' | 'visite_programmee' | 'visite_effectuee' | 'annulee';
+  created_at?: string;
 }
-
-const INITIAL_VISITS: VisitRequest[] = [];
 
 interface VisitesViewProps {
   onOpenMessages?: (tenantId?: string) => void;
 }
 
 export const VisitesView: React.FC<VisitesViewProps> = ({ onOpenMessages }) => {
-  const [visits, setVisits] = useState<VisitRequest[]>(INITIAL_VISITS);
+  const { user } = useAuth();
+  const [visits, setVisits] = useState<VisitRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('tous');
+  const [showPastVisits, setShowPastVisits] = useState(false);
   const [selectedVisitDetails, setSelectedVisitDetails] = useState<VisitRequest | null>(null);
 
   // Proposer une autre date modal state
@@ -50,37 +60,248 @@ export const VisitesView: React.FC<VisitesViewProps> = ({ onOpenMessages }) => {
   const [newDate, setNewDate] = useState('');
   const [newTime, setNewTime] = useState('');
 
-  const handleUpdateStatus = (id: string, newStatus: VisitRequest['status']) => {
-    setVisits((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, status: newStatus } : v))
-    );
+  // 1. Charger les visites depuis localStorage et Supabase
+  const loadVisits = useCallback(async () => {
+    setIsLoading(true);
+    let localList: VisitRequest[] = [];
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_visit_requests');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) localList = parsed;
+        }
+      } catch (err) {
+        console.warn('Erreur lecture visites locales:', err);
+      }
+    }
+
+    let dbList: VisitRequest[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('visit_requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        dbList = data.map((item: any) => ({
+          id: String(item.id),
+          tenant_id: item.tenant_id,
+          tenant_name: item.tenant_name || 'Candidat Locataire',
+          tenant_avatar:
+            item.tenant_avatar ||
+            (item.tenant_name
+              ? `https://ui-avatars.com/api/?name=${encodeURIComponent(item.tenant_name)}&background=0284c7&color=fff`
+              : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80'),
+          tenant_phone: item.tenant_phone || '',
+          tenant_email: item.tenant_email || '',
+          property_id: item.property_id,
+          property_title: item.property_title || 'Bien immobilier',
+          property_address: item.property_address || 'Abidjan, Côte d\'Ivoire',
+          owner_id: item.owner_id,
+          agency_id: item.agency_id,
+          request_date: item.request_date || (item.created_at ? new Date(item.created_at).toISOString().split('T')[0] : 'Aujourd\'hui'),
+          preferred_date: item.preferred_date || '',
+          preferred_time: item.preferred_time || '',
+          comment: item.comment || 'Aucun commentaire renseigné.',
+          status: item.status || 'en_attente',
+          created_at: item.created_at
+        }));
+      }
+    } catch (e) {
+      console.warn('Erreur chargement visit_requests Supabase:', e);
+    }
+
+    // Fusion et déduplication par id
+    const map = new Map<string, VisitRequest>();
+    localList.forEach((v) => map.set(v.id, v));
+    dbList.forEach((v) => {
+      const existing = map.get(v.id);
+      if (existing) {
+        map.set(v.id, { ...existing, ...v });
+      } else {
+        map.set(v.id, v);
+      }
+    });
+
+    const allVisits = Array.from(map.values());
+
+    // Filtrer pour le propriétaire ou l'agence connecté
+    const userVisits = allVisits.filter((v) => {
+      if (!user?.id) return true;
+      return (
+        v.owner_id === user.id ||
+        v.agency_id === user.id ||
+        !v.owner_id ||
+        v.owner_id === 'usr_owner' ||
+        v.agency_id === 'usr_agency'
+      );
+    });
+
+    setVisits(userVisits);
+    setIsLoading(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    loadVisits();
+
+    const handleSync = () => loadVisits();
+    window.addEventListener('locatrust:visit-requests-updated', handleSync);
+    window.addEventListener('locatrust:applications-updated', handleSync);
+
+    return () => {
+      window.removeEventListener('locatrust:visit-requests-updated', handleSync);
+      window.removeEventListener('locatrust:applications-updated', handleSync);
+    };
+  }, [loadVisits]);
+
+  // Sauvegarder les visites en local et émettre l'événement
+  const persistVisits = (updatedVisits: VisitRequest[]) => {
+    setVisits(updatedVisits);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('locatrust_visit_requests', JSON.stringify(updatedVisits));
+        window.dispatchEvent(new CustomEvent('locatrust:visit-requests-updated', { detail: { visits: updatedVisits } }));
+      } catch (e) {
+        console.warn('Erreur persistance visites:', e);
+      }
+    }
   };
 
-  const handleConfirmReschedule = () => {
+  // Envoyer une notification au locataire
+  const notifyTenant = async (vis: VisitRequest, title: string, message: string) => {
+    if (!vis.tenant_id && !vis.tenant_name) return;
+    try {
+      const notifId = `notif_visit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const notifObj = {
+        id: notifId,
+        user_id: vis.tenant_id,
+        title,
+        message,
+        type: 'visit',
+        is_read: false,
+        read: false,
+        created_at: new Date().toISOString()
+      };
+
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem('locatrust_notifications');
+        const notifs = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(notifs)) {
+          notifs.unshift(notifObj);
+          localStorage.setItem('locatrust_notifications', JSON.stringify(notifs));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: notifs } }));
+        }
+      }
+
+      await supabase.from('notifications').insert({
+        user_id: vis.tenant_id,
+        title,
+        message,
+        type: 'visit',
+        is_read: false
+      }).catch(() => {});
+    } catch {}
+  };
+
+  // Mettre à jour le statut d'une visite
+  const handleUpdateStatus = async (id: string, newStatus: VisitRequest['status']) => {
+    const targetVisit = visits.find((v) => v.id === id);
+    const updated = visits.map((v) => (v.id === id ? { ...v, status: newStatus } : v));
+    persistVisits(updated);
+
+    try {
+      await supabase.from('visit_requests').update({ status: newStatus }).eq('id', id);
+    } catch (e) {
+      console.warn('Erreur Supabase update visit status:', e);
+    }
+
+    if (targetVisit) {
+      if (newStatus === 'visite_programmee' || newStatus === 'acceptee') {
+        await notifyTenant(
+          targetVisit,
+          'Demande de visite acceptée',
+          `Votre visite pour « ${targetVisit.property_title} » est confirmée pour le ${targetVisit.preferred_date} à ${targetVisit.preferred_time}.`
+        );
+      } else if (newStatus === 'refusee') {
+        await notifyTenant(
+          targetVisit,
+          'Demande de visite refusée',
+          `Le bailleur n'a pas pu valider votre créneau de visite pour « ${targetVisit.property_title} ». Vous pouvez proposer une autre date.`
+        );
+      } else if (newStatus === 'visite_effectuee') {
+        await notifyTenant(
+          targetVisit,
+          'Visite effectuée',
+          `Votre visite pour « ${targetVisit.property_title} » a été marquée comme effectuée. Vous pouvez maintenant soumettre votre dossier de location.`
+        );
+      }
+    }
+  };
+
+  // Reporter / Proposer un nouveau créneau
+  const handleConfirmReschedule = async () => {
     if (!reschedulingVisit || !newDate || !newTime) return;
-    setVisits((prev) =>
-      prev.map((v) =>
-        v.id === reschedulingVisit.id
-          ? {
-              ...v,
-              preferred_date: newDate,
-              preferred_time: newTime,
-              status: 'visite_programmee'
-            }
-          : v
-      )
+    const targetId = reschedulingVisit.id;
+
+    const updated = visits.map((v) =>
+      v.id === targetId
+        ? {
+            ...v,
+            preferred_date: newDate,
+            preferred_time: newTime,
+            status: 'visite_programmee' as const
+          }
+        : v
     );
-    alert(`Nouvelle date proposée pour ${reschedulingVisit.tenant_name} : le ${newDate} à ${newTime}. Notifié par SMS/Email.`);
+    persistVisits(updated);
+
+    try {
+      await supabase.from('visit_requests').update({
+        preferred_date: newDate,
+        preferred_time: newTime,
+        status: 'visite_programmee'
+      }).eq('id', targetId);
+    } catch (e) {
+      console.warn('Erreur Supabase reschedule visit:', e);
+    }
+
+    await notifyTenant(
+      reschedulingVisit,
+      'Nouveau créneau de visite proposé',
+      `Le bailleur vous propose un nouveau créneau pour visiter « ${reschedulingVisit.property_title} » : le ${newDate} à ${newTime}.`
+    );
+
     setReschedulingVisit(null);
     setNewDate('');
     setNewTime('');
   };
+
+  // Règle d'expiration : Masquer automatiquement les visites de plus de 24h par rapport à la date de rendez-vous
+  const isPastVisit = (dateStr: string) => {
+    if (!dateStr) return false;
+    const visitDate = new Date(dateStr);
+    if (isNaN(visitDate.getTime())) return false;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 1);
+    cutoff.setHours(0, 0, 0, 0);
+    return visitDate < cutoff;
+  };
+
+  const pastVisitsCount = visits.filter((v) => isPastVisit(v.preferred_date)).length;
 
   const filteredVisits = visits.filter((v) => {
     const matchesSearch =
       v.tenant_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       v.property_title.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'tous' || v.status === statusFilter;
+    const isPast = isPastVisit(v.preferred_date);
+
+    // Par défaut, masquer automatiquement les visites dépassées de plus d'un jour
+    if (!showPastVisits && isPast) {
+      return false;
+    }
+
     return matchesSearch && matchesStatus;
   });
 
@@ -138,13 +359,13 @@ export const VisitesView: React.FC<VisitesViewProps> = ({ onOpenMessages }) => {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Gérez les rendez-vous de visite avec les candidats. Une visite permet au locataire de découvrir le bien avant d'effectuer une éventuelle demande de location.
+            Gérez les rendez-vous de visite avec les candidats. Une visite permet au candidat de découvrir le bien avant de soumettre une éventuelle demande de location.
           </p>
         </div>
 
-        {/* Search & Filter Controls */}
+        {/* Search, Filter & Past Visits Toggle Controls */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="relative w-full sm:w-60">
+          <div className="relative w-full sm:w-56">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
@@ -166,6 +387,22 @@ export const VisitesView: React.FC<VisitesViewProps> = ({ onOpenMessages }) => {
             <option value="visite_effectuee">Visite effectuée</option>
             <option value="refusee">Refusée</option>
           </select>
+
+          {pastVisitsCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowPastVisits((prev) => !prev)}
+              className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 ${
+                showPastVisits
+                  ? 'bg-blue-50 text-blue-700 border-blue-300'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+              }`}
+              title="Masquer ou afficher les visites passées de plus de 24h"
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>{showPastVisits ? 'Masquer passées' : `Passées (${pastVisitsCount})`}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -175,135 +412,149 @@ export const VisitesView: React.FC<VisitesViewProps> = ({ onOpenMessages }) => {
           <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">
             Demandes reçues ({filteredVisits.length})
           </h3>
-          <span className="text-[11px] text-slate-500">
-            Les contrats ne peuvent être générés que suite à une demande de location formelle.
+          <span className="text-[11px] text-slate-500 hidden sm:inline">
+            Les contrats ne sont générés que suite à une demande de location formelle.
           </span>
         </div>
 
         <div className="divide-y divide-slate-100">
-          {filteredVisits.length === 0 ? (
+          {isLoading ? (
+            <div className="p-12 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+              <Clock className="w-4 h-4 animate-spin text-blue-600" />
+              <span>Chargement du planning de visites...</span>
+            </div>
+          ) : filteredVisits.length === 0 ? (
             <div className="p-12 text-center text-slate-400 text-xs">
               Aucune demande de visite ne correspond à vos critères.
             </div>
           ) : (
-            filteredVisits.map((vis) => (
-              <div
-                key={vis.id}
-                className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-slate-50/70 transition-colors"
-              >
-                {/* Left: Tenant & Property */}
-                <div className="flex items-start gap-3.5 min-w-[280px]">
-                  <img
-                    src={vis.tenant_avatar}
-                    alt={vis.tenant_name}
-                    className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
-                  />
-                  <div className="flex flex-col">
-                    <span className="text-sm font-black text-slate-900 leading-tight">
-                      {vis.tenant_name}
-                    </span>
-                    <span className="text-xs font-bold text-blue-700 mt-0.5">
-                      {vis.property_title}
-                    </span>
-                    <span className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                      <MapPin className="w-3 h-3 text-slate-400" /> {vis.property_address}
-                    </span>
+            filteredVisits.map((vis) => {
+              const isPast = isPastVisit(vis.preferred_date);
+              return (
+                <div
+                  key={vis.id}
+                  className={`p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-colors ${
+                    isPast ? 'bg-slate-50/50 opacity-75' : 'hover:bg-slate-50/70'
+                  }`}
+                >
+                  {/* Left: Tenant & Property */}
+                  <div className="flex items-start gap-3.5 min-w-[280px]">
+                    <img
+                      src={vis.tenant_avatar}
+                      alt={vis.tenant_name}
+                      className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
+                    />
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-slate-900 leading-tight">
+                          {vis.tenant_name}
+                        </span>
+                        {isPast && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-slate-200 text-slate-600">
+                            Passée
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs font-bold text-blue-700 mt-0.5">
+                        {vis.property_title}
+                      </span>
+                      <span className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-3 h-3 text-slate-400" /> {vis.property_address}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Middle: Date & Comment */}
+                  <div className="flex flex-col gap-1 text-xs max-w-md">
+                    <div className="flex items-center gap-3">
+                      <span className="font-extrabold text-slate-800 flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                        Visite souhaitée : {vis.preferred_date} à {vis.preferred_time}
+                      </span>
+                      <span className="text-[11px] text-slate-400">Demande le {vis.request_date}</span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-200 line-clamp-2">
+                      &laquo; {vis.comment} &raquo;
+                    </p>
+                  </div>
+
+                  {/* Status */}
+                  <div className="shrink-0">
+                    {getStatusBadge(vis.status)}
+                  </div>
+
+                  {/* Actions (Strictly visit management actions, NO contract generator) */}
+                  <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                    {vis.status === 'en_attente' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateStatus(vis.id, 'visite_programmee')}
+                          className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-sm transition-all active:scale-95"
+                        >
+                          Accepter
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReschedulingVisit(vis)}
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+                        >
+                          Autre date
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateStatus(vis.id, 'refusee')}
+                          className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold text-xs transition-colors"
+                        >
+                          Refuser
+                        </button>
+                      </>
+                    )}
+
+                    {vis.status === 'visite_programmee' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateStatus(vis.id, 'visite_effectuee')}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-sm flex items-center gap-1 transition-all active:scale-95"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Visite effectuée</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReschedulingVisit(vis)}
+                          className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                        >
+                          Reporter
+                        </button>
+                      </>
+                    )}
+
+                    {/* Details Modal Trigger */}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedVisitDetails(vis)}
+                      className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600"
+                      title="Voir les détails"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+
+                    {/* Message Trigger */}
+                    <button
+                      type="button"
+                      onClick={() => onOpenMessages?.(vis.tenant_id)}
+                      className="p-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200"
+                      title="Envoyer un message"
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-
-                {/* Middle: Date & Comment */}
-                <div className="flex flex-col gap-1 text-xs max-w-md">
-                  <div className="flex items-center gap-3">
-                    <span className="font-extrabold text-slate-800 flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                      Visite souhaitée : {vis.preferred_date} à {vis.preferred_time}
-                    </span>
-                    <span className="text-[11px] text-slate-400">Demande le {vis.request_date}</span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-200 line-clamp-2">
-                    &laquo; {vis.comment} &raquo;
-                  </p>
-                </div>
-
-                {/* Status */}
-                <div className="shrink-0">
-                  {getStatusBadge(vis.status)}
-                </div>
-
-                {/* Actions (Strictly visit management actions, NO contract generator) */}
-                <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-                  
-                  {vis.status === 'en_attente' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateStatus(vis.id, 'visite_programmee')}
-                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-sm transition-all active:scale-95"
-                      >
-                        Accepter
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReschedulingVisit(vis)}
-                        className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
-                      >
-                        Autre date
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateStatus(vis.id, 'refusee')}
-                        className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold text-xs transition-colors"
-                      >
-                        Refuser
-                      </button>
-                    </>
-                  )}
-
-                  {vis.status === 'visite_programmee' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateStatus(vis.id, 'visite_effectuee')}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-sm flex items-center gap-1 transition-all active:scale-95"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Visite effectuée</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReschedulingVisit(vis)}
-                        className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
-                      >
-                        Reporter
-                      </button>
-                    </>
-                  )}
-
-                  {/* Details Modal Trigger */}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedVisitDetails(vis)}
-                    className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600"
-                    title="Voir les détails"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-
-                  {/* Message Trigger */}
-                  <button
-                    type="button"
-                    onClick={() => onOpenMessages?.()}
-                    className="p-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200"
-                    title="Envoyer un message"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                  </button>
-
-                </div>
-
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

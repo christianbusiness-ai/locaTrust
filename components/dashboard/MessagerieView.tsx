@@ -157,8 +157,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             app.owner_id === currentUserId ||
             app.agency_id === currentUserId ||
             (app.owner as any)?.id === currentUserId ||
-            (app.agency as any)?.id === currentUserId ||
-            (userRole === 'agence' && Boolean(app.agency_name || app.is_agency || app.agency_id))
+            (app.agency as any)?.id === currentUserId
           );
         });
 

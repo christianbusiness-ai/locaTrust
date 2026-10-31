@@ -203,7 +203,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 1. LOCATAIRE SPECIFIC NAVIGATION
   const tenantItems = [
     { id: 'feed', name: "Fil d'actualité", icon: LayoutDashboard },
-    { id: 'search', name: 'Rechercher', icon: Search },
     { id: 'favorites', name: 'Favoris', icon: Heart },
     { id: 'applications', name: 'Demandes', icon: Eye, badge: appCount > 0 ? appCount : undefined },
     { id: 'messages', name: 'Messages', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
@@ -213,7 +212,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'receipts', name: 'Reçus', icon: Receipt },
     { id: 'guarantees', name: 'Cautions', icon: ShieldCheck, badge: cautionPendingCount > 0 ? cautionPendingCount : undefined },
     { id: 'maintenance', name: 'Maintenance', icon: Wrench },
-    { id: 'notifications', name: 'Notifications', icon: Bell },
     { id: 'profile', name: 'Mon profil', icon: UserIcon },
     { id: 'settings', name: 'Paramètres', icon: Settings },
     { id: 'support', name: 'Aide & Support', icon: HelpCircle },
@@ -241,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'payments', name: 'Paiements & Loyers', icon: CreditCard },
     { id: 'guarantees', name: 'Cautions', icon: ShieldCheck, badge: cautionPendingCount > 0 ? cautionPendingCount : undefined },
     { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
-    { id: 'visits', name: 'Demandes de visite', icon: Eye },
+    { id: 'visits', name: 'Visites', icon: Calendar },
     { id: 'documents', name: 'Documents', icon: Folder },
     { id: 'receipts', name: 'Reçus & Quittances', icon: Receipt },
     { id: 'history', name: 'Historique général', icon: History },

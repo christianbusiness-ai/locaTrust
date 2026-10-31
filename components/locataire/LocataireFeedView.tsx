@@ -102,6 +102,20 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   const [isSubmittingApp, setIsSubmittingApp] = useState(false);
   const [isSendingDirectMessage, setIsSendingDirectMessage] = useState(false);
 
+  // States pour les vidéos et demandes de visite réelles
+  const [activeVideoModal, setActiveVideoModal] = useState<string | null>(null);
+  const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
+  const [selectedVisitRental, setSelectedVisitRental] = useState<any>(null);
+  const [visitDate, setVisitDate] = useState(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  });
+  const [visitTime, setVisitTime] = useState('10:00');
+  const [visitComment, setVisitComment] = useState('Bonjour, je souhaite visiter ce logement. Merci.');
+  const [isSubmittingVisit, setIsSubmittingVisit] = useState(false);
+  const [visitSuccessModal, setVisitSuccessModal] = useState<{ propertyTitle: string; date: string; time: string } | null>(null);
+
   const toggleLike = (id: string) => {
     setLikedPosts(prev => {
       const isLiked = !prev[id];
@@ -125,12 +139,121 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
   const handleMessage = (rental: any) => {
     if (!isVerified) {
-      setKycBlockAction('contacter le bailleur et demander une visite');
+      setKycBlockAction('contacter le bailleur et échanger par message');
       setShowKycBlockModal(true);
       return;
     }
     setSelectedRental(rental);
     setIsMessageModalOpen(true);
+  };
+
+  const handleOpenVisitModal = (rental: any) => {
+    if (!isVerified) {
+      setKycBlockAction('planifier une visite');
+      setShowKycBlockModal(true);
+      return;
+    }
+    setSelectedVisitRental(rental);
+    setIsVisitModalOpen(true);
+  };
+
+  const submitVisitRequest = async (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    if (!selectedVisitRental || isSubmittingVisit || !visitDate) return;
+
+    setIsSubmittingVisit(true);
+    try {
+      const applicantId = user?.id || profile?.id || 'usr_tenant';
+      const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
+      const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
+      const applicantEmail = user?.email || (profile as any)?.email || '';
+      const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+
+      const isAgencyProp = Boolean(
+        selectedVisitRental.agencyId ||
+        selectedVisitRental.agency_id ||
+        selectedVisitRental.is_agency ||
+        selectedVisitRental.roleBadge?.toLowerCase().includes('agence')
+      );
+      const targetAgencyId = selectedVisitRental.agencyId || selectedVisitRental.agency_id || (isAgencyProp ? (selectedVisitRental.ownerId || selectedVisitRental.owner?.id) : undefined);
+      const targetOwnerId = selectedVisitRental.ownerId || selectedVisitRental.owner?.id || targetAgencyId || selectedVisitRental.mandant_id || 'usr_owner';
+      const primaryRecipientId = targetAgencyId || targetOwnerId;
+
+      const visitPayload = {
+        id: crypto.randomUUID(),
+        property_id: selectedVisitRental.id,
+        property_title: selectedVisitRental.title,
+        property_address: selectedVisitRental.location,
+        tenant_id: applicantId,
+        tenant_name: applicantName,
+        tenant_phone: applicantPhone,
+        tenant_email: applicantEmail,
+        tenant_avatar: applicantAvatar,
+        owner_id: targetOwnerId,
+        agency_id: targetAgencyId,
+        request_date: new Date().toISOString().split('T')[0],
+        preferred_date: visitDate,
+        preferred_time: visitTime,
+        comment: visitComment.trim(),
+        status: 'en_attente'
+      };
+
+      // 1. Sauvegarde dans Supabase visit_requests
+      try {
+        await supabase.from('visit_requests').insert([visitPayload]);
+      } catch (sbErr) {
+        console.warn('Notice Supabase visit_requests insert:', sbErr);
+      }
+
+      // 2. Persistance locale
+      if (typeof window !== 'undefined') {
+        const raw = localStorage.getItem('locatrust_visit_requests');
+        let currentVisits: any[] = [];
+        if (raw) {
+          try { currentVisits = JSON.parse(raw); } catch {}
+        }
+        const updated = [visitPayload, ...currentVisits.filter((v: any) => v.id !== visitPayload.id)];
+        localStorage.setItem('locatrust_visit_requests', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:visits-updated', { detail: { visits: updated } }));
+      }
+
+      // 3. Notification pour le propriétaire ou l'agence
+      pushGlobalNotification({
+        title: 'Nouvelle demande de visite reçue',
+        description: `${applicantName} souhaite visiter « ${selectedVisitRental.title} » le ${visitDate} à ${visitTime}.`,
+        category: 'visite',
+        targetTab: 'visits',
+        targetRole: isAgencyProp ? 'agence' : 'proprietaire',
+        targetUserId: primaryRecipientId,
+        senderUserId: applicantId,
+        payload: {
+          visitId: visitPayload.id,
+          propertyId: selectedVisitRental.id,
+          tenantId: applicantId
+        }
+      });
+
+      broadcastLiveEvent('APPLICATION_SUBMITTED' as any, {
+        actorId: applicantId,
+        targetUserId: primaryRecipientId,
+        propertyId: selectedVisitRental.id,
+        data: visitPayload,
+        timestamp: new Date().toISOString()
+      });
+
+      triggerCelebration();
+      setIsVisitModalOpen(false);
+      setVisitSuccessModal({
+        propertyTitle: selectedVisitRental.title,
+        date: visitDate,
+        time: visitTime
+      });
+    } catch (err: any) {
+      console.warn('Erreur demande de visite:', err);
+      alert('Une erreur est survenue lors de l\'envoi de votre demande de visite.');
+    } finally {
+      setIsSubmittingVisit(false);
+    }
   };
 
   const submitApplication = async (e?: React.FormEvent) => {
@@ -594,6 +717,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       caution: Number(p.caution || (p as any).caution_amount || (Number(p.rent || 0) * 2)),
       location: `${p.commune ? p.commune + ', ' : ''}${p.city || 'Abidjan'}`,
       amenities: dynamicAmenities,
+      videos: Array.isArray(p.videos) ? p.videos.filter(Boolean) : ((p as any).video_url ? [(p as any).video_url] : []),
       images: {
         all: photos,
         main: photos[0] || '',
@@ -761,6 +885,17 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {item.videos && item.videos.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveVideoModal(item.videos[0])}
+              className="px-2.5 py-1 rounded-full bg-violet-600 hover:bg-violet-700 text-white font-extrabold text-[11px] tracking-wide flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
+              title="Regarder la vidéo de visite réelle"
+            >
+              <Video className="w-3.5 h-3.5" />
+              <span>Vidéo</span>
+            </button>
+          )}
           <span className="px-3 py-1 rounded-full bg-blue-600 text-white font-extrabold text-[11px] tracking-wide uppercase shadow-sm">
             {item.badge}
           </span>
@@ -907,18 +1042,30 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         </div>
       </div>
 
-      {/* Bottom Actions: Demander, Favoris & Message (100% responsive sur mobile sans débordement) */}
+      {/* Bottom Actions: Demander, Demander une visite, Favoris & Message */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2">
         <div className="flex items-center gap-2 flex-1">
+          {/* Bouton raccourci Demander */}
           <button
             onClick={() => handleApply(item)}
-            className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 text-center min-w-0"
+            className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 text-center min-w-0 cursor-pointer"
+            title="Candidater pour ce logement"
           >
             <Key className="w-4 h-4 shrink-0" />
-            <span className="truncate">Demander la location</span>
+            <span className="truncate">Demander</span>
           </button>
 
-          {/* Bouton Ajouter aux favoris toujours visible */}
+          {/* Bouton Demander une visite */}
+          <button
+            onClick={() => handleOpenVisitModal(item)}
+            className="flex-1 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95 text-center min-w-0 cursor-pointer"
+            title="Demander une visite pour ce logement"
+          >
+            <Calendar className="w-4 h-4 shrink-0" />
+            <span className="truncate">Demander une visite</span>
+          </button>
+
+          {/* Bouton Ajouter aux favoris */}
           <button
             onClick={() => toggleLike(item.id)}
             className={`py-2.5 px-3 rounded-xl border transition-all flex items-center justify-center gap-1.5 shrink-0 ${
@@ -938,7 +1085,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
         <button
           onClick={() => handleMessage(item)}
-          className="w-full sm:w-auto py-2.5 px-3.5 rounded-xl border border-blue-200 text-blue-700 bg-blue-50/50 hover:bg-blue-100/70 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95 text-center shrink-0"
+          className="w-full sm:w-auto py-2.5 px-3.5 rounded-xl border border-blue-200 text-blue-700 bg-blue-50/50 hover:bg-blue-100/70 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all active:scale-95 text-center shrink-0 cursor-pointer"
         >
           <MessageSquare className="w-4 h-4 text-blue-600 shrink-0" />
           <span>Message</span>
@@ -1708,6 +1855,158 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                 Fermer
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL LECTURE VIDÉO DE VISITE RÉELLE */}
+      {activeVideoModal && (
+        <div
+          className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setActiveVideoModal(null)}
+        >
+          <div
+            className="relative w-full max-w-3xl bg-slate-900 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/80">
+              <div className="flex items-center gap-2">
+                <Video className="w-5 h-5 text-emerald-400" />
+                <span className="text-white font-extrabold text-sm">Vidéo de visite réelle du logement</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveVideoModal(null)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="relative aspect-video w-full bg-black flex items-center justify-center">
+              <video
+                src={activeVideoModal}
+                controls
+                autoPlay
+                playsInline
+                className="w-full h-full max-h-[75vh] object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PLANIFICATION D'UNE VISITE */}
+      {isVisitModalOpen && selectedVisitRental && (
+        <div className="fixed inset-0 z-[110] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">Demander une visite</h3>
+                  <p className="text-[11px] text-slate-500 font-medium truncate max-w-[240px]">{selectedVisitRental.title}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsVisitModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={submitVisitRequest} className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-700">Date souhaitée</label>
+                <input
+                  type="date"
+                  required
+                  min={new Date().toISOString().split('T')[0]}
+                  value={visitDate}
+                  onChange={(e) => setVisitDate(e.target.value)}
+                  className="px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-700">Créneau horaire</label>
+                <select
+                  value={visitTime}
+                  onChange={(e) => setVisitTime(e.target.value)}
+                  className="px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="09:00">09:00 - Matin</option>
+                  <option value="10:00">10:00 - Matin</option>
+                  <option value="11:30">11:30 - Matin</option>
+                  <option value="14:00">14:00 - Après-midi</option>
+                  <option value="15:30">15:30 - Après-midi</option>
+                  <option value="17:00">17:00 - Fin d'après-midi</option>
+                  <option value="18:00">18:00 - Soirée</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-700">Message / Précision pour le bailleur (optionnel)</label>
+                <textarea
+                  rows={2}
+                  value={visitComment}
+                  onChange={(e) => setVisitComment(e.target.value)}
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Ex : Je suis disponible à partir de 10h, merci."
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-50 border border-blue-100 flex items-start gap-2 text-[11px] text-blue-900 font-medium">
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <span>Le bailleur sera notifié instantanément et pourra soit confirmer ce créneau, soit vous en proposer un nouveau.</span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsVisitModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingVisit}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSubmittingVisit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
+                  <span>Confirmer la demande</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL SUCCÈS DEMANDE DE VISITE */}
+      {visitSuccessModal && (
+        <div className="fixed inset-0 z-[115] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col items-center text-center gap-3">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+            <h3 className="text-base font-extrabold text-slate-900">Demande de visite envoyée !</h3>
+            <p className="text-xs text-slate-600 max-w-sm leading-relaxed">
+              Votre demande de visite pour <strong>« {visitSuccessModal.propertyTitle} »</strong> le <strong>{visitSuccessModal.date}</strong> à <strong>{visitSuccessModal.time}</strong> a été transmise avec succès au bailleur certifié.
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Vous recevrez une notification dès que le bailleur aura validé ou reprogrammé le rendez-vous.
+            </p>
+            <button
+              type="button"
+              onClick={() => setVisitSuccessModal(null)}
+              className="mt-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
+            >
+              Parfait, merci
+            </button>
           </div>
         </div>
       )}

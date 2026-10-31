@@ -38,6 +38,7 @@ import { createProperty, uploadFileToStorage } from '@/lib/supabase/services';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { getAgencyMandates, saveAgencyMandate, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
+import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 
 // Helper pour compresser les vraies photos de l'utilisateur sans aucune perte de sujet
 const compressImageToDataUrl = (file: File, maxWidth = 1280, maxHeight = 1280, quality = 0.82): Promise<string> => {
@@ -170,6 +171,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
+  const isSubmittingRef = React.useRef<boolean>(false);
 
   // Sélecteur de fichiers local (Photos & Vidéo)
   const [photoFiles, setPhotoFiles] = useState<{ id: string; url: string; name: string }[]>([]);
@@ -261,6 +263,8 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || isSubmittingRef.current) return;
+
     if (isSubscriptionExpired) {
       setErrorMsg('⚠️ Publication impossible : votre abonnement SaaS LocaTrust est expiré. Veuillez le renouveler dans la section "Abonnement" pour ajouter de nouveaux biens.');
       return;
@@ -285,6 +289,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
     }
 
     setErrorMsg('');
+    isSubmittingRef.current = true;
     setLoading(true);
 
     try {
@@ -336,7 +341,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       const currentPublisherAvatar = profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentPublisherName)}&background=1E40AF&color=fff`;
       const currentPublisherPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
 
-      // Vidéo optionnelle : Téléversement réel vers Supabase Storage
+      // Vidéo optionnelle : Téléversement direct rapide vers Supabase Storage
       const finalVideos: string[] = [];
       if (videoRawFile) {
         try {
@@ -345,17 +350,9 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
           const uploadRes = await uploadFileToStorage('property_photos', filePath, videoRawFile);
           if (uploadRes?.publicUrl) {
             finalVideos.push(uploadRes.publicUrl);
-          } else {
-            // Conversion base64 de secours si stockage indisponible
-            const base64Video = await new Promise<string>((resolve) => {
-              const r = new FileReader();
-              r.onloadend = () => resolve(r.result as string);
-              r.readAsDataURL(videoRawFile);
-            });
-            if (base64Video) finalVideos.push(base64Video);
           }
         } catch (vErr) {
-          console.warn('Erreur téléversement vidéo du bien:', vErr);
+          console.warn('Notice téléversement vidéo du bien:', vErr);
         }
       } else if (videoUrl.trim() && !videoUrl.startsWith('blob:')) {
         finalVideos.push(videoUrl.trim());
@@ -404,12 +401,12 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         mandant_name: finalMandantName
       };
 
-      // 1. Sauvegarde dans Supabase avec délai de protection (ne bloque jamais plus de 4s)
+      // 1. Sauvegarde dans Supabase
       let dbData = null;
       try {
         const dbPromise = createProperty(newPropPayload);
         const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error('Timeout Supabase') }), 4000)
+          setTimeout(() => resolve({ data: null, error: new Error('Timeout Supabase') }), 7000)
         );
         const res = await Promise.race([dbPromise, timeoutPromise]);
         if (res.data) dbData = res.data;
@@ -417,7 +414,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
         console.warn('Notice Supabase createProperty:', dbErr);
       }
 
-      // 2. Synchronisation locale immédiate et robuste
+      // 2. Synchronisation locale immédiate sans doublon
       if (typeof window !== 'undefined') {
         const existing = localStorage.getItem('locatrust_properties');
         let list: any[] = [];
@@ -454,7 +451,18 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
           mandant_id: finalMandantId,
           mandant_name: finalMandantName
         };
-        list.unshift(propToSave);
+
+        // Règle stricte anti-doublon : vérifier à la fois l'id et le titre/loyer/propriétaire
+        const propKey = `${propToSave.title.trim().toLowerCase()}_${propToSave.owner_id}_${propToSave.rent}`;
+        const existingIdx = list.findIndex(
+          (p) => p && (p.id === propToSave.id || `${p.title?.trim().toLowerCase()}_${p.owner_id}_${p.rent}` === propKey)
+        );
+
+        if (existingIdx !== -1) {
+          list[existingIdx] = { ...list[existingIdx], ...propToSave };
+        } else {
+          list.unshift(propToSave);
+        }
 
         try {
           localStorage.setItem('locatrust_properties', JSON.stringify(list));
@@ -493,6 +501,7 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
       console.error('Erreur lors de la publication:', err);
       setErrorMsg('⚠️ Une erreur est survenue lors de la publication : ' + (err?.message || 'Veuillez réessayer.'));
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   };
@@ -1519,8 +1528,6 @@ export const AddPropertyModal: React.FC<{ isOpen: boolean; onClose: () => void }
     </div>
   );
 };
-
-import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
 
 // 2. Créer un contrat Modal (Integrated with Full LocaTrust Compliance Engine)
 export const CreateContractModal: React.FC<{ isOpen: boolean; onClose: () => void; initialData?: any }> = ({ isOpen, onClose, initialData }) => {

@@ -124,10 +124,25 @@ export const BiensView: React.FC<BiensViewProps> = ({
         }
       }
 
-      setProperties(combined);
+      // Règle stricte anti-doublon : déduplication absolue par id et (titre + loyer + commune/ville)
+      const seenIds = new Set<string>();
+      const seenSignature = new Set<string>();
+      const dedupedCombined: Property[] = [];
+
+      for (const p of combined) {
+        if (!p || !p.id) continue;
+        const normKey = `${(p.title || '').trim().toLowerCase()}_${Number(p.rent || 0)}_${(p.commune || p.city || '').trim().toLowerCase()}`;
+        if (!seenIds.has(p.id) && !seenSignature.has(normKey)) {
+          seenIds.add(p.id);
+          seenSignature.add(normKey);
+          dedupedCombined.push(p);
+        }
+      }
+
+      setProperties(dedupedCombined);
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem('locatrust_properties', JSON.stringify(combined));
+          localStorage.setItem('locatrust_properties', JSON.stringify(dedupedCombined));
         } catch {}
       }
     } catch (err: any) {

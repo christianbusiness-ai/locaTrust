@@ -283,12 +283,14 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       text: string,
       x: number,
       y: number,
-      maxWidth: number = 175,
+      maxWidth: number = 168,
       lineHeight: number = 2.9
     ): number => {
       const lines: string[] = doc.splitTextToSize(text, maxWidth);
-      doc.text(lines, x, y);
-      return y + (lines.length - 1) * lineHeight;
+      lines.forEach((l, i) => {
+        doc.text(l, x, y + i * lineHeight);
+      });
+      return y + lines.length * lineHeight;
     };
 
     // Parties réelles et désignations dynamiques (Point 4)
@@ -342,7 +344,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(51, 65, 85);
 
       const article1ProIntro = `${bailleurDesignation}, donne à bail à usage professionnel à ${preneurDesignation} qui accepte, les locaux professionnels désignés ci-après :`;
-      printWrapped(article1ProIntro, 15, 73, 175, 2.7);
+      printWrapped(article1ProIntro, 15, 73, 168, 2.7);
 
       doc.setFillColor(248, 250, 252);
       doc.roundedRect(15, 76.5, 175, 17, 2, 2, 'FD');
@@ -364,7 +366,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.6);
       doc.setTextColor(51, 65, 85);
       const article2ProText = `Le bail est conclu pour une durée ferme de ${effectiveDurationMonths} mois, prenant effet le ${startDate}. Il est régi par les stipulations de l'Article 104 de l'AUDCG.`;
-      printWrapped(article2ProText, 15, 100, 175, 2.8);
+      printWrapped(article2ProText, 15, 100, 168, 2.8);
 
       // ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES COMMERCIALES (OHADA Art. 116)
       doc.roundedRect(15, 104, 175, 11, 2, 2, 'D');
@@ -470,7 +472,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
       const art8ProText = 'Le droit au renouvellement est acquis au preneur justifiant d\'au moins 2 ans d\'exploitation conforme. Aucune clause contractuelle ne peut déroger à cette disposition d\'ordre public (Art. 134).';
-      printWrapped(art8ProText, 15, 186, 175, 2.7);
+      printWrapped(art8ProText, 15, 186, 168, 2.7);
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
@@ -480,7 +482,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
       const art9ProText = 'Toute résiliation requiert une mise en demeure d\'au moins 1 mois (Art. 133). Expulsion soumise à l\'Article 14 de la Loi ivoirienne N° 2025-221 (ministère exclusif d\'un Commissaire de Justice sur titre exécutoire, voies de fait et expulsions de fait prohibées).';
-      printWrapped(art9ProText, 15, 197, 175, 2.7);
+      printWrapped(art9ProText, 15, 196.5, 168, 2.8);
     } else {
       // ----------------------------------------------------------------------
       // MODEL 1 : BAIL À USAGE D'HABITATION (LOI 2019-576 & LOI 2025-221)
@@ -494,7 +496,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.3);
       doc.setTextColor(51, 65, 85);
       const article1HabIntro = `${bailleurDesignation}, donne en location à ${preneurDesignation}, qui accepte, le bien immobilier dont la consistance réelle est désignée ci-après :`;
-      printWrapped(article1HabIntro, 15, 73.2, 175, 2.7);
+      printWrapped(article1HabIntro, 15, 73.2, 168, 2.7);
 
       doc.setFillColor(248, 250, 252);
       doc.roundedRect(15, 75, 175, 17, 2, 2, 'FD');
@@ -523,7 +525,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.8);
       doc.setTextColor(51, 65, 85);
       const article2HabText = `Le présent contrat est conclu pour une durée de ${effectiveDurationMonths} mois, commençant le ${startDate}, renouvelable tacitement par période de même durée.`;
-      printWrapped(article2HabText, 15, 100, 175, 3.2);
+      printWrapped(article2HabText, 15, 100, 168, 3.0);
 
       // ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES (LOI 2019-576 ART. 415 & 416)
       doc.roundedRect(15, 104, 175, 11, 2, 2, 'D');
@@ -631,7 +633,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
       const art8HabText = 'État des lieux contradictoire écrit obligatoire à l\'entrée et à la sortie (Art. 416). Enregistrement fiscal obligatoire à la Direction Générale des Impôts (DGI) conformément à l\'Article 414 de la Loi 2019-576.';
-      printWrapped(art8HabText, 15, 186.5, 175, 2.7);
+      printWrapped(art8HabText, 15, 186.5, 168, 2.7);
 
       // ARTICLE 9 : RÉSILIATION ET EXPULSION LÉGALE (LOI 2019-576 & LOI 2025-221)
       doc.setFont('helvetica', 'bold');
@@ -642,7 +644,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.1);
       doc.setTextColor(71, 85, 105);
       const art9HabText = 'Résiliation après mise en demeure (Art. 450). Expulsion strictement encadrée par la Loi n° 2025-221 du 28 mars 2025 (commandement de libérer les lieux et intervention exclusive du Commissaire de Justice sur titre exécutoire, voies de fait et expulsions de fait prohibées).';
-      printWrapped(art9HabText, 15, 197, 175, 2.7);
+      printWrapped(art9HabText, 15, 196.5, 168, 2.8);
     }
 
     // SIGNATURES DES PARTIES

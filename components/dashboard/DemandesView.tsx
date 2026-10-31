@@ -385,13 +385,25 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const mergedDbApps = dbApps.map((dbItem) => {
         const localItem = localMap.get(dbItem.id);
         if (localItem) {
+          const isLocalRetained =
+            Boolean(localItem.candidate_selected) ||
+            localItem.status === 'validee' ||
+            localItem.status === 'en_attente_signature_locataire' ||
+            localItem.status === 'contrat_signe_locataire';
+
+          const effectiveStatus =
+            isLocalRetained && dbItem.status === 'en_attente'
+              ? localItem.status
+              : dbItem.status;
+
           return {
             ...localItem,
             ...dbItem,
+            status: effectiveStatus,
             // Préserver les indicateurs d'étape et signatures sans écrasement
             contract_transmitted: (dbItem as any).contract_transmitted ?? (localItem as any)?.contract_transmitted,
             tenant_signed: (dbItem as any).tenant_signed || (localItem as any)?.tenant_signed,
-            candidate_selected: (dbItem as any).candidate_selected ?? (localItem as any)?.candidate_selected,
+            candidate_selected: (dbItem as any).candidate_selected ?? localItem.candidate_selected,
             tenant_signature_url: (dbItem as any).tenant_signature_url || (localItem as any).tenant_signature_url,
             owner_signature_url: (dbItem as any).owner_signature_url || (localItem as any).owner_signature_url,
           };
@@ -1151,10 +1163,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           const isThisActive = app.status === 'contrat_actif';
           const isAwaitingTenantSig =
             app.status === 'en_attente_signature_locataire' || (Boolean(app.contract_transmitted) && !app.tenant_signed);
-          const isRetained = app.status === 'validee' || Boolean(app.candidate_selected) || isAwaitingTenantSig;
+          const isRetained =
+            app.status === 'validee' ||
+            Boolean(app.candidate_selected) ||
+            isAwaitingTenantSig ||
+            app.status === 'contrat_signe_locataire';
 
-          // Un candidat n'est refusé que si son statut est 'refusee' OU si le logement est scellé par un autre candidat actif
-          const isRefused = app.status === 'refusee' || (isPropertyTaken && !isThisActive && !isRetained);
+          // Un candidat n'est refusé que s'il n'est ni retenu ni actif, ET (statut refusé OU bien scellé par un tiers)
+          const isRefused = !isRetained && !isThisActive && (app.status === 'refusee' || isPropertyTaken);
 
           return (
             <div

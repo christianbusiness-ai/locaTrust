@@ -14,7 +14,10 @@ import {
   MapPin,
   MessageSquare,
   Heart,
-  Car
+  Car,
+  Calendar,
+  Key,
+  Video
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
@@ -22,12 +25,14 @@ interface FeedPropertyCardProps {
   property: Property;
   onOpenRentalModal: (property: Property) => void;
   onOpenMessageModal: (property: Property) => void;
+  onOpenVisitModal?: (property: Property) => void;
 }
 
 export const FeedPropertyCard: React.FC<FeedPropertyCardProps> = ({
   property,
   onOpenRentalModal,
   onOpenMessageModal,
+  onOpenVisitModal,
 }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(property.stats?.favorites_count || 18);
@@ -71,6 +76,12 @@ export const FeedPropertyCard: React.FC<FeedPropertyCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {property.videos && property.videos.length > 0 && (
+            <span className="px-2.5 py-1 rounded-full bg-violet-600 text-white font-extrabold text-[11px] flex items-center gap-1 shadow-sm">
+              <Video className="w-3.5 h-3.5" />
+              <span>Vidéo</span>
+            </span>
+          )}
           <span className="px-3 py-1 rounded-full bg-brand-500 text-white font-bold text-xs uppercase tracking-wider shadow-sm">
             À LOUER
           </span>
@@ -159,28 +170,40 @@ export const FeedPropertyCard: React.FC<FeedPropertyCardProps> = ({
         </div>
       </div>
 
-      {/* 6. Action Buttons (Envoyer un message, Demander cette location, Favorite heart) */}
-      <div className="flex items-center gap-3 pt-2">
+      {/* 6. Action Buttons */}
+      <div className="flex items-center gap-2 pt-2">
         <Button
           variant="outline"
-          className="flex-1 text-xs font-semibold py-2.5 rounded-xl"
+          className="text-xs font-semibold py-2 px-3 rounded-xl"
           onClick={() => onOpenMessageModal(property)}
         >
-          <MessageSquare className="w-4 h-4 text-brand-600" />
-          <span>Envoyer un message</span>
+          <MessageSquare className="w-3.5 h-3.5 text-brand-600" />
+          <span className="hidden sm:inline">Message</span>
         </Button>
 
         <Button
           variant="primary"
-          className="flex-1 text-xs font-bold py-2.5 rounded-xl shadow-md shadow-brand-500/20"
+          className="flex-1 text-xs font-bold py-2 px-3 rounded-xl shadow-md shadow-brand-500/20"
           onClick={() => onOpenRentalModal(property)}
         >
-          <span>Demander cette location</span>
+          <Key className="w-3.5 h-3.5" />
+          <span>Demander</span>
         </Button>
+
+        {onOpenVisitModal && (
+          <button
+            type="button"
+            onClick={() => onOpenVisitModal(property)}
+            className="flex-1 text-xs font-bold py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            <span>Demander une visite</span>
+          </button>
+        )}
 
         <button
           onClick={toggleLike}
-          className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl border transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${
             isLiked
               ? 'bg-rose-50 border-rose-200 text-rose-600'
               : 'border-slate-200 hover:bg-slate-50 text-slate-600'
