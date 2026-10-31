@@ -195,7 +195,7 @@ export const Header: React.FC<HeaderProps> = ({
       window.removeEventListener('locatrust:messages_updated', updateUnread);
       window.removeEventListener('locatrust:messages-updated', updateUnread);
     };
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // Audit complet et silencieux du calendrier des loyers en arrière-plan (connecté à la base de données)
   useEffect(() => {
@@ -203,7 +203,9 @@ export const Header: React.FC<HeaderProps> = ({
     try {
       runBackgroundRentScheduleAudit(currentUser?.id);
       intervalId = setInterval(() => {
-        runBackgroundRentScheduleAudit(currentUser?.id);
+        if (document.visibilityState === 'visible') {
+          runBackgroundRentScheduleAudit(currentUser?.id);
+        }
       }, 15 * 60 * 1000);
     } catch (e) {
       console.warn('Erreur audit calendrier arrière-plan:', e);
@@ -211,7 +213,7 @@ export const Header: React.FC<HeaderProps> = ({
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // Synchronisation dynamique des compteurs de candidatures et de contrats
   useEffect(() => {
@@ -271,7 +273,7 @@ export const Header: React.FC<HeaderProps> = ({
       window.removeEventListener('locatrust:applications-updated', updateDynamicBadges);
       window.removeEventListener('locatrust:contracts-updated', updateDynamicBadges);
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.role, currentUser?.email]);
 
   // Initialize theme and avatar listener from localStorage
   useEffect(() => {

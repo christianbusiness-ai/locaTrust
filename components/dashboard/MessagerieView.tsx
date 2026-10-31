@@ -605,13 +605,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       )
       .subscribe();
 
-    // Polling doux de synchronisation automatique sans perturber le scroll
+    // Polling doux de synchronisation automatique sans perturber le scroll (uniquement si l'onglet est actif)
     const heartbeat = setInterval(() => {
-      refreshMessages();
-      if (currentUserId) {
-        fetchSupabaseMessages(currentUserId).then(() => refreshMessages()).catch(() => {});
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        refreshMessages();
+        if (currentUserId) {
+          fetchSupabaseMessages(currentUserId).then(() => refreshMessages()).catch(() => {});
+        }
       }
-    }, 4000);
+    }, 20000);
 
     return () => {
       window.removeEventListener('locatrust:messages_updated', handleMessagesUpdated);

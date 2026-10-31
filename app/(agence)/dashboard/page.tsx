@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
 import { getActiveUser } from '@/lib/authStore';
 import { Header } from '@/components/layout/Header';
@@ -70,27 +70,32 @@ export default function AgencyDashboardPage({
   }, [user?.id]);
 
   const activeUser = getActiveUser();
-  const currentUser = user ? {
-    id: user.id,
-    email: user.email || '',
-    full_name: profile?.full_name || user.user_metadata?.full_name || 'Agence Immobilière Agréée',
-    avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${user.id}`) || localStorage.getItem('locatrust_user_avatar') || '') : ''),
-    role: 'agence' as const,
-    phone: profile?.phone || '',
-    verification_status: profile?.verification_status || 'non_verifie',
-    is_verified: profile?.verification_status === 'verifie',
-    created_at: profile?.created_at || user.created_at || new Date().toISOString()
-  } : (activeUser || {
-    id: 'guest',
-    email: 'agence@locatrust.ci',
-    full_name: 'Agence Immobilière Agréée',
-    avatar_url: '',
-    role: 'agence' as const,
-    phone: '',
-    verification_status: 'non_verifie',
-    is_verified: false,
-    created_at: new Date().toISOString()
-  });
+  const currentUser = useMemo(() => {
+    if (user) {
+      return {
+        id: user.id,
+        email: user.email || '',
+        full_name: profile?.full_name || user.user_metadata?.full_name || 'Agence Immobilière Agréée',
+        avatar_url: profile?.avatar_url || user.user_metadata?.avatar_url || (typeof window !== 'undefined' ? (localStorage.getItem(`locatrust_user_avatar_${user.id}`) || localStorage.getItem('locatrust_user_avatar') || '') : ''),
+        role: 'agence' as const,
+        phone: profile?.phone || '',
+        verification_status: profile?.verification_status || 'non_verifie',
+        is_verified: profile?.verification_status === 'verifie',
+        created_at: profile?.created_at || user.created_at || new Date().toISOString()
+      };
+    }
+    return activeUser || {
+      id: 'guest',
+      email: 'agence@locatrust.ci',
+      full_name: 'Agence Immobilière Agréée',
+      avatar_url: '',
+      role: 'agence' as const,
+      phone: '',
+      verification_status: 'non_verifie',
+      is_verified: false,
+      created_at: new Date().toISOString()
+    };
+  }, [user?.id, user?.email, profile?.full_name, profile?.avatar_url, profile?.phone, profile?.verification_status]);
 
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);

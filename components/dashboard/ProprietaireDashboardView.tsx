@@ -281,10 +281,12 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     window.addEventListener('locatrust:cautions_updated', handleLiveUpdate);
     window.addEventListener('locatrust:year_changed', handleYearChanged);
 
-    // Polling discret de rafraîchissement temps réel (10s) pour synchronisation multi-appareils sans F5
+    // Polling discret de rafraîchissement temps réel (60s) uniquement si l'onglet est actif
     const syncInterval = setInterval(() => {
-      fetchDashboardData();
-    }, 10000);
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchDashboardData();
+      }
+    }, 60000);
 
     return () => {
       clearInterval(syncInterval);

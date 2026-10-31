@@ -759,9 +759,15 @@ export function startBackgroundQuotaWorker(
   // Exécution immédiate en arrière-plan
   syncQuotaInBackground(cleanId, role).catch(() => {});
 
+  let debounceTimer: any = null;
   const handleDomainMutation = () => {
     if (bgActiveEntityId) {
-      syncQuotaInBackground(bgActiveEntityId, role).catch(() => {});
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (bgActiveEntityId && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+          syncQuotaInBackground(bgActiveEntityId, role).catch(() => {});
+        }
+      }, 2500);
     }
   };
 
@@ -770,17 +776,18 @@ export function startBackgroundQuotaWorker(
   window.addEventListener('locatrust:properties-updated', handleDomainMutation);
 
   bgQuotaListenerCleanup = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     window.removeEventListener('locatrust:contracts-updated', handleDomainMutation);
     window.removeEventListener('locatrust:applications-updated', handleDomainMutation);
     window.removeEventListener('locatrust:properties-updated', handleDomainMutation);
   };
 
-  // Vérification périodique silencieuse en arrière-plan toutes les 15 secondes
+  // Vérification périodique silencieuse et allégée en arrière-plan (uniquement si l'onglet est actif)
   bgQuotaInterval = setInterval(() => {
-    if (bgActiveEntityId) {
+    if (bgActiveEntityId && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
       syncQuotaInBackground(bgActiveEntityId, role).catch(() => {});
     }
-  }, 15000);
+  }, 90000);
 }
 
 /**
