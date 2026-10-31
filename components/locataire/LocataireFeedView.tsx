@@ -285,8 +285,12 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         (realRent > 0 ? realRent * 2 : 0)
       );
 
+      const generatedAppId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `app_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
       const newApp = {
-        id: `app_${Date.now()}`,
+        id: generatedAppId,
         property_id: selectedRental.id,
         property_title: selectedRental.title,
         property_address: selectedRental.location,
@@ -339,6 +343,30 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         return;
       }
 
+      // 1. Insertion directe et prioritaire dans Supabase rental_applications
+      if (isValidUuid(generatedAppId) && isValidUuid(selectedRental.id)) {
+        try {
+          await supabase.from('rental_applications').insert({
+            id: generatedAppId,
+            property_id: selectedRental.id,
+            tenant_id: isValidUuid(applicantId) ? applicantId : null,
+            tenant_name: applicantName,
+            tenant_phone: applicantPhone,
+            tenant_email: applicantEmail,
+            tenant_avatar: applicantAvatar,
+            property_title: selectedRental.title,
+            property_address: selectedRental.location,
+            rent_amount: realRent,
+            caution_amount: realCaution,
+            status: 'en_attente',
+            dossier_status: 'complet',
+            documents: newApp.documents
+          });
+        } catch (dbErr) {
+          console.warn('Erreur Supabase insert rental_applications:', dbErr);
+        }
+      }
+
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
@@ -362,17 +390,35 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         })
       }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
 
-      // Notification ciblée pour le bailleur ou l'agence gestionnaire
+      // 2. Notification persistante dans Supabase notifications
+      if (isValidUuid(primaryRecipientId)) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: primaryRecipientId,
+            title: 'Nouvelle demande de location',
+            message: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+            type: 'demande',
+            is_read: false,
+            link: `/dashboard?tab=applications&appId=${newApp.id}`
+          });
+        } catch (nErr) {
+          console.warn('Erreur Supabase notification bailleur:', nErr);
+        }
+      }
+
+      // Notification officielle globale avec redirection vers la demande
       pushGlobalNotification({
-        title: 'Nouvelle demande de location reçue',
-        description: `${applicantName} a postulé pour le bien « ${selectedRental.title} ».`,
-        category: 'candidature',
+        title: 'Nouvelle demande de location',
+        description: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+        category: 'demande',
         targetTab: 'applications',
         targetRole: isAgencyProp ? 'agence' : 'proprietaire',
         targetUserId: primaryRecipientId,
         senderUserId: applicantId,
+        senderAvatar: applicantAvatar,
         payload: {
           applicationId: newApp.id,
+          rental_request_id: newApp.id,
           propertyId: selectedRental.id,
           tenantId: applicantId,
           agencyId: targetAgencyId,
@@ -381,16 +427,31 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       });
 
       if (targetAgencyId && targetOwnerId && targetAgencyId !== targetOwnerId) {
+        if (isValidUuid(targetOwnerId)) {
+          try {
+            await supabase.from('notifications').insert({
+              user_id: targetOwnerId,
+              title: 'Nouvelle demande de location',
+              message: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+              type: 'demande',
+              is_read: false,
+              link: `/dashboard?tab=applications&appId=${newApp.id}`
+            });
+          } catch {}
+        }
+
         pushGlobalNotification({
-          title: 'Nouvelle demande de location reçue',
-          description: `${applicantName} a postulé pour le bien « ${selectedRental.title} ».`,
-          category: 'candidature',
+          title: 'Nouvelle demande de location',
+          description: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+          category: 'demande',
           targetTab: 'applications',
           targetRole: 'proprietaire',
           targetUserId: targetOwnerId,
           senderUserId: applicantId,
+          senderAvatar: applicantAvatar,
           payload: {
             applicationId: newApp.id,
+            rental_request_id: newApp.id,
             propertyId: selectedRental.id,
             tenantId: applicantId,
             agencyId: targetAgencyId,

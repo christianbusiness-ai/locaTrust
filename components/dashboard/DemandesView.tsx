@@ -55,7 +55,7 @@ export interface RentalApplication {
   rent_amount: number;
   caution_amount: number;
   date_received: string;
-  status: 'en_attente' | 'validee' | 'liste_d_attente' | 'contrat_actif' | 'refusee';
+  status: 'en_attente' | 'validee' | 'en_redaction_bail' | 'en_attente_signature_locataire' | 'contrat_signe_locataire' | 'liste_d_attente' | 'contrat_actif' | 'refusee';
   dossier_status: 'complet' | 'en_cours';
   tenant_signed?: boolean;
   tenant_signed_at?: string;
@@ -105,6 +105,40 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       return () => clearTimeout(timer);
     }
   }, [candidateAlert]);
+
+  // Ouverture automatique du dossier complet du candidat lors d'un clic sur notification (Point 1 du prompt)
+  useEffect(() => {
+    const checkPendingSelectedApp = () => {
+      try {
+        const pendingAppId = typeof window !== 'undefined' ? localStorage.getItem('locatrust_selected_application_id') : null;
+        if (pendingAppId && applications.length > 0) {
+          const found = applications.find(a => a.id === pendingAppId);
+          if (found) {
+            setSelectedDossierApp(found);
+            localStorage.removeItem('locatrust_selected_application_id');
+          }
+        }
+      } catch {}
+    };
+
+    checkPendingSelectedApp();
+
+    const handleOpenAppEvent = (e: any) => {
+      const appId = e.detail?.applicationId;
+      if (appId && applications.length > 0) {
+        const found = applications.find(a => a.id === appId);
+        if (found) {
+          setSelectedDossierApp(found);
+          try { localStorage.removeItem('locatrust_selected_application_id'); } catch {}
+        }
+      }
+    };
+
+    window.addEventListener('locatrust:open_application', handleOpenAppEvent);
+    return () => {
+      window.removeEventListener('locatrust:open_application', handleOpenAppEvent);
+    };
+  }, [applications]);
 
   const loadFromDatabase = async () => {
     setIsLoading(true);
@@ -537,12 +571,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       return;
     }
 
+    const isTargetChosen = (a: RentalApplication) =>
+      a.id === chosenApp.id ||
+      (a.tenant_name && chosenApp.tenant_name &&
+       a.tenant_name.trim().toLowerCase() === chosenApp.tenant_name.trim().toLowerCase() &&
+       (a.property_id === chosenApp.property_id || a.property_title === chosenApp.property_title));
+
     const competingCandidates = applications.filter(
-      (a) => (a.property_id === chosenApp.property_id || a.property_title === chosenApp.property_title) && a.id !== chosenApp.id
+      (a) => (a.property_id === chosenApp.property_id || a.property_title === chosenApp.property_title) && !isTargetChosen(a)
     );
 
     const updated = applications.map((app) => {
-      if (app.id === chosenApp.id) {
+      if (isTargetChosen(app)) {
         return {
           ...app,
           status: 'validee' as const,
@@ -623,6 +663,68 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         `✔ ${chosenApp.tenant_name} sélectionné pour « ${chosenApp.property_title} ». Vous pouvez maintenant préparer le contrat de bail.`
       );
     }
+  };
+
+  // Démarrage de la rédaction du contrat : met à jour le statut en 'en_redaction_bail' (Point 3 & 4 du prompt)
+  const handleStartContract = async (app: RentalApplication, startStep: 'form' | 'transmission' = 'form') => {
+    const isTargetChosen = (a: RentalApplication) =>
+      a.id === app.id ||
+      (a.tenant_name && app.tenant_name &&
+       a.tenant_name.trim().toLowerCase() === app.tenant_name.trim().toLowerCase() &&
+       (a.property_id === app.property_id || a.property_title === app.property_title));
+
+    const updated = applications.map((a) => {
+      if (isTargetChosen(a)) {
+        const nextStatus = (a.status === 'contrat_actif' || a.status === 'contrat_signe_locataire' || a.status === 'en_attente_signature_locataire')
+          ? a.status
+          : ('en_redaction_bail' as const);
+        return {
+          ...a,
+          status: nextStatus,
+          candidate_selected: true
+        };
+      }
+      if ((a.property_id === app.property_id || a.property_title === app.property_title) && a.status !== 'refusee' && a.status !== 'contrat_actif') {
+        return {
+          ...a,
+          status: 'liste_d_attente' as const,
+          candidate_selected: false
+        };
+      }
+      return a;
+    });
+
+    saveApplications(updated);
+
+    try {
+      await supabase.from('rental_applications').update({
+        status: 'en_redaction_bail'
+      }).eq('id', app.id);
+    } catch (err) {
+      console.warn('Supabase status update error:', err);
+    }
+
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_application',
+          applicationId: app.id,
+          updates: { status: 'en_redaction_bail', candidate_selected: true }
+        })
+      }).catch(() => {});
+    } catch {}
+
+    broadcastLiveEvent('APPLICATION_UPDATED', {
+      actorId: user?.id,
+      targetUserId: app.tenant_id,
+      propertyId: app.property_id,
+      data: { appId: app.id, status: 'en_redaction_bail' }
+    });
+
+    setContractModalStartStep(startStep);
+    setSelectedApplicationForContract(app);
   };
 
   // Validation effective de la signature par le locataire (Étape 1 & 2)
@@ -994,6 +1096,30 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const matchedProperty = getPropertyForApp(app.property_id);
       const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
 
+      let matchedContract: any = null;
+      try {
+        const rawC = localStorage.getItem('locatrust_contracts');
+        if (rawC) {
+          const contracts = JSON.parse(rawC);
+          if (Array.isArray(contracts)) {
+            matchedContract = contracts.find((c: any) =>
+              (app.contract_number && (c.contract_number === app.contract_number || c.id === app.contract_number)) ||
+              ((c.property_id === app.property_id || c.property?.id === app.property_id) &&
+               (c.tenant_id === app.tenant_id || c.tenant?.id === app.tenant_id || c.tenant_name === app.tenant_name))
+            );
+          }
+        }
+      } catch {}
+
+      const resolvedCharges = Number(
+        matchedContract?.charges_amount ??
+        matchedContract?.charges ??
+        (app as any)?.charges_amount ??
+        (app as any)?.charges ??
+        matchedProperty?.charges ??
+        0
+      );
+
       const resolved = await resolveContractParties({
         app,
         matchedProperty,
@@ -1002,7 +1128,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       });
 
       await generateOfficialContractPdf({
-        contractNumber: app.contract_number || 'LT-2026-CI-000492',
+        contractNumber: app.contract_number || matchedContract?.contract_number || 'LT-2026-CI-000492',
         isAgency: resolved.isAgency,
         ownerName: resolved.ownerName,
         mandantName: resolved.mandantName,
@@ -1024,14 +1150,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         equipments: matchedProperty?.equipments,
         amenities: matchedProperty?.equipments,
         propertyDescription: matchedProperty?.description,
-        durationMonths: app.duration_months || matchedProperty?.duration_months || (leaseType === 'professionnel' ? 24 : 12),
+        durationMonths: app.duration_months || matchedContract?.duration_months || matchedProperty?.duration_months || (leaseType === 'professionnel' ? 24 : 12),
         startDate: app.signed_date || (app.signed_at ? new Date(app.signed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
-        rent: app.rent_amount,
+        rent: app.rent_amount || matchedContract?.monthly_rent || matchedProperty?.rent || 0,
         cautionMonths: matchedProperty?.caution_months || (leaseType === 'professionnel' ? 3 : 2),
-        chargesAmount: matchedProperty?.charges !== undefined && matchedProperty?.charges !== null ? Number(matchedProperty.charges) : 0,
+        chargesAmount: resolvedCharges,
         dueDay: 5,
-        ownerSignatureUrl: resolved.ownerSignatureUrl,
-        tenantSignatureUrl: resolved.tenantSignatureUrl,
+        ownerSignatureUrl: resolved.ownerSignatureUrl || matchedContract?.owner_signature_url,
+        tenantSignatureUrl: resolved.tenantSignatureUrl || matchedContract?.tenant_signature_url,
         isSignedCopy: true,
         leaseType,
         usageDestination: leaseType,
@@ -1165,7 +1291,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             app.status === 'en_attente_signature_locataire' || (Boolean(app.contract_transmitted) && !app.tenant_signed);
           const isRetained =
             app.status === 'validee' ||
-            Boolean(app.candidate_selected) ||
+            app.status === 'en_redaction_bail' ||
+            Boolean((app as any).candidate_selected) ||
             isAwaitingTenantSig ||
             app.status === 'contrat_signe_locataire';
 
@@ -1257,10 +1384,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                     <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
                     <span>⏳ En attente signature locataire</span>
                   </span>
-                ) : isRetained ? (
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    <span>✔ Retenu (Contrat en préparation)</span>
+                ) : (app.status === 'en_redaction_bail' || isRetained) ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
+                    <PenTool className="w-3 h-3 text-blue-600 animate-pulse" />
+                    <span>En rédaction du contrat</span>
                   </span>
                 ) : app.status === 'liste_d_attente' ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
@@ -1365,8 +1492,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        setContractModalStartStep('form');
-                        setSelectedApplicationForContract(app);
+                        handleStartContract(app, 'form');
                       }}
                       className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                       title="Créer et paramétrer le contrat de bail certifié"
@@ -1381,8 +1507,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        setContractModalStartStep('transmission');
-                        setSelectedApplicationForContract(app);
+                        handleStartContract(app, 'transmission');
                       }}
                       className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                       title="Ouvrir le formulaire de transmission du contrat au locataire"
@@ -1456,23 +1581,22 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       </button>
                     )}
 
-                    {/* Bouton Créer le contrat direct (notamment si 1 seul candidat) */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        // Si c'est le seul candidat ou direct, on le retient et on ouvre le générateur
-                        handleSelectAndSignWithCandidate(app);
-                        setContractModalStartStep('form');
-                        setSelectedApplicationForContract(app);
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                      title="Créer immédiatement le contrat de bail officiel"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>Créer le contrat</span>
-                    </button>
+                    {/* Bouton Créer le contrat direct UNIQUEMENT si 1 seul candidat */}
+                    {!hasMultipleCandidates && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleStartContract(app, 'form');
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                        title="Créer immédiatement le contrat de bail officiel"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Créer le contrat</span>
+                      </button>
+                    )}
                   </>
                 )}
               </div>

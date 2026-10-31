@@ -583,6 +583,18 @@ export const Header: React.FC<HeaderProps> = ({
       (item.title && item.title.toLowerCase().includes('demande de location')) ||
       (item.title && item.title.toLowerCase().includes('candidature'))
     ) {
+      const targetAppId =
+        item.payload?.applicationId ||
+        item.payload?.rental_request_id ||
+        (item.link && item.link.includes('appId=') ? new URLSearchParams(item.link.split('?')[1]).get('appId') : null);
+
+      if (targetAppId && typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_selected_application_id', targetAppId);
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('locatrust:open_application', { detail: { applicationId: targetAppId } }));
+        }, 150);
+      }
+
       if (onNavigateTab) {
         onNavigateTab('applications');
       }

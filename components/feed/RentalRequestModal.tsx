@@ -13,6 +13,7 @@ import { triggerCelebration } from '@/lib/celebration';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { supabase } from '@/src/lib/supabase';
 
 interface RentalRequestModalProps {
   property: Property | null;
@@ -65,8 +66,13 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
       (realRent > 0 ? realRent * 2 : 0)
     );
 
+    const isValidUuid = (str?: string) =>
+      Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+    const appUuid = crypto.randomUUID();
+
     const newApp = {
-      id: `app_${Date.now()}`,
+      id: appUuid,
       property_id: property.id,
       property_title: property.title,
       property_address: `${property.location?.commune || property.location?.quartier || ''}, ${property.location?.city || 'Abidjan'}`,
@@ -137,6 +143,50 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         timestamp: new Date().toISOString()
       });
 
+      // Insertion directe dans la table Supabase rental_applications
+      if (isValidUuid(applicantId) && isValidUuid(property.id)) {
+        try {
+          await supabase.from('rental_applications').insert({
+            id: appUuid,
+            property_id: property.id,
+            tenant_id: applicantId,
+            owner_id: isValidUuid(targetOwnerId) ? targetOwnerId : null,
+            agency_id: isValidUuid(targetAgencyId) ? targetAgencyId : null,
+            rent_amount: realRent,
+            caution_amount: realCaution,
+            status: 'en_attente',
+            dossier_status: 'complet',
+            tenant_name: applicantName,
+            tenant_phone: applicantPhone,
+            tenant_email: applicantEmail,
+            tenant_avatar: applicantAvatar,
+            property_title: property.title,
+            property_address: (property as any).address || `${property.location?.commune || ''}, ${property.location?.city || 'Abidjan'}`.trim(),
+            message: message
+          });
+        } catch (dbErr) {
+          console.warn('Supabase rental_applications direct insert notice:', dbErr);
+        }
+
+        // Insertion directe dans la table Supabase notifications pour le bailleur / agence
+        if (isValidUuid(primaryRecipientId)) {
+          try {
+            await supabase.from('notifications').insert({
+              id: crypto.randomUUID(),
+              user_id: primaryRecipientId,
+              title: 'Nouvelle demande de location',
+              message: `${applicantName} souhaite louer « ${property.title} ».`,
+              type: 'candidature',
+              category: 'candidature',
+              read: false,
+              created_at: new Date().toISOString()
+            });
+          } catch (notifErr) {
+            console.warn('Supabase notification insert notice:', notifErr);
+          }
+        }
+      }
+
       // Synchronisation persistante avec le serveur central /api/sync
       fetch('/api/sync', {
         method: 'POST',
@@ -147,10 +197,10 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         })
       }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
 
-      // Notification ciblée pour le bailleur ou l'agence
+      // Notification ciblée pour le bailleur ou l'agence (Point 1 du prompt)
       pushGlobalNotification({
-        title: 'Nouvelle demande de location reçue',
-        description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
+        title: 'Nouvelle demande de location',
+        description: `${applicantName} souhaite louer « ${property.title} ».`,
         category: 'candidature',
         targetTab: 'applications',
         targetRole: isAgency ? 'agence' : 'proprietaire',
@@ -168,6 +218,23 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
 
       if (targetAgencyId && targetOwnerId && targetAgencyId !== targetOwnerId) {
         pushGlobalNotification({
+          title: 'Nouvelle demande de location',
+          description: `${applicantName} souhaite louer « ${property.title} ».`,
+          category: 'candidature',
+          targetTab: 'applications',
+          targetRole: 'proprietaire',
+          targetUserId: targetOwnerId,
+          senderUserId: applicantId,
+          senderAvatar: applicantAvatar,
+          payload: {
+            applicationId: newApp.id,
+            propertyId: property.id,
+            tenantId: applicantId,
+            agencyId: targetAgencyId,
+            ownerId: targetOwnerId
+          }
+        });
+      }
           title: 'Nouvelle demande de location reçue',
           description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
           category: 'candidature',

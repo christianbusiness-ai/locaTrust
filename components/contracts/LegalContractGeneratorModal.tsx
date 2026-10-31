@@ -42,6 +42,7 @@ import {
   cleanClauseLine,
   LeaseType,
   reorganizeAndReformulateClauses,
+  cleanDictationRepetitions,
   ReorganizationResult
 } from '@/lib/legalAnalysisEngine';
 import {
@@ -464,9 +465,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
-  // Synchronisation dynamique de l'étape et de la signature à l'ouverture du modal
+  // Synchronisation dynamique de l'étape et de la signature uniquement à l'ouverture initiale du modal
+  const isFirstOpenRef = React.useRef(false);
   React.useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !isFirstOpenRef.current) {
+      isFirstOpenRef.current = true;
       const targetStep = startAtStep || initialData?.startAtStep;
       if (targetStep) {
         setCurrentStep(targetStep);
@@ -475,8 +478,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       if (existingOwnerSig) {
         setOwnerSignatureUrl(existingOwnerSig);
       }
+    } else if (!isOpen) {
+      isFirstOpenRef.current = false;
     }
-  }, [isOpen, startAtStep, initialData]);
+  }, [isOpen, startAtStep]);
 
   // Inline Clause Editing State
   const [editingClauseId, setEditingClauseId] = useState<string | null>(null);
@@ -500,7 +505,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
   const commitTextToField = React.useCallback(
     (field: 'owner' | 'tenant' | 'property', textToAppend: string) => {
-      let clean = textToAppend.trim();
+      let clean = cleanDictationRepetitions(textToAppend.trim());
       if (!clean) return;
 
       // Nettoyer les répétitions immédiates de mots bégayés (ex: "le le" -> "le")
@@ -1932,11 +1937,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   </button>
                 </div>
                 <textarea
-                  rows={2}
+                  rows={5}
                   value={tenantCustomRequests}
                   onChange={(e) => setTenantCustomRequests(e.target.value)}
-                  className="w-full p-3 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                  placeholder="Saisissez ou dictez les demandes du locataire..."
+                  className="w-full p-3.5 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none min-h-[120px] resize-y"
+                  placeholder="Saisissez ou dictez les demandes particulières du locataire (aménagements, modes et dates de paiement, etc.)..."
                 />
                 {/* Visualiseur de dictée en cours pour le locataire */}
                 {listeningField === 'tenant' && (
@@ -2114,34 +2119,58 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       {reorganizationReport.logs.map((log, idx) => (
                         <div
                           key={idx}
-                          className={`p-2.5 rounded-lg border text-[11px] flex flex-col gap-1 ${log.isCorrectedAbuse
-                              ? 'bg-amber-50/70 border-amber-200 text-amber-900'
-                              : 'bg-slate-50 border-slate-200 text-slate-800'
-                            }`}
+                          className={`p-3 rounded-xl border text-[11px] flex flex-col gap-1.5 ${
+                            log.caseCategory === 'C' || log.isCorrectedAbuse
+                              ? 'bg-amber-50/80 border-amber-300 text-amber-950'
+                              : log.caseCategory === 'D'
+                              ? 'bg-rose-50/80 border-rose-300 text-rose-950'
+                              : log.caseCategory === 'B'
+                              ? 'bg-blue-50/70 border-blue-200 text-blue-950'
+                              : 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                          }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-slate-700">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-extrabold text-slate-800">
                               {log.assignedField === 'owner'
                                 ? '→ Conditions Propriétaire'
                                 : log.assignedField === 'tenant'
                                   ? '→ Demandes Locataire'
                                   : '→ Règles Copropriété'}
                             </span>
-                            {log.legalCitation && (
-                              <span className="text-[10px] text-blue-700 font-bold">
-                                {log.legalCitation}
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              {log.caseCategory && (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                    log.caseCategory === 'A'
+                                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                      : log.caseCategory === 'B'
+                                      ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                                      : log.caseCategory === 'C'
+                                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                      : 'bg-rose-100 text-rose-900 border border-rose-300'
+                                  }`}
+                                >
+                                  {log.caseLabel || `Cas ${log.caseCategory}`}
+                                </span>
+                              )}
+                              {log.legalCitation && (
+                                <span className="text-[10px] font-mono text-slate-600 bg-white/80 px-2 py-0.5 rounded border">
+                                  {log.legalCitation}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div className="text-slate-500 line-through truncate">
+                          <div className="text-slate-500 line-through text-[10.5px]">
                             Phrase d'origine : « {log.rawText} »
                           </div>
                           <div className="font-bold text-slate-900">
-                            Reformulation légale : {log.reformulatedText}
+                            {log.caseCategory === 'D'
+                              ? `Non retenue : ${log.reformulatedText}`
+                              : `Reformulation légale : ${log.reformulatedText}`}
                           </div>
                           {log.abuseReason && (
-                            <div className="text-[10px] text-amber-800 italic">
-                              Note légale : {log.abuseReason}
+                            <div className="text-[10px] font-medium italic mt-0.5 opacity-90">
+                              ⚖️ Note juridique : {log.abuseReason}
                             </div>
                           )}
                         </div>

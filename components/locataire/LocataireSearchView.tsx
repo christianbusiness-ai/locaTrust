@@ -704,8 +704,36 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
                 const isSignedByTenant = Boolean(app.tenant_signed);
                 const isFinalized = app.status === 'contrat_actif';
                 const isRetained = app.status === 'validee' || Boolean(app.candidate_selected);
+                const isWritingContract = app.status === 'en_redaction_bail';
                 const isWaitingList = app.status === 'liste_d_attente';
                 const isRefused = app.status === 'refusee';
+
+                const propInfo = properties.find(
+                  (p: any) =>
+                    p &&
+                    (p.id === app.property_id ||
+                      (app.property_title && p.title && p.title.toLowerCase().trim() === app.property_title.toLowerCase().trim()))
+                );
+
+                const displayRent =
+                  Number(app.rent_amount || 0) > 0
+                    ? Number(app.rent_amount)
+                    : Number((propInfo as any)?.price || (propInfo as any)?.rent || (propInfo as any)?.pricing?.monthly_rent || 0);
+
+                const displayCaution =
+                  Number(app.caution_amount || 0) > 0
+                    ? Number(app.caution_amount)
+                    : Number((propInfo as any)?.caution || (displayRent > 0 ? displayRent * 2 : 0));
+
+                const displayOwnerName =
+                  app.agency_name ||
+                  app.owner_name ||
+                  (propInfo as any)?.agency_name ||
+                  (propInfo as any)?.authorName ||
+                  (propInfo as any)?.ownerName ||
+                  (propInfo as any)?.owner?.full_name ||
+                  (propInfo as any)?.owner_name ||
+                  'Bailleur certifié';
 
                 return (
                   <div key={app.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
@@ -734,6 +762,11 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                             ✍️ Signé (Attente validation bailleur)
                           </span>
+                        ) : isWritingContract ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-300 text-[10px] font-black flex items-center gap-1 animate-pulse">
+                            <PenTool className="w-3 h-3 text-blue-600" />
+                            En rédaction du contrat
+                          </span>
                         ) : isRetained ? (
                           <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black border border-blue-300">
                             Candidat Retenu (Contrat en préparation)
@@ -749,18 +782,18 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
                         )}
                       </div>
 
-                      <h4 className="text-base font-black text-slate-900">{app.property_title || 'Logement LocaTrust'}</h4>
-                      <p className="text-xs text-slate-500 font-medium">{app.property_address || 'Abidjan'}</p>
+                      <h4 className="text-base font-black text-slate-900">{app.property_title || propInfo?.title || 'Logement LocaTrust'}</h4>
+                      <p className="text-xs text-slate-500 font-medium">{app.property_address || propInfo?.location?.commune || 'Abidjan'}</p>
                       <div className="flex items-center gap-3 pt-2 text-xs font-bold text-slate-700">
-                        <span>Loyer : <strong className="text-blue-600">{formatFCFA(Number(app.rent_amount || 0))}</strong>/mois</span>
+                        <span>Loyer : <strong className="text-blue-600">{formatFCFA(displayRent)}</strong>/mois</span>
                         <span>•</span>
-                        <span>Caution : {formatFCFA(Number(app.caution_amount || 0))}</span>
+                        <span>Caution : {formatFCFA(displayCaution)}</span>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between border-t pt-3">
                       <span className="text-[11px] text-slate-500 font-semibold">
-                        Bailleur : <strong>{app.owner_name || 'Bailleur certifié'}</strong>
+                        Bailleur : <strong>{displayOwnerName}</strong>
                       </span>
 
                       {isFinalized ? (

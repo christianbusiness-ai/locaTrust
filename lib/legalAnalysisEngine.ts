@@ -1556,6 +1556,24 @@ export interface ReorganizedClauseLog {
   legalCitation?: string;
   isCorrectedAbuse?: boolean;
   abuseReason?: string;
+  caseCategory?: 'A' | 'B' | 'C' | 'D';
+  caseLabel?: string;
+}
+
+/**
+ * Nettoie les répétitions de mots ou groupes de mots consécutifs issues de la dictée vocale
+ * (ex: "le locataire doit... le locataire doit..." -> "le locataire doit...")
+ */
+export function cleanDictationRepetitions(text: string): string {
+  if (!text) return '';
+  let cleaned = text.trim();
+  // 1. Éliminer les répétitions de phrases ou groupes de 1 à 5 mots consécutifs
+  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ0-9']+(?:\s+[a-zA-ZÀ-ÿ0-9']+){0,4})\s+(?:\.{2,}\s*)?\1\b/gi, '$1');
+  // 2. Nettoyer les bégaiements d'un seul mot
+  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ0-9']{2,})\s+\1\b/gi, '$1');
+  // 3. Nettoyer les pointillés multiples
+  cleaned = cleaned.replace(/\.{2,}/g, '.');
+  return cleaned.trim();
 }
 
 export interface ReorganizationResult {
@@ -1576,17 +1594,20 @@ export function reorganizeAndReformulateClauses({
 }: ReorganizationInput): ReorganizationResult {
   const isHabitation = leaseType === 'habitation';
 
-  // 1. Extraire les clauses brutes avec leur champ de provenance
+  // 1. Nettoyer les répétitions de dictée vocale et extraire les clauses réelles
   const rawItems: Array<{ text: string; sourceField: 'owner' | 'tenant' | 'property' }> = [];
 
-  for (const clause of extractLogicalClauses(ownerText)) {
-    rawItems.push({ text: clause, sourceField: 'owner' });
+  for (const clause of extractLogicalClauses(cleanDictationRepetitions(ownerText || ''))) {
+    const cClean = cleanDictationRepetitions(clause);
+    if (cClean) rawItems.push({ text: cClean, sourceField: 'owner' });
   }
-  for (const clause of extractLogicalClauses(tenantText)) {
-    rawItems.push({ text: clause, sourceField: 'tenant' });
+  for (const clause of extractLogicalClauses(cleanDictationRepetitions(tenantText || ''))) {
+    const cClean = cleanDictationRepetitions(clause);
+    if (cClean) rawItems.push({ text: cClean, sourceField: 'tenant' });
   }
-  for (const clause of extractLogicalClauses(propertyText)) {
-    rawItems.push({ text: clause, sourceField: 'property' });
+  for (const clause of extractLogicalClauses(cleanDictationRepetitions(propertyText || ''))) {
+    const cClean = cleanDictationRepetitions(clause);
+    if (cClean) rawItems.push({ text: cClean, sourceField: 'property' });
   }
 
   const logs: ReorganizedClauseLog[] = [];
@@ -1609,9 +1630,11 @@ export function reorganizeAndReformulateClauses({
     let legalCitation: string | undefined;
     let isCorrectedAbuse = false;
     let abuseReason: string | undefined;
+    let caseCategory: 'A' | 'B' | 'C' | 'D' = 'A';
+    let caseLabel = 'Clause compatible';
 
     // ------------------------------------------------------------------------
-    // CLASSIFICATION SÉMANTIQUE AUTOMATIQUE
+    // CLASSIFICATION SÉMANTIQUE AUTOMATIQUE DANS LES 3 ZONES
     // ------------------------------------------------------------------------
     const mentionsPropertyAndBuilding =
       /(?:bruit|calme|tapage|voisin|voisinage|22h|nuit|fete|silence|repos|animal|animaux|chien|chiens|chat|chats|dangereux|elevage|ordure|ordures|poubelle|poubelles|local poubelle|dechet|tri|commun|communs|partie commune|parties communes|escalier|couloir|cour|cour commune|parking|stationnement|garage|vehicule|voiture|moto|place reservee|percer|perforation|trou|trous|carreau|carreaux|faience|clim|climatiseur|climatiseurs|filtre|filtres|cuisine|hotte|facade|linge|balcon)/.test(norm);
@@ -1622,7 +1645,6 @@ export function reorganizeAndReformulateClauses({
     const mentionsOwnerObligations =
       /(?:remise des cles|cles|grosse reparation|grosses reparations|toit|toiture|etancheite|fissure structurelle|gros murs|visite annuelle|droit de visite|quittance|quittances|recu de loyer|restitution caution|restitution depot)/.test(norm);
 
-    // Détermination de la cible idoine
     if (mentionsPropertyAndBuilding && !mentionsOwnerObligations && !mentionsTenantRequestsOrPayments) {
       assignedField = 'property';
     } else if (mentionsTenantRequestsOrPayments && !mentionsOwnerObligations) {
@@ -1630,7 +1652,6 @@ export function reorganizeAndReformulateClauses({
     } else if (mentionsOwnerObligations) {
       assignedField = 'owner';
     } else {
-      // Détection basée sur la partie désignée dans la phrase
       const targetParty = detectTargetParty(raw, item.sourceField === 'owner' ? 'proprietaire' : item.sourceField === 'tenant' ? 'locataire' : 'logement');
       if (targetParty === 'proprietaire') assignedField = 'owner';
       else if (targetParty === 'locataire') assignedField = 'tenant';
@@ -1642,128 +1663,130 @@ export function reorganizeAndReformulateClauses({
     }
 
     // ------------------------------------------------------------------------
-    // CONTRÔLE DE CONFORMITÉ & CORRECTION DES CLAUSES ABUSIVES (LOI 2019-576 & OHADA)
+    // CONTRÔLE DE CONFORMITÉ & CLASSIFICATION EN 4 CAS (A, B, C, D)
     // ------------------------------------------------------------------------
 
-    // A. Caution excessive (> 2 mois) ou avance excessive (> 2 mois)
+    // CAS C : CLAUSE PROBLÉMATIQUE (CONTRAIRE À L'ORDRE PUBLIC)
+    // C.1 Caution excessive (> 2 mois en habitation)
     if (/(?:caution|depot de garantie|avance|mois d avance)/.test(norm) && /(?:[3-9]|1[0-2])\s*mois/.test(norm)) {
+      caseCategory = 'C';
+      caseLabel = 'Clause problématique (Ordre public)';
       isCorrectedAbuse = true;
       correctedViolationsCount++;
       legalCitation = isHabitation
-        ? 'Loi n° 2019-576 (Code de la Construction et de l\'Habitat), Art. 414 & 415'
-        : 'Acte Uniforme OHADA AUDCG, Art. 101 et suivants';
+        ? 'Loi n° 2019-576, Art. 414 & 415'
+        : 'Acte Uniforme OHADA AUDCG, Art. 101';
       abuseReason = isHabitation
-        ? 'En Côte d\'Ivoire, l\'Article 414 de la Loi 2019-576 plafonne impérativement le dépôt de garantie à deux (2) mois de loyer hors charges.'
-        : 'Plafonnement des garanties locatives à un niveau proportionné et conforme aux usages commerciaux OHADA.';
+        ? 'L\'Article 414 de la Loi 2019-576 plafonne impérativement le dépôt de garantie à deux (2) mois de loyer hors charges.'
+        : 'Plafonnement des garanties locatives proportionné aux usages commerciaux OHADA.';
       reformulated = isHabitation
-        ? 'La garantie locative est fixée au strict maximum légal de deux (2) mois de loyer hors charges, conformément à l\'Article 414 de la Loi N° 2019-576.'
+        ? 'Le dépôt de garantie est fixé à deux (2) mois de loyer hors charges, conformément au plafond légal de l\'Article 414 de la Loi N° 2019-576.'
         : 'Le dépôt de garantie commercial est fixé à deux (2) mois de loyer hors charges en garantie des obligations contractuelles.';
+      assignedField = 'owner';
     }
-
-    // B. Transfert illégal des grosses réparations ou de la toiture au locataire
+    // C.2 Transfert illégal des grosses réparations ou de la toiture au locataire
     else if (
       /(?:locatair|locataire|preneur)\s*.*(?:paye|paie|supporte|repare|prend en charge).*(?:tout|tous les travaux|toutes les reparations|toiture|toit|etancheite|grosse reparation|gros murs|structure)/.test(norm) ||
       /(?:bailleur|proprietaire)\s*.*(?:ne repare rien|decline toute reparation|ne prend pas en charge)/.test(norm)
     ) {
+      caseCategory = 'C';
+      caseLabel = 'Clause problématique (Ordre public)';
       isCorrectedAbuse = true;
       correctedViolationsCount++;
       legalCitation = isHabitation
         ? 'Loi n° 2019-576, Art. 428 & 435'
         : 'Acte Uniforme OHADA AUDCG, Art. 106';
       abuseReason = isHabitation
-        ? 'L\'Article 428 du Code de l\'Habitat ivoirien met impérativement à la charge du bailleur les grosses réparations (clos, couvert, structure, toiture).'
-        : 'L\'Article 106 OHADA AUDCG rend obligatoire la prise en charge des grosses réparations par le bailleur.';
-      reformulated = 'Le Bailleur conserve l\'entière charge des grosses réparations structurelles (toiture, clos et couvert) conformément à la loi. Le Preneur assume l\'entretien locatif courant et les menues réparations d\'usage.';
+        ? 'L\'Article 428 met impérativement à la charge du bailleur les grosses réparations (clos, couvert, structure, toiture).'
+        : 'L\'Article 106 OHADA AUDCG met obligatoirement les grosses réparations à la charge du bailleur.';
+      reformulated = 'Le Bailleur conserve l\'entière charge des grosses réparations structurelles (toiture, clos et couvert) conformément à la loi. Le Preneur assume l\'entretien locatif courant et les menues réparations.';
       assignedField = 'owner';
     }
-
-    // C. Droit de visite inopiné / intrusion sans préavis
+    // C.3 Droit de visite inopiné / intrusion sans préavis
     else if (
       /(?:proprietaire|bailleur)\s*.*(?:entre quand il veut|rentrer n importe quand|visite sans prevenir|passe quand il veut)/.test(norm) ||
       /(?:acces a tout moment sans preavis)/.test(norm)
     ) {
+      caseCategory = 'C';
+      caseLabel = 'Clause problématique (Ordre public)';
       isCorrectedAbuse = true;
       correctedViolationsCount++;
-      legalCitation = 'Loi n° 2019-576, Art. 430 (Inviolabilité du domicile et jouissance paisible)';
-      abuseReason = 'Le bailleur ne peut pénétrer dans les lieux loués sans l\'accord du locataire et sans préavis préalable d\'au moins 48 heures.';
+      legalCitation = 'Loi n° 2019-576, Art. 430';
+      abuseReason = 'L\'Article 430 impose un préavis écrit d\'au moins 48 heures pour toute visite du bailleur.';
       reformulated = 'Le Bailleur ou son mandataire dispose d\'un droit de visite annuel pour contrôle de l\'état d\'entretien, exercé après notification d\'un préavis écrit d\'au moins 48 heures convenu avec le Preneur.';
       assignedField = 'owner';
     }
-
-    // D. Interdiction d'enfants ou discrimination familiale
+    // C.4 Discrimination familiale / interdiction d'enfants
     else if (/(?:interdit|pas)\s*.*(?:enfant|enfants|femme enceinte|famille|bebe)/.test(norm)) {
+      caseCategory = 'C';
+      caseLabel = 'Clause problématique (Ordre public)';
       isCorrectedAbuse = true;
       correctedViolationsCount++;
-      legalCitation = 'Loi n° 2019-576, Art. 429 & Code Civil';
-      abuseReason = 'Clause réputée non écrite : interdiction discriminatoire portant atteinte au droit de mener une vie familiale normale.';
+      legalCitation = 'Loi n° 2019-576, Art. 429';
+      abuseReason = 'Clause réputée non écrite : atteinte au droit de mener une vie familiale normale.';
       reformulated = 'L\'occupation des lieux est réservée au Preneur et aux membres de sa famille nucléaire déclarée, dans la stricte limite de la capacité d\'habitabilité normale du logement.';
       assignedField = 'property';
     }
-
-    // ------------------------------------------------------------------------
-    // REFORMULATION PROFESSIONNELLE DES CLAUSES CONFORMES (LANGAGE PARLÉ -> JURIDIQUE)
-    // ------------------------------------------------------------------------
+    // C.5 Expulsion de fait ou coupure sauvage d'eau/courant
+    else if (/(?:expulsion sans juge|couper le courant|couper l eau|bloquer la porte|changer serrure si retard)/.test(norm)) {
+      caseCategory = 'C';
+      caseLabel = 'Clause problématique (Ordre public)';
+      isCorrectedAbuse = true;
+      correctedViolationsCount++;
+      legalCitation = 'Loi n° 2025-221 du 28 mars 2025 & Art. 450';
+      abuseReason = 'Toute expulsion de fait ou voie de fait sans titre exécutoire est pénalement et civilement prohibée.';
+      reformulated = 'Toute résiliation pour manquement financier intervient après mise en demeure d\'un mois (Art. 450) et procédure légale exclusive devant la juridiction compétente (Loi n° 2025-221).';
+      assignedField = 'owner';
+    }
+    // CAS B : CLAUSE IMPRÉCISE (À CLARIFIER TOUT EN RESPECTANT LE SENS STRICT)
+    else if (raw.length < 15 || /^(?:clim|peinture|animaux|bruit|caution|travaux|cl[eé]s?|porte)$/i.test(raw)) {
+      caseCategory = 'B';
+      caseLabel = 'Clause imprécise (Clarifiée)';
+      if (/clim/i.test(raw)) {
+        reformulated = 'Entretien et nettoyage régulier des filtres de climatisation à la diligence et aux frais du Preneur.';
+        legalCitation = isHabitation ? 'Loi n° 2019-576, Art. 435' : 'Usage locatif conforme';
+      } else if (/peinture/i.test(raw)) {
+        reformulated = 'Maintien des peintures intérieures en bon état d\'entretien et interdiction de modifications de teintes sans accord écrit préalable.';
+        legalCitation = isHabitation ? 'Loi n° 2019-576, Art. 436' : 'Usage locatif conforme';
+      } else if (/bruit/i.test(raw)) {
+        reformulated = 'Respect du calme et tranquillité du voisinage, sans nuisances sonores excessives de jour comme de nuit.';
+        legalCitation = 'Règlement d\'immeuble & Art. 435';
+      } else {
+        reformulated = `Obligation convenue entre les parties concernant : ${raw}.`;
+        legalCitation = 'Liberté contractuelle';
+      }
+    }
+    // CAS D : CLAUSE NON RECONNUE / SANS FONDEMENT JURIDIQUE IDENTIFIABLE
+    else if (
+      /(?:politique|religion|vote|visite ami interdit|pas de visiteur|pas inviter|fouiller sacs|confisquer)/.test(norm)
+    ) {
+      caseCategory = 'D';
+      caseLabel = 'Clause à vérifier / non justifiée juridiquement';
+      legalCitation = 'Fondement juridique non identifié';
+      abuseReason = 'Cette condition ne correspond pas à une disposition juridique identifiée applicable à ce contrat. Elle ne sera pas automatiquement intégrée au contrat final.';
+      reformulated = raw; // Préservée dans le log mais NON insérée dans le contrat final
+    }
+    // CAS A : CLAUSE COMPATIBLE (FORMALISATION FIDÈLE SANS AJOUT SILENCIEUX)
     else {
-      // 1. Tranquillité & Bruit nocturne
-      if (/(?:calme|bruit|tapage|musique|silence|22h|nuit|repos)/.test(norm)) {
-        reformulated = 'Respect strict de la tranquillité et du repos du voisinage : cessation de toute nuisance sonore et respect du calme absolu, particulièrement entre 22h00 et 06h00.';
-        legalCitation = 'Loi n° 2019-576, Art. 435 & Règlement de Copropriété';
-      }
-      // 2. Animaux domestiques & dangereux
-      else if (/(?:animal|animaux|chien|chiens|chat|chats|dangereux|elevage)/.test(norm)) {
-        reformulated = 'Interdiction formelle de détention ou d\'élevage d\'animaux dangereux, agressifs ou de nature à occasionner des nuisances ou dégradations au sein de l\'immeuble.';
-        legalCitation = 'Règlement Sanitaire et de Sécurité de l\'Habitat';
-      }
-      // 3. Entretien climatiseurs
-      else if (/(?:clim|climatiseur|climatiseurs|filtre|filtres|ventilation)/.test(norm)) {
-        reformulated = 'Entretien semestriel régulier et dépoussiérage des filtres des climatiseurs et appareils de traitement d\'air à la diligence et aux frais du Preneur.';
-        legalCitation = 'Loi n° 2019-576, Art. 435 (Réparations et entretien locatifs courants)';
-      }
-      // 4. Stationnement / Parking
-      else if (/(?:parking|stationnement|place|garage|voiture|vehicule)/.test(norm)) {
-        const placeMatch = raw.match(/N[°o]?\s*(\d+)/i) || raw.match(/place\s*(\d+)/i);
-        const placeNum = placeMatch ? placeMatch[1] : 'réservée';
-        reformulated = `Stationnement privatif strictement autorisé sur l'emplacement réservé N° ${placeNum}, à l'exclusion de tout encombrement des voies de circulation communes.`;
-      }
-      // 5. Faïence, carrelage et perforations
-      else if (/(?:carreau|carreaux|faience|percer|trou|trous|murs)/.test(norm)) {
-        reformulated = 'Interdiction formelle de perforer les carreaux de faïence murale et revêtements étanches scellés sans l\'accord écrit et préalable du Bailleur.';
-        legalCitation = 'Loi n° 2019-576, Art. 435 (Maintien de l\'état d\'étanchéité du bien)';
-      }
-      // 6. Serrure haute sécurité / Clés
-      else if (/(?:serrure|haute securite|canon|cylindre|porte blindee)/.test(norm)) {
-        reformulated = 'Autorisation accordée au Preneur d\'installer une serrure de haute sécurité à ses frais exclusifs, sous réserve de remise d\'un jeu de clés complet au Bailleur lors de la restitution des lieux.';
-      }
-      // 7. Règlement Mobile Money (Wave, Orange Money)
-      else if (/(?:wave|orange money|mtn|moov|mobile money)/.test(norm)) {
-        reformulated = 'Modalité convenue de paiement du loyer par virement électronique certifié (Wave ou Orange Money) au plus tard le 05 de chaque mois civil à terme échu.';
-      }
-      // 8. Ordures ménagères et propreté
-      else if (/(?:poubelle|poubelles|ordure|ordures|dechet|tri|local poubelle)/.test(norm)) {
-        reformulated = 'Évacuation conforme des déchets et ordures ménagères en sacs hermétiques fermés dans le local poubelle réservé à cet effet, avec respect strict des règles de salubrité.';
-        legalCitation = 'Règlement de Salubrité Urbaine & Copropriété';
-      }
-      // 9. Quittances de loyer
-      else if (/(?:quittance|quittances|recu)/.test(norm)) {
-        reformulated = 'Délivrance systématique et gratuite d\'une quittance de loyer officielle et certifiée pour chaque terme de loyer intégralement acquitté par le Preneur.';
-        legalCitation = 'Loi n° 2019-576, Art. 418';
-      }
-      // 10. Restitution des clés et état des lieux
-      else if (/(?:etat des lieux|remise cles|inventaire)/.test(norm)) {
-        reformulated = 'Établissement obligatoire d\'un état des lieux d\'entrée et de sortie contradictoire et remise formelle de l\'ensemble des clés d\'accès contre décharge.';
-        legalCitation = 'Loi n° 2019-576, Art. 421';
-      }
-      // 11. Restitution de caution
-      else if (/(?:restitution caution|remboursement caution|rendre caution)/.test(norm)) {
-        reformulated = 'Restitution du dépôt de garantie au Preneur dans un délai maximal de trente (30) jours suivant la remise effective des clés, déduction faite des sommes restant dues.';
-        legalCitation = 'Loi n° 2019-576, Art. 416';
-      }
-      // 12. Reformulation générique soignée
-      else {
-        // Mettre une majuscule et un point propre si nécessaire
-        reformulated = raw.charAt(0).toUpperCase() + raw.slice(1);
-        if (!/[.!?]$/.test(reformulated)) reformulated += '.';
-      }
+      caseCategory = 'A';
+      caseLabel = 'Clause compatible';
+      legalCitation = isHabitation ? 'Loi n° 2019-576 (Liberté contractuelle)' : 'Acte Uniforme OHADA AUDCG';
+
+      // Reformuler fidèlement en français juridique sans changer le fond ni inventer de règles
+      let formatted = raw.trim();
+      formatted = formatted.charAt(0).toUpperCase() + formatted.slice(1);
+      if (!/[.!?]$/.test(formatted)) formatted += '.';
+
+      // Retoucher légèrement les tournures familières tout en gardant exactement le sens saisi
+      formatted = formatted
+        .replace(/\bje veux que\b/gi, "Il est expressément convenu que")
+        .replace(/\ble locataire doit\b/gi, "Le Preneur s'engage à")
+        .replace(/\ble proprietaire doit\b/gi, "Le Bailleur s'engage à")
+        .replace(/\ble proprio doit\b/gi, "Le Bailleur s'engage à")
+        .replace(/\binterdit de\b/gi, "Il est formellement interdit de")
+        .replace(/\bil faut\b/gi, "Les parties conviennent d'");
+
+      reformulated = formatted;
     }
 
     if (reformulated !== raw) {
@@ -1777,22 +1800,27 @@ export function reorganizeAndReformulateClauses({
       reformulatedText: reformulated,
       legalCitation,
       isCorrectedAbuse,
-      abuseReason
+      abuseReason,
+      caseCategory,
+      caseLabel
     });
 
-    // Dédoublonnage intelligent dans les catégories : ne pas ajouter une règle déjà présente
-    const normRef = normalizeSemanticText(reformulated);
-    if (assignedField === 'owner') {
-      if (!categorizedOwner.some((existing) => normalizeSemanticText(existing) === normRef)) {
-        categorizedOwner.push(reformulated);
-      }
-    } else if (assignedField === 'tenant') {
-      if (!categorizedTenant.some((existing) => normalizeSemanticText(existing) === normRef)) {
-        categorizedTenant.push(reformulated);
-      }
-    } else {
-      if (!categorizedProperty.some((existing) => normalizeSemanticText(existing) === normRef)) {
-        categorizedProperty.push(reformulated);
+    // Dédoublonnage et intégration : Seules les clauses Cas A, B et C corrigé sont insérées dans le contrat final
+    // Les clauses Cas D (non reconnues / sans fondement) sont exclues du contrat final
+    if (caseCategory !== 'D') {
+      const normRef = normalizeSemanticText(reformulated);
+      if (assignedField === 'owner') {
+        if (!categorizedOwner.some((existing) => normalizeSemanticText(existing) === normRef)) {
+          categorizedOwner.push(reformulated);
+        }
+      } else if (assignedField === 'tenant') {
+        if (!categorizedTenant.some((existing) => normalizeSemanticText(existing) === normRef)) {
+          categorizedTenant.push(reformulated);
+        }
+      } else {
+        if (!categorizedProperty.some((existing) => normalizeSemanticText(existing) === normRef)) {
+          categorizedProperty.push(reformulated);
+        }
       }
     }
   }
