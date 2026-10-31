@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   ArrowRight,
   Clock,
+  PenTool,
   X
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
@@ -174,6 +175,31 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
                 (user.email && pa.tenant_email?.toLowerCase() === user.email.toLowerCase());
               if (isMatch && !appsList.some((ex) => ex.id === pa.id || (ex.property_id === pa.property_id && ex.tenant_id === pa.tenant_id))) {
                 appsList.push(pa);
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // Réconciliation avec les contrats
+      try {
+        const rawContracts = localStorage.getItem('locatrust_contracts');
+        if (rawContracts) {
+          const parsedContracts = JSON.parse(rawContracts);
+          if (Array.isArray(parsedContracts)) {
+            appsList.forEach((app, idx) => {
+              const matchedContract = parsedContracts.find((c: any) =>
+                (c.tenant_id === user.id || (c.tenant?.id === user.id)) &&
+                (c.property_id === app.property_id || c.contract_number === app.contract_number)
+              );
+              if (matchedContract) {
+                appsList[idx] = {
+                  ...app,
+                  contract_number: matchedContract.contract_number,
+                  contract_transmitted: true,
+                  tenant_signed: Boolean(matchedContract.tenant_signed),
+                  status: matchedContract.status === 'actif' ? 'contrat_actif' : (matchedContract.tenant_signed ? 'validee' : 'en_attente_signature_locataire')
+                };
               }
             });
           }
@@ -672,69 +698,114 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {tenantApplications.map((app) => (
-                <div key={app.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-400">
-                        {app.date_received || (app.created_at ? new Date(app.created_at).toLocaleDateString('fr-FR') : 'Date récente')}
-                      </span>
-                      {app.status === 'en_attente' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-300">
-                          En attente de réponse
-                        </span>
-                      )}
-                      {app.status === 'validee' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black border border-blue-300">
-                          Candidature Retenue
-                        </span>
-                      )}
-                      {app.status === 'contrat_actif' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-300 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          Bail Scellé & Actif
-                        </span>
-                      )}
-                      {app.status === 'refusee' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black border border-slate-300">
-                          Non Retenu (Logement déjà attribué)
-                        </span>
-                      )}
-                    </div>
-                    <h4 className="text-base font-black text-slate-900">{app.property_title || 'Logement LocaTrust'}</h4>
-                    <p className="text-xs text-slate-500 font-medium">{app.property_address || 'Abidjan'}</p>
-                    <div className="flex items-center gap-3 pt-2 text-xs font-bold text-slate-700">
-                      <span>Loyer : <strong className="text-blue-600">{formatFCFA(Number(app.rent_amount || 0))}</strong>/mois</span>
-                      <span>•</span>
-                      <span>Caution : {formatFCFA(Number(app.caution_amount || 0))}</span>
-                    </div>
-                  </div>
+              {tenantApplications.map((app) => {
+                const isAwaitingSig =
+                  app.status === 'en_attente_signature_locataire' || (Boolean(app.contract_transmitted) && !app.tenant_signed);
+                const isSignedByTenant = Boolean(app.tenant_signed);
+                const isFinalized = app.status === 'contrat_actif';
+                const isRetained = app.status === 'validee' || Boolean(app.candidate_selected);
+                const isWaitingList = app.status === 'liste_d_attente';
+                const isRefused = app.status === 'refusee';
 
-                  <div className="flex items-center justify-between border-t pt-3">
-                    <span className="text-[11px] text-slate-500 font-semibold">
-                      Bailleur : <strong>{app.owner_name || 'Bailleur certifié'}</strong>
-                    </span>
-                    {(app.status === 'contrat_actif' || app.status === 'validee') ? (
-                      <button
-                        onClick={() => onNavigateTab?.('contracts')}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <span>Consulter mon contrat</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    ) : app.status === 'refusee' ? (
-                      <span className="text-[11px] text-slate-400 italic">
-                        Le logement a été attribué
+                return (
+                  <div key={app.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-400">
+                          {app.date_received || (app.created_at ? new Date(app.created_at).toLocaleDateString('fr-FR') : 'Date récente')}
+                        </span>
+
+                        {isRefused ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black border border-slate-300">
+                            Non Retenu (Logement déjà attribué)
+                          </span>
+                        ) : isFinalized ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-300 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Bail Scellé & Actif
+                          </span>
+                        ) : isAwaitingSig ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-black border border-amber-300 flex items-center gap-1 animate-pulse">
+                            <Clock className="w-3 h-3 text-amber-600" />
+                            ⚠️ En attente de votre signature
+                          </span>
+                        ) : isSignedByTenant ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black border border-emerald-300 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            ✍️ Signé (Attente validation bailleur)
+                          </span>
+                        ) : isRetained ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-black border border-blue-300">
+                            Candidat Retenu (Contrat en préparation)
+                          </span>
+                        ) : isWaitingList ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[10px] font-black border border-amber-200">
+                            ⏳ En attente (Liste d'attente)
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-300">
+                            En attente de réponse
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 className="text-base font-black text-slate-900">{app.property_title || 'Logement LocaTrust'}</h4>
+                      <p className="text-xs text-slate-500 font-medium">{app.property_address || 'Abidjan'}</p>
+                      <div className="flex items-center gap-3 pt-2 text-xs font-bold text-slate-700">
+                        <span>Loyer : <strong className="text-blue-600">{formatFCFA(Number(app.rent_amount || 0))}</strong>/mois</span>
+                        <span>•</span>
+                        <span>Caution : {formatFCFA(Number(app.caution_amount || 0))}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t pt-3">
+                      <span className="text-[11px] text-slate-500 font-semibold">
+                        Bailleur : <strong>{app.owner_name || 'Bailleur certifié'}</strong>
                       </span>
-                    ) : (
-                      <span className="text-[11px] text-amber-700 font-bold flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-amber-600" />
-                        Réponse sous 24-48h
-                      </span>
-                    )}
+
+                      {isFinalized ? (
+                        <button
+                          onClick={() => onNavigateTab?.('contracts')}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Consulter mon contrat</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      ) : isAwaitingSig ? (
+                        <button
+                          onClick={() => onNavigateTab?.('contracts')}
+                          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-md transition flex items-center gap-1.5 animate-pulse cursor-pointer"
+                        >
+                          <PenTool className="w-3.5 h-3.5" />
+                          <span>Examiner & Signer le contrat</span>
+                        </button>
+                      ) : isSignedByTenant ? (
+                        <button
+                          onClick={() => onNavigateTab?.('contracts')}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Voir le contrat</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      ) : isRefused ? (
+                        <span className="text-[11px] text-slate-400 italic">
+                          Le logement a été attribué
+                        </span>
+                      ) : isRetained ? (
+                        <span className="text-[11px] text-blue-700 font-bold flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-blue-600" />
+                          Contrat en cours de préparation
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-amber-700 font-bold flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-amber-600" />
+                          Réponse sous 24-48h
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

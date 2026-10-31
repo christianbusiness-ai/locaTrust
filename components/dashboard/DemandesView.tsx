@@ -96,6 +96,16 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [signingOwnerApp, setSigningOwnerApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
 
+  // Auto-fermeture automatique de la bannière temporaire de notification (Point 8)
+  useEffect(() => {
+    if (candidateAlert) {
+      const timer = setTimeout(() => {
+        setCandidateAlert(null);
+      }, 6500);
+      return () => clearTimeout(timer);
+    }
+  }, [candidateAlert]);
+
   const loadFromDatabase = async () => {
     setIsLoading(true);
     setLoadError(null);
@@ -119,54 +129,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         return found;
       };
 
-      const enrichAppItem = (dbA: any): RentalApplication => {
-        const pInfo = getPropInfo(dbA.property_id, dbA.property_title);
-        const rent = Number(
-          (pInfo && (pInfo.rent || pInfo.price))
-            ? (pInfo.rent || pInfo.price)
-            : (dbA.rent_amount || dbA.rent || dbA.property?.rent || 0)
-        );
-        const caution = Number(
-          (pInfo && (pInfo.caution || pInfo.caution_amount))
-            ? (pInfo.caution || pInfo.caution_amount)
-            : (dbA.caution_amount || (pInfo?.rent ? Number(pInfo.rent) * 2 : 0) || (rent > 0 ? rent * 2 : 0))
-        );
-
-        return {
-          ...dbA,
-          property_title: pInfo?.title || dbA.property_title || dbA.property?.title || 'Bien immobilier',
-          property_address: pInfo?.commune ? `${pInfo.commune}, ${pInfo.city || 'Abidjan'}` : (dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`),
-          rent_amount: rent,
-          caution_amount: caution,
-          date_received: dbA.date_received || (dbA.created_at ? new Date(dbA.created_at).toISOString().split('T')[0] : '2026-10-10'),
-          dossier_status: dbA.dossier_status || 'complet',
-          status: dbA.status || 'en_attente',
-          tenant_name: dbA.tenant_name || 'Candidat Locataire',
-          tenant_phone: dbA.tenant_phone || '+225 07 00 00 00 00',
-          tenant_email: dbA.tenant_email || '',
-          tenant_avatar:
-            (dbA.tenant_avatar && !dbA.tenant_avatar.includes('ui-avatars.com') ? dbA.tenant_avatar : null) ||
-            (typeof window !== 'undefined'
-              ? localStorage.getItem(`locatrust_user_avatar_${dbA.tenant_id}`) ||
-                localStorage.getItem('locatrust_tenant_avatar') ||
-                localStorage.getItem('locatrust_user_avatar_usr_tenant')
-              : null) ||
-            (dbA.tenant_name ? `https://ui-avatars.com/api/?name=${encodeURIComponent(dbA.tenant_name)}&background=0284c7&color=fff` : undefined),
-          tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
-          documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
-            ? dbA.documents
-            : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
-        };
-      };
-
+      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
+      let serverApps: any[] = [];
       let localApps: RentalApplication[] = [];
+      const userPropertyIds = new Set<string>();
+      const userMandantIds = new Set<string>();
+
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_rental_applications');
           if (raw) {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) {
-              // Nettoyer définitivement les candidatures de démonstration fictives
               localApps = parsed.filter(
                 (a: any) =>
                   a &&
@@ -181,11 +155,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           }
         } catch {}
       }
-
-      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
-      let serverApps: any[] = [];
-      const userPropertyIds = new Set<string>();
-      const userMandantIds = new Set<string>();
 
       if (typeof window !== 'undefined' && user?.id) {
         try {
@@ -225,7 +194,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         console.warn('API /api/sync applications notice:', syncErr);
       }
 
-      // Fusionner les candidatures du serveur central
       for (const sa of serverApps) {
         if (!localApps.some(a => a.id === sa.id)) {
           localApps.unshift(sa);
@@ -273,6 +241,109 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         .select('*')
         .order('created_at', { ascending: false });
 
+      // Récupération des véritables profils pour les photos de profil (Point 6)
+      const allRaw = [...(data || []), ...localApps, ...serverApps];
+      const tenantIds = Array.from(new Set(allRaw.map((a: any) => a?.tenant_id).filter(Boolean)));
+      const tenantEmails = Array.from(new Set(allRaw.map((a: any) => a?.tenant_email).filter(Boolean)));
+
+      const tenantProfilesMap: Record<string, any> = {};
+      if (tenantIds.length > 0) {
+        try {
+          const { data: profsById } = await supabase
+            .from('profiles')
+            .select('id, full_name, avatar_url, phone, email')
+            .in('id', tenantIds);
+          if (profsById && Array.isArray(profsById)) {
+            profsById.forEach((p) => {
+              if (p?.id) tenantProfilesMap[p.id] = p;
+              if (p?.email) tenantProfilesMap[p.email.toLowerCase()] = p;
+              if (p?.avatar_url && !p.avatar_url.includes('ui-avatars.com') && typeof window !== 'undefined') {
+                try { localStorage.setItem(`locatrust_user_avatar_${p.id}`, p.avatar_url); } catch {}
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Erreur chargement profils par ID:', e);
+        }
+      }
+
+      const missingEmails = tenantEmails.filter(em => em && !tenantProfilesMap[em.toLowerCase()]);
+      if (missingEmails.length > 0) {
+        try {
+          const { data: profsByEmail } = await supabase
+            .from('profiles')
+            .select('id, full_name, avatar_url, phone, email')
+            .in('email', missingEmails);
+          if (profsByEmail && Array.isArray(profsByEmail)) {
+            profsByEmail.forEach((p) => {
+              if (p?.email) tenantProfilesMap[p.email.toLowerCase()] = p;
+              if (p?.id) tenantProfilesMap[p.id] = p;
+              if (p?.avatar_url && !p.avatar_url.includes('ui-avatars.com') && typeof window !== 'undefined') {
+                try { localStorage.setItem(`locatrust_user_avatar_${p.id}`, p.avatar_url); } catch {}
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Erreur chargement profils par Email:', e);
+        }
+      }
+
+      const enrichAppItem = (dbA: any): RentalApplication => {
+        const pInfo = getPropInfo(dbA.property_id, dbA.property_title);
+        const rent = Number(
+          (pInfo && (pInfo.rent || pInfo.price))
+            ? (pInfo.rent || pInfo.price)
+            : (dbA.rent_amount || dbA.rent || dbA.property?.rent || 0)
+        );
+        const caution = Number(
+          (pInfo && (pInfo.caution || pInfo.caution_amount))
+            ? (pInfo.caution || pInfo.caution_amount)
+            : (dbA.caution_amount || (pInfo?.rent ? Number(pInfo.rent) * 2 : 0) || (rent > 0 ? rent * 2 : 0))
+        );
+
+        // Vraie photo de profil récupérée depuis la table profiles (Point 6)
+        const prof = (dbA.tenant_id && tenantProfilesMap[dbA.tenant_id]) ||
+                     (dbA.tenant_email && tenantProfilesMap[dbA.tenant_email.toLowerCase()]) ||
+                     (Object.values(tenantProfilesMap) as any[]).find((p: any) =>
+                       p?.full_name && dbA.tenant_name && p.full_name.trim().toLowerCase() === dbA.tenant_name.trim().toLowerCase()
+                     );
+        const realProfileAvatar = prof?.avatar_url && !prof.avatar_url.includes('ui-avatars.com')
+          ? prof.avatar_url
+          : null;
+
+        const effectiveAvatar =
+          realProfileAvatar ||
+          (dbA.tenant_avatar && !dbA.tenant_avatar.includes('ui-avatars.com') ? dbA.tenant_avatar : null) ||
+          (typeof window !== 'undefined' && dbA.tenant_id
+            ? localStorage.getItem(`locatrust_user_avatar_${dbA.tenant_id}`) ||
+              localStorage.getItem(`locatrust_avatar_profile_${dbA.tenant_id}`)
+            : null) ||
+          undefined;
+
+        if (realProfileAvatar && typeof window !== 'undefined' && dbA.tenant_id) {
+          try { localStorage.setItem(`locatrust_user_avatar_${dbA.tenant_id}`, realProfileAvatar); } catch {}
+        }
+
+        return {
+          ...dbA,
+          property_title: pInfo?.title || dbA.property_title || dbA.property?.title || 'Bien immobilier',
+          property_address: pInfo?.commune ? `${pInfo.commune}, ${pInfo.city || 'Abidjan'}` : (dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`),
+          rent_amount: rent,
+          caution_amount: caution,
+          date_received: dbA.date_received || (dbA.created_at ? new Date(dbA.created_at).toISOString().split('T')[0] : '2026-10-10'),
+          dossier_status: dbA.dossier_status || 'complet',
+          status: dbA.status || 'en_attente',
+          tenant_name: prof?.full_name || dbA.tenant_name || 'Candidat Locataire',
+          tenant_phone: prof?.phone || dbA.tenant_phone || '+225 07 00 00 00 00',
+          tenant_email: prof?.email || dbA.tenant_email || '',
+          tenant_avatar: effectiveAvatar,
+          tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
+          documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
+            ? dbA.documents
+            : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
+        };
+      };
+
       const isAdmin = profile?.role === 'admin' || (user as any)?.role === 'admin';
 
       // Filtrer strictement les candidatures appartenant à l'utilisateur (Propriétaire ou Agence)
@@ -317,7 +388,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           return {
             ...localItem,
             ...dbItem,
-            // Conserver les signatures locales en mémoire si la base n'a pas encore de lien direct
+            // Préserver les indicateurs d'étape et signatures sans écrasement
+            contract_transmitted: (dbItem as any).contract_transmitted ?? (localItem as any)?.contract_transmitted,
+            tenant_signed: (dbItem as any).tenant_signed || (localItem as any)?.tenant_signed,
+            candidate_selected: (dbItem as any).candidate_selected ?? (localItem as any)?.candidate_selected,
             tenant_signature_url: (dbItem as any).tenant_signature_url || (localItem as any).tenant_signature_url,
             owner_signature_url: (dbItem as any).owner_signature_url || (localItem as any).owner_signature_url,
           };
@@ -330,9 +404,43 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         ...mergedDbApps
       ];
 
-      setApplications(combined);
+      // Réconciliation avec les contrats réels (locatrust_contracts)
+      let contractsList: any[] = [];
+      try {
+        const rawC = localStorage.getItem('locatrust_contracts');
+        if (rawC) contractsList = JSON.parse(rawC);
+      } catch {}
+
+      const reconciledApps = combined.map((app) => {
+        const matchingC = contractsList.find((c: any) =>
+          (app.contract_number && (c.contract_number === app.contract_number || c.id === app.contract_number)) ||
+          ((c.property_id === app.property_id || c.property?.id === app.property_id) &&
+           (c.tenant_id === app.tenant_id || c.tenant?.id === app.tenant_id || c.tenant_name === app.tenant_name))
+        );
+
+        if (matchingC) {
+          const isActif = matchingC.status === 'actif' || matchingC.status === 'contrat_actif';
+          const isTransmitted = matchingC.status === 'en_attente_signature_locataire' || matchingC.status === 'transmis';
+          const tenantSigned = Boolean(matchingC.tenant_signed || matchingC.tenant_signature || matchingC.tenant_signature_url);
+          const ownerSigned = Boolean(matchingC.owner_signed || matchingC.owner_signature || matchingC.owner_signature_url);
+
+          return {
+            ...app,
+            contract_number: matchingC.contract_number || app.contract_number,
+            contract_transmitted: isTransmitted || Boolean(matchingC.contract_number) || (app as any).contract_transmitted,
+            tenant_signed: tenantSigned || app.tenant_signed,
+            owner_signed: ownerSigned || (app as any).owner_signed,
+            tenant_signature_url: matchingC.tenant_signature || matchingC.tenant_signature_url || (app as any).tenant_signature_url,
+            owner_signature_url: matchingC.owner_signature || matchingC.owner_signature_url || (app as any).owner_signature_url,
+            status: isActif ? 'contrat_actif' : (tenantSigned ? 'contrat_signe_locataire' : (isTransmitted ? 'en_attente_signature_locataire' : app.status))
+          };
+        }
+        return app;
+      });
+
+      setApplications(reconciledApps);
       if (typeof window !== 'undefined') {
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(combined));
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(reconciledApps));
       }
     } catch (err: any) {
       console.warn('Erreur chargement candidatures:', err);
@@ -383,23 +491,24 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     }
   };
 
-  // Vérifier si un logement a déjà un contrat actif / finalisé
+  // Vérifier si un logement a déjà un contrat actif / finalisé (Point 4 & 5)
   const propertyHasActiveContract = (propertyId: string, propertyTitle?: string) => {
-    // 1. Vérifier si un contrat actif ou transmis existe dans les candidatures
+    // 1. Vérifier si un contrat actif finalisé existe dans les candidatures
     const hasActiveApp = applications.some((a) =>
       (a.property_id === propertyId || (propertyTitle && a.property_title === propertyTitle)) &&
-      (a.status === 'contrat_actif' || (a.status === 'validee' && (a as any).contract_transmitted))
+      a.status === 'contrat_actif'
     );
     if (hasActiveApp) return true;
 
-    // 2. Vérifier dans le registre officiel des contrats (locatrust_contracts)
+    // 2. Vérifier dans le registre officiel des contrats (locatrust_contracts) un contrat réellement actif
     try {
       const stored = localStorage.getItem('locatrust_contracts');
       if (stored) {
         const contracts = JSON.parse(stored);
         if (Array.isArray(contracts)) {
           return contracts.some((c: any) =>
-            (c.property?.id === propertyId || c.property_id === propertyId || (propertyTitle && c.property?.title === propertyTitle))
+            (c.property?.id === propertyId || c.property_id === propertyId || (propertyTitle && c.property?.title === propertyTitle)) &&
+            (c.status === 'actif' || c.status === 'contrat_actif')
           );
         }
       }
@@ -408,27 +517,34 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     return false;
   };
 
-  // Choix d'un candidat : Rejette automatiquement les concurrents et les notifie en temps réel
+  // Choix d'un candidat : Met les concurrents en liste d'attente (NE PAS LES REFUSER TANT QUE LE CONTRAT N'EST PAS FINALISÉ - Points 3 & 4)
   const handleSelectAndSignWithCandidate = async (chosenApp: RentalApplication) => {
     // Contrôle d'état : si le logement est déjà pris
-    if (propertyHasActiveContract(chosenApp.property_id)) {
+    if (propertyHasActiveContract(chosenApp.property_id, chosenApp.property_title)) {
       alert("Ce logement est déjà loué sous contrat actif. Impossible de sélectionner un nouveau candidat.");
       return;
     }
 
     const competingCandidates = applications.filter(
-      (a) => a.property_id === chosenApp.property_id && a.id !== chosenApp.id
+      (a) => (a.property_id === chosenApp.property_id || a.property_title === chosenApp.property_title) && a.id !== chosenApp.id
     );
 
     const updated = applications.map((app) => {
       if (app.id === chosenApp.id) {
-        return { ...app, status: 'validee' as const, candidate_selected: true, tenant_signed: false };
-      }
-      if (app.property_id === chosenApp.property_id) {
         return {
           ...app,
-          status: 'refusee' as const,
-          unavailable_reason: "Le logement demandé est déjà pris et n'est plus disponible."
+          status: 'validee' as const,
+          candidate_selected: true,
+          tenant_signed: app.tenant_signed || false
+        };
+      }
+      if (app.property_id === chosenApp.property_id || app.property_title === chosenApp.property_title) {
+        // RÈGLE FONDAMENTALE (Points 3, 4, 5) : Les concurrents ne sont PAS refusés !
+        // Ils passent en liste d'attente pendant que le contrat est en préparation / négociation.
+        return {
+          ...app,
+          status: 'liste_d_attente' as const,
+          candidate_selected: false
         };
       }
       return app;
@@ -436,7 +552,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     saveApplications(updated);
 
-    // Mettre à jour la base Supabase pour le candidat retenu et les concurrents
+    // Mettre à jour Supabase pour le candidat retenu et les concurrents (liste d'attente)
     try {
       await supabase.from('rental_applications').update({
         status: 'validee'
@@ -444,12 +560,37 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       for (const comp of competingCandidates) {
         await supabase.from('rental_applications').update({
-          status: 'refusee'
+          status: 'liste_d_attente'
         }).eq('id', comp.id);
       }
     } catch (e) {
       console.warn('Erreur mise à jour Supabase sélection candidat:', e);
     }
+
+    // Synchronisation persistante multi-appareils /api/sync
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_application',
+          applicationId: chosenApp.id,
+          updates: { status: 'validee', candidate_selected: true }
+        })
+      }).catch(() => {});
+
+      for (const comp of competingCandidates) {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_application',
+            applicationId: comp.id,
+            updates: { status: 'liste_d_attente', candidate_selected: false }
+          })
+        }).catch(() => {});
+      }
+    } catch {}
 
     broadcastLiveEvent('APPLICATION_UPDATED', {
       actorId: user?.id,
@@ -458,31 +599,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       data: { appId: chosenApp.id, status: 'validee' }
     });
 
-    // Envoi immédiat des notifications et messages aux candidats non retenus
-    competingCandidates.forEach((comp) => {
-      pushGlobalNotification({
-        title: "Logement non disponible",
-        description: `Le logement « ${comp.property_title} » a été attribué et n'est plus disponible.`,
-        category: 'demande',
-        targetTab: 'applications'
-      });
-
-      const compTenantId = comp.tenant_id || `tenant_${comp.id}`;
-      try {
-        sendChatMessage(
-          currentUserId,
-          compTenantId,
-          `Bonjour ${comp.tenant_name}, nous vous informons que le logement « ${comp.property_title} » a été attribué et n'est plus disponible. Votre demande a donc été classée sans suite. Merci de votre confiance.`
-        );
-      } catch {}
-    });
-
-    // Ne pas ouvrir la modale automatiquement : le bailleur clique sur "Créer le contrat"
     setSelectedApplicationForContract(null);
 
-    setCandidateAlert(
-      `✔ ${chosenApp.tenant_name} retenu pour « ${chosenApp.property_title} ». Les autres candidats ont été automatiquement notifiés que le logement est déjà pris. Vous pouvez maintenant cliquer sur « Créer le contrat » pour préparer le bail.`
-    );
+    // Notification temporaire ciblée (Points 7 & 8) : ne pas mentionner "les autres candidats" s'il n'y en a pas
+    if (competingCandidates.length > 0) {
+      setCandidateAlert(
+        `✔ ${chosenApp.tenant_name} sélectionné pour « ${chosenApp.property_title} ». Les autres candidats ont été placés en liste d'attente. Vous pouvez maintenant préparer le contrat de bail.`
+      );
+    } else {
+      setCandidateAlert(
+        `✔ ${chosenApp.tenant_name} sélectionné pour « ${chosenApp.property_title} ». Vous pouvez maintenant préparer le contrat de bail.`
+      );
+    }
   };
 
   // Validation effective de la signature par le locataire (Étape 1 & 2)
@@ -500,7 +628,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             ...a,
             tenant_signed: true,
             tenant_signed_at: signedAt,
-            tenant_signature_url: sigUrl
+            tenant_signature_url: sigUrl,
+            status: 'contrat_signe_locataire' as const
           }
         : a
     );
@@ -512,17 +641,36 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     try {
       await supabase.from('rental_applications').update({
         tenant_signed: true,
-        tenant_signed_at: signedAt
+        tenant_signed_at: signedAt,
+        status: 'contrat_signe_locataire'
       }).eq('id', app.id);
     } catch (e) {
       console.warn('Sync signature error:', e);
     }
 
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_application',
+          applicationId: app.id,
+          updates: {
+            tenant_signed: true,
+            tenant_signed_at: signedAt,
+            tenant_signature_url: sigUrl,
+            status: 'contrat_signe_locataire'
+          }
+        })
+      }).catch(() => {});
+    } catch {}
+
     broadcastLiveEvent('CONTRACT_SIGNED_BY_TENANT', {
       actorId: user?.id,
-      targetUserId: app.tenant_id,
+      targetUserId: app.owner_id || currentUserId,
       propertyId: app.property_id,
-      data: { appId: app.id }
+      contractId: app.contract_number,
+      data: { appId: app.id, signedAt }
     });
   };
 
@@ -989,9 +1137,24 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             .replace(/pièces /gi, 'P ')
             .replace(/pièce /gi, 'P ');
 
-          const isPropertyTaken = propertyHasActiveContract(app.property_id);
+          // Vérifier s'il y a d'autres candidats concurrents sur ce même logement
+          const otherCandidatesForThisProp = applications.filter(
+            (a) =>
+              (a.property_id === app.property_id ||
+                (a.property_title && app.property_title && a.property_title.trim().toLowerCase() === app.property_title.trim().toLowerCase())) &&
+              a.id !== app.id &&
+              a.status !== 'refusee'
+          );
+          const hasMultipleCandidates = otherCandidatesForThisProp.length > 0;
+
+          const isPropertyTaken = propertyHasActiveContract(app.property_id, app.property_title);
           const isThisActive = app.status === 'contrat_actif';
-          const isRefused = app.status === 'refusee' || (isPropertyTaken && !isThisActive);
+          const isAwaitingTenantSig =
+            app.status === 'en_attente_signature_locataire' || (Boolean(app.contract_transmitted) && !app.tenant_signed);
+          const isRetained = app.status === 'validee' || Boolean(app.candidate_selected) || isAwaitingTenantSig;
+
+          // Un candidat n'est refusé que si son statut est 'refusee' OU si le logement est scellé par un autre candidat actif
+          const isRefused = app.status === 'refusee' || (isPropertyTaken && !isThisActive && !isRetained);
 
           return (
             <div
@@ -999,7 +1162,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               className={`bg-white rounded-2xl border transition-all p-3 sm:p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 hover:shadow-sm ${
                 isThisActive
                   ? 'border-blue-300 bg-blue-50/20'
-                  : app.status === 'validee'
+                  : isRetained
                   ? 'border-emerald-300 bg-emerald-50/20'
                   : isRefused
                   ? 'border-slate-200 bg-slate-50/50 opacity-80'
@@ -1008,7 +1171,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   : 'border-slate-200'
               }`}
             >
-              {/* 1. Candidat Profil */}
+              {/* 1. Candidat Profil avec Vraie Photo */}
               <div className="flex items-center gap-3 min-w-0 sm:min-w-[180px]">
                 <UserAvatar
                   src={app.tenant_avatar}
@@ -1057,21 +1220,31 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   {app.date_received}
                 </span>
 
-                {/* Si logement déjà pris et candidat non retenu -> Refusé */}
+                {/* Badges de statut stricts */}
                 {isRefused ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-800 border border-rose-200 text-[11px] font-black whitespace-nowrap flex items-center gap-1">
                     <X className="w-3 h-3 text-rose-600" />
-                    <span>Refusé (Logement déjà pris)</span>
+                    <span>Refusé (Logement déjà attribué)</span>
                   </span>
                 ) : isThisActive ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
                     <CheckCircle2 className="w-3 h-3 text-blue-600" />
                     <span>✔ Contrat Actif (Loué)</span>
                   </span>
-                ) : app.status === 'validee' ? (
+                ) : app.tenant_signed ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
                     <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    <span>✔ Retenu ({app.tenant_signed ? 'Signé' : 'Attente signature'})</span>
+                    <span>✍️ Signé par le locataire</span>
+                  </span>
+                ) : isAwaitingTenantSig ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
+                    <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
+                    <span>⏳ En attente signature locataire</span>
+                  </span>
+                ) : isRetained ? (
+                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    <span>✔ Retenu (Contrat en préparation)</span>
                   </span>
                 ) : app.status === 'liste_d_attente' ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black flex items-center gap-1 whitespace-nowrap">
@@ -1086,13 +1259,13 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 )}
               </div>
 
-              {/* 4. Actions selon l'état réel (Points 1 & 2) */}
+              {/* 4. Actions selon l'état réel */}
               <div className="flex items-center gap-1.5 w-full lg:w-auto justify-end flex-wrap pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
                 {/* Voir Dossier */}
                 <button
                   type="button"
                   onClick={() => setSelectedDossierApp(app)}
-                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs inline-flex items-center gap-1 transition-all whitespace-nowrap"
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs inline-flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
                   title="Voir le dossier de candidature"
                 >
                   <Eye className="w-3.5 h-3.5 text-slate-500" />
@@ -1135,7 +1308,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                     type="button"
                     disabled
                     className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed opacity-40 flex items-center gap-1.5 whitespace-nowrap"
-                    title="Le logement demandé est déjà pris et n'est plus disponible. Aucun contrat ne peut être généré ou signé pour ce bien."
+                    title="Le logement demandé a été attribué. Aucun contrat ne peut être généré ou signé pour ce bien."
                   >
                     <Lock className="w-3.5 h-3.5 text-slate-300" />
                     <span>Contrat</span>
@@ -1149,7 +1322,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       type="button"
                       disabled
                       className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed opacity-60 flex items-center gap-1.5 whitespace-nowrap"
-                      title="Le contrat est finalisé et en cours d'exécution. Aucune modification n'est permise."
+                      title="Le contrat est scellé et actif. Aucune modification n'est permise."
                     >
                       <Lock className="w-3.5 h-3.5 text-slate-400" />
                       <span>Contrat (Scellé)</span>
@@ -1167,21 +1340,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   </>
                 )}
 
-                {/* CAS C : Candidat retenu en cours de finalisation */}
-                {!isRefused && !isThisActive && app.status === 'validee' && (
+                {/* CAS C : Candidat retenu / En attente de signature / En cours de finalisation */}
+                {!isRefused && !isThisActive && isRetained && (
                   <>
-                    {/* Badge / Bouton indiquant que ce candidat a été retenu (Désactivé) */}
-                    <button
-                      type="button"
-                      disabled
-                      className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 font-extrabold text-xs border border-emerald-200 cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
-                      title="Ce candidat a été retenu pour ce logement."
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>✓ Candidat retenu</span>
-                    </button>
-
-                    {/* Bouton dédié Créer le contrat */}
+                    {/* Bouton Créer le contrat */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -1197,7 +1359,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                       <span>Créer le contrat</span>
                     </button>
 
-                    {/* Bouton dédié Transmettre le contrat */}
+                    {/* Bouton Transmettre le contrat */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -1207,20 +1369,20 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                         setSelectedApplicationForContract(app);
                       }}
                       className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                      title="Ouvrir directement le formulaire officiel de transmission du contrat au locataire"
+                      title="Ouvrir le formulaire de transmission du contrat au locataire"
                     >
                       <Send className="w-3.5 h-3.5" />
                       <span>Transmettre le contrat</span>
                     </button>
 
-                    {/* Tant que le locataire n'a pas signé : statut d'attente (Le bailleur ne peut pas signer à la place du locataire) */}
+                    {/* Tant que le locataire n'a pas signé : statut d'attente (Finaliser le contrat reste VISIBLE mais DÉSACTIVÉ) */}
                     {!app.tenant_signed ? (
                       <>
                         <button
                           type="button"
                           disabled
                           className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-400 font-bold text-xs border border-slate-300 cursor-not-allowed opacity-60 flex items-center gap-1.5 whitespace-nowrap"
-                          title="En attente de la signature effective du locataire. Le bouton deviendra cliquable dès validation de sa signature."
+                          title="En attente de la signature effective du locataire. Ce bouton deviendra actif dès que le locataire aura apposé sa signature."
                         >
                           <Clock className="w-3.5 h-3.5 text-slate-400" />
                           <span>Finaliser le contrat</span>
@@ -1228,56 +1390,65 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
                         <div
                           className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200 flex items-center gap-1.5 whitespace-nowrap shadow-xs"
-                          title="Le bail officiel a été transmis au locataire dans sa boîte de messagerie. En attente de sa signature électronique sur son espace."
+                          title="Le bail officiel a été transmis au locataire. En attente de sa signature électronique sur son espace."
                         >
                           <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse shrink-0" />
-                          <span>Statut : Signature locataire en attente</span>
+                          <span>Statut : En attente de signature du locataire</span>
                         </div>
                       </>
                     ) : (
-                      /* Dès que le locataire a signé et validé : badge vert et bouton de finalisation actif */
-                      <>
-                        <div
-                          className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-bold text-xs border border-emerald-200 flex items-center gap-1.5 whitespace-nowrap shadow-xs"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>Signé par le locataire</span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleFinalizeContract(app)}
-                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
-                          title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                          <span>Finaliser le contrat</span>
-                        </button>
-                      </>
+                      /* Dès que le locataire a signé : bouton de finalisation actif et animé */
+                      <button
+                        type="button"
+                        onClick={() => handleFinalizeContract(app)}
+                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
+                        title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>Finaliser le contrat</span>
+                      </button>
                     )}
                   </>
                 )}
 
                 {/* CAS D : Candidat en attente ou liste d'attente (logement non encore pris) */}
-                {!isRefused && !isThisActive && app.status !== 'validee' && (
+                {!isRefused && !isThisActive && !isRetained && (
                   <>
-                    {app.status === 'en_attente' && (
+                    {/* S'il y a plusieurs candidats sur ce logement, afficher 'Signer avec [Prénom]' */}
+                    {app.status === 'en_attente' && hasMultipleCandidates && (
                       <button
                         type="button"
                         onClick={() => handleSelectAndSignWithCandidate(app)}
                         className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
-                        title="Choisir ce candidat et rejeter automatiquement les autres demandes concurrentes"
+                        title={`Choisir ${app.tenant_name} pour ce logement`}
                       >
                         <Check className="w-3.5 h-3.5" />
                         <span>Signer avec {app.tenant_name.split(' ')[0]}</span>
                       </button>
                     )}
 
+                    {/* Si liste d'attente, permettre de le repêcher */}
+                    {app.status === 'liste_d_attente' && (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectAndSignWithCandidate(app)}
+                        className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs shadow-sm flex items-center gap-1 transition-all whitespace-nowrap cursor-pointer"
+                        title="Sélectionner ce candidat de la liste d'attente"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Choisir ce candidat</span>
+                      </button>
+                    )}
+
+                    {/* Bouton Créer le contrat direct (notamment si 1 seul candidat) */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        // Si c'est le seul candidat ou direct, on le retient et on ouvre le générateur
+                        handleSelectAndSignWithCandidate(app);
+                        setContractModalStartStep('form');
                         setSelectedApplicationForContract(app);
                       }}
                       className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
@@ -1484,6 +1655,24 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
               setCandidateAlert(
                 `🎉 Bail N° ${contractNumber} finalisé avec ${tenantName} pour « ${propertyTitle} » ! Les candidats en liste d'attente (${competingNames || 'demandeurs'}) ont été automatiquement notifiés que le logement n'est plus disponible.`
+              );
+            }}
+            onContractTransmitted={({ contractNumber, tenantName, propertyTitle }) => {
+              const chosenApp = selectedApplicationForContract;
+              const updated = applications.map((a) => {
+                if (a.id === chosenApp.id) {
+                  return {
+                    ...a,
+                    status: 'en_attente_signature_locataire' as const,
+                    contract_number: contractNumber,
+                    contract_transmitted: true
+                  };
+                }
+                return a;
+              });
+              saveApplications(updated);
+              setCandidateAlert(
+                `📄 Le contrat N° ${contractNumber} a été transmis à ${tenantName} pour « ${propertyTitle} ». Statut : En attente de signature du locataire.`
               );
             }}
             initialData={{

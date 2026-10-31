@@ -122,6 +122,11 @@ interface LegalContractGeneratorModalProps {
     tenantName: string;
     propertyTitle: string;
   }) => void;
+  onContractTransmitted?: (contractData: {
+    contractNumber: string;
+    tenantName: string;
+    propertyTitle: string;
+  }) => void;
 }
 
 export interface AnalyzedClause {
@@ -139,7 +144,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   isAgency = false,
   startAtStep,
   initialData,
-  onContractFinalized
+  onContractFinalized,
+  onContractTransmitted
 }) => {
   const { user, profile } = useAuth();
 
@@ -964,7 +970,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
             if (isMatch) {
               return {
                 ...a,
-                status: 'validee' as const,
+                status: tenantSignatureUrl ? ('contrat_actif' as const) : ('en_attente_signature_locataire' as const),
                 candidate_selected: true,
                 contract_number: contractNumber,
                 contract_transmitted: true,
@@ -984,8 +990,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           if (targetAppId) {
             try {
               await supabase.from('rental_applications').update({
-                status: 'validee',
-                contract_number: contractNumber
+                status: tenantSignatureUrl ? 'contrat_actif' : 'en_attente_signature_locataire',
+                contract_number: contractNumber,
+                contract_transmitted: true,
+                owner_signed: true,
+                owner_signature: ownerSignatureUrl
               }).eq('id', targetAppId);
             } catch (err: any) {
               console.warn('Erreur mise à jour rental_applications:', err?.message);
@@ -1180,6 +1189,33 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       });
     } catch (e) {
       console.warn('Erreur registre contrats:', e);
+    }
+
+    // Notification réelle et persistante au locataire pour l'inviter à signer son bail
+    try {
+      pushGlobalNotification({
+        title: 'Nouveau contrat de bail à signer',
+        description: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis par le bailleur. Veuillez l'examiner et apposer votre signature certifiée.`,
+        category: 'contrat',
+        targetUserId: targetTenantId,
+        targetTab: 'applications',
+        targetRole: 'locataire',
+        link: '/dashboard'
+      });
+    } catch (notifErr) {
+      console.warn('Erreur notification locataire contrat:', notifErr);
+    }
+
+    if (onContractTransmitted) {
+      try {
+        onContractTransmitted({
+          contractNumber,
+          tenantName,
+          propertyTitle
+        });
+      } catch (e) {
+        console.warn('onContractTransmitted error:', e);
+      }
     }
 
     // 5. Notification automatique aux demandeurs en liste d'attente pour ce logement

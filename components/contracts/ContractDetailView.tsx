@@ -55,6 +55,8 @@ import {
 } from '@/lib/contractPartyResolver';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 import { acceptContractRenewal, refuseContractRenewal } from '@/lib/contractRenewalManager';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 interface ContractDetailViewProps {
   onBack?: () => void;
@@ -1447,6 +1449,22 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   .update({ signature_url: signatureUrl })
                   .eq('id', user.id);
               }
+
+              // Si le locataire signe, mettre à jour la candidature correspondante
+              if (!isOwner) {
+                try {
+                  await supabase
+                    .from('rental_applications')
+                    .update({
+                      tenant_signed: true,
+                      tenant_signed_at: new Date().toISOString(),
+                      tenant_signature: signatureUrl
+                    })
+                    .or(`contract_number.eq.${contractNumber},tenant_id.eq.${user?.id}`);
+                } catch (appErr) {
+                  console.warn('Erreur mise à jour application lors signature locataire:', appErr);
+                }
+              }
             } catch (dbErr) {
               console.warn('Notice persistance signature Supabase:', dbErr);
             }
@@ -1474,6 +1492,55 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   localStorage.setItem('locatrust_contracts', JSON.stringify(updated));
                   window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updated } }));
                 }
+              }
+
+              // Mettre à jour aussi locatrust_rental_applications en cache
+              if (!isOwner) {
+                const appsRaw = localStorage.getItem('locatrust_rental_applications');
+                if (appsRaw) {
+                  const parsedApps = JSON.parse(appsRaw);
+                  if (Array.isArray(parsedApps)) {
+                    const updatedApps = parsedApps.map((a: any) => {
+                      if (
+                        a.contract_number === contractNumber ||
+                        a.tenant_id === user?.id ||
+                        (a.tenant_name && tenantData.name && a.tenant_name.trim().toLowerCase() === tenantData.name.trim().toLowerCase())
+                      ) {
+                        return {
+                          ...a,
+                          tenant_signed: true,
+                          tenant_signed_at: new Date().toISOString(),
+                          tenant_signature_url: signatureUrl
+                        };
+                      }
+                      return a;
+                    });
+                    localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+                    window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
+                  }
+                }
+
+                // Notifier le propriétaire
+                const targetOwnerId = realContract?.owner_id || realContract?.owner?.id;
+                if (targetOwnerId) {
+                  pushGlobalNotification({
+                    title: 'Contrat signé par le locataire',
+                    description: `${tenantData.name} a apposé sa signature certifiée sur le contrat N° ${contractNumber}. Vous pouvez maintenant le finaliser.`,
+                    category: 'contrat',
+                    targetUserId: targetOwnerId,
+                    targetTab: 'demandes',
+                    targetRole: 'proprietaire',
+                    link: '/dashboard'
+                  });
+                }
+
+                broadcastLiveEvent('TENANT_SIGNED', {
+                  contractId: contractNumber,
+                  actorId: user?.id,
+                  targetUserId: targetOwnerId,
+                  propertyId: realContract?.property_id,
+                  data: { contractNumber, tenantName: tenantData.name }
+                });
               }
             } catch (err) {
               console.warn('Error saving signature in locatrust_contracts:', err);
