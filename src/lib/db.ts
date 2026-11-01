@@ -1,6 +1,6 @@
 import { supabase } from '@/src/lib/supabase';
 
-async function enrichPropertiesWithProfiles(properties: any[]) {
+export async function enrichPropertiesWithProfiles(properties: any[]) {
   if (!properties || properties.length === 0) return [];
   const ownerIds = Array.from(
     new Set(properties.map((p) => p.owner_id || p.agency_id).filter(Boolean))

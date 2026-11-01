@@ -557,8 +557,17 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
         is_read: false,
         read: false,
         data: {
-          application_id: data?.id || payload.id,
-          property_id: payload.property_id,
+          applicationId: data?.id || payload.id,
+          rental_request_id: data?.id || payload.id,
+          propertyId: payload.property_id,
+          tenantId: payload.tenant_id,
+          targetTab: 'applications'
+        },
+        payload: {
+          applicationId: data?.id || payload.id,
+          rental_request_id: data?.id || payload.id,
+          propertyId: payload.property_id,
+          tenantId: payload.tenant_id,
           targetTab: 'applications'
         }
       }]);

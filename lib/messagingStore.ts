@@ -1109,17 +1109,13 @@ export function markMessagesAsRead(
       (extraIdSet.has(m.id) && m.sender_id !== currentUserId);
 
     if (isFromContact) {
-      newlyReadIds.push(m.id);
-      if (m.status !== 'read' || !m.is_read) {
+      if (m.status !== 'read' || !m.is_read || !m.read) {
+        newlyReadIds.push(m.id);
         changed = true;
         return { ...m, status: 'read' as const, is_read: true, read: true, read_at: m.read_at || nowIso };
       }
     }
     return m;
-  });
-
-  extraIdSet.forEach((id) => {
-    if (id && !newlyReadIds.includes(id)) newlyReadIds.push(id);
   });
 
   if (newlyReadIds.length > 0) {
@@ -1161,7 +1157,7 @@ export function markMessagesAsRead(
     saveStoredMessages(updated);
   }
 
-  if (changed || notifsChanged || newlyReadIds.length > 0) {
+  if (changed || notifsChanged) {
     if (currentUserId) {
       try {
         fetch('/api/sync', {
@@ -1177,13 +1173,13 @@ export function markMessagesAsRead(
         }).catch(() => {});
       } catch {}
 
-      // Mise à jour directe de la table messages dans Supabase
+      // Mise à jour directe de la table messages dans Supabase (colonne 'read' boolean)
       const uuidMsgIds = newlyReadIds.filter(isValidUuid);
       if (uuidMsgIds.length > 0) {
         try {
           supabase
             .from('messages')
-            .update({ status: 'read' })
+            .update({ read: true })
             .in('id', uuidMsgIds)
             .then();
         } catch {}
@@ -1191,9 +1187,9 @@ export function markMessagesAsRead(
         try {
           supabase
             .from('messages')
-            .update({ status: 'read' })
+            .update({ read: true })
             .eq('sender_id', contactId)
-            .neq('status', 'read')
+            .eq('read', false)
             .then();
         } catch {}
       }
@@ -1240,9 +1236,9 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   const updated = current.map((m) => {
     const isFromMe = Boolean(currentUserId && m.sender_id === currentUserId);
     if (!isFromMe) {
-      if (m.id) newlyReadIds.push(m.id);
       if (m.sender_id) setConvLastReadAt(currentUserId, m.sender_id, nowMs);
-      if (m.status !== 'read' || !m.is_read) {
+      if (m.status !== 'read' || !m.is_read || !m.read) {
+        if (m.id) newlyReadIds.push(m.id);
         changed = true;
         return { ...m, status: 'read' as const, is_read: true, read: true, read_at: m.read_at || nowIso };
       }
@@ -1255,6 +1251,7 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   }
 
   // Marquer également les notifications de messagerie comme lues
+  let notifsChanged = false;
   try {
     const notifsRaw = localStorage.getItem('locatrust_notifications');
     if (notifsRaw) {
@@ -1267,11 +1264,16 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
             (n.targetTab === 'messages' || String(n.title || '').toLowerCase().includes('message'));
           if (isMsgNotif) {
             addReadNotificationIds([n]);
-            return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
+            if (!n.read || !n.is_read || n.unread !== false) {
+              notifsChanged = true;
+              return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
+            }
           }
           return n;
         });
-        localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+        if (notifsChanged) {
+          localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+        }
       }
     }
   } catch {}
@@ -1280,7 +1282,7 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
     saveStoredMessages(updated);
   }
 
-  if (currentUserId) {
+  if (currentUserId && (changed || notifsChanged)) {
     try {
       fetch('/api/sync', {
         method: 'POST',
@@ -1300,7 +1302,7 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
       try {
         supabase
           .from('messages')
-          .update({ status: 'read' })
+          .update({ read: true })
           .in('id', uuidMsgIds)
           .then();
       } catch {}
@@ -2057,21 +2059,8 @@ export async function fetchSupabaseConversationsWithProfiles(userId: string): Pr
     const allConvs = Array.from(convMapById.values());
     if (allConvs.length === 0) return [];
 
-    // Vérifier que la conversation possède au moins un message réel dans public.messages
-    const allConvIds = allConvs.map((c) => c.id);
-    const { data: existingMsgs } = await supabase
-      .from('messages')
-      .select('conversation_id, sender_id')
-      .in('conversation_id', allConvIds);
-
-    const activeConvIdsWithMessages = new Set<string>();
-    if (Array.isArray(existingMsgs)) {
-      existingMsgs.forEach((m: any) => {
-        if (m?.conversation_id) activeConvIdsWithMessages.add(m.conversation_id);
-      });
-    }
-
-    const convs = allConvs.filter((c) => activeConvIdsWithMessages.has(c.id));
+    // Conserver toutes les conversations valides de l'utilisateur, y compris celles avec 0 message ("Aucun message pour le moment")
+    const convs = allConvs;
     if (convs.length === 0) return [];
 
     const otherUserIds = Array.from(

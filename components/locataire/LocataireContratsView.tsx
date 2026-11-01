@@ -425,8 +425,24 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
   useEffect(() => {
     fetchTenantData();
 
+    // Vérifier si un contrat spécifique a été ciblé par un clic de notification
+    try {
+      const targeted = localStorage.getItem('locatrust_selected_contract_number');
+      if (targeted) {
+        setSelectedContractNumber(targeted);
+        localStorage.removeItem('locatrust_selected_contract_number');
+      }
+    } catch {}
+
     const handleUpdate = () => {
       fetchTenantData();
+    };
+
+    const handleOpenContract = (e: any) => {
+      const cNum = e?.detail?.contractNumber;
+      if (cNum) {
+        setSelectedContractNumber(cNum);
+      }
     };
 
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
@@ -434,12 +450,14 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     window.addEventListener('locatrust:receipts_updated', handleUpdate);
     window.addEventListener('locatrust:cautions_updated', handleUpdate);
     window.addEventListener('locatrust:payments-updated', handleUpdate);
+    window.addEventListener('locatrust:open_contract', handleOpenContract);
     return () => {
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
       window.removeEventListener('locatrust:applications-updated', handleUpdate);
       window.removeEventListener('locatrust:receipts_updated', handleUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleUpdate);
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
+      window.removeEventListener('locatrust:open_contract', handleOpenContract);
     };
   }, [user]);
 
@@ -545,7 +563,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       startDate: cnt.start_date || '01/01/2026',
       rent: Number(cnt.rent || 0),
       cautionMonths: 2,
-      chargesAmount: Number(cnt.charges || 0),
+      chargesAmount: Number(cnt.charges_amount ?? cnt.charges ?? 0),
       dueDay: cnt.payment_due_day || 5,
       ownerSignatureUrl: resolved.ownerSignatureUrl,
       tenantSignatureUrl: resolved.tenantSignatureUrl,
@@ -612,7 +630,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       </div>
 
       {/* ÉTATS : LOADER SKELETON, ERREUR, OU VIDE */}
-      {isLoading ? (
+      {(isLoading && contracts.length === 0) ? (
         <div className="space-y-4">
           <ContractCardSkeleton />
           <ContractCardSkeleton />

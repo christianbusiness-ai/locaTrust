@@ -154,9 +154,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   const tenantData = React.useMemo(() => {
     if (realContract) {
-      const rentVal = Number(realContract.monthly_rent || realContract.rent || realContract.rent_amount || 30000);
-      const cautionVal = Number(realContract.caution_amount || realContract.caution || rentVal * 2);
-      const chargesVal = Number(realContract.charges_amount || realContract.charges || 0);
+      const rentVal = Number(dbContract?.monthly_rent || realContract.monthly_rent || realContract.rent || realContract.rent_amount || 30000);
+      const cautionVal = Number(dbContract?.caution_amount || realContract.caution_amount || realContract.caution || rentVal * 2);
+      const chargesVal = Number(dbContract?.charges_amount ?? realContract.charges_amount ?? realContract.charges ?? 0);
 
       return {
         name: realContract.tenant?.full_name || realContract.tenant_name || user?.user_metadata?.full_name || 'Locataire',
@@ -1217,7 +1217,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   </p>
                 </div>
                 <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm shrink-0 self-end sm:self-center">
-                  {(tenantData.charges && tenantData.charges > 0) ? `${formatFCFA(tenantData.charges)} / mois` : '0 FCFA (Incluses)'}
+                  {(tenantData.charges && tenantData.charges > 0) ? `${formatFCFA(tenantData.charges)} / mois` : 'Aucune provision exigée'}
                 </span>
               </div>
             </div>
@@ -1457,10 +1457,34 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                     .from('rental_applications')
                     .update({
                       tenant_signed: true,
-                      tenant_signed_at: new Date().toISOString(),
-                      tenant_signature: signatureUrl
+                      status: 'contrat_signe_locataire'
                     })
                     .or(`contract_number.eq.${contractNumber},tenant_id.eq.${user?.id}`);
+
+                  // Notifier le bailleur que le locataire a signé
+                  const targetOwnerId = realContract?.owner_id || realContract?.owner?.id;
+                  if (targetOwnerId) {
+                    await supabase.from('notifications').insert({
+                      user_id: targetOwnerId,
+                      title: 'Contrat signé par le locataire',
+                      message: `${tenantData.name} a signé le contrat de bail pour « ${tenantData.propertyTitle} ». Vous pouvez désormais le finaliser.`,
+                      description: `${tenantData.name} a signé le contrat de bail pour « ${tenantData.propertyTitle} ». Vous pouvez désormais le finaliser.`,
+                      content: `${tenantData.name} a signé le contrat de bail pour « ${tenantData.propertyTitle} ». Vous pouvez désormais le finaliser.`,
+                      type: 'contrat',
+                      category: 'contrat',
+                      target_role: 'proprietaire',
+                      read: false,
+                      is_read: false,
+                      data: {
+                        contractNumber,
+                        targetTab: 'applications'
+                      },
+                      payload: {
+                        contractNumber,
+                        targetTab: 'applications'
+                      }
+                    });
+                  }
                 } catch (appErr) {
                   console.warn('Erreur mise à jour application lors signature locataire:', appErr);
                 }

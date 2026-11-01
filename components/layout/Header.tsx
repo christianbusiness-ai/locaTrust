@@ -347,18 +347,22 @@ export const Header: React.FC<HeaderProps> = ({
               dbNotifs.forEach((dbN: any) => {
                 const dbRead = Boolean(dbN.read || dbN.is_read);
                 if (!existingIds.has(dbN.id)) {
+                  const notifData = dbN.data || dbN.payload || {};
                   parsed.unshift({
                     id: dbN.id,
                     title: dbN.title,
-                    description: dbN.content || dbN.message || dbN.title,
+                    description: dbN.description || dbN.content || dbN.message || dbN.title,
                     created_at: dbN.created_at,
                     timestamp: dbN.created_at ? new Date(dbN.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : 'Récent',
                     read: dbRead,
                     is_read: dbRead,
                     unread: !dbRead,
                     type: dbN.type,
+                    category: dbN.category || dbN.type || notifData.category || 'general',
+                    targetTab: dbN.target_tab || notifData.targetTab,
                     targetUserId: dbN.user_id,
-                    payload: dbN.payload
+                    data: notifData,
+                    payload: notifData
                   });
                 }
               });
@@ -577,15 +581,64 @@ export const Header: React.FC<HeaderProps> = ({
         }
       }, 150);
     } else if (
+      item.category === 'contrat' ||
+      item.type === 'contrat' ||
+      item.targetTab === 'contracts' ||
+      (item.title && item.title.toLowerCase().includes('contrat')) ||
+      (item.title && item.title.toLowerCase().includes('bail')) ||
+      item.payload?.contract_id ||
+      item.data?.contract_id ||
+      item.payload?.contractNumber ||
+      item.data?.contractNumber
+    ) {
+      const targetContractNumber =
+        item.payload?.contractNumber ||
+        item.data?.contractNumber ||
+        item.payload?.contract_id ||
+        item.data?.contract_id;
+
+      if (targetContractNumber && typeof window !== 'undefined') {
+        localStorage.setItem('locatrust_selected_contract_number', String(targetContractNumber));
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent('locatrust:open_contract', {
+              detail: {
+                contractNumber: targetContractNumber,
+                contractId: item.payload?.contract_id || item.data?.contract_id
+              }
+            })
+          );
+        }, 150);
+      }
+
+      if (onNavigateTab) {
+        onNavigateTab('contracts');
+      }
+    } else if (
+      item.category === 'visite' ||
+      item.type === 'visite' ||
+      item.targetTab === 'visits' ||
+      (item.title && item.title.toLowerCase().includes('visite'))
+    ) {
+      if (onNavigateTab) {
+        onNavigateTab('visits');
+      }
+    } else if (
       item.targetTab === 'applications' ||
       item.category === 'candidature' ||
-      (item.category === 'demande' && item.targetTab !== 'messages' && !item.title?.toLowerCase().includes('message')) ||
+      item.category === 'demande' ||
+      item.type === 'demande' ||
+      item.type === 'candidature' ||
       (item.title && item.title.toLowerCase().includes('demande de location')) ||
       (item.title && item.title.toLowerCase().includes('candidature'))
     ) {
       const targetAppId =
         item.payload?.applicationId ||
+        item.data?.applicationId ||
         item.payload?.rental_request_id ||
+        item.data?.rental_request_id ||
+        item.payload?.id ||
+        item.data?.id ||
         (item.link && item.link.includes('appId=') ? new URLSearchParams(item.link.split('?')[1]).get('appId') : null);
 
       if (targetAppId && typeof window !== 'undefined') {

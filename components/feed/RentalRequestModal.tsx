@@ -176,9 +176,26 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
               user_id: primaryRecipientId,
               title: 'Nouvelle demande de location',
               message: `${applicantName} souhaite louer « ${property.title} ».`,
-              type: 'candidature',
-              category: 'candidature',
+              description: `${applicantName} souhaite louer « ${property.title} ». Loyer : ${realRent.toLocaleString('fr-FR')} FCFA/mois.`,
+              type: 'demande',
+              category: 'demande',
+              target_role: (targetAgencyId ? 'agence' : 'proprietaire'),
               read: false,
+              is_read: false,
+              data: {
+                applicationId: appUuid,
+                rental_request_id: appUuid,
+                propertyId: property.id,
+                tenantId: applicantId,
+                targetTab: 'applications'
+              },
+              payload: {
+                applicationId: appUuid,
+                rental_request_id: appUuid,
+                propertyId: property.id,
+                tenantId: applicantId,
+                targetTab: 'applications'
+              },
               created_at: new Date().toISOString()
             });
           } catch (notifErr) {

@@ -485,7 +485,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
-            {isLoading ? (
+            {(isLoading && receipts.length === 0) ? (
               <TableRowsSkeleton rows={5} cols={8} />
             ) : (
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -503,7 +503,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 </tr>
               )}
 
-              {!isLoading && !loadError && filteredReceipts.length === 0 && (
+              {!(isLoading && receipts.length === 0) && !loadError && filteredReceipts.length === 0 && (
                 <tr>
                   <td colSpan={8} className="p-12 text-center">
                     <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
@@ -523,7 +523,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
                 </tr>
               )}
 
-              {!isLoading && !loadError && filteredReceipts.map((r) => (
+              {!(isLoading && receipts.length === 0) && !loadError && filteredReceipts.map((r) => (
                 <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
                   
                   {/* N° Reçu */}

@@ -38,6 +38,7 @@ import { ActionConfirmationModal } from '@/components/common/ActionConfirmationM
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
+import { enrichPropertiesWithProfiles } from '@/src/lib/db';
 
 export interface LocataireSearchViewProps {
   activeTab?: string;
@@ -100,7 +101,8 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         .select('*')
         .order('created_at', { ascending: false });
 
-      const formatted = (data || []).map((p: any) => ({
+      const enriched = await enrichPropertiesWithProfiles(data || []);
+      const formatted = (enriched || []).map((p: any) => ({
         ...p,
         location: p.location || {
           city: p.city || 'Abidjan',
@@ -205,6 +207,62 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           }
         }
       } catch {}
+
+      // Enrichir les candidatures avec les informations réelles du bien et du bailleur
+      const ownerIdsToFetch = new Set<string>();
+      const propIdsToFetch = new Set<string>();
+
+      appsList.forEach((app) => {
+        if (!app.rent_amount || Number(app.rent_amount) <= 0 || !app.caution_amount) {
+          if (app.property_id) propIdsToFetch.add(app.property_id);
+        }
+        if (!app.owner_name && app.owner_id) {
+          ownerIdsToFetch.add(app.owner_id);
+        }
+      });
+
+      const fetchedPropsMap = new Map<string, any>();
+      if (propIdsToFetch.size > 0) {
+        try {
+          const { data: pData } = await supabase
+            .from('properties')
+            .select('id, rent, caution, title, address, owner_id, agency_id')
+            .in('id', Array.from(propIdsToFetch));
+          if (pData) {
+            pData.forEach((p) => {
+              fetchedPropsMap.set(p.id, p);
+              if (p.owner_id && !ownerIdsToFetch.has(p.owner_id)) ownerIdsToFetch.add(p.owner_id);
+            });
+          }
+        } catch {}
+      }
+
+      const fetchedProfilesMap = new Map<string, any>();
+      if (ownerIdsToFetch.size > 0) {
+        try {
+          const { data: profData } = await supabase
+            .from('profiles')
+            .select('id, full_name, phone, account_type')
+            .in('id', Array.from(ownerIdsToFetch));
+          if (profData) {
+            profData.forEach((prof) => fetchedProfilesMap.set(prof.id, prof));
+          }
+        } catch {}
+      }
+
+      appsList.forEach((app, idx) => {
+        const prop = fetchedPropsMap.get(app.property_id);
+        const ownerId = app.owner_id || prop?.owner_id;
+        const ownerProfile = ownerId ? fetchedProfilesMap.get(ownerId) : null;
+
+        appsList[idx] = {
+          ...app,
+          rent_amount: Number(app.rent_amount || 0) > 0 ? Number(app.rent_amount) : Number(prop?.rent || 0),
+          caution_amount: Number(app.caution_amount || 0) > 0 ? Number(app.caution_amount) : Number(prop?.caution || 0),
+          owner_name: app.owner_name || ownerProfile?.full_name || (ownerProfile?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Bailleur'),
+          owner_id: ownerId || app.owner_id
+        };
+      });
 
       setTenantApplications(appsList);
     } catch (e) {
@@ -676,7 +734,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
             )}
           </div>
 
-          {loadingApps ? (
+          {(loadingApps && tenantApplications.length === 0) ? (
             <PropertyGridSkeleton count={3} />
           ) : tenantApplications.length === 0 ? (
             <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">
@@ -872,7 +930,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
             )}
           </div>
 
-          {loadingVisits ? (
+          {(loadingVisits && tenantVisits.length === 0) ? (
             <PropertyGridSkeleton count={3} />
           ) : tenantVisits.length === 0 ? (
             <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">

@@ -439,14 +439,15 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   ]);
 
   // Conditions Particulières Saisies (Sections 1, 3, 4 du Cahier des Charges)
+  // Strictement initialisées vides ou avec les données réelles saisies (aucune clause fictive pré-enregistrée)
   const [ownerCustomConditions, setOwnerCustomConditions] = useState<string>(
-    "1. Respect strict du calme et du voisinage après 22h.\n2. Interdiction d'élevage d'animaux dangereux.\n3. Entretien régulier des climatiseurs et appareils de cuisine.\n4. Stationnement autorisé uniquement sur la place réservée N° 14."
+    initialData?.ownerCustomConditions || (initialData as any)?.owner_custom_conditions || ''
   );
   const [tenantCustomRequests, setTenantCustomRequests] = useState<string>(
-    "1. Demande d'installation d'une serrure haute sécurité à la charge du locataire.\n2. Option de règlement par Wave ou Orange Money le 05 du mois."
+    initialData?.tenantCustomRequests || (initialData as any)?.tenant_custom_requests || ''
   );
   const [propertySpecificRules, setPropertySpecificRules] = useState<string>(
-    "1. Interdiction de percer les carreaux de faïence de la salle de bain.\n2. Utilisation conforme des espaces communs et tris des ordures dans le local poubelle."
+    initialData?.propertySpecificRules || (initialData as any)?.property_specific_rules || ''
   );
 
   // Workflow steps: 'form' -> 'verification' -> 'preview' -> 'transmission' -> 'success'
@@ -690,6 +691,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   // ANALYSE, CLASSEMENT ET REFORMULATION JURIDIQUE PAR IA (LOI 2019-576 & OHADA)
   // --------------------------------------------------------------------------
   const handleRunClauseReorganization = () => {
+    const rawTotal = `${ownerCustomConditions} ${tenantCustomRequests} ${propertySpecificRules}`.trim();
+    if (!rawTotal) {
+      alert("Veuillez d'abord saisir ou dicter vos clauses particulières avant de lancer l'analyse.");
+      return;
+    }
+
     setIsReorganizing(true);
 
     // Sauvegarde initiale pour permettre l'annulation si souhaité
@@ -703,9 +710,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
     try {
       const result = reorganizeAndReformulateClauses({
-        ownerText: ownerCustomConditions,
-        tenantText: tenantCustomRequests,
-        propertyText: propertySpecificRules,
+        ownerText: cleanDictationRepetitions(ownerCustomConditions),
+        tenantText: cleanDictationRepetitions(tenantCustomRequests),
+        propertyText: cleanDictationRepetitions(propertySpecificRules),
         leaseType
       });
 
@@ -926,40 +933,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       console.warn('Contract registry error:', err);
     }
 
-    // 2. Transmettre le contrat de bail directement dans la boîte de messagerie du locataire
-    try {
-      const contractAttachment: ChatContractAttachment = {
-        contractNumber,
-        propertyTitle,
-        propertyAddress,
-        rentAmount: rent,
-        cautionAmount: effectiveCautionAmount,
-        durationMonths,
-        startDate,
-        ownerName,
-        tenantName,
-        ownerSigned: true,
-        tenantSigned: Boolean(tenantSignatureUrl),
-        ownerSignatureUrl: ownerSignatureUrl || undefined,
-        tenantSignatureUrl: tenantSignatureUrl || undefined,
-        surface: propertySurface,
-        rooms: propertyRooms,
-        bedrooms: propertyBedrooms,
-        bathrooms: propertyBathrooms,
-        equipments: propertyEquipments,
-        amenities: propertyEquipments,
-        propertyDescription: propertyDescription,
-        leaseType,
-        usageDestination: leaseType,
-        authorizedActivity
-      };
-
-      sendContractToTenant(targetTenantId, contractAttachment, targetOwnerId);
-    } catch (msgErr) {
-      console.warn('Erreur transmission contrat chat:', msgErr);
-    }
-
-    // 3. Mise à jour de la candidature dans le localStorage pour verrouiller l'état
+    // 2. Mise à jour de la candidature dans le localStorage pour verrouiller l'état
     try {
       const appsRaw = localStorage.getItem('locatrust_rental_applications');
       if (appsRaw) {
@@ -980,7 +954,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 contract_number: contractNumber,
                 contract_transmitted: true,
                 owner_signed: true,
-                owner_signature_url: ownerSignatureUrl,
+                owner_signature_url: effectiveOwnerSig,
                 tenant_signed: Boolean(tenantSignatureUrl),
                 tenant_signature_url: tenantSignatureUrl || a.tenant_signature_url
               };
@@ -997,9 +971,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               await supabase.from('rental_applications').update({
                 status: tenantSignatureUrl ? 'contrat_actif' : 'en_attente_signature_locataire',
                 contract_number: contractNumber,
-                contract_transmitted: true,
-                owner_signed: true,
-                owner_signature: ownerSignatureUrl
+                tenant_signed: Boolean(tenantSignatureUrl),
+                contract_finalized: Boolean(tenantSignatureUrl)
               }).eq('id', targetAppId);
             } catch (err: any) {
               console.warn('Erreur mise à jour rental_applications:', err?.message);
@@ -1196,17 +1169,42 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       console.warn('Erreur registre contrats:', e);
     }
 
-    // Notification réelle et persistante au locataire pour l'inviter à signer son bail
+    // Notification réelle et persistante au locataire pour l'inviter à signer son bail directement dans l'onglet Contrats
     try {
       pushGlobalNotification({
         title: 'Nouveau contrat de bail à signer',
-        description: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis par le bailleur. Veuillez l'examiner et apposer votre signature certifiée.`,
+        description: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
         category: 'contrat',
         targetUserId: targetTenantId,
-        targetTab: 'applications',
+        targetTab: 'contracts',
         targetRole: 'locataire',
         link: '/dashboard'
       });
+
+      if (finalTenantId) {
+        supabase.from('notifications').insert({
+          user_id: finalTenantId,
+          title: 'Nouveau contrat de bail à signer',
+          message: `Votre contrat de bail pour « ${propertyTitle} » est prêt. Veuillez le signer dans l'onglet Contrats.`,
+          description: `Votre contrat de bail pour « ${propertyTitle} » est prêt. Veuillez le signer dans l'onglet Contrats.`,
+          content: `Votre contrat de bail pour « ${propertyTitle} » est prêt. Veuillez le signer dans l'onglet Contrats.`,
+          type: 'contrat',
+          category: 'contrat',
+          target_role: 'locataire',
+          read: false,
+          is_read: false,
+          data: {
+            contract_id: generatedContractUuid,
+            contractNumber,
+            targetTab: 'contracts'
+          },
+          payload: {
+            contract_id: generatedContractUuid,
+            contractNumber,
+            targetTab: 'contracts'
+          }
+        }).then();
+      }
     } catch (notifErr) {
       console.warn('Erreur notification locataire contrat:', notifErr);
     }
@@ -1863,11 +1861,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   </button>
                 </div>
                 <textarea
-                  rows={3}
+                  rows={5}
                   value={ownerCustomConditions}
                   onChange={(e) => setOwnerCustomConditions(e.target.value)}
-                  className="w-full p-3 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                  placeholder="Saisissez ou dictez les règles proposées par le propriétaire..."
+                  className="w-full p-3.5 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none min-h-[140px] resize-y"
+                  placeholder="Saisissez ou dictez les règles proposées par le propriétaire (respect du voisinage, entretien spécifique, etc.)..."
                 />
                 {/* Visualiseur de dictée en cours pour le propriétaire */}
                 {listeningField === 'owner' && (
@@ -1940,8 +1938,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   rows={5}
                   value={tenantCustomRequests}
                   onChange={(e) => setTenantCustomRequests(e.target.value)}
-                  className="w-full p-3.5 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none min-h-[120px] resize-y"
-                  placeholder="Saisissez ou dictez les demandes particulières du locataire (aménagements, modes et dates de paiement, etc.)..."
+                  className="w-full p-3.5 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none min-h-[140px] resize-y"
+                  placeholder="Saisissez ou dictez les demandes particulières du locataire (aménagements convenus, modes et dates de paiement convenus, etc.)..."
                 />
                 {/* Visualiseur de dictée en cours pour le locataire */}
                 {listeningField === 'tenant' && (
@@ -2011,11 +2009,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   </button>
                 </div>
                 <textarea
-                  rows={2}
+                  rows={5}
                   value={propertySpecificRules}
                   onChange={(e) => setPropertySpecificRules(e.target.value)}
-                  className="w-full p-3 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-                  placeholder="Saisissez ou dictez les règles spécifiques au bien..."
+                  className="w-full p-3.5 rounded-xl border text-xs leading-relaxed bg-white font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none min-h-[140px] resize-y"
+                  placeholder="Saisissez ou dictez les règles spécifiques au bien (protection des revêtements, règles d'usage des communs, etc.)..."
                 />
                 {/* Visualiseur de dictée en cours pour le logement */}
                 {listeningField === 'property' && (
@@ -2790,7 +2788,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     </span>
                   </div>
                   <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm shrink-0 self-end sm:self-center">
-                    {chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : "0 FCFA (Incluses)"}
+                    {chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : "Aucune provision exigée"}
                   </span>
                 </div>
 

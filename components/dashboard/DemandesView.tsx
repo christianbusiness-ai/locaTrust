@@ -1228,7 +1228,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       {/* Main List: 3 States (Loader, Error, Empty State) */}
       <div className="flex flex-col gap-2.5">
         {/* 1. Skeleton Loader */}
-        {isLoading && (
+        {(isLoading && applications.length === 0) && (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <ApplicationCardSkeleton key={i} />
@@ -1237,7 +1237,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         )}
 
         {/* 2. Erreur */}
-        {!isLoading && loadError && (
+        {!(isLoading && applications.length === 0) && loadError && (
           <div className="p-8 text-center bg-rose-50 border border-rose-200 rounded-2xl flex flex-col items-center justify-center">
             <AlertTriangle className="w-10 h-10 text-rose-500 mb-3" />
             <h3 className="text-slate-900 font-bold text-base">Impossible de charger les candidatures</h3>
@@ -1252,7 +1252,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         )}
 
         {/* 3. État vide */}
-        {!isLoading && !loadError && filteredApps.length === 0 && (
+        {!(isLoading && applications.length === 0) && !loadError && filteredApps.length === 0 && (
           <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
             <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mb-3">
               <Users className="w-6 h-6" />
@@ -1268,7 +1268,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           </div>
         )}
 
-        {!isLoading && !loadError && filteredApps.map((app) => {
+        {!(isLoading && applications.length === 0) && !loadError && filteredApps.map((app) => {
           const compactTitle = app.property_title
             .replace(/Appartement numéro /gi, 'App. N°')
             .replace(/Appartement /gi, 'App. ')
@@ -1647,6 +1647,17 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 <span className="font-black text-slate-900 text-sm">{selectedDossierApp.tenant_name}</span>
                 <span className="text-slate-500">Tél : {selectedDossierApp.tenant_phone}</span>
                 <span className="text-slate-500">CNI : {selectedDossierApp.tenant_cni}</span>
+              </div>
+            </div>
+
+            {/* Property summary */}
+            <div className="p-3.5 bg-blue-50/50 rounded-2xl border border-blue-100 flex flex-col gap-1 text-xs">
+              <span className="font-extrabold text-blue-900 text-sm">{selectedDossierApp.property_title}</span>
+              <span className="text-slate-600">{selectedDossierApp.property_address || 'Abidjan'}</span>
+              <div className="flex items-center gap-3 pt-1 text-xs font-bold text-slate-800">
+                <span>Loyer : <strong className="text-blue-700">{formatFCFA(selectedDossierApp.rent_amount)}</strong>/mois</span>
+                <span>•</span>
+                <span>Caution : <strong className="text-slate-700">{formatFCFA(selectedDossierApp.caution_amount)}</strong></span>
               </div>
             </div>
 

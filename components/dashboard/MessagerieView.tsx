@@ -585,7 +585,6 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
 
     window.addEventListener('locatrust:messages_updated', handleMessagesUpdated);
     window.addEventListener('locatrust:messages-updated', handleMessagesUpdated);
-    window.addEventListener('locatrust:receipts_updated', handleMessagesUpdated);
     window.addEventListener('storage', handleStorage);
 
     // Souscription Realtime Supabase aux nouveaux messages instantanés
@@ -617,10 +616,11 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return () => {
       window.removeEventListener('locatrust:messages_updated', handleMessagesUpdated);
       window.removeEventListener('locatrust:messages-updated', handleMessagesUpdated);
-      window.removeEventListener('locatrust:receipts_updated', handleMessagesUpdated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(heartbeat);
-      realtimeChatChannel.unsubscribe();
+      try {
+        supabase.removeChannel(realtimeChatChannel);
+      } catch {}
     };
   }, [currentUserId]);
 
@@ -726,13 +726,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       userConsultedContactId === activeContact.id &&
       (typeof document === 'undefined' || document.hasFocus())
     ) {
-      const msgIds = currentConversationMessages.map((m) => m.id);
-      markMessagesAsRead(activeContact.id, currentUserId, msgIds);
+      const unreadMsgs = currentConversationMessages.filter(
+        (m) => (!m.read || !m.is_read || m.status !== 'read') && m.sender_id !== currentUserId
+      );
+      if (unreadMsgs.length > 0) {
+        markMessagesAsRead(activeContact.id, currentUserId, unreadMsgs.map((m) => m.id));
+      }
       if (typeof window !== 'undefined' && getActiveChatPartnerForUser(currentUserId) === activeContact.id) {
         setActiveChatPartnerForUser(currentUserId, null);
       }
     }
-  }, [activeContact?.id, currentUserId, currentConversationMessages.length, userConsultedContactId]);
+  }, [activeContact?.id, currentUserId, userConsultedContactId]);
 
   // Filter contacts by search
   const filteredContacts = roleContacts.filter(
@@ -1525,7 +1529,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       </div>
 
       {/* Main Dual-Column Scrollable Container */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden flex flex-col md:flex-row h-[680px] max-h-[calc(100vh-160px)] transition-colors">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden flex flex-col md:flex-row h-[calc(100vh-140px)] md:h-[680px] max-h-[850px] transition-colors">
         
         {/* LEFT COLUMN: Contact List (Scrollable independently) */}
         <div
@@ -1677,11 +1681,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           onClick={() => {
             if (activeContact?.id && currentUserId) {
               setUserConsultedContactId(activeContact.id);
-              markMessagesAsRead(
-                activeContact.id,
-                currentUserId,
-                currentConversationMessages.map((m) => m.id)
+              const unreadMsgs = currentConversationMessages.filter(
+                (m) => (!m.read || !m.is_read || m.status !== 'read') && m.sender_id !== currentUserId
               );
+              if (unreadMsgs.length > 0) {
+                markMessagesAsRead(activeContact.id, currentUserId, unreadMsgs.map((m) => m.id));
+              }
             }
           }}
           className={`${
@@ -1689,7 +1694,15 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           } flex-1 flex flex-col bg-slate-100/70 dark:bg-slate-900 h-full min-w-0 relative`}
         >
           {!activeContact ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white dark:bg-slate-900">
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-white dark:bg-slate-900 relative">
+              <button
+                type="button"
+                onClick={() => setShowMobileChat(false)}
+                className="md:hidden absolute top-4 left-4 p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center gap-1.5 text-xs font-bold"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Retour
+              </button>
               <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-4 shadow-inner">
                 <MessageSquare className="w-8 h-8" />
               </div>

@@ -268,22 +268,46 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
       const applicantEmail = user?.email || (profile as any)?.email || 'locataire@locatrust.ci';
       const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
-      const isAgencyProp = Boolean(
-        selectedRental.agencyId ||
-        selectedRental.agency_id ||
-        selectedRental.is_agency ||
-        selectedRental.roleBadge?.toLowerCase().includes('agence')
-      );
-      const targetAgencyId = selectedRental.agencyId || selectedRental.agency_id || (isAgencyProp ? (selectedRental.ownerId || selectedRental.owner?.id) : undefined);
-      const targetOwnerId = selectedRental.ownerId || selectedRental.owner?.id || targetAgencyId || selectedRental.mandant_id || 'usr_owner';
-      const primaryRecipientId = targetAgencyId || targetOwnerId;
-
-      const realRent = Number(selectedRental.price || 0);
-      const realCaution = Number(
+      let targetAgencyId = selectedRental.agencyId || selectedRental.agency_id;
+      let targetOwnerId = selectedRental.ownerId || selectedRental.owner_id || selectedRental.owner?.id || selectedRental.mandant_id;
+      let realRent = Number(selectedRental.price || selectedRental.rent || 0);
+      let realCaution = Number(
         (selectedRental as any).caution ||
         (selectedRental as any).caution_amount ||
         (realRent > 0 ? realRent * 2 : 0)
       );
+      let realTitle = selectedRental.title || 'Logement';
+      let realAddress = selectedRental.location || (selectedRental as any).property_address || (selectedRental as any).address || 'Côte d\'Ivoire';
+      let realOwnerName = selectedRental.authorName || selectedRental.ownerName || (selectedRental as any).owner_name;
+
+      // Si ownerId ou rent manque, interroger Supabase directement sur la propriété
+      if ((!targetOwnerId || !isValidUuid(targetOwnerId) || realRent === 0) && isValidUuid(selectedRental.id)) {
+        try {
+          const { data: propRow } = await supabase
+            .from('properties')
+            .select('owner_id, agency_id, rent, caution, title, city, commune, owner_name')
+            .eq('id', selectedRental.id)
+            .maybeSingle();
+          if (propRow) {
+            if (propRow.owner_id && isValidUuid(propRow.owner_id)) targetOwnerId = propRow.owner_id;
+            if (propRow.agency_id && isValidUuid(propRow.agency_id)) targetAgencyId = propRow.agency_id;
+            if (Number(propRow.rent) > 0) realRent = Number(propRow.rent);
+            if (Number(propRow.caution) > 0) realCaution = Number(propRow.caution);
+            if (propRow.title) realTitle = propRow.title;
+            if (propRow.commune || propRow.city) realAddress = `${propRow.commune ? propRow.commune + ', ' : ''}${propRow.city || 'Abidjan'}`;
+            if (propRow.owner_name && !realOwnerName) realOwnerName = propRow.owner_name;
+          }
+        } catch (fetchErr) {
+          console.warn('Erreur résolution détails propriété pour candidature:', fetchErr);
+        }
+      }
+
+      const isAgencyProp = Boolean(
+        targetAgencyId ||
+        selectedRental.is_agency ||
+        selectedRental.roleBadge?.toLowerCase().includes('agence')
+      );
+      const primaryRecipientId = targetAgencyId || targetOwnerId;
 
       const generatedAppId = typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
@@ -292,8 +316,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const newApp = {
         id: generatedAppId,
         property_id: selectedRental.id,
-        property_title: selectedRental.title,
-        property_address: selectedRental.location,
+        property_title: realTitle,
+        property_address: realAddress,
         rent_amount: realRent,
         caution_amount: realCaution,
         date_received: desiredDate || new Date().toISOString().split('T')[0],
@@ -307,10 +331,10 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         tenant_cni: 'CI-ABJ-2024-B-89412',
         owner_id: targetOwnerId,
         agency_id: targetAgencyId,
-        agency_name: isAgencyProp ? (selectedRental.authorName || selectedRental.ownerName) : undefined,
+        agency_name: isAgencyProp ? realOwnerName : undefined,
         is_agency: isAgencyProp,
         mandant_id: selectedRental.mandant_id,
-        owner_name: selectedRental.authorName || 'Propriétaire Bailleur',
+        owner_name: realOwnerName || 'Propriétaire Bailleur',
         owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
         owner_avatar: selectedRental.authorAvatar || '',
         tenant_signed: false,
@@ -343,19 +367,22 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         return;
       }
 
-      // 1. Insertion directe et prioritaire dans Supabase rental_applications
+      // 1. Insertion directe et prioritaire dans Supabase rental_applications avec colonnes réelles
       if (isValidUuid(generatedAppId) && isValidUuid(selectedRental.id)) {
         try {
           await supabase.from('rental_applications').insert({
             id: generatedAppId,
             property_id: selectedRental.id,
             tenant_id: isValidUuid(applicantId) ? applicantId : null,
+            owner_id: isValidUuid(targetOwnerId) ? targetOwnerId : null,
+            agency_id: isValidUuid(targetAgencyId) ? targetAgencyId : null,
             tenant_name: applicantName,
             tenant_phone: applicantPhone,
             tenant_email: applicantEmail,
             tenant_avatar: applicantAvatar,
-            property_title: selectedRental.title,
-            property_address: selectedRental.location,
+            tenant_cni: 'CI-ABJ-2024-B-89412',
+            property_title: realTitle,
+            property_address: realAddress,
             rent_amount: realRent,
             caution_amount: realCaution,
             status: 'en_attente',
@@ -390,16 +417,34 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         })
       }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
 
-      // 2. Notification persistante dans Supabase notifications
+      // 2. Notification persistante dans Supabase notifications avec colonnes certifiées (sans colonne link non existante)
       if (isValidUuid(primaryRecipientId)) {
         try {
           await supabase.from('notifications').insert({
+            id: crypto.randomUUID(),
             user_id: primaryRecipientId,
             title: 'Nouvelle demande de location',
-            message: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+            message: `${applicantName} souhaite louer « ${realTitle} ».`,
+            description: `${applicantName} souhaite louer « ${realTitle} ». Loyer : ${realRent.toLocaleString('fr-FR')} FCFA/mois.`,
             type: 'demande',
+            category: 'demande',
+            target_role: isAgencyProp ? 'agence' : 'proprietaire',
+            read: false,
             is_read: false,
-            link: `/dashboard?tab=applications&appId=${newApp.id}`
+            data: {
+              applicationId: newApp.id,
+              rental_request_id: newApp.id,
+              propertyId: selectedRental.id,
+              tenantId: applicantId,
+              targetTab: 'applications'
+            },
+            payload: {
+              applicationId: newApp.id,
+              rental_request_id: newApp.id,
+              propertyId: selectedRental.id,
+              tenantId: applicantId,
+              targetTab: 'applications'
+            }
           });
         } catch (nErr) {
           console.warn('Erreur Supabase notification bailleur:', nErr);
@@ -409,7 +454,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       // Notification officielle globale avec redirection vers la demande
       pushGlobalNotification({
         title: 'Nouvelle demande de location',
-        description: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+        description: `${applicantName} souhaite louer « ${realTitle} ».`,
         category: 'demande',
         targetTab: 'applications',
         targetRole: isAgencyProp ? 'agence' : 'proprietaire',
@@ -430,19 +475,37 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         if (isValidUuid(targetOwnerId)) {
           try {
             await supabase.from('notifications').insert({
+              id: crypto.randomUUID(),
               user_id: targetOwnerId,
               title: 'Nouvelle demande de location',
-              message: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+              message: `${applicantName} souhaite louer « ${realTitle} ».`,
+              description: `${applicantName} souhaite louer « ${realTitle} ». Loyer : ${realRent.toLocaleString('fr-FR')} FCFA/mois.`,
               type: 'demande',
+              category: 'demande',
+              target_role: 'proprietaire',
+              read: false,
               is_read: false,
-              link: `/dashboard?tab=applications&appId=${newApp.id}`
+              data: {
+                applicationId: newApp.id,
+                rental_request_id: newApp.id,
+                propertyId: selectedRental.id,
+                tenantId: applicantId,
+                targetTab: 'applications'
+              },
+              payload: {
+                applicationId: newApp.id,
+                rental_request_id: newApp.id,
+                propertyId: selectedRental.id,
+                tenantId: applicantId,
+                targetTab: 'applications'
+              }
             });
           } catch {}
         }
 
         pushGlobalNotification({
           title: 'Nouvelle demande de location',
-          description: `${applicantName} souhaite louer « ${selectedRental.title} ».`,
+          description: `${applicantName} souhaite louer « ${realTitle} ».`,
           category: 'demande',
           targetTab: 'applications',
           targetRole: 'proprietaire',
@@ -1307,7 +1370,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         </div>
 
         {/* ÉTATS : LOADER, ERREUR, OU VIDE */}
-        {isLoading ? (
+        {(isLoading && properties.length === 0) ? (
           <div className="w-full py-2">
             <PropertyGridSkeleton count={6} />
           </div>

@@ -1037,6 +1037,14 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
   }
 }
 
+let syncDebounceTimer: any = null;
+function debouncedSyncUserData(userId: string) {
+  if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => {
+    import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(userId)).catch(() => {});
+  }, 1200);
+}
+
 /**
  * Initialise le canal partagé UNE SEULE FOIS pour éviter l'erreur Supabase
  * "cannot add event handlers after subscribe"
@@ -1056,9 +1064,6 @@ function initSharedChannel() {
         try {
           console.log('⚡ Événement temps réel reçu :', payload.event, payload);
           dispatchDomEventForType(payload.event, payload);
-          if (currentActiveUserId) {
-            import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-          }
         } catch (e) {
           console.warn('Erreur gestion broadcast temps réel:', e);
         }
@@ -1084,53 +1089,37 @@ function initSharedChannel() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rent_payments' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'receipts' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
         window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cautions' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
         window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rental_applications' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
         window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-        if (currentActiveUserId) {
-          import('@/lib/unifiedSyncEngine').then(m => m.syncUserData(currentActiveUserId!)).catch(() => {});
-        }
+        if (currentActiveUserId) debouncedSyncUserData(currentActiveUserId);
       });
 
     channel.subscribe((status) => {

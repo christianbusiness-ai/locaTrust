@@ -940,7 +940,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       </div>
 
       {/* KPI Cards (3 Compact & Responsive Cards) */}
-      {isLoading ? (
+      {(isLoading && payments.length === 0) ? (
         <KpiGridSkeleton count={3} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1061,7 +1061,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 <th className="p-4 text-center">Actions & Quittance</th>
               </tr>
             </thead>
-            {isLoading ? (
+            {(isLoading && payments.length === 0) ? (
               <TableRowsSkeleton rows={5} cols={6} />
             ) : (
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -1079,7 +1079,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 </tr>
               )}
 
-              {!isLoading && !loadError && filteredPayments.length === 0 && (
+              {!(isLoading && payments.length === 0) && !loadError && filteredPayments.length === 0 && (
                 <tr>
                   <td colSpan={6} className="p-12 text-center">
                     <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
@@ -1097,7 +1097,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 </tr>
               )}
 
-              {!isLoading && !loadError && filteredPayments.map((pmt) => (
+              {!(isLoading && payments.length === 0) && !loadError && filteredPayments.map((pmt) => (
                 <tr key={pmt.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="p-4 font-bold text-slate-900">
                     <div className="flex flex-col">
