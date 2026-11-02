@@ -98,6 +98,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const [signingTenantApp, setSigningTenantApp] = useState<RentalApplication | null>(null);
   const [signingOwnerApp, setSigningOwnerApp] = useState<RentalApplication | null>(null);
   const [candidateAlert, setCandidateAlert] = useState<string | null>(null);
+  const [dbProperties, setDbProperties] = useState<any[]>([]);
 
   // Auto-fermeture automatique de la bannière temporaire de notification (Point 8)
   useEffect(() => {
@@ -237,14 +238,15 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         }
       }
 
-      // 1. Récupérer les identifiants des biens appartenant au bailleur ou à l'agence connectée
+      // 1. Récupérer les identifiants et caractéristiques des biens appartenant au bailleur ou à l'agence connectée
       if (user?.id) {
         try {
           const { data: myProperties } = await supabase
             .from('properties')
-            .select('id, mandant_id')
+            .select('*')
             .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
           if (myProperties) {
+            setDbProperties(myProperties);
             myProperties.forEach((p: any) => {
               userPropertyIds.add(p.id);
               if (p.mandant_id) userMandantIds.add(p.mandant_id);
@@ -584,12 +586,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       (a) => (a.property_id === chosenApp.property_id || a.property_title === chosenApp.property_title) && !isTargetChosen(a)
     );
 
+    const nowIso = new Date().toISOString();
     const updated = applications.map((app) => {
       if (isTargetChosen(app)) {
         return {
           ...app,
           status: 'validee' as const,
           candidate_selected: true,
+          candidate_selected_at: nowIso,
           tenant_signed: app.tenant_signed || false
         };
       }
@@ -620,6 +624,46 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       }
     } catch (e) {
       console.warn('Erreur mise à jour Supabase sélection candidat:', e);
+    }
+
+    // Notification officielle au locataire retenu (délai de priorité 72h)
+    if (chosenApp.tenant_id) {
+      try {
+        await supabase.from('notifications').insert({
+          user_id: chosenApp.tenant_id,
+          title: 'Demande retenue !',
+          message: `Votre demande pour « ${chosenApp.property_title} » a été retenue. Votre contrat est en préparation.`,
+          description: `Votre demande pour « ${chosenApp.property_title} » a été retenue. Votre contrat est en préparation.`,
+          content: `Votre demande pour « ${chosenApp.property_title} » a été retenue. Votre contrat est en préparation.`,
+          type: 'candidature',
+          category: 'demande',
+          target_role: 'locataire',
+          read: false,
+          is_read: false,
+          data: {
+            application_id: chosenApp.id,
+            property_id: chosenApp.property_id,
+            targetTab: 'applications'
+          },
+          payload: {
+            application_id: chosenApp.id,
+            property_id: chosenApp.property_id,
+            targetTab: 'applications'
+          }
+        });
+
+        pushGlobalNotification({
+          title: 'Demande retenue !',
+          description: `Votre demande pour « ${chosenApp.property_title} » a été retenue. Votre contrat est en préparation.`,
+          category: 'demande',
+          targetUserId: chosenApp.tenant_id,
+          targetRole: 'locataire',
+          targetTab: 'applications',
+          link: '/dashboard'
+        });
+      } catch (err) {
+        console.warn('Erreur notification candidat retenu:', err);
+      }
     }
 
     // Synchronisation persistante multi-appareils /api/sync
@@ -957,35 +1001,72 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           0
         );
 
-        const { error: insertErr } = await supabase.from('contracts').insert({
-          id: contractUuid,
-          contract_number: contractNumber,
-          property_id: targetPropId,
-          tenant_id: targetTenantId,
-          owner_id: targetOwnerId,
-          monthly_rent: Number(app.rent_amount || 0),
-          caution_amount: Number(app.caution_amount || 0),
-          charges_amount: resolvedCharges,
-          duration_months: 12,
-          status: 'actif',
-          start_date: new Date().toISOString().split('T')[0],
-          owner_signed: true,
-          owner_signed_at: new Date().toISOString(),
-          tenant_signed: true,
-          tenant_signed_at: new Date().toISOString()
-        });
-        if (insertErr) {
-          console.error('Erreur insertion Supabase contracts (DemandesView):', insertErr.message);
-          if (insertErr.code === '23505' || insertErr.message?.includes('idx_unique_active_contract_per_property')) {
+        const resolvedDurationMonths = Number(
+          matchedContract?.duration_months ??
+          (app as any)?.duration_months ??
+          matchedProperty?.duration_months ??
+          12
+        );
+
+        // Vérifier si le contrat a déjà été inséré lors de la transmission
+        const { data: existingContract } = await supabase
+          .from('contracts')
+          .select('id, contract_number')
+          .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
+          .maybeSingle();
+
+        let finalContractUuid = contractUuid;
+        let finalizationError: any = null;
+
+        if (existingContract) {
+          finalContractUuid = existingContract.id;
+          const { error: updErr } = await supabase
+            .from('contracts')
+            .update({
+              status: 'actif',
+              owner_signed: true,
+              owner_signed_at: new Date().toISOString(),
+              tenant_signed: true,
+              tenant_signed_at: new Date().toISOString(),
+              duration_months: resolvedDurationMonths,
+              charges_amount: resolvedCharges,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingContract.id);
+          finalizationError = updErr;
+        } else {
+          const { error: insErr } = await supabase.from('contracts').insert({
+            id: contractUuid,
+            contract_number: contractNumber,
+            property_id: targetPropId,
+            tenant_id: targetTenantId,
+            owner_id: targetOwnerId,
+            monthly_rent: Number(app.rent_amount || 0),
+            caution_amount: Number(app.caution_amount || 0),
+            charges_amount: resolvedCharges,
+            duration_months: resolvedDurationMonths,
+            status: 'actif',
+            start_date: new Date().toISOString().split('T')[0],
+            owner_signed: true,
+            owner_signed_at: new Date().toISOString(),
+            tenant_signed: true,
+            tenant_signed_at: new Date().toISOString()
+          });
+          finalizationError = insErr;
+        }
+
+        if (finalizationError) {
+          console.error('Erreur finalisation Supabase contracts (DemandesView):', finalizationError.message);
+          if (finalizationError.code === '23505' || finalizationError.message?.includes('idx_unique_active_contract_per_property')) {
             alert("Ce bien a déjà un contrat actif. Impossible d'activer deux baux concurrents sur le même logement.");
             return;
           }
         } else {
-          // Insérer la caution correspondante dans la table cautions de Supabase
+          // Insérer ou mettre à jour la caution
           try {
             await supabase.from('cautions').upsert({
               id: crypto.randomUUID(),
-              contract_id: contractUuid,
+              contract_id: finalContractUuid,
               tenant_id: targetTenantId,
               owner_id: targetOwnerId,
               amount_requested: Number(app.caution_amount || 0),
@@ -994,10 +1075,48 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             });
           } catch {}
 
+          // Notifier le locataire que son contrat est maintenant actif et scellé
+          try {
+            await supabase.from('notifications').insert({
+              user_id: targetTenantId,
+              title: 'Contrat de bail finalisé et actif 🎉',
+              message: `Votre contrat de bail N° ${contractNumber} pour « ${app.property_title} » a été scellé et finalisé. Il est disponible en téléchargement dans votre onglet Contrats.`,
+              description: `Votre contrat de bail N° ${contractNumber} pour « ${app.property_title} » a été scellé et finalisé. Il est disponible en téléchargement dans votre onglet Contrats.`,
+              content: `Votre contrat de bail N° ${contractNumber} pour « ${app.property_title} » a été scellé et finalisé. Il est disponible en téléchargement dans votre onglet Contrats.`,
+              type: 'contrat',
+              category: 'contrat',
+              target_role: 'locataire',
+              read: false,
+              is_read: false,
+              data: {
+                contract_id: finalContractUuid,
+                contractNumber,
+                targetTab: 'contracts'
+              },
+              payload: {
+                contract_id: finalContractUuid,
+                contractNumber,
+                targetTab: 'contracts'
+              }
+            });
+
+            pushGlobalNotification({
+              title: 'Contrat de bail finalisé et actif 🎉',
+              description: `Votre contrat de bail N° ${contractNumber} pour « ${app.property_title} » est disponible en téléchargement dans l'onglet Contrats.`,
+              category: 'contrat',
+              targetUserId: targetTenantId,
+              targetRole: 'locataire',
+              targetTab: 'contracts',
+              link: '/dashboard'
+            });
+          } catch (notifErr) {
+            console.warn('Erreur notification locataire finalisation:', notifErr);
+          }
+
           // Diffuser l'événement temps réel
           try {
             broadcastLiveEvent('CONTRACT_FINALIZED', {
-              contractId: contractUuid,
+              contractId: finalContractUuid,
               actorId: targetOwnerId,
               targetUserId: targetTenantId,
               propertyId: targetPropId,
@@ -1035,7 +1154,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         caution_amount: app.caution_amount,
         charges: resolvedCharges,
         payment_due_day: 5,
-        duration_months: 12,
+        duration_months: resolvedDurationMonths,
         owner: { id: user?.id, full_name: ownerName, phone: ownerPhone },
         tenant: { id: app.tenant_id, full_name: app.tenant_name, phone: app.tenant_phone, email: app.tenant_email },
         property: {
@@ -1090,6 +1209,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   };
 
   const getPropertyForApp = (propId: string) => {
+    if (dbProperties && dbProperties.length > 0) {
+      const found = dbProperties.find((p: any) => p.id === propId);
+      if (found) return found;
+    }
     if (typeof window === 'undefined') return null;
     try {
       const raw = localStorage.getItem('locatrust_properties');
@@ -1974,6 +2097,14 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               propertyId: selectedApplicationForContract.property_id,
               propertyTitle: selectedApplicationForContract.property_title,
               propertyAddress: selectedApplicationForContract.property_address,
+              propertyCity: matchedProperty?.city,
+              propertyCommune: matchedProperty?.commune,
+              durationMonths: Number(
+                (selectedApplicationForContract as any)?.duration_months ??
+                matchedProperty?.duration_months ??
+                12
+              ),
+              startDate: (selectedApplicationForContract as any)?.start_date || new Date().toISOString().split('T')[0],
               propertySurface: matchedProperty?.surface,
               propertyRooms: matchedProperty?.rooms,
               propertyBedrooms: matchedProperty?.bedrooms,

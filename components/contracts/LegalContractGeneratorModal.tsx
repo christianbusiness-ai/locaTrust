@@ -196,7 +196,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   // Ville et Commune (Côte d'Ivoire - Section 15 du cahier des charges)
   const [propertyCity, setPropertyCity] = useState<string>(initialData?.propertyCity || 'Abidjan');
   const [propertyCommune, setPropertyCommune] = useState<string>(initialData?.propertyCommune || 'Cocody');
-  const [propertyStreet, setPropertyStreet] = useState<string>('Riviera 3');
+  const [propertyStreet, setPropertyStreet] = useState<string>('');
 
   // Adresse complète calculée dynamiquement
   const computedAddress = useMemo(() => {
@@ -213,8 +213,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   );
 
   useEffect(() => {
-    setPropertyAddress(computedAddress);
-  }, [computedAddress]);
+    if (propertyStreet.trim()) {
+      setPropertyAddress(computedAddress);
+    } else if (initialData?.propertyAddress) {
+      setPropertyAddress(initialData.propertyAddress);
+    } else if (computedAddress && computedAddress !== 'Côte d\'Ivoire') {
+      setPropertyAddress(computedAddress);
+    }
+  }, [computedAddress, initialData?.propertyAddress, propertyStreet]);
 
   const [propertyDestination, setPropertyDestination] = useState<string>(
     initialData?.usageDestination === 'professionnel'
@@ -386,18 +392,44 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           }
         }
 
-        const resSurface = initialData.propertySurface ?? publishedProp?.surface ?? 75;
-        const resRooms = initialData.propertyRooms ?? publishedProp?.rooms ?? 3;
-        const resBedrooms = initialData.propertyBedrooms ?? publishedProp?.bedrooms ?? 2;
-        const resBathrooms = initialData.propertyBathrooms ?? publishedProp?.bathrooms ?? 1;
-        const resEquipments = initialData.propertyEquipments ?? publishedProp?.equipments ?? ['Compteurs CIE/SODECI individuels', 'Sanitaires privatifs', 'Cuisine équipée'];
+        // Si non trouvé dans le cache local, charger directement depuis Supabase
+        if (!publishedProp && initialData.propertyId) {
+          try {
+            supabase
+              .from('properties')
+              .select('*')
+              .eq('id', initialData.propertyId)
+              .maybeSingle()
+              .then(({ data }) => {
+                if (data) {
+                  if (typeof initialData.propertySurface !== 'number' && typeof data.surface === 'number') setPropertySurface(data.surface);
+                  if (typeof initialData.propertyRooms !== 'number' && typeof data.rooms === 'number') setPropertyRooms(data.rooms);
+                  if (typeof initialData.propertyBedrooms !== 'number' && typeof data.bedrooms === 'number') setPropertyBedrooms(data.bedrooms);
+                  if (typeof initialData.propertyBathrooms !== 'number' && typeof data.bathrooms === 'number') setPropertyBathrooms(data.bathrooms);
+                  if (!initialData.propertyEquipments && Array.isArray(data.equipments)) setPropertyEquipments(data.equipments);
+                  if (!initialData.propertyPhotos && Array.isArray(data.photos)) setPropertyPhotos(data.photos);
+                  if (!initialData.propertyDescription && data.description) setPropertyDescription(data.description);
+                  if (typeof initialData.chargesAmount !== 'number' && typeof data.charges === 'number') setChargesAmount(data.charges);
+                  if (!initialData.propertyCity && data.city) setPropertyCity(data.city);
+                  if (!initialData.propertyCommune && data.commune) setPropertyCommune(data.commune);
+                  if (!initialData.propertyAddress && data.address) setPropertyAddress(data.address);
+                }
+              });
+          } catch {}
+        }
+
+        const resSurface = initialData.propertySurface ?? publishedProp?.surface;
+        const resRooms = initialData.propertyRooms ?? publishedProp?.rooms;
+        const resBedrooms = initialData.propertyBedrooms ?? publishedProp?.bedrooms;
+        const resBathrooms = initialData.propertyBathrooms ?? publishedProp?.bathrooms;
+        const resEquipments = initialData.propertyEquipments ?? publishedProp?.equipments ?? [];
         const resPhotos = initialData.propertyPhotos ?? publishedProp?.photos ?? [];
         const resDesc = initialData.propertyDescription ?? publishedProp?.description ?? '';
 
-        setPropertySurface(resSurface);
-        setPropertyRooms(resRooms);
-        setPropertyBedrooms(resBedrooms);
-        setPropertyBathrooms(resBathrooms);
+        if (resSurface !== undefined) setPropertySurface(resSurface);
+        if (resRooms !== undefined) setPropertyRooms(resRooms);
+        if (resBedrooms !== undefined) setPropertyBedrooms(resBedrooms);
+        if (resBathrooms !== undefined) setPropertyBathrooms(resBathrooms);
         setPropertyEquipments(resEquipments);
         setPropertyPhotos(resPhotos);
         setPropertyDescription(resDesc);

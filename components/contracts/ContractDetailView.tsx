@@ -172,7 +172,24 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         startDate: realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         duration: Number(realContract.duration_months || 12),
         dateSignature: realContract.signed_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
-        periode: `${realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'))} (${realContract.duration_months || 12} mois)`,
+        periode: (() => {
+          const dur = Number(realContract.duration_months || 12);
+          const sDateStr = realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'));
+          try {
+            const rawS = realContract.start_date || realContract.signed_date || new Date();
+            let sObj = new Date(rawS);
+            if (isNaN(sObj.getTime()) && typeof rawS === 'string' && rawS.includes('/')) {
+              const p = rawS.split('/');
+              sObj = new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0]));
+            }
+            if (!isNaN(sObj.getTime())) {
+              const eObj = new Date(sObj);
+              eObj.setMonth(eObj.getMonth() + dur);
+              return `${sDateStr} au ${eObj.toLocaleDateString('fr-FR')} (${dur} mois)`;
+            }
+          } catch {}
+          return `${sDateStr} (${dur} mois)`;
+        })(),
         avatar: realContract.tenant?.avatar_url || ''
       };
     }
@@ -1471,22 +1488,12 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                 updatePayload.tenant_signature = signatureUrl;
                 updatePayload.tenant_signed = true;
                 updatePayload.tenant_signed_at = new Date().toISOString();
-                updatePayload.status = 'actif';
               }
 
               await supabase
                 .from('contracts')
                 .update(updatePayload)
                 .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
-
-              // Si le locataire a signé, marquer le bien comme loué dans Supabase
-              if (!isOwner && (realContract?.property_id || realContract?.property?.id)) {
-                const pId = realContract.property_id || realContract.property?.id;
-                await supabase
-                  .from('properties')
-                  .update({ status: 'loue' })
-                  .eq('id', pId);
-              }
 
               // Enregistrer la signature sur le profil de l'utilisateur
               if (user?.id) {
