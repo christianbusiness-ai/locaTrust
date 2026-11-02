@@ -213,21 +213,48 @@ export interface Message {
   id: string;
   conversation_id: string;
   sender_id: string;
+  receiver_id?: string;
   content: string;
+  message_type?: 'text' | 'quittance' | 'contract' | 'restitution' | 'caution' | 'declaration' | string;
+  attachments?: any[];
   attachment_url?: string;
+  status?: 'sent' | 'delivered' | 'read' | string;
+  is_read?: boolean;
+  read_at?: string;
   created_at: string;
   sender?: User;
 }
 
 export interface Conversation {
   id: string;
-  property_id: string;
+  property_id?: string | null;
   participant_a: string;
   participant_b: string;
+  last_message_at?: string;
   created_at: string;
+  updated_at?: string;
   property?: Property;
   other_participant?: User;
   last_message?: Message;
+}
+
+export interface AgencyMandate {
+  id: string;
+  agency_id: string;
+  owner_id: string;
+  property_id?: string | null;
+  mandate_number: string;
+  type: 'gestion_complete' | 'mandat_simple' | 'mandat_exclusif';
+  status: 'actif' | 'expire' | 'suspendu' | 'resilie';
+  commission_rate: number;
+  start_date: string;
+  end_date: string;
+  documents?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+  agency?: User;
+  owner?: User;
+  property?: Property;
 }
 
 export interface NotificationItem {
