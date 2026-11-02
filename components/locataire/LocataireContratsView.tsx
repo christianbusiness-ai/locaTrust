@@ -129,24 +129,6 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       // Fusion avec les contrats du stockage local pour le locataire connecté
       const localContracts: any[] = [];
 
-      // Synchronisation prioritaire depuis le serveur central (/api/sync)
-      try {
-        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=locataire` : '/api/sync';
-        const syncRes = await fetch(syncUrl);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (Array.isArray(syncJson?.data?.contracts)) {
-            syncJson.data.contracts.forEach((sc: any) => {
-              const isMatch =
-                Boolean(user?.id && (sc.tenant_id === user.id || sc.tenant?.id === user.id)) ||
-                Boolean(user?.email && (sc.tenant?.email?.toLowerCase() === user.email.toLowerCase() || sc.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
-                Boolean(user?.user_metadata?.full_name && sc.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
-              if (isMatch) localContracts.push(sc);
-            });
-          }
-        }
-      } catch {}
-
       try {
         const raw = localStorage.getItem('locatrust_contracts');
         if (raw) {
@@ -274,47 +256,9 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
       setContracts(Array.from(map.values()));
 
-      // Reçus / quittances réelles : Source de vérité prioritaire /api/sync + Supabase + cache local assaini
+      // Reçus / quittances réelles : Source de vérité prioritaire Supabase + cache local assaini
       let combinedReceipts: any[] = [];
       const seenReceiptNums = new Set<string>();
-
-      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
-      try {
-        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=locataire` : '/api/sync';
-        const syncRes = await fetch(syncUrl);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.data?.receipts && Array.isArray(syncJson.data.receipts)) {
-            syncJson.data.receipts.forEach((sr: any) => {
-              const isMatch =
-                Boolean(user?.id && (sr.tenant_id === user.id || sr.tenant?.id === user.id)) ||
-                Boolean(user?.email && (sr.tenant_email?.toLowerCase() === user.email.toLowerCase() || sr.tenant?.email?.toLowerCase() === user.email.toLowerCase())) ||
-                Boolean(user?.user_metadata?.full_name && sr.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
-              if (!isMatch) return;
-              const num = sr.receipt_number || sr.reference;
-              const amt = Number(sr.amount) || 0;
-              if (num && amt > 0 && !seenReceiptNums.has(num)) {
-                seenReceiptNums.add(num);
-                combinedReceipts.push({
-                  id: sr.id,
-                  receipt_number: num,
-                  period: sr.period_covered || 'Mois en cours',
-                  amount: amt,
-                  token: sr.token,
-                  type: sr.type || 'loyer',
-                  owner_name: sr.owner_name || 'Bailleur',
-                  property_title: sr.property_title || 'Logement',
-                  property_address: sr.property_address,
-                  contract_number: sr.contract_number || '',
-                  rawReceipt: sr
-                });
-              }
-            });
-          }
-        }
-      } catch (syncErr) {
-        console.warn('Sync receipts warning:', syncErr);
-      }
 
       // 1. Quittances directes Supabase
       try {

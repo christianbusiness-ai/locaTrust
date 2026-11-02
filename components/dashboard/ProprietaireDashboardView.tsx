@@ -74,27 +74,11 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     isFetchingRef.current = true;
     setIsLoading(true);
     try {
-      // 0. Synchronisation prioritaire depuis /api/sync
       let loadedPayments: any[] = [];
       let loadedApps: any[] = [];
       const currentUserId = user?.id;
       const isMine = (x: any) =>
         Boolean(currentUserId && x && (x.owner_id === currentUserId || x.agency_id === currentUserId));
-
-      if (currentUserId) {
-        try {
-          const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(currentUserId)}&role=${encodeURIComponent(userRole)}`);
-          if (syncRes.ok) {
-            const syncJson = await syncRes.json();
-            if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
-              loadedPayments = syncJson.data.payments.filter(isMine);
-            }
-            if (syncJson?.success && Array.isArray(syncJson.data?.applications)) {
-              loadedApps = syncJson.data.applications.filter(isMine);
-            }
-          }
-        } catch {}
-      }
 
       // 1. Biens immobiliers
       let finalProps: any[] = [];

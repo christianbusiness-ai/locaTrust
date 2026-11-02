@@ -777,26 +777,12 @@ export async function syncMessageToSupabase(
       });
     } catch {}
 
-    // Synchronisation avec /api/sync en arrière-plan
-    if (typeof window !== 'undefined') {
-      try {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'send_message',
-            message: enrichedMessage
-          })
-        }).catch(() => {});
-      } catch {}
-    }
-
     // 2. Persistance BDD : utiliser exclusivement les UUID réels des participants
     const finalSenderId = senderId;
     const finalReceiverId = receiverId;
 
     if (isValidUuid(finalSenderId) && isValidUuid(finalReceiverId) && finalSenderId !== finalReceiverId) {
-      // Trouver ou créer la conversation (support transparent des colonnes tenant_id/owner_id ET participant_a/b)
+      // Trouver ou créer la conversation (support transparent des colonnes participant_a/b)
       let convId: string | null = null;
 
       try {
@@ -810,44 +796,18 @@ export async function syncMessageToSupabase(
 
       if (!convId) {
         try {
-          const { data: convData2 } = await supabase
-            .from('conversations')
-            .select('id')
-            .or(`and(tenant_id.eq.${finalSenderId},owner_id.eq.${finalReceiverId}),and(tenant_id.eq.${finalReceiverId},owner_id.eq.${finalSenderId})`)
-            .maybeSingle();
-          if (convData2?.id) convId = convData2.id;
-        } catch {}
-      }
-
-      if (!convId) {
-        try {
           const { data: newConv } = await supabase
             .from('conversations')
             .insert({
-              tenant_id: finalSenderId,
-              owner_id: finalReceiverId,
+              participant_a: finalSenderId,
+              participant_b: finalReceiverId,
               property_id: isValidUuid(propertyId) ? propertyId : undefined
             })
             .select('id')
             .maybeSingle();
           if (newConv?.id) convId = newConv.id;
-        } catch {}
-
-        if (!convId) {
-          try {
-            const { data: newConv2 } = await supabase
-              .from('conversations')
-              .insert({
-                participant_a: finalSenderId,
-                participant_b: finalReceiverId,
-                property_id: isValidUuid(propertyId) ? propertyId : undefined
-              })
-              .select('id')
-              .maybeSingle();
-            if (newConv2?.id) convId = newConv2.id;
-          } catch (insertErr: any) {
-            console.warn('Notice création conversation Supabase:', insertErr?.message);
-          }
+        } catch (insertErr: any) {
+          console.warn('Notice création conversation Supabase:', insertErr?.message);
         }
       }
 
@@ -886,12 +846,27 @@ export async function syncMessageToSupabase(
           });
         }
 
+        const msgType = newMsg.declaration
+          ? 'declaration'
+          : newMsg.contract
+          ? 'contract'
+          : newMsg.quittance
+          ? 'quittance'
+          : newMsg.restitution
+          ? 'restitution'
+          : 'text';
+
         const { data: insertedMsg, error: msgInsertError } = await supabase
           .from('messages')
           .insert({
+            id: isValidUuid(newMsg.id) ? newMsg.id : undefined,
             conversation_id: convId,
             sender_id: finalSenderId,
-            content: contentToStore
+            receiver_id: finalReceiverId,
+            content: contentToStore,
+            message_type: msgType,
+            status: 'sent',
+            is_read: false
           })
           .select('id, created_at')
           .maybeSingle();
@@ -924,23 +899,20 @@ export async function syncMessageToSupabase(
           const notifContent = text.length > 100 ? `${text.slice(0, 97)}...` : text;
           const notifType = newMsg.declaration ? 'caution' : newMsg.contract ? 'contrat' : newMsg.quittance ? 'quittance' : 'info';
 
-          const { error: nErr } = await supabase.from('notifications').insert({
+          await supabase.from('notifications').insert({
+            id: isValidUuid(notifDeterministicId) ? notifDeterministicId : undefined,
             user_id: finalReceiverId,
             title: notifTitle,
             message: notifContent,
             type: notifType,
-            is_read: false
+            category: 'demande',
+            read: false,
+            is_read: false,
+            data: {
+              contactId: finalSenderId,
+              messageId: insertedMsg?.id || newMsg.id
+            }
           });
-          if (nErr) {
-            await supabase.from('notifications').insert({
-              user_id: finalReceiverId,
-              title: notifTitle,
-              content: notifContent,
-              type: notifType,
-              read: false,
-              payload: newMsg.declaration ? { declaration: newMsg.declaration } : undefined
-            });
-          }
         }
 
         return { success: true };
@@ -968,8 +940,8 @@ export function sendChatMessage(
   }
 ): ChatMessage {
   const current = getStoredMessages();
-  const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const notifId = `notif_msg_${msgId}`;
+  const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8003-${Date.now().toString(16).padStart(12, '0')}`;
+  const notifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8004-${Date.now().toString(16).padStart(12, '0')}`;
   const nowIso = new Date().toISOString();
   const newMsg: ChatMessage & { notificationId?: string } = {
     id: msgId,

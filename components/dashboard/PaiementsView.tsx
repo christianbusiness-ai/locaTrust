@@ -105,23 +105,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     try {
       let loaded: RentPayment[] = [];
 
-      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
-      try {
-        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=proprietaire` : '/api/sync';
-        const syncRes = await fetch(syncUrl);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
-            const mySyncPayments = syncJson.data.payments.filter((p: any) =>
-              Boolean(user?.id && (p.owner_id === user.id || p.agency_id === user.id))
-            );
-            loaded = [...mySyncPayments];
-          }
-        }
-      } catch (syncErr) {
-        console.warn('API /api/sync loadPayments notice:', syncErr);
-      }
-
       // 1. Supabase rent_payments
       try {
         let pQuery = supabase
@@ -284,7 +267,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
     // Add new payment entry to history with exact periods covered text
     const newPmt: RentPayment = {
-      id: `pmt_${Date.now()}`,
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8006-${Date.now().toString(16).padStart(12, '0')}`,
       contract_id: payments[0]?.contract_id || 'LT-CONTRAT-01',
       tenant_id: payments[0]?.tenant_id || 'usr_tenant',
       owner_id: user?.id || 'usr_owner',
@@ -592,20 +575,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
       } catch {}
 
-      // Synchroniser avec le serveur central /api/sync
-      try {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'confirm_payment',
-            paymentId: validatingPayment.id,
-            reference: extractedOcrData.reference,
-            ownerSignatureUrl: effectiveOwnerSig
-          })
-        }).catch(() => {});
-      } catch {}
-
       const ownerId = user?.id || 'usr_owner';
       const tenantId = validatingPayment.tenant_id || (validatingPayment.tenant as any)?.id || 'usr_tenant';
 
@@ -635,13 +604,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       }
 
       // Persister également dans locatrust_tenant_receipts_v2 pour visibilité immédiate côté locataire
+      const receiptUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8007-${Date.now().toString(16).padStart(12, '0')}`;
       try {
         const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
         let receiptsV2 = rawV2 ? JSON.parse(rawV2) : [];
         if (Array.isArray(receiptsV2)) {
           receiptsV2 = receiptsV2.filter((r: any) => (r.receipt_number !== extractedOcrData.reference && r.receiptNumber !== extractedOcrData.reference));
           receiptsV2.unshift({
-            id: `rec_${Date.now()}`,
+            id: receiptUuid,
             receipt_number: extractedOcrData.reference,
             receiptNumber: extractedOcrData.reference,
             type: 'loyer',
@@ -682,7 +652,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       // 4. Créer la notification d'invitation à signer pour le locataire
       try {
         if (typeof window !== 'undefined') {
-          const notifId = `notif_sign_rec_${Date.now()}`;
+          const notifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8008-${Date.now().toString(16).padStart(12, '0')}`;
           const newNotif = {
             id: notifId,
             title: '🛡️ Quittance de loyer reçue pour signature',

@@ -210,28 +210,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         } catch {}
       }
 
-      try {
-        const effectiveRole = profile?.account_type === 'agence' || (profile?.role as string) === 'agence' ? 'agence' : (profile?.role || 'proprietaire');
-        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=${encodeURIComponent(effectiveRole)}` : '/api/sync';
-        const syncRes = await fetch(syncUrl);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.success && Array.isArray(syncJson.data?.applications)) {
-            serverApps = syncJson.data.applications;
-          }
-          if (syncJson?.data?.properties && Array.isArray(syncJson.data.properties)) {
-            syncJson.data.properties.forEach((p: any) => {
-              if (p.id && (p.owner_id === user?.id || p.agency_id === user?.id || !user?.id)) {
-                userPropertyIds.add(p.id);
-                if (p.mandant_id) userMandantIds.add(p.mandant_id);
-              }
-            });
-          }
-        }
-      } catch (syncErr) {
-        console.warn('API /api/sync applications notice:', syncErr);
-      }
-
       for (const sa of serverApps) {
         if (!localApps.some(a => a.id === sa.id)) {
           localApps.unshift(sa);
@@ -529,14 +507,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       window.dispatchEvent(
         new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: updated } })
       );
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'sync_all',
-          clientApplications: updated
-        })
-      }).catch(() => {});
     } catch (e) {
       console.warn(e);
     }
@@ -666,31 +636,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       }
     }
 
-    // Synchronisation persistante multi-appareils /api/sync
-    try {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'update_application',
-          applicationId: chosenApp.id,
-          updates: { status: 'validee', candidate_selected: true }
-        })
-      }).catch(() => {});
-
-      for (const comp of competingCandidates) {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'update_application',
-            applicationId: comp.id,
-            updates: { status: 'liste_d_attente', candidate_selected: false }
-          })
-        }).catch(() => {});
-      }
-    } catch {}
-
     broadcastLiveEvent('APPLICATION_UPDATED', {
       actorId: user?.id,
       targetUserId: chosenApp.tenant_id,
@@ -751,18 +696,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       console.warn('Supabase status update error:', err);
     }
 
-    try {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'update_application',
-          applicationId: app.id,
-          updates: { status: 'en_redaction_bail', candidate_selected: true }
-        })
-      }).catch(() => {});
-    } catch {}
-
     broadcastLiveEvent('APPLICATION_UPDATED', {
       actorId: user?.id,
       targetUserId: app.tenant_id,
@@ -808,23 +741,6 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     } catch (e) {
       console.warn('Sync signature error:', e);
     }
-
-    try {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'update_application',
-          applicationId: app.id,
-          updates: {
-            tenant_signed: true,
-            tenant_signed_at: signedAt,
-            tenant_signature_url: sigUrl,
-            status: 'contrat_signe_locataire'
-          }
-        })
-      }).catch(() => {});
-    } catch {}
 
     broadcastLiveEvent('CONTRACT_SIGNED_BY_TENANT', {
       actorId: user?.id,

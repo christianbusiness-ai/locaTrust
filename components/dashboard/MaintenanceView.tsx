@@ -158,23 +158,6 @@ export const MaintenanceView: React.FC = () => {
       }
     } catch {}
 
-    // Synchronisation depuis le serveur central /api/sync
-    try {
-      const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}` : '/api/sync';
-      const syncRes = await fetch(syncUrl);
-      if (syncRes.ok) {
-        const syncJson = await syncRes.json();
-        if (Array.isArray(syncJson?.data?.maintenance)) {
-          syncJson.data.maintenance.forEach((m: any) => {
-            const isMine = !user?.id || m.owner_id === user.id || m.agency_id === user.id || m.tenant_id === user.id;
-            if (isMine && !list.some(l => l.id === m.id || l.ticketNumber === m.ticketNumber)) {
-              list.push(m);
-            }
-          });
-        }
-      }
-    } catch {}
-
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');

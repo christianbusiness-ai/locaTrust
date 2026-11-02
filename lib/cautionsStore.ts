@@ -179,13 +179,57 @@ export function declareCautionPayment(params: {
     saveStoredDeposits([updatedDeposit, ...all]);
   }
 
-  // Notifier immédiatement le bailleur et l'agence dans locatrust_notifications
+  // Inscription directe dans la table cautions de Supabase pour visibilité multi-appareils immédiate
+  try {
+    const dbCautionPayload: Record<string, any> = {
+      id: updatedDeposit.id,
+      amount_requested: Number(params.amount),
+      amount_paid: Number(params.amount),
+      status: 'caution_a_confirmer',
+      restitution_status: 'conserve',
+      payment_method: params.method,
+      declared_reference: params.reference,
+      proof_url: params.proofUrl || null
+    };
+
+    if (isValidUuid(params.contractId)) {
+      dbCautionPayload.contract_id = params.contractId;
+    }
+    if (isValidUuid(params.tenantId)) {
+      dbCautionPayload.tenant_id = params.tenantId;
+    }
+    if (isValidUuid(targetOwnerId)) {
+      dbCautionPayload.owner_id = targetOwnerId;
+    }
+    if (isValidUuid(targetAgencyId)) {
+      dbCautionPayload.agency_id = targetAgencyId;
+    }
+    if (targetContractNumber) {
+      dbCautionPayload.contract_number = targetContractNumber;
+    }
+
+    supabase
+      .from('cautions')
+      .upsert(dbCautionPayload)
+      .then(({ error }) => {
+        if (error) {
+          console.warn('Notice insertion caution Supabase:', error.message);
+        }
+      });
+  } catch (dbErr) {
+    console.warn('Erreur upsert caution Supabase:', dbErr);
+  }
+
+  // Notifier immédiatement le bailleur et l'agence dans les notifications locales ET Supabase
+  const notifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${Date.now().toString(16).padStart(12, '0')}`;
+  const agencyNotifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8001-${Date.now().toString(16).padStart(12, '0')}`;
+
   if (typeof window !== 'undefined') {
     try {
       const notifsRaw = localStorage.getItem('locatrust_notifications');
       const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
       const notifItem = {
-        id: `notif_caut_decl_${Date.now()}`,
+        id: notifId,
         title: '💰 Nouvelle déclaration de caution reçue',
         description: `${params.tenantName} a déclaré le règlement de sa caution (${formatFCFA(params.amount)} • Réf: ${params.reference}). En attente de confirmation.`,
         time: 'À l\'instant',
@@ -197,7 +241,7 @@ export function declareCautionPayment(params: {
       };
       const agencyNotifItem = {
         ...notifItem,
-        id: `notif_caut_decl_agency_${Date.now()}`,
+        id: agencyNotifId,
         targetRole: 'agence',
         targetUserId: targetAgencyId || 'usr_agency'
       };
@@ -206,14 +250,33 @@ export function declareCautionPayment(params: {
     } catch {}
   }
 
-  // Synchronisation avec le serveur central /api/sync
-  try {
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'declare_caution', caution: updatedDeposit })
-    }).catch(() => {});
-  } catch {}
+  // Inscription directe dans la table notifications Supabase pour le bailleur et l'agence
+  if (isValidUuid(targetOwnerId)) {
+    supabase.from('notifications').insert({
+      id: notifId,
+      user_id: targetOwnerId,
+      title: '💰 Nouvelle déclaration de caution reçue',
+      message: `${params.tenantName} a déclaré le règlement de sa caution (${formatFCFA(params.amount)} • Réf: ${params.reference}). En attente de confirmation.`,
+      type: 'caution',
+      category: 'caution',
+      read: false,
+      is_read: false,
+      data: { depositId: updatedDeposit.id, contractId: params.contractId }
+    }).then();
+  }
+  if (isValidUuid(targetAgencyId) && targetAgencyId !== targetOwnerId) {
+    supabase.from('notifications').insert({
+      id: agencyNotifId,
+      user_id: targetAgencyId,
+      title: '💰 Nouvelle déclaration de caution reçue',
+      message: `${params.tenantName} a déclaré le règlement de sa caution (${formatFCFA(params.amount)} • Réf: ${params.reference}). En attente de confirmation.`,
+      type: 'caution',
+      category: 'caution',
+      read: false,
+      is_read: false,
+      data: { depositId: updatedDeposit.id, contractId: params.contractId }
+    }).then();
+  }
 
   // Record audit entry
   recordCautionAudit({
@@ -261,15 +324,6 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
     }
   } catch {}
 
-  // Synchronisation avec le serveur central /api/sync
-  try {
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'confirm_caution', caution: updatedDeposit })
-    }).catch(() => {});
-  } catch {}
-
   try {
     broadcastLiveEvent('CAUTION_CONFIRMED', {
       depositId: target.id,
@@ -281,12 +335,13 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
   } catch {}
 
   // Notifier immédiatement le locataire que sa caution est validée et que le reçu est disponible
+  const tenantNotifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8002-${Date.now().toString(16).padStart(12, '0')}`;
   if (typeof window !== 'undefined') {
     try {
       const notifsRaw = localStorage.getItem('locatrust_notifications');
       const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
       const tenantNotif = {
-        id: `notif_caut_confirmed_${Date.now()}`,
+        id: tenantNotifId,
         title: '✅ Caution validée & Reçu officiel disponible',
         description: `Votre caution de ${formatFCFA(target.amount_paid)} pour le contrat ${target.contract_number || target.contract_id} a été validée par ${confirmedBy}. Le reçu certifié avec QR Code officiel est disponible au téléchargement.`,
         time: 'À l\'instant',
@@ -319,6 +374,21 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
 
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
     } catch {}
+  }
+
+  // Persistance notification dans Supabase pour affichage immédiat sur les autres appareils du locataire
+  if (isValidUuid(target.tenant_id)) {
+    supabase.from('notifications').insert({
+      id: tenantNotifId,
+      user_id: target.tenant_id,
+      title: '✅ Caution validée & Reçu officiel disponible',
+      message: `Votre caution de ${formatFCFA(target.amount_paid)} pour le contrat ${target.contract_number || target.contract_id} a été validée par ${confirmedBy}. Le reçu certifié avec QR Code officiel est disponible au téléchargement.`,
+      type: 'caution',
+      category: 'caution',
+      read: false,
+      is_read: false,
+      data: { depositId: target.id, contractId: target.contract_id }
+    }).then();
   }
 
   // Record audit entry

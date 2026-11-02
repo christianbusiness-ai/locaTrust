@@ -94,7 +94,9 @@ export function saveAgencyMandate(
   }
 
   const existingList = getAgencyMandates(agencyId);
-  const mandateId = mandateData.id || `mnd_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const mandateId = mandateData.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mandateData.id)
+    ? mandateData.id
+    : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8012-${Date.now().toString(16).padStart(12, '0')}`);
 
   const newMandate: AgencyMandate = {
     id: mandateId,
@@ -133,6 +135,29 @@ export function saveAgencyMandate(
       })
     );
   }
+
+  // Persistance directe dans Supabase table agency_mandates pour disponibilité multi-appareils
+  try {
+    const isUuid = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+    if (isUuid(agencyId)) {
+      supabase.from('agency_mandates').upsert({
+        id: newMandate.id,
+        agency_id: agencyId,
+        owner_id: agencyId,
+        mandate_number: `MND-${newMandate.id.slice(0, 8).toUpperCase()}`,
+        type: newMandate.mandate_type === 'simple' ? 'mandat_simple' : 'gestion_complete',
+        status: 'actif',
+        commission_rate: 8.0,
+        documents: {
+          full_name: newMandate.full_name,
+          email: newMandate.email,
+          phone: newMandate.phone,
+          properties_count: newMandate.properties_count,
+          total_monthly_rent: newMandate.total_monthly_rent
+        }
+      }).then();
+    }
+  } catch {}
 
   return newMandate;
 }

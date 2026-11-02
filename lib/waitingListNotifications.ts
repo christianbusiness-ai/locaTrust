@@ -409,7 +409,7 @@ export function pushGlobalNotification(notif: {
   try {
     const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
     const currentNotifs: GlobalNotificationItem[] = raw ? JSON.parse(raw) : [];
-    const notifId = notif.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+    const notifId = isValidUuid(notif.id) ? notif.id! : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8000-${Date.now().toString(16).padStart(12, '0')}`);
     const nowIso = new Date().toISOString();
     const newNotif: any = {
       id: notifId,
@@ -441,45 +441,26 @@ export function pushGlobalNotification(notif: {
       })
     );
 
-    // Synchronisation multi-appareils via /api/sync
-    try {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'push_notification',
-          notification: newNotif
-        })
-      }).catch(() => {});
-    } catch {}
-
-    // Inscription directe dans la table notifications Supabase avec le même UUID
+    // Inscription directe dans la table notifications Supabase avec le même UUID pour visibilité cross-devices
     if (notif.targetUserId && isValidUuid(notif.targetUserId)) {
-      const dbNotifId = isValidUuid(notifId) ? notifId : crypto.randomUUID();
       try {
+        const notifPayload: Record<string, any> = {
+          id: notifId,
+          user_id: notif.targetUserId,
+          title: notif.title,
+          message: notif.description,
+          type: notif.category === 'candidature' ? 'demande' : notif.category,
+          category: notif.category === 'candidature' ? 'demande' : notif.category,
+          read: false,
+          is_read: false,
+          data: notif.payload || {}
+        };
         supabase
           .from('notifications')
-          .insert({
-            id: dbNotifId,
-            user_id: notif.targetUserId,
-            title: notif.title,
-            message: notif.description,
-            type: notif.category,
-            is_read: false
-          })
+          .upsert(notifPayload)
           .then(({ error }) => {
             if (error) {
-              supabase
-                .from('notifications')
-                .insert({
-                  id: dbNotifId,
-                  user_id: notif.targetUserId,
-                  title: notif.title,
-                  content: notif.description,
-                  type: notif.category,
-                  read: false
-                })
-                .then();
+              console.warn('Notice persistence notification Supabase:', error.message);
             }
           });
       } catch {}

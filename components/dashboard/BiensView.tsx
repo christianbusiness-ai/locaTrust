@@ -98,31 +98,10 @@ export const BiensView: React.FC<BiensViewProps> = ({
     }
     setLoadError(null);
     try {
-      let syncProps: any[] = [];
-      try {
-        const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(user.id)}&role=proprietaire`);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.success && Array.isArray(syncJson.data?.properties)) {
-            syncProps = syncJson.data.properties.filter((sp: any) =>
-              sp && (sp.owner_id === user.id || sp.agency_id === user.id)
-            );
-          }
-        }
-      } catch {}
-
       const { data } = await fetchDbProperties(user.id);
       let combined = Array.isArray(data)
         ? data.filter((p: any) => p && (p.owner_id === user.id || p.agency_id === user.id))
         : [];
-
-      if (syncProps.length > 0) {
-        for (const sp of syncProps) {
-          if (!combined.some(c => c.id === sp.id)) {
-            combined.unshift(sp);
-          }
-        }
-      }
 
       // Règle stricte anti-doublon : déduplication absolue par id et (titre + loyer + commune/ville)
       const seenIds = new Set<string>();

@@ -154,23 +154,6 @@ export const LocatairePaiementsView: React.FC = () => {
       // 1. Paiements de loyers
       let rentList: any[] = [];
 
-      // 0. Synchronisation prioritaire depuis le serveur central (/api/sync)
-      try {
-        const syncUrl = user?.id ? `/api/sync?userId=${encodeURIComponent(user.id)}&role=locataire` : '/api/sync';
-        const syncRes = await fetch(syncUrl);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.success && Array.isArray(syncJson.data?.payments)) {
-            rentList = syncJson.data.payments.filter((p: any) =>
-              Boolean(user?.id && (p.tenant_id === user.id || p.tenant?.id === user.id)) ||
-              Boolean(user?.email && (p.tenant?.email?.toLowerCase() === user.email.toLowerCase() || p.tenant_email?.toLowerCase() === user.email.toLowerCase()))
-            );
-          }
-        }
-      } catch (syncErr) {
-        console.warn('API /api/sync tenant load notice:', syncErr);
-      }
-
       try {
         const { data: pmtData, error: pmtErr } = await getRentPayments(user.id);
         if (pmtErr) {
@@ -520,11 +503,12 @@ export const LocatairePaiementsView: React.FC = () => {
       };
 
       let savedPayment: any = null;
+      const fallbackPmtUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8009-${Date.now().toString(16).padStart(12, '0')}`;
       try {
         const { data, error } = await createRentPayment(newPaymentData);
-        savedPayment = (!error && data) ? data : { ...newPaymentData, id: `pmt_${Date.now()}`, payment_method: method };
+        savedPayment = (!error && data) ? data : { ...newPaymentData, id: fallbackPmtUuid, payment_method: method };
       } catch {
-        savedPayment = { ...newPaymentData, id: `pmt_${Date.now()}`, payment_method: method };
+        savedPayment = { ...newPaymentData, id: fallbackPmtUuid, payment_method: method };
       }
 
       // Save locally for responsive offline/instant UX
@@ -532,25 +516,6 @@ export const LocatairePaiementsView: React.FC = () => {
         const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
         localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
       } catch { }
-
-      // Enregistrement direct sur le serveur central /api/sync
-      try {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'declare_payment',
-            payment: {
-              ...savedPayment,
-              tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-              owner_id: targetOwnerId || '',
-              agency_id: targetOwnerId || '',
-              contract_id: chosenContract?.contract_number || chosenContract?.id || '',
-              property_title: chosenContract?.property?.title || 'Logement LocaTrust'
-            }
-          })
-        }).catch(() => {});
-      } catch {}
 
       // Send real notification to owner/agency in Supabase
       if (ownerUuid) {
@@ -704,14 +669,16 @@ export const LocatairePaiementsView: React.FC = () => {
           .select()
           .maybeSingle();
 
+        const fallbackCauUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8010-${Date.now().toString(16).padStart(12, '0')}`;
         if (dbCaution) {
           savedCaution = { ...cautionData, ...dbCaution };
         } else {
           if (ctnErr) console.warn('Supabase caution insert notice:', ctnErr.message);
-          savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
+          savedCaution = { ...cautionData, id: fallbackCauUuid };
         }
       } catch {
-        savedCaution = { ...cautionData, id: `cau_${Date.now()}` };
+        const fallbackCauUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8010-${Date.now().toString(16).padStart(12, '0')}`;
+        savedCaution = { ...cautionData, id: fallbackCauUuid };
       }
 
       // Notification Supabase persistante pour le bailleur/agence
@@ -1004,7 +971,7 @@ export const LocatairePaiementsView: React.FC = () => {
         }
 
         const notifItem = {
-          id: `notif_rec_signed_${Date.now()}`,
+          id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8011-${Date.now().toString(16).padStart(12, '0')}`,
           title: '✅ Reçu de paiement finalisé',
           description: `Le locataire ${tenantName} a apposé sa signature certifiée sur le reçu N° ${pmt.reference}. Le document est officiellement scellé et téléchargeable par tous.`,
           time: "À l'instant",
@@ -1021,21 +988,6 @@ export const LocatairePaiementsView: React.FC = () => {
         const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
         localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(curNotifs) ? curNotifs : [])]));
         window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-      } catch {}
-
-      // 7. Synchronisation avec le serveur central /api/sync
-      try {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'sign_receipt',
-            paymentId: pmt.id,
-            reference: pmt.reference,
-            tenantSignatureUrl: signatureData,
-            ownerSignatureUrl: effectiveOwnerSig
-          })
-        }).catch(() => {});
       } catch {}
 
       // 8. Diffuser les événements temps réel sur tous les appareils

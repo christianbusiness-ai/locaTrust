@@ -523,7 +523,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       );
 
       const newApp = {
-        id: `app_${Date.now()}`,
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8005-${Date.now().toString(16).padStart(12, '0')}`,
         property_id: selectedProperty.id,
         property_title: selectedProperty.title,
         property_address: `${selectedProperty.location?.commune || selectedProperty.location?.quartier || ''}, ${selectedProperty.location?.city || 'Abidjan'}`,
@@ -648,16 +648,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         timestamp: new Date().toISOString()
       });
 
-      // Synchronisation persistante avec le serveur central /api/sync
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'submit_application',
-          application: newApp
-        })
-      }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
-
+      // Synchronisation directe avec Supabase (Source unique de vérité)
       await createRentalApplication({
         id: newApp.id,
         property_id: selectedProperty.id,
