@@ -539,8 +539,54 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     });
   };
 
-  const handleSaveAvenant = () => {
+  const handleSaveAvenant = async () => {
     setIsAvenantFormOpen(false);
+    const nowIso = new Date().toISOString();
+    const amendmentId = crypto.randomUUID();
+    const amendmentNumber = `AV-${contractNumber}-${Date.now().toString().slice(-4)}`;
+
+    // 1. Sauvegarde dans la table Supabase contract_amendments
+    try {
+      const realContractId = realContract?.id || contractNumber;
+      await supabase.from('contract_amendments').insert({
+        id: amendmentId,
+        contract_id: realContractId,
+        amendment_number: amendmentNumber,
+        type: avenantData.type,
+        effective_date: avenantData.effectiveDate,
+        new_rent: avenantData.newRent > 0 ? avenantData.newRent : null,
+        clauses: avenantData.clauses,
+        owner_id: user?.id || realContract?.owner_id,
+        tenant_id: realContract?.tenant_id,
+        agency_id: realContract?.agency_id || null,
+        status: 'en_attente_signature_locataire',
+        verification_token: `tok_av_${Date.now()}`
+      });
+    } catch (sbErr) {
+      console.warn('Notice Supabase contract_amendments insert:', sbErr);
+    }
+
+    // 2. Notification au locataire
+    try {
+      if (realContract?.tenant_id) {
+        pushGlobalNotification({
+          title: 'Nouvel avenant au bail proposé',
+          description: `Votre bailleur a rédigé l'avenant N° ${amendmentNumber} (${avenantData.type}). Veuillez le consulter et le signer.`,
+          category: 'contrat',
+          targetTab: 'contracts',
+          targetRole: 'locataire',
+          targetUserId: realContract.tenant_id,
+          senderUserId: user?.id,
+          payload: {
+            contractNumber: contractNumber,
+            amendmentNumber: amendmentNumber
+          }
+        });
+      }
+    } catch (notifErr) {
+      console.warn('Notice notification avenant:', notifErr);
+    }
+
     setConfirmationModal({
       isOpen: true,
       type: 'avenant_initiated',
