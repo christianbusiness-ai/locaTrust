@@ -334,8 +334,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const isDeclaredStatus = (status?: string) =>
     status === 'declare' || status === 'en_attente' || status === 'a_valider';
 
+  // REGLE FINANCIERE STRICTE (PHASE 2) : Seuls les paiements 'confirme' ou 'valide'
+  // sont comptabilisés dans le total encaissé. 'en_attente_signature_locataire' est exclu
+  // tant que le preneur n'a pas scellé la quittance.
   const isConfirmedStatus = (status?: string) =>
-    status === 'confirme' || status === 'valide' || status === 'en_attente_signature_locataire';
+    status === 'confirme' || status === 'valide';
 
   // Stats dynamiques
   const totalConfirmed = payments
@@ -356,6 +359,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     detected_month: string;
   } | null>(null);
   const [previewingReceipt, setPreviewingReceipt] = useState<RentPayment | null>(null);
+
+  // State pour le Modal Formel de Rejet (Phase 2)
+  const [rejectingPayment, setRejectingPayment] = useState<RentPayment | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState<string>('');
+  const [rejectionPreset, setRejectionPreset] = useState<string>('reference_introuvable');
+  const [isSubmittingRejection, setIsSubmittingRejection] = useState<boolean>(false);
 
   const handleStartValidation = (pmt: RentPayment) => {
     if (pmt.status === 'confirme' || pmt.status === 'en_attente_signature_locataire') {
@@ -753,19 +762,102 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     }
   };
 
-  const handleReject = async (id: string) => {
-    const reason = prompt('Motif du refus du paiement :');
-    if (reason !== null) {
-      setPayments((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, status: 'refuse' } : p))
-      );
-      try {
-        await supabase.from('rent_payments').update({ status: 'refuse' }).eq('id', id);
-      } catch (e) {
-        console.warn('Sync payment rejection error:', e);
-      }
-      alert('Paiement refusé et notifié au locataire.');
+  const handleOpenRejectModal = (pmt: RentPayment) => {
+    setRejectingPayment(pmt);
+    setRejectionPreset('reference_introuvable');
+    setRejectionReasonInput('Référence de transaction introuvable ou non créditée sur le compte.');
+  };
+
+  const handleConfirmRejection = async () => {
+    if (!rejectingPayment) return;
+    const finalReason = rejectionReasonInput.trim();
+    if (!finalReason) {
+      alert('Veuillez préciser le motif obligatoire du refus.');
+      return;
     }
+
+    setIsSubmittingRejection(true);
+    const targetId = rejectingPayment.id;
+    const nowIso = new Date().toISOString();
+
+    // 1. Mise à jour de l'état local
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.id === targetId
+          ? {
+              ...p,
+              status: 'refuse',
+              rejection_reason: finalReason,
+              updated_at: nowIso
+            }
+          : p
+      )
+    );
+
+    // 2. Persistance locale dans locatrust_payments_v2
+    try {
+      const stored = localStorage.getItem('locatrust_payments_v2');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const updated = parsed.map((p: any) =>
+            p.id === targetId
+              ? { ...p, status: 'refuse', rejection_reason: finalReason, updated_at: nowIso }
+              : p
+          );
+          localStorage.setItem('locatrust_payments_v2', JSON.stringify(updated));
+        }
+      }
+    } catch (e) {
+      console.warn('LocalStorage update rejection notice:', e);
+    }
+
+    // 3. Mise à jour Supabase table rent_payments
+    try {
+      await supabase
+        .from('rent_payments')
+        .update({
+          status: 'rejete',
+          rejection_reason: finalReason,
+          updated_at: nowIso
+        })
+        .eq('id', targetId);
+    } catch (e) {
+      console.warn('Supabase rent_payments rejection update notice:', e);
+    }
+
+    // 4. Notification ciblée au locataire
+    try {
+      const tenantId = rejectingPayment.tenant_id || (rejectingPayment.tenant as any)?.id;
+      if (tenantId) {
+        pushGlobalNotification({
+          title: 'Paiement de loyer refusé',
+          description: `Votre déclaration de paiement (${formatFCFA(rejectingPayment.amount)}) a été refusée. Motif : ${finalReason}`,
+          category: 'paiement',
+          targetTab: 'payments',
+          targetRole: 'locataire',
+          targetUserId: tenantId,
+          senderUserId: user?.id,
+          payload: {
+            paymentId: targetId,
+            rejectionReason: finalReason,
+            reference: rejectingPayment.reference
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Notification rejection notice:', e);
+    }
+
+    setIsSubmittingRejection(false);
+    setRejectingPayment(null);
+    setConfirmationModal({
+      isOpen: true,
+      type: 'generic_success',
+      title: 'Paiement refusé',
+      message: `Le versement de ${formatFCFA(rejectingPayment.amount)} a été marqué comme refusé. Le locataire a été notifié avec le motif précisé et dispose de la faculté de contestation.`,
+      confirmText: 'Compris'
+    });
   };
 
   const handleTransmitReceipt = async (pmt: RentPayment) => {
@@ -1164,7 +1256,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                           <span>Vérifier</span>
                         </button>
                         <button
-                          onClick={() => handleReject(pmt.id)}
+                          onClick={() => handleOpenRejectModal(pmt)}
                           className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-extrabold text-xs flex items-center gap-1 transition-all cursor-pointer"
                         >
                           <XCircle className="w-3.5 h-3.5" />
@@ -1934,6 +2026,120 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           confirmText={confirmationModal.confirmText}
           withCelebration={confirmationModal.withCelebration}
         />
+      )}
+
+      {/* MODAL FORMEL DE REFUS DE PAIEMENT (PHASE 2) */}
+      {rejectingPayment && (
+        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4 animate-scaleUp">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center font-black">
+                  <XCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Refuser la déclaration de loyer</h3>
+                  <p className="text-[11px] text-slate-500">Un motif clair et précis est obligatoirement notifié au locataire</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRejectingPayment(null)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Récapitulatif du versement */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Locataire & Période</span>
+                <span className="font-extrabold text-slate-900">{rejectingPayment.tenant?.full_name || 'Locataire'}</span>
+                <span className="text-slate-500 block text-[11px]">{rejectingPayment.target_month || 'Loyer'}</span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Montant Déclaré</span>
+                <span className="font-black text-rose-600 text-sm">{formatFCFA(rejectingPayment.amount)}</span>
+                <span className="font-mono text-[10px] text-slate-500 block">{rejectingPayment.reference}</span>
+              </div>
+            </div>
+
+            {/* Sélecteur de motifs prédéfinis */}
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-black text-slate-800">Sélectionnez le motif principal du refus :</label>
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  { id: 'reference_introuvable', label: 'Référence introuvable', desc: 'Transaction inexistante sur le compte Mobile Money / bancaire.' },
+                  { id: 'montant_incomplet', label: 'Montant versé incomplet', desc: 'La somme reçue est inférieure au montant du loyer dû.' },
+                  { id: 'erreur_periode', label: 'Erreur sur l\'échéance ou le bien', desc: 'Le règlement ne correspond pas au mois ou au logement indiqué.' },
+                  { id: 'autre', label: 'Autre motif spécifique', desc: 'Préciser les détails dans le champ ci-dessous.' }
+                ].map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      setRejectionPreset(preset.id);
+                      if (preset.id === 'reference_introuvable') {
+                        setRejectionReasonInput('Référence de transaction introuvable ou non créditée sur le compte.');
+                      } else if (preset.id === 'montant_incomplet') {
+                        setRejectionReasonInput('Le montant effectif reçu est inférieur au loyer mensuel prévu au bail.');
+                      } else if (preset.id === 'erreur_periode') {
+                        setRejectionReasonInput('Erreur d\'imputation sur le mois ou sur la référence du contrat de bail.');
+                      } else {
+                        setRejectionReasonInput('');
+                      }
+                    }}
+                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition-all text-xs cursor-pointer ${
+                      rejectionPreset === preset.id
+                        ? 'border-rose-500 bg-rose-50/70 text-rose-950 font-bold'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <span className="font-black text-slate-900">{preset.label}</span>
+                    <span className="text-[10px] text-slate-500 font-normal">{preset.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Champ texte libre du motif */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold text-slate-700">Détail du motif communiqué au locataire :</label>
+              <textarea
+                value={rejectionReasonInput}
+                onChange={(e) => setRejectionReasonInput(e.target.value)}
+                rows={3}
+                placeholder="Indiquez clairement la raison du rejet pour permettre au locataire de régulariser..."
+                className="w-full p-3 rounded-xl border border-slate-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 text-xs text-slate-900 outline-none resize-none"
+              />
+            </div>
+
+            {/* Boutons d'action */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+              <button
+                type="button"
+                onClick={() => setRejectingPayment(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingRejection || !rejectionReasonInput.trim()}
+                onClick={handleConfirmRejection}
+                className={`px-5 py-2 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow-md transition-all cursor-pointer ${
+                  isSubmittingRejection || !rejectionReasonInput.trim()
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                    : 'bg-rose-600 hover:bg-rose-500 active:scale-95'
+                }`}
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                <span>{isSubmittingRejection ? 'Enregistrement...' : 'Confirmer le refus'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

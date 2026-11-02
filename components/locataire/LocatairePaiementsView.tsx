@@ -65,6 +65,12 @@ export const LocatairePaiementsView: React.FC = () => {
   const [showCautionModal, setShowCautionModal] = useState<boolean>(false);
   const [isSigningCautionModalOpen, setIsSigningCautionModalOpen] = useState<boolean>(false);
   const [signingReceiptPayment, setSigningReceiptPayment] = useState<any | null>(null);
+
+  // Dispute & Contestation Modal State (Phase 2)
+  const [contestingPayment, setContestingPayment] = useState<any | null>(null);
+  const [disputeArgumentInput, setDisputeArgumentInput] = useState<string>('');
+  const [disputeProofUrlInput, setDisputeProofUrlInput] = useState<string>('');
+  const [isSubmittingDispute, setIsSubmittingDispute] = useState<boolean>(false);
   const [isSigningReceiptModalOpen, setIsSigningReceiptModalOpen] = useState<boolean>(false);
   const [isSubmittingCaution, setIsSubmittingCaution] = useState<boolean>(false);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState<boolean>(false);
@@ -1066,6 +1072,120 @@ export const LocatairePaiementsView: React.FC = () => {
     }
   };
 
+  // Handlers pour la Contestation de Litige (Phase 2)
+  const handleOpenContestModal = (pmt: any) => {
+    setContestingPayment(pmt);
+    setDisputeArgumentInput(`Je confirme avoir réglé ce montant le ${pmt.payment_date || 'ce mois'} via ${pmt.payment_method || 'Mobile Money'}. Référence réelle confirmée : ${pmt.reference || ''}. Merci de réexaminer ce versement.`);
+    setDisputeProofUrlInput('');
+  };
+
+  const handleConfirmDisputeSubmission = async () => {
+    if (!contestingPayment) return;
+    const finalArgument = disputeArgumentInput.trim();
+    if (!finalArgument) {
+      alert('Veuillez préciser vos explications et motifs de contestation.');
+      return;
+    }
+
+    setIsSubmittingDispute(true);
+    const targetId = contestingPayment.id;
+    const nowIso = new Date().toISOString();
+
+    // 1. Mise à jour de l'état local
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.id === targetId
+          ? {
+              ...p,
+              rejection_contested: true,
+              dispute_reason: finalArgument,
+              updated_at: nowIso
+            }
+          : p
+      )
+    );
+
+    // 2. Persistance locale dans locatrust_payments_v2
+    try {
+      const stored = localStorage.getItem('locatrust_payments_v2');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const updated = parsed.map((p: any) =>
+            p.id === targetId
+              ? { ...p, rejection_contested: true, dispute_reason: finalArgument, updated_at: nowIso }
+              : p
+          );
+          localStorage.setItem('locatrust_payments_v2', JSON.stringify(updated));
+        }
+      }
+    } catch (e) {
+      console.warn('LocalStorage contestation update notice:', e);
+    }
+
+    // 3. Mise à jour Supabase table rent_payments
+    try {
+      await supabase
+        .from('rent_payments')
+        .update({
+          rejection_contested: true,
+          dispute_reason: finalArgument,
+          updated_at: nowIso
+        })
+        .eq('id', targetId);
+    } catch (e) {
+      console.warn('Supabase rent_payments contestation update notice:', e);
+    }
+
+    // 4. Insertion dans la table Supabase payment_disputes pour arbitrage admin
+    try {
+      await supabase.from('payment_disputes').insert({
+        id: crypto.randomUUID(),
+        payment_id: targetId,
+        contract_id: contestingPayment.contract_id || null,
+        tenant_id: user?.id || contestingPayment.tenant_id,
+        owner_id: contestingPayment.owner_id || null,
+        agency_id: contestingPayment.agency_id || null,
+        amount_in_dispute: Number(contestingPayment.amount) || 0,
+        rejection_reason: contestingPayment.rejection_reason || 'Paiement rejeté par le bailleur',
+        dispute_reason: finalArgument,
+        proof_url: disputeProofUrlInput.trim() || null,
+        status: 'arbitrage_requis'
+      });
+    } catch (dispErr) {
+      console.warn('Supabase payment_disputes insert notice:', dispErr);
+    }
+
+    // 5. Notification au bailleur
+    try {
+      const ownerId = contestingPayment.owner_id;
+      if (ownerId) {
+        pushGlobalNotification({
+          title: 'Refus de loyer contesté par le locataire',
+          description: `Le locataire conteste le refus du loyer (${formatFCFA(contestingPayment.amount)}). Le dossier est transmis pour arbitrage.`,
+          category: 'paiement',
+          targetTab: 'payments',
+          targetRole: 'proprietaire',
+          targetUserId: ownerId,
+          senderUserId: user?.id,
+          payload: {
+            paymentId: targetId,
+            disputeReason: finalArgument
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Notification dispute notice:', e);
+    }
+
+    setIsSubmittingDispute(false);
+    setContestingPayment(null);
+    setSuccessModalMessage({
+      title: 'Contestation transmise !',
+      desc: 'Votre contestation et vos justificatifs ont été enregistrés avec succès. Le dossier est ouvert pour examen et arbitrage prioritaire.'
+    });
+  };
+
   const handleDownloadCautionReceipt = async (dep: any) => {
     try {
       const resolved = resolveDepositContractDetails(dep);
@@ -1541,6 +1661,29 @@ export const LocatairePaiementsView: React.FC = () => {
                           <Receipt className="w-3.5 h-3.5" />
                           <span>Télécharger Quittance</span>
                         </button>
+                      ) : pmt.status === 'refuse' || pmt.status === 'rejete' ? (
+                        <div className="flex flex-col items-end gap-1">
+                          {pmt.rejection_contested ? (
+                            <span className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 text-[10px] font-black border border-purple-200">
+                              ⚖️ Arbitrage en cours
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenContestModal(pmt)}
+                              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black inline-flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
+                              title="Contester le refus et fournir des preuves"
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              <span>Contester le refus</span>
+                            </button>
+                          )}
+                          {pmt.rejection_reason && (
+                            <span className="text-[10px] text-rose-500 font-medium max-w-[180px] truncate" title={pmt.rejection_reason}>
+                              Motif : {pmt.rejection_reason}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-slate-400 text-[11px]">En attente validation</span>
                       )}
@@ -2046,6 +2189,97 @@ export const LocatairePaiementsView: React.FC = () => {
           documentTitle="Reçu Officiel de Caution"
           documentNumber={`REC-CAUT-${(myDeposit.id || 'OFFICIEL').toUpperCase()}`}
         />
+      )}
+
+      {/* MODAL DE CONTESTATION DE LITIGE PAR LE LOCATAIRE (PHASE 2) */}
+      {contestingPayment && (
+        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4 animate-scaleUp">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-black">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Contester le refus de loyer</h3>
+                  <p className="text-[11px] text-slate-500">Ouverture d'un dossier de médiation et d'arbitrage officiel</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setContestingPayment(null)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Récapitulatif du versement refusé */}
+            <div className="p-3.5 rounded-2xl bg-rose-50/60 border border-rose-200 flex flex-col gap-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-slate-900">Règlement de {formatFCFA(contestingPayment.amount)}</span>
+                <span className="font-mono text-[10px] text-slate-600 bg-white px-2 py-0.5 rounded border border-rose-200">
+                  {contestingPayment.reference}
+                </span>
+              </div>
+              {contestingPayment.rejection_reason && (
+                <div className="mt-1 pt-1 border-t border-rose-200/60 text-rose-800">
+                  <span className="font-bold">Motif communiqué par le bailleur : </span>
+                  <span className="italic">{contestingPayment.rejection_reason}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Formulaire de contestation */}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-800">Votre argumentation et explication détaillée :</label>
+                <textarea
+                  value={disputeArgumentInput}
+                  onChange={(e) => setDisputeArgumentInput(e.target.value)}
+                  rows={4}
+                  placeholder="Précisez votre heure de virement, le numéro d'envoi Mobile Money ou la preuve du débit..."
+                  className="w-full p-3 rounded-xl border border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-xs text-slate-900 outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-800">Lien ou référence vers le reçu de paiement (optionnel) :</label>
+                <input
+                  type="text"
+                  value={disputeProofUrlInput}
+                  onChange={(e) => setDisputeProofUrlInput(e.target.value)}
+                  placeholder="Ex : Référence SMS Wave CI ou capture hébergée"
+                  className="w-full p-2.5 rounded-xl border border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 text-xs text-slate-900 outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Boutons d'action */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+              <button
+                type="button"
+                onClick={() => setContestingPayment(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingDispute || !disputeArgumentInput.trim()}
+                onClick={handleConfirmDisputeSubmission}
+                className={`px-5 py-2 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow-md transition-all cursor-pointer ${
+                  isSubmittingDispute || !disputeArgumentInput.trim()
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                    : 'bg-amber-600 hover:bg-amber-500 active:scale-95'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>{isSubmittingDispute ? 'Transmission...' : 'Ouvrir le litige officiel'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* MODAL DE SIGNATURE DE LA QUITTANCE DE LOYER PAR LE LOCATAIRE (Point 7 du prompt) */}

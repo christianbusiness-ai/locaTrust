@@ -246,6 +246,65 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         .select('*')
         .limit(100);
 
+      // 5. Litiges et contestations réelles (Phase 2)
+      let liveDisputes: DisputeDossier[] = [];
+      try {
+        const { data: dbDisputes } = await supabase
+          .from('payment_disputes')
+          .select('*')
+          .limit(100);
+
+        if (dbDisputes && dbDisputes.length > 0) {
+          liveDisputes = dbDisputes.map((d: any) => {
+            const tenantProf = (dbProfiles || []).find((p: any) => p.id === d.tenant_id);
+            const ownerProf = (dbProfiles || []).find((p: any) => p.id === d.owner_id);
+            const cnt = (dbContracts || []).find((c: any) => c.id === d.contract_id);
+
+            return {
+              id: d.id,
+              title: `Contestation de Loyer : Refus de paiement`,
+              description: d.dispute_reason || 'Contestation soumise par le locataire',
+              status: (d.status === 'resolu' ? 'resolu' : (d.status === 'en_cours' ? 'en_cours' : 'arbitrage_requis')) as any,
+              tenant_name: tenantProf?.full_name || 'Locataire',
+              tenant_phone: tenantProf?.phone || 'Non renseigné',
+              owner_name: ownerProf?.full_name || 'Bailleur',
+              owner_phone: ownerProf?.phone || 'Non renseigné',
+              amount_in_dispute: Number(d.amount_in_dispute) || 0,
+              contract_number: cnt?.contract_number || 'LT-CI-CONTRAT',
+              created_at: d.created_at ? new Date(d.created_at).toLocaleDateString('fr-FR') : 'Récent',
+              resolution_notes: d.resolution_verdict || undefined
+            };
+          });
+        }
+      } catch (dispErr) {
+        console.warn('Notice chargement payment_disputes:', dispErr);
+      }
+
+      // Compléter avec les paiements marqués rejection_contested
+      (dbPayments || [])
+        .filter((pm: any) => pm.rejection_contested && !liveDisputes.some(ld => ld.id === pm.id))
+        .forEach((pm: any) => {
+          const tenantProf = (dbProfiles || []).find((p: any) => p.id === pm.tenant_id);
+          const ownerProf = (dbProfiles || []).find((p: any) => p.id === pm.owner_id);
+          const cnt = (dbContracts || []).find((c: any) => c.id === pm.contract_id);
+
+          liveDisputes.push({
+            id: pm.id,
+            title: `Contestation de Loyer : ${pm.reference || 'Échéance'}`,
+            description: pm.dispute_reason || 'Paiement contesté suite au refus du bailleur',
+            status: 'arbitrage_requis',
+            tenant_name: tenantProf?.full_name || 'Locataire',
+            tenant_phone: tenantProf?.phone || 'Non renseigné',
+            owner_name: ownerProf?.full_name || 'Bailleur',
+            owner_phone: ownerProf?.phone || 'Non renseigné',
+            amount_in_dispute: Number(pm.amount) || 0,
+            contract_number: cnt?.contract_number || 'LT-CI-CONTRAT',
+            created_at: pm.updated_at ? new Date(pm.updated_at).toLocaleDateString('fr-FR') : 'Récent'
+          });
+        });
+
+      setDisputes(liveDisputes);
+
       const profiles = dbProfiles || [];
       const properties = dbProperties || [];
       const contracts = dbContracts || [];
@@ -671,13 +730,51 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   };
 
   // =========================================================================
-  // ACTIONS : DISPUTES / LITIGES
+  // ACTIONS : DISPUTES / LITIGES (PHASE 2 - ARBITRAGE ADMIN CONNECTÉ)
   // =========================================================================
-  const handleResolveDispute = (disputeId: string, resolutionVerdict: string) => {
+  const handleResolveDispute = async (disputeId: string, resolutionVerdict: string, decision: 'locataire_confirme' | 'bailleur_maintenu' = 'locataire_confirme') => {
+    // 1. Mise à jour de l'état local
     setDisputes(prev => prev.map(d => d.id === disputeId ? { ...d, status: 'resolu', resolution_notes: resolutionVerdict } : d));
     setInspectedDispute(null);
+
+    // 2. Appel RPC ou update Supabase
+    try {
+      const { error: rpcErr } = await supabase.rpc('admin_resolve_dispute', {
+        p_dispute_id: disputeId,
+        p_verdict: resolutionVerdict,
+        p_decision: decision
+      });
+
+      if (rpcErr) {
+        // Fallback update direct si RPC non encore appliquée
+        await supabase
+          .from('payment_disputes')
+          .update({
+            status: 'resolu',
+            resolution_verdict: resolutionVerdict,
+            resolved_at: new Date().toISOString()
+          })
+          .eq('id', disputeId);
+
+        // Répercussion sur rent_payments
+        if (decision === 'locataire_confirme') {
+          await supabase
+            .from('rent_payments')
+            .update({ status: 'confirme', rejection_contested: false })
+            .eq('id', disputeId);
+        } else {
+          await supabase
+            .from('rent_payments')
+            .update({ status: 'rejete', rejection_contested: false })
+            .eq('id', disputeId);
+        }
+      }
+    } catch (e) {
+      console.warn('Arbitrage dispute sync notice:', e);
+    }
+
     triggerCelebration('success');
-    showToast(`⚖️ Litige ${disputeId} arbitré et clôturé : ${resolutionVerdict}`);
+    showToast(`⚖️ Litige arbitré et clôturé : ${resolutionVerdict}`);
   };
 
   // =========================================================================
@@ -2355,19 +2452,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
             {/* Direct Mediation Arbitrage Buttons */}
             <div className="flex flex-col gap-2 pt-3 border-t">
-              <span className="text-xs font-bold text-slate-700">Actions d'Arbitrage de l'Administrateur :</span>
+              <span className="text-xs font-bold text-slate-700">Actions d'Arbitrage et Verdict Administrateur :</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
-                  onClick={() => handleResolveDispute(inspectedDispute.id, 'Restitution intégrale ordonnée au profit du locataire')}
-                  className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm transition-all"
+                  type="button"
+                  onClick={() => handleResolveDispute(inspectedDispute.id, 'Paiement confirmé après vérification des preuves de virement', 'locataire_confirme')}
+                  className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  ✔ Restituer la caution au locataire
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Arbitrer en faveur du locataire (Confirmer loyer)</span>
                 </button>
                 <button
-                  onClick={() => handleResolveDispute(inspectedDispute.id, 'Retenue validée au profit du bailleur')}
-                  className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-extrabold text-xs shadow-sm transition-all"
+                  type="button"
+                  onClick={() => handleResolveDispute(inspectedDispute.id, 'Refus du bailleur maintenu faute de justificatif probant', 'bailleur_maintenu')}
+                  className="py-2.5 px-3 rounded-xl bg-rose-700 hover:bg-rose-800 text-white font-extrabold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  ✔ Valider retenue au bailleur
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span>Maintenir le rejet au profit du bailleur</span>
                 </button>
               </div>
             </div>
