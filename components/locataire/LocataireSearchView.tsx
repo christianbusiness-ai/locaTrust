@@ -99,7 +99,8 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       const { data, error: qErr } = await supabase
         .from('properties')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(30);
 
       const enriched = await enrichPropertiesWithProfiles(data || []);
       const formatted = (enriched || []).map((p: any) => ({
@@ -130,7 +131,8 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       let query = supabase
         .from('rental_applications')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(30);
 
       if (user.id) {
         query = query.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);

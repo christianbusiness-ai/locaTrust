@@ -294,8 +294,12 @@ export const Header: React.FC<HeaderProps> = ({
       document.documentElement.classList.remove('dark');
     }
 
+    let isFetchingNotifs = false;
+    let notifsDebounceTimer: any = null;
+
     const loadStoredNotifs = async () => {
-      if (isLoggingOutInProgress()) return;
+      if (isLoggingOutInProgress() || isFetchingNotifs) return;
+      isFetchingNotifs = true;
       try {
         const userId = currentUser.id || '';
         const userRole = currentUser.role || 'proprietaire';
@@ -437,6 +441,8 @@ export const Header: React.FC<HeaderProps> = ({
         }
       } catch (e) {
         console.warn('Error reading notifications:', e);
+      } finally {
+        isFetchingNotifs = false;
       }
       setNotifications([]);
     };
@@ -504,12 +510,16 @@ export const Header: React.FC<HeaderProps> = ({
         const cleaned = deduplicateAndNormalizeNotifications(cleanedRaw, userId);
         setNotifications(cleaned);
       } else {
-        loadStoredNotifs();
+        if (notifsDebounceTimer) clearTimeout(notifsDebounceTimer);
+        notifsDebounceTimer = setTimeout(() => {
+          loadStoredNotifs();
+        }, 400);
       }
     };
     window.addEventListener('locatrust:notifications-updated', handleNotifsUpdated);
 
     return () => {
+      if (notifsDebounceTimer) clearTimeout(notifsDebounceTimer);
       window.removeEventListener('locatrust:avatar_updated', handleAvatarUpdated);
       window.removeEventListener('locatrust:notifications-updated', handleNotifsUpdated);
     };

@@ -152,8 +152,13 @@ const LiveSyncManager: React.FC = () => {
 
     const unsubscribe = subscribeToLiveSync(user.id);
 
+    let lastSyncTime = 0;
     const triggerGlobalSync = () => {
       if (!user?.id || isLoggingOutInProgress()) return;
+      const now = Date.now();
+      if (now - lastSyncTime < 10000) return; // Limiter la fréquence de synchronisation globale (minimum 10s)
+      lastSyncTime = now;
+
       subscribeToLiveSync(user.id);
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
       window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
@@ -190,9 +195,11 @@ const MobileBackButtonManager: React.FC = () => {
   const { user } = useAuth();
 
   useEffect(() => {
-    if (user && !isLoggingOutInProgress() && typeof window !== 'undefined') {
+    if (user?.id && !isLoggingOutInProgress() && typeof window !== 'undefined') {
       try {
-        window.history.pushState({ locatrustApp: true }, '', window.location.href);
+        if (!window.history.state?.locatrustApp) {
+          window.history.pushState({ locatrustApp: true }, '', window.location.href);
+        }
       } catch {}
 
       const handlePopState = () => {
@@ -224,7 +231,7 @@ const MobileBackButtonManager: React.FC = () => {
         window.removeEventListener('popstate', handlePopState);
       };
     }
-  }, [user, navigate]);
+  }, [user?.id, navigate]);
 
   return null;
 };

@@ -21,7 +21,10 @@ import {
   Check,
   Lock,
   PenTool,
-  AlertTriangle
+  AlertTriangle,
+  Building2,
+  Home,
+  Phone
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
@@ -1637,28 +1640,73 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             </div>
 
             {/* Profile summary */}
-            <div className="p-3.5 bg-slate-50 rounded-2xl border flex items-center gap-3 text-xs">
-              <img
-                src={selectedDossierApp.tenant_avatar}
-                alt={selectedDossierApp.tenant_name}
-                className="w-12 h-12 rounded-full object-cover border"
-              />
-              <div className="flex flex-col">
-                <span className="font-black text-slate-900 text-sm">{selectedDossierApp.tenant_name}</span>
-                <span className="text-slate-500">Tél : {selectedDossierApp.tenant_phone}</span>
-                <span className="text-slate-500">CNI : {selectedDossierApp.tenant_cni}</span>
+            <div className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-200">
+                  <UserAvatar
+                    name={selectedDossierApp.tenant_name}
+                    src={selectedDossierApp.tenant_avatar}
+                    fallbackRole="locataire"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-xs truncate">{selectedDossierApp.tenant_name}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold shrink-0">
+                      ✓ Candidat
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px] truncate">
+                    <span>Tél : {selectedDossierApp.tenant_phone || 'Non renseigné'}</span>
+                    <span className="text-slate-300">•</span>
+                    <span>CNI : {selectedDossierApp.tenant_cni || 'Vérifiée'}</span>
+                  </div>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => alert(`Dossier candidat : ${selectedDossierApp.tenant_name}\nTéléphone : ${selectedDossierApp.tenant_phone || 'Non renseigné'}\nCNI : ${selectedDossierApp.tenant_cni || 'Vérifiée'}`)}
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold shrink-0 ml-3"
+              >
+                Consulter
+              </button>
             </div>
 
             {/* Property summary */}
-            <div className="p-3.5 bg-blue-50/50 rounded-2xl border border-blue-100 flex flex-col gap-1 text-xs">
-              <span className="font-extrabold text-blue-900 text-sm">{selectedDossierApp.property_title}</span>
-              <span className="text-slate-600">{selectedDossierApp.property_address || 'Abidjan'}</span>
-              <div className="flex items-center gap-3 pt-1 text-xs font-bold text-slate-800">
-                <span>Loyer : <strong className="text-blue-700">{formatFCFA(selectedDossierApp.rent_amount)}</strong>/mois</span>
-                <span>•</span>
-                <span>Caution : <strong className="text-slate-700">{formatFCFA(selectedDossierApp.caution_amount)}</strong></span>
+            <div className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-xs truncate">{selectedDossierApp.property_title}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-bold shrink-0">
+                      Logement
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px] truncate">
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                      {selectedDossierApp.property_address || 'Abidjan'}
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-blue-700 font-bold">
+                      {formatFCFA(selectedDossierApp.rent_amount)}/mois
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span>Caution : {formatFCFA(selectedDossierApp.caution_amount)}</span>
+                  </div>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => alert(`Logement : ${selectedDossierApp.property_title}\nAdresse : ${selectedDossierApp.property_address || 'Abidjan'}\nLoyer : ${formatFCFA(selectedDossierApp.rent_amount)}/mois\nCaution : ${formatFCFA(selectedDossierApp.caution_amount)}`)}
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold shrink-0 ml-3"
+              >
+                Consulter
+              </button>
             </div>
 
             {/* Documents attached */}
@@ -1709,7 +1757,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   <FileText className="w-4 h-4 text-blue-600" />
                   <div className="flex flex-col">
                     <span className="font-bold text-slate-900">Fiche de renseignements locataire</span>
-                    <span className="text-[10px] text-slate-400">Complétée le {selectedDossierApp.date_received}</span>
+                    <span className="text-[10px] text-emerald-600 font-bold">
+                      ✓ Complétée le {selectedDossierApp.date_received ? new Date(selectedDossierApp.date_received).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Récemment'}
+                    </span>
                   </div>
                 </div>
                 <button

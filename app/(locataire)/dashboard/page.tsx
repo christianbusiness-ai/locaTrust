@@ -26,6 +26,7 @@ import { SupportModal } from '@/components/modals/InteractiveModals';
 
 import { ShieldCheck, ArrowRight } from 'lucide-react';
 import { initAccentTheme } from '@/lib/themeHelper';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 interface TenantDashboardPageProps {
   currentRole?: UserRole;
@@ -113,7 +114,8 @@ export default function TenantDashboardPage({
           onOpenSupport={() => setActiveTab('support')}
         />
 
-        <main className="flex-1 flex flex-col min-w-0">
+        <ErrorBoundary>
+          <main className="flex-1 flex flex-col min-w-0">
           
           {/* Bannière KYC discrète et responsive si compte non encore certifié */}
           {profile?.verification_status !== 'verifie' && (
@@ -215,6 +217,7 @@ export default function TenantDashboardPage({
           )}
 
         </main>
+        </ErrorBoundary>
       </div>
 
       <SupportModal isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} />

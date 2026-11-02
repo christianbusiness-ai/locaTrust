@@ -67,9 +67,11 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const [realPayments, setRealPayments] = useState<any[]>([]);
   const [realApplications, setRealApplications] = useState<any[]>([]);
   const [realAccountingDataset, setRealAccountingDataset] = useState<RealAccountingDataset | null>(null);
+  const isFetchingRef = React.useRef(false);
 
   const fetchDashboardData = async () => {
-    if (isDemo) return;
+    if (isDemo || isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setIsLoading(true);
     try {
       // 0. Synchronisation prioritaire depuis /api/sync
@@ -257,6 +259,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     } catch (err) {
       console.warn('Dashboard live fetch notice:', err);
     } finally {
+      isFetchingRef.current = false;
       setIsLoading(false);
     }
   };
@@ -264,9 +267,13 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   useEffect(() => {
     fetchDashboardData();
 
-    // Écouteurs d'événements pour mise à jour instantanée sans forcer l'utilisateur à actualiser
+    // Écouteurs d'événements debouncés pour mise à jour instantanée sans avalanche de requêtes
+    let updateDebounceTimer: any = null;
     const handleLiveUpdate = () => {
-      fetchDashboardData();
+      if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
+      updateDebounceTimer = setTimeout(() => {
+        fetchDashboardData();
+      }, 300);
     };
 
     const handleYearChanged = (e: any) => {
@@ -289,6 +296,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     }, 60000);
 
     return () => {
+      if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
       clearInterval(syncInterval);
       window.removeEventListener('locatrust:properties-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:applications-updated', handleLiveUpdate);
@@ -298,7 +306,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       window.removeEventListener('locatrust:cautions_updated', handleLiveUpdate);
       window.removeEventListener('locatrust:year_changed', handleYearChanged);
     };
-  }, [user, isDemo]);
+  }, [user?.id, isDemo]);
 
   // Synchronisation avec l'année du profil Supabase
   useEffect(() => {

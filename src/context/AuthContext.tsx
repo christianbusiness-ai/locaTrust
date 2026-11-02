@@ -307,8 +307,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 3. Écoute réactive des mises à jour de profil (événements personnalisés & retour au premier plan)
+    let lastFocusSyncTime = 0;
     const handleProfileSync = () => {
       if (mounted && !isLoggingOutInProgress()) {
+        const now = Date.now();
+        if (now - lastFocusSyncTime < 30000) return; // Limiter la fréquence de synchronisation du profil au focus (max 1x / 30s)
+        lastFocusSyncTime = now;
+
         refreshProfile();
         supabase.auth.getUser().then(({ data: { user: curUser } }) => {
           if (curUser && !isLoggingOutInProgress()) syncUserData(curUser.id).catch(console.warn);
@@ -318,6 +323,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && mounted && !isLoggingOutInProgress()) {
+        const now = Date.now();
+        if (now - lastFocusSyncTime < 30000) return;
+        lastFocusSyncTime = now;
+
         refreshProfile();
         supabase.auth.getUser().then(({ data: { user: curUser } }) => {
           if (curUser && !isLoggingOutInProgress()) syncUserData(curUser.id).catch(console.warn);

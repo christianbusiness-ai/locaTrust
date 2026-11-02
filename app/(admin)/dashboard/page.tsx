@@ -8,6 +8,7 @@ import { RoleSwitcher } from '@/components/layout/RoleSwitcher';
 import { AdminDashboardView } from '@/components/admin/AdminDashboardView';
 import { SupportModal } from '@/components/modals/InteractiveModals';
 import { UserRole } from '@/types/database.types';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 import { initAccentTheme } from '@/lib/themeHelper';
 
@@ -76,12 +77,14 @@ export default function AdminDashboardPage({
           onOpenSupport={() => setIsSupportOpen(true)}
         />
 
-        <main className="flex-1 flex flex-col min-w-0">
-          <AdminDashboardView
-            activeTab={activeTab === 'overview' ? 'supervision' : activeTab}
-            onSelectTab={setActiveTab}
-          />
-        </main>
+        <ErrorBoundary>
+          <main className="flex-1 flex flex-col min-w-0">
+            <AdminDashboardView
+              activeTab={activeTab === 'overview' ? 'supervision' : activeTab}
+              onSelectTab={setActiveTab}
+            />
+          </main>
+        </ErrorBoundary>
       </div>
 
       <SupportModal isOpen={isSupportOpen} onClose={() => setIsSupportOpen(false)} />

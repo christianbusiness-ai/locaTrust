@@ -59,14 +59,15 @@ export async function enrichPropertiesWithProfiles(properties: any[]) {
 }
 
 // =============================================================================
-// REQUÊTES PROPRIÉTÉS (BIENS IMMOBILIERS)
+// REQUÊTES PROPRIÉTÉS (BIENS IMMOBILIERS) AVEC PAGINATION STRICTE
 // =============================================================================
-export async function getProperties(ownerId?: string) {
+export async function getProperties(ownerId?: string, limit: number = 50, offset: number = 0) {
   try {
     let query = supabase
       .from('properties')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (ownerId) {
       query = query.or(`owner_id.eq.${ownerId},agency_id.eq.${ownerId}`);
@@ -84,14 +85,15 @@ export async function getProperties(ownerId?: string) {
   }
 }
 
-export async function getAvailableProperties() {
+export async function getAvailableProperties(limit: number = 20, offset: number = 0) {
   try {
     const { data, error } = await supabase
       .from('properties')
       .select('*')
       .eq('status', 'disponible')
       .is('deleted_at', null)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (error) {
       console.warn('Erreur lecture logements disponibles:', error.message);

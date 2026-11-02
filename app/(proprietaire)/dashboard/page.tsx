@@ -200,7 +200,8 @@ export default function ProprietaireDashboardPage({
         />
 
         {/* Main Content Render Area */}
-        <main className="flex-1 flex flex-col min-w-0">
+        <ErrorBoundary>
+          <main className="flex-1 flex flex-col min-w-0">
           
           {/* Bannière KYC discrète et responsive si compte non encore certifié */}
           {profile?.verification_status !== 'verifie' && (
@@ -453,6 +454,7 @@ export default function ProprietaireDashboardPage({
           )}
 
         </main>
+        </ErrorBoundary>
 
       </div>
 

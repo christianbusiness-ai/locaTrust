@@ -198,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       window.removeEventListener('locatrust:messages-updated', updateCounts);
       window.removeEventListener('locatrust:cautions_updated', updateCounts);
     };
-  }, [user, isLocataire, isProprietaire, isAgence]);
+  }, [user?.id, user?.email, isLocataire, isProprietaire, isAgence]);
 
   // 1. LOCATAIRE SPECIFIC NAVIGATION
   const tenantItems = [

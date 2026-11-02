@@ -212,34 +212,39 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const fetchRealData = async () => {
     setIsLoadingData(true);
     try {
-      // 1. Profils réels enregistrés
+      // 1. Profils réels enregistrés avec plafond sécurisé
       const { data: dbProfiles, error: profErr } = await supabase
         .from('profiles')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(100);
 
       if (profErr) {
         console.error('Erreur chargement profils:', profErr);
       }
 
-      // 2. Biens réels
+      // 2. Biens réels (plafond 100)
       const { data: dbProperties } = await supabase
         .from('properties')
-        .select('*');
+        .select('*')
+        .limit(100);
 
-      // 3. Contrats réels
+      // 3. Contrats réels (plafond 100)
       const { data: dbContracts } = await supabase
         .from('contracts')
-        .select('*');
+        .select('*')
+        .limit(100);
 
-      // 4. Paiements & Cautions
+      // 4. Paiements & Cautions (plafond 100)
       const { data: dbPayments } = await supabase
         .from('rent_payments')
-        .select('*');
+        .select('*')
+        .limit(100);
 
       const { data: dbCautions } = await supabase
         .from('cautions')
-        .select('*');
+        .select('*')
+        .limit(100);
 
       const profiles = dbProfiles || [];
       const properties = dbProperties || [];
@@ -328,9 +333,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   useEffect(() => {
     fetchRealData();
 
-    // Rafraîchissement automatique instantané sur soumission KYC ou modification de profil
+    // Rafraîchissement automatique debouncé sur soumission KYC ou modification de profil
+    let syncDebounceTimer: any = null;
     const handleSync = () => {
-      fetchRealData();
+      if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
+      syncDebounceTimer = setTimeout(() => {
+        fetchRealData();
+      }, 500);
     };
 
     window.addEventListener('locatrust:verification_updated', handleSync);
@@ -344,12 +353,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles' },
         () => {
-          fetchRealData();
+          handleSync();
         }
       )
       .subscribe();
 
     return () => {
+      if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
       window.removeEventListener('locatrust:verification_updated', handleSync);
       window.removeEventListener('locatrust:profile_updated', handleSync);
       window.removeEventListener('locatrust:refresh_admin_data', handleSync);

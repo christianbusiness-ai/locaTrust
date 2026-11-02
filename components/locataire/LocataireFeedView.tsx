@@ -60,6 +60,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   const [typeFilter, setTypeFilter] = useState('');
   const [budgetFilter, setBudgetFilter] = useState('');
   const [roomsFilter, setRoomsFilter] = useState('Toutes');
+  const [visibleCount, setVisibleCount] = useState<number>(10);
 
   const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({});
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
@@ -852,6 +853,10 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     };
   });
 
+  useEffect(() => {
+    setVisibleCount(10);
+  }, [activeSearch, cityFilter, districtFilter, typeFilter, budgetFilter, roomsFilter]);
+
   // Options dynamiques calculées en direct depuis les données réelles de la base Supabase
   const availableCities = React.useMemo(() => {
     const set = new Set<string>();
@@ -992,6 +997,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           <img
             src={item.authorAvatar}
             alt={item.authorName}
+            loading="lazy"
+            decoding="async"
             className="w-11 h-11 rounded-full object-cover ring-2 ring-slate-100"
           />
           <div className="flex flex-col">
@@ -1044,6 +1051,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           <img
             src={item.images.main}
             alt={item.title}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
@@ -1061,6 +1070,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             <img
               src={item.images.main}
               alt={item.title}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
           </div>
@@ -1071,6 +1082,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             <img
               src={item.images.thumb1}
               alt="Photo 2"
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
           </div>
@@ -1085,6 +1098,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             <img
               src={item.images.main}
               alt={item.title}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             />
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
@@ -1101,6 +1116,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <img
                 src={item.images.thumb1}
                 alt="Vue pièce"
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               />
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
@@ -1112,6 +1129,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <img
                 src={item.images.thumb2}
                 alt="Vue intérieure"
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               />
               {item.images.extraCount ? (
@@ -1457,7 +1476,20 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
                 </button>
               </div>
             )}
-            {filteredFeedItems.map((item) => renderFeedCard(item, false))}
+            {filteredFeedItems.slice(0, visibleCount).map((item) => renderFeedCard(item, false))}
+            
+            {visibleCount < filteredFeedItems.length && (
+              <div className="flex justify-center mt-6">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((prev) => prev + 10)}
+                  className="px-6 py-3 rounded-2xl bg-white border border-slate-200 text-blue-600 hover:bg-blue-50 font-black text-xs shadow-sm flex items-center gap-2 transition-all cursor-pointer active:scale-95"
+                >
+                  <span>Afficher plus d'annonces ({filteredFeedItems.length - visibleCount} restantes)</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -2010,7 +2042,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
               <video
                 src={activeVideoModal}
                 controls
-                autoPlay
+                preload="none"
                 playsInline
                 className="w-full h-full max-h-[75vh] object-contain"
               />

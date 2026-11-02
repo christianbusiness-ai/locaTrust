@@ -630,7 +630,7 @@ export const BiensView: React.FC<BiensViewProps> = ({
                           src={vUrl}
                           controls
                           className="w-full h-full object-contain"
-                          preload="metadata"
+                          preload="none"
                         >
                           Votre navigateur ne prend pas en charge la lecture vidéo.
                         </video>
