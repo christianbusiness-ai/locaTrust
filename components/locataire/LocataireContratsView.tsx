@@ -236,19 +236,19 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                   rent: a.rent_amount,
                   caution: a.caution_amount,
                   caution_amount: a.caution_amount,
-                  charges: 10000,
+                  charges: Number(a.charges_amount || a.charges || 0),
                   status: 'actif',
                   start_date: a.date_received || new Date().toISOString(),
                   owner_signed: a.owner_signed ?? true,
                   tenant_signed: a.tenant_signed ?? true,
                   owner_signature_url: a.owner_signature_url,
                   tenant_signature_url: a.tenant_signature_url,
-                  owner: { full_name: a.owner_name || 'Bailleur certifié', phone: a.owner_phone || '+225 00 00 00 00' },
+                  owner: { full_name: a.owner_name || 'Bailleur', phone: a.owner_phone || '+225 00 00 00 00' },
                   tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
                   property: {
                     title: a.property_title || 'Logement loué',
-                    city: 'Abidjan',
-                    address: a.property_address || 'Abidjan - Côte d\'Ivoire'
+                    city: a.city || a.property_city || 'Côte d\'Ivoire',
+                    address: a.property_address || 'Côte d\'Ivoire'
                   }
                 });
               }

@@ -292,12 +292,12 @@ export const LocatairePaiementsView: React.FC = () => {
                 rent: Number(a.rent_amount || 0),
                 caution: Number(a.caution_amount || 0),
                 caution_amount: Number(a.caution_amount || 0),
-                charges: 10000,
+                charges: Number(a.charges_amount || a.charges || 0),
                 status: 'actif',
                 property: {
                   title: a.property_title || 'Logement loué',
-                  city: 'Abidjan',
-                  address: a.property_address || 'Abidjan'
+                  city: a.city || a.property_city || 'Côte d\'Ivoire',
+                  address: a.property_address || 'Côte d\'Ivoire'
                 }
               });
             }

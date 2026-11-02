@@ -575,110 +575,114 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const handleNotificationClick = (item: any) => {
-    markNotificationAsRead(item, currentUser?.id);
-    setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n)));
+    if (!item) return;
+    try {
+      markNotificationAsRead(item, currentUser?.id);
+      setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n)));
+      setShowNotifications(false);
 
-    setShowNotifications(false);
-
-    // Redirection directe contextuelle selon la notification
-    if (item.type === 'quittance_signature_requise' || item.payload?.action === 'sign_receipt') {
-      if (onNavigateTab) {
-        onNavigateTab('payments');
-      }
-      setTimeout(() => {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('locatrust:open_sign_receipt', { detail: item.payload }));
+      // Redirection directe contextuelle selon la notification
+      if (item.type === 'quittance_signature_requise' || item.payload?.action === 'sign_receipt') {
+        if (onNavigateTab) {
+          onNavigateTab('payments');
         }
-      }, 150);
-    } else if (
-      item.category === 'contrat' ||
-      item.type === 'contrat' ||
-      item.targetTab === 'contracts' ||
-      (item.title && item.title.toLowerCase().includes('contrat')) ||
-      (item.title && item.title.toLowerCase().includes('bail')) ||
-      item.payload?.contract_id ||
-      item.data?.contract_id ||
-      item.payload?.contractNumber ||
-      item.data?.contractNumber
-    ) {
-      const targetContractNumber =
-        item.payload?.contractNumber ||
-        item.data?.contractNumber ||
+        setTimeout(() => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('locatrust:open_sign_receipt', { detail: item.payload }));
+          }
+        }, 150);
+      } else if (
+        item.category === 'contrat' ||
+        item.type === 'contrat' ||
+        item.targetTab === 'contracts' ||
+        (item.title && item.title.toLowerCase().includes('contrat')) ||
+        (item.title && item.title.toLowerCase().includes('bail')) ||
         item.payload?.contract_id ||
-        item.data?.contract_id;
+        item.data?.contract_id ||
+        item.payload?.contractNumber ||
+        item.data?.contractNumber
+      ) {
+        const targetContractNumber =
+          item.payload?.contractNumber ||
+          item.data?.contractNumber ||
+          item.payload?.contract_id ||
+          item.data?.contract_id;
 
-      if (targetContractNumber && typeof window !== 'undefined') {
-        localStorage.setItem('locatrust_selected_contract_number', String(targetContractNumber));
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent('locatrust:open_contract', {
-              detail: {
-                contractNumber: targetContractNumber,
-                contractId: item.payload?.contract_id || item.data?.contract_id
-              }
-            })
-          );
-        }, 150);
-      }
+        if (targetContractNumber && typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_selected_contract_number', String(targetContractNumber));
+          setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent('locatrust:open_contract', {
+                detail: {
+                  contractNumber: targetContractNumber,
+                  contractId: item.payload?.contract_id || item.data?.contract_id
+                }
+              })
+            );
+          }, 150);
+        }
 
-      if (onNavigateTab) {
-        onNavigateTab('contracts');
-      }
-    } else if (
-      item.category === 'visite' ||
-      item.type === 'visite' ||
-      item.targetTab === 'visits' ||
-      (item.title && item.title.toLowerCase().includes('visite'))
-    ) {
-      if (onNavigateTab) {
-        onNavigateTab('visits');
-      }
-    } else if (
-      item.targetTab === 'applications' ||
-      item.category === 'candidature' ||
-      item.category === 'demande' ||
-      item.type === 'demande' ||
-      item.type === 'candidature' ||
-      (item.title && item.title.toLowerCase().includes('demande de location')) ||
-      (item.title && item.title.toLowerCase().includes('candidature'))
-    ) {
-      const targetAppId =
-        item.payload?.applicationId ||
-        item.data?.applicationId ||
-        item.payload?.rental_request_id ||
-        item.data?.rental_request_id ||
-        item.payload?.id ||
-        item.data?.id ||
-        (item.link && item.link.includes('appId=') ? new URLSearchParams(item.link.split('?')[1]).get('appId') : null);
+        if (onNavigateTab) {
+          onNavigateTab('contracts');
+        }
+      } else if (
+        item.category === 'visite' ||
+        item.type === 'visite' ||
+        item.targetTab === 'visits' ||
+        (item.title && item.title.toLowerCase().includes('visite'))
+      ) {
+        if (onNavigateTab) {
+          onNavigateTab('visits');
+        }
+      } else if (
+        item.targetTab === 'applications' ||
+        item.category === 'candidature' ||
+        item.category === 'demande' ||
+        item.type === 'demande' ||
+        item.type === 'candidature' ||
+        (item.title && item.title.toLowerCase().includes('demande de location')) ||
+        (item.title && item.title.toLowerCase().includes('candidature'))
+      ) {
+        const targetAppId =
+          item.payload?.applicationId ||
+          item.data?.applicationId ||
+          item.payload?.rental_request_id ||
+          item.data?.rental_request_id ||
+          item.payload?.id ||
+          item.data?.id ||
+          (item.link && item.link.includes('appId=') ? new URLSearchParams(item.link.split('?')[1]).get('appId') : null);
 
-      if (targetAppId && typeof window !== 'undefined') {
-        localStorage.setItem('locatrust_selected_application_id', targetAppId);
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('locatrust:open_application', { detail: { applicationId: targetAppId } }));
-        }, 150);
-      }
+        if (targetAppId && typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_selected_application_id', targetAppId);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('locatrust:open_application', { detail: { applicationId: targetAppId } }));
+          }, 150);
+        }
 
-      if (onNavigateTab) {
-        onNavigateTab('applications');
+        if (onNavigateTab) {
+          onNavigateTab('applications');
+        }
+      } else if (
+        item.targetTab === 'messages' ||
+        item.type === 'message' ||
+        (item.title && item.title.toLowerCase().includes('message'))
+      ) {
+        const contactId = item.senderUserId || item.payload?.contactId || item.payload?.sender_id;
+        if (contactId && typeof window !== 'undefined') {
+          setActiveChatPartnerForUser(currentUser?.id, contactId);
+          window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+          markMessagesAsRead(contactId, currentUser?.id);
+        }
+        if (onNavigateTab) {
+          onNavigateTab('messages');
+        }
+      } else if (item.targetTab && onNavigateTab) {
+        onNavigateTab(item.targetTab);
+      } else {
+        setSelectedNotification(item);
       }
-    } else if (
-      item.targetTab === 'messages' ||
-      item.type === 'message' ||
-      (item.title && item.title.toLowerCase().includes('message'))
-    ) {
-      const contactId = item.senderUserId || item.payload?.contactId || item.payload?.sender_id;
-      if (contactId && typeof window !== 'undefined') {
-        setActiveChatPartnerForUser(currentUser?.id, contactId);
-        window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
-        markMessagesAsRead(contactId, currentUser?.id);
-      }
-      if (onNavigateTab) {
-        onNavigateTab('messages');
-      }
-    } else if (item.targetTab && onNavigateTab) {
-      onNavigateTab(item.targetTab);
-    } else {
-      setSelectedNotification(item);
+    } catch (clickErr) {
+      console.warn('Erreur navigation notification sécurisée:', clickErr);
     }
   };
 
