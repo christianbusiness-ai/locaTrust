@@ -69,44 +69,19 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     const { data: serverProps, error: propErr } = await pQuery;
 
-    if (!propErr && typeof window !== 'undefined') {
+    if (!propErr && typeof window !== 'undefined' && Array.isArray(serverProps)) {
       try {
-        const rawLocal = localStorage.getItem('locatrust_properties');
-        const localProps = rawLocal ? JSON.parse(rawLocal) : [];
-        const isMyProp = (p: any) => p && (p.owner_id === userId || p.agency_id === userId);
-        const validLocalProps = localProps.filter((lp: any) => isMyProp(lp) && !isValidUuid(lp.id));
-        const serverPropIds = new Set((serverProps || []).map(p => p.id));
-        const mergedProps = [
-          ...(serverProps || []),
-          ...validLocalProps.filter((lp: any) => !serverPropIds.has(lp.id))
-        ];
-        localStorage.setItem('locatrust_properties', JSON.stringify(mergedProps));
-        window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { properties: mergedProps } }));
+        localStorage.setItem('locatrust_properties', JSON.stringify(serverProps));
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated', { detail: { properties: serverProps } }));
       } catch {}
     }
 
     // 2. SYNCHRONISATION DES CONTRATS (CONTRACTS)
     try {
       const { data: serverContracts, error: cntErr } = await getContracts(userId, role as any);
-      if (!cntErr && Array.isArray(serverContracts) && serverContracts.length > 0) {
-        if (typeof window !== 'undefined') {
-          const rawLocal = localStorage.getItem('locatrust_contracts');
-          const localContracts = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverCntNumbers = new Set(serverContracts.map((c: any) => c.contract_number || c.contractNumber));
-          const serverCntIds = new Set(serverContracts.map((c: any) => c.id));
-
-          const mergedContracts = [
-            ...serverContracts,
-            ...localContracts.filter((lc: any) =>
-              lc?.id &&
-              !serverCntIds.has(lc.id) &&
-              !serverCntNumbers.has(lc.contract_number || lc.contractNumber)
-            )
-          ];
-
-          localStorage.setItem('locatrust_contracts', JSON.stringify(mergedContracts));
-          window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: mergedContracts } }));
-        }
+      if (!cntErr && typeof window !== 'undefined' && Array.isArray(serverContracts)) {
+        localStorage.setItem('locatrust_contracts', JSON.stringify(serverContracts));
+        window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: serverContracts } }));
       }
     } catch (cntErr) {
       console.warn('Erreur synchronisation contrats:', cntErr);
@@ -115,24 +90,9 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     // 2bis. SYNCHRONISATION DE LA MAINTENANCE (MAINTENANCE TICKETS)
     try {
       const { data: serverTickets, error: tckErr } = await getMaintenanceTickets(userId);
-      if (!tckErr && Array.isArray(serverTickets) && serverTickets.length > 0) {
-        if (typeof window !== 'undefined') {
-          const rawLocal = localStorage.getItem('locatrust_maintenance_tickets');
-          const localTickets = rawLocal ? JSON.parse(rawLocal) : [];
-          const serverTckIds = new Set(serverTickets.map((t: any) => t.id || t.ticketNumber));
-
-          const mergedTickets = [
-            ...serverTickets,
-            ...localTickets.filter((lt: any) =>
-              lt?.id &&
-              !serverTckIds.has(lt.id) &&
-              !serverTckIds.has(lt.ticketNumber)
-            )
-          ];
-
-          localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(mergedTickets));
-          window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: { tickets: mergedTickets } }));
-        }
+      if (!tckErr && typeof window !== 'undefined' && Array.isArray(serverTickets)) {
+        localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(serverTickets));
+        window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: { tickets: serverTickets } }));
       }
     } catch (maintErr) {
       console.warn('Erreur synchronisation maintenance tickets:', maintErr);
@@ -152,27 +112,10 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     const { data: serverApps, error: appErr } = await appQuery;
 
-    if (!appErr && typeof window !== 'undefined') {
+    if (!appErr && typeof window !== 'undefined' && Array.isArray(serverApps)) {
       try {
-        const myPropIds = new Set((serverProps || []).map((p: any) => p.id));
-        const rawLocal = localStorage.getItem('locatrust_rental_applications');
-        const localApps = rawLocal ? JSON.parse(rawLocal) : [];
-        const isMyApp = (a: any) =>
-          a &&
-          (a.owner_id === userId ||
-            a.agency_id === userId ||
-            a.tenant_id === userId ||
-            (a.property_id && myPropIds.has(a.property_id)));
-        const validLocalApps = localApps.filter(isMyApp);
-        const serverAppIds = new Set((serverApps || []).map(a => a.id));
-
-        const mergedApps = [
-          ...(serverApps || []),
-          ...validLocalApps.filter((la: any) => la?.id && !serverAppIds.has(la.id))
-        ];
-
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(mergedApps));
-        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: mergedApps, applications: mergedApps } }));
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(serverApps));
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: serverApps, applications: serverApps } }));
       } catch {}
     }
 
@@ -190,16 +133,9 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     const { data: serverCautions, error: cauErr } = await cauQuery;
 
-    if (!cauErr && typeof window !== 'undefined') {
+    if (!cauErr && typeof window !== 'undefined' && Array.isArray(serverCautions)) {
       try {
-        const rawLocal = localStorage.getItem('locatrust_deposits_v1') || localStorage.getItem('locatrust_caution_deposits');
-        const localDeps = rawLocal ? JSON.parse(rawLocal) : [];
-        const isMyCaution = (c: any) =>
-          c && (c.owner_id === userId || c.agency_id === userId || c.tenant_id === userId);
-        const validLocalDeps = localDeps.filter(isMyCaution);
-        const serverCauIds = new Set((serverCautions || []).map(c => c.id));
-
-        const normalizedServerCautions = (serverCautions || []).map(c => ({
+        const normalizedServerCautions = serverCautions.map(c => ({
           ...c,
           contract_number: c.contract?.contract_number || c.contract_number,
           property: c.contract?.property || {
@@ -215,14 +151,9 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
           proof_url: c.proof_url
         }));
 
-        const mergedCautions = [
-          ...normalizedServerCautions,
-          ...validLocalDeps.filter((ld: any) => ld?.id && !serverCauIds.has(ld.id))
-        ];
-
-        localStorage.setItem('locatrust_deposits_v1', JSON.stringify(mergedCautions));
-        localStorage.setItem('locatrust_caution_deposits', JSON.stringify(mergedCautions));
-        window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: { cautions: mergedCautions } }));
+        localStorage.setItem('locatrust_deposits_v1', JSON.stringify(normalizedServerCautions));
+        localStorage.setItem('locatrust_caution_deposits', JSON.stringify(normalizedServerCautions));
+        window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: { cautions: normalizedServerCautions } }));
       } catch {}
     }
 
@@ -240,24 +171,47 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     const { data: serverPayments, error: pmtErr } = await pmQuery;
 
-    if (!pmtErr && typeof window !== 'undefined') {
+    if (!pmtErr && typeof window !== 'undefined' && Array.isArray(serverPayments)) {
       try {
-        const rawLocal = localStorage.getItem('locatrust_rent_payments');
-        const localPmts = rawLocal ? JSON.parse(rawLocal) : [];
-        const isMyPayment = (p: any) =>
-          p && (p.owner_id === userId || p.agency_id === userId || p.tenant_id === userId);
-        const validLocalPmts = localPmts.filter(isMyPayment);
-        const serverPmtIds = new Set((serverPayments || []).map(p => p.id));
-
-        const mergedPayments = [
-          ...(serverPayments || []),
-          ...validLocalPmts.filter((lp: any) => lp?.id && !serverPmtIds.has(lp.id))
-        ];
-
-        localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedPayments));
-        window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedPayments } }));
+        localStorage.setItem('locatrust_rent_payments', JSON.stringify(serverPayments));
+        window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: serverPayments } }));
       } catch {}
     }
+
+    // 5bis. SYNCHRONISATION DES QUITTANCES (RECEIPTS)
+    try {
+      let rcQuery = supabase
+        .from('receipts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (role === 'locataire') {
+        rcQuery = rcQuery.eq('tenant_id', userId);
+      } else {
+        rcQuery = rcQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+      }
+
+      const { data: serverReceipts, error: rcErr } = await rcQuery;
+      if (!rcErr && typeof window !== 'undefined' && Array.isArray(serverReceipts)) {
+        localStorage.setItem('locatrust_receipts', JSON.stringify(serverReceipts));
+        localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(serverReceipts));
+        window.dispatchEvent(new CustomEvent('locatrust:receipts-updated', { detail: { receipts: serverReceipts } }));
+      }
+    } catch {}
+
+    // 5ter. SYNCHRONISATION DES MANDATS D'AGENCE (AGENCY MANDATES)
+    try {
+      const { data: serverMandates, error: mndErr } = await supabase
+        .from('agency_mandates')
+        .select('*')
+        .or(`agency_id.eq.${userId},owner_id.eq.${userId}`)
+        .order('created_at', { ascending: false });
+
+      if (!mndErr && typeof window !== 'undefined' && Array.isArray(serverMandates)) {
+        localStorage.setItem('locatrust_agency_mandates', JSON.stringify(serverMandates));
+        window.dispatchEvent(new CustomEvent('locatrust:mandates-updated', { detail: { mandates: serverMandates } }));
+      }
+    } catch {}
 
     // 6. SYNCHRONISATION DES MESSAGES & CONVERSATIONS (ISOLATION STRICTE PAR UTILISATEUR)
     setActiveMessagingUser(userId);
@@ -375,24 +329,19 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               })
               .filter(Boolean) as any[];
 
-            const mergedMsgs = deduplicateMessageList([
-              ...normalizedMsgs,
-              ...(Array.isArray(localMsgs) ? localMsgs : [])
-            ]);
+            const cleanMsgs = deduplicateMessageList(normalizedMsgs);
 
-            saveStoredMessages(mergedMsgs, userId);
-            window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: mergedMsgs } }));
-            window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: mergedMsgs } }));
+            saveStoredMessages(cleanMsgs, userId);
+            window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: cleanMsgs } }));
+            window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: cleanMsgs } }));
           } catch {}
         }
       }
     } else if (typeof window !== 'undefined') {
-      // Aucun fil de conversation sur Supabase pour ce compte : garantir que seuls ses éventuels messages locaux légitimes subsistent
       try {
-        const localMsgs = getStoredMessages(userId);
-        saveStoredMessages(localMsgs, userId);
-        window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: localMsgs } }));
-        window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: localMsgs } }));
+        saveStoredMessages([], userId);
+        window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: [] } }));
+        window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: [] } }));
       } catch {}
     }
 
@@ -406,9 +355,6 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     if (!notifErr && Array.isArray(serverNotifs)) {
       if (typeof window !== 'undefined') {
         try {
-          const rawLocal = localStorage.getItem('locatrust_notifications');
-          const localNotifs = rawLocal ? JSON.parse(rawLocal) : [];
-
           const normalizedNotifs = serverNotifs.map(n => {
             const candidate = {
               id: n.id,
@@ -438,13 +384,10 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             };
           });
 
-          const mergedNotifs = deduplicateAndNormalizeNotifications(
-            [...normalizedNotifs, ...(Array.isArray(localNotifs) ? localNotifs : [])],
-            userId
-          );
+          const cleanNotifs = deduplicateAndNormalizeNotifications(normalizedNotifs, userId);
 
-          localStorage.setItem('locatrust_notifications', JSON.stringify(mergedNotifs));
-          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: mergedNotifs } }));
+          localStorage.setItem('locatrust_notifications', JSON.stringify(cleanNotifs));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: cleanNotifs } }));
         } catch {}
       }
     }

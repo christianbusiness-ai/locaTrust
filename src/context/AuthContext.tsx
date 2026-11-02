@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
 import { syncUserData } from '@/lib/unifiedSyncEngine';
@@ -130,6 +130,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const profileRef = useRef<UserProfile | null>(null);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   const fetchProfile = async (userId: string): Promise<UserProfile | null> => {
     if (!userId || isLoggingOutInProgress()) return null;
@@ -311,12 +316,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleProfileSync = () => {
       if (mounted && !isLoggingOutInProgress()) {
         const now = Date.now();
-        if (now - lastFocusSyncTime < 30000) return; // Limiter la fréquence de synchronisation du profil au focus (max 1x / 30s)
+        if (now - lastFocusSyncTime < 3000) return; // Limiter la fréquence de synchronisation du profil au focus (max 1x / 3s)
         lastFocusSyncTime = now;
 
         refreshProfile();
-        supabase.auth.getUser().then(({ data: { user: curUser } }) => {
-          if (curUser && !isLoggingOutInProgress()) syncUserData(curUser.id).catch(console.warn);
+        supabase.auth.getUser().then(async ({ data: { user: curUser } }) => {
+          if (curUser && !isLoggingOutInProgress()) {
+            const p = profileRef.current || (await fetchProfile(curUser.id));
+            syncUserData(curUser.id, p?.account_type).catch(console.warn);
+          }
         }).catch(() => {});
       }
     };
@@ -324,12 +332,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && mounted && !isLoggingOutInProgress()) {
         const now = Date.now();
-        if (now - lastFocusSyncTime < 30000) return;
+        if (now - lastFocusSyncTime < 3000) return;
         lastFocusSyncTime = now;
 
         refreshProfile();
-        supabase.auth.getUser().then(({ data: { user: curUser } }) => {
-          if (curUser && !isLoggingOutInProgress()) syncUserData(curUser.id).catch(console.warn);
+        supabase.auth.getUser().then(async ({ data: { user: curUser } }) => {
+          if (curUser && !isLoggingOutInProgress()) {
+            const p = profileRef.current || (await fetchProfile(curUser.id));
+            syncUserData(curUser.id, p?.account_type).catch(console.warn);
+          }
         }).catch(() => {});
       }
     };

@@ -108,7 +108,7 @@ export function declareCautionPayment(params: {
           }
         }
       }
-    } catch {}
+    } catch { }
   }
   if (!targetOwnerId) targetOwnerId = 'usr_owner';
 
@@ -247,7 +247,7 @@ export function declareCautionPayment(params: {
       };
       localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, agencyNotifItem, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-    } catch {}
+    } catch { }
   }
 
   // Inscription directe dans la table notifications Supabase pour le bailleur et l'agence
@@ -322,7 +322,7 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
     } else if (isValidUuid(target.tenant_id)) {
       supabase.from('cautions').update(updatePayload).eq('tenant_id', target.tenant_id).then();
     }
-  } catch {}
+  } catch { }
 
   try {
     broadcastLiveEvent('CAUTION_CONFIRMED', {
@@ -332,7 +332,7 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
       targetUserId: target.tenant_id,
       data: { deposit: updatedDeposit }
     });
-  } catch {}
+  } catch { }
 
   // Notifier immédiatement le locataire que sa caution est validée et que le reçu est disponible
   const tenantNotifId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8002-${Date.now().toString(16).padStart(12, '0')}`;
@@ -370,10 +370,10 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
           targetTab: 'guarantees'
         };
         localStorage.setItem('locatrust_tenant_notifications', JSON.stringify([tenantViewNotif, ...(Array.isArray(parsedTenantNotifs) ? parsedTenantNotifs : [])]));
-      } catch {}
+      } catch { }
 
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-    } catch {}
+    } catch { }
   }
 
   // Persistance notification dans Supabase pour affichage immédiat sur les autres appareils du locataire
@@ -392,17 +392,17 @@ export function confirmCautionReceipt(depositId: string, confirmedBy: string = '
   }
 
   // Record audit entry
-  recordCautionAudit({
-    action: 'confirmation_caution',
-    contractId: target.contract_number || target.contract_id,
-    tenantName: target.tenant?.full_name || 'Locataire',
-    confirmedBy,
-    amount: target.amount_paid,
-    date: now,
-    details: `Réception de caution de ${target.amount_paid} FCFA officiellement confirmée par ${confirmedBy}`
-  });
+recordCautionAudit({
+  action: 'confirmation_caution',
+  contractId: target.contract_number || target.contract_id,
+  tenantName: target.tenant?.full_name || 'Locataire',
+  confirmedBy,
+  amount: target.amount_paid,
+  date: now,
+  details: `Réception de caution de ${target.amount_paid} FCFA officiellement confirmée par ${confirmedBy}`
+});
 
-  return updatedDeposit;
+return updatedDeposit;
 }
 
 export function rejectCautionPayment(depositId: string, refusalReason: string): Deposit | null {
@@ -440,7 +440,7 @@ export function signCautionReceipt(
 ): Deposit | null {
   const all = getStoredDeposits();
   const cleanDepId = depositId ? depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
-  let target = all.find((d) => 
+  let target = all.find((d) =>
     d.id === depositId ||
     (depositId && d.id && d.id.toLowerCase() === depositId.toLowerCase()) ||
     (cleanDepId && d.id && d.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
@@ -479,7 +479,7 @@ export function signCautionReceipt(
     } else if (isValidUuid(target.tenant_id)) {
       supabase.from('cautions').update(updatePayload).eq('tenant_id', target.tenant_id).then();
     }
-  } catch {}
+  } catch { }
 
   try {
     broadcastLiveEvent(party === 'owner' ? 'CAUTION_CONFIRMED' : 'CAUTION_SIGNED_BY_TENANT', {
@@ -492,7 +492,7 @@ export function signCautionReceipt(
         signatureUrl: signatureData
       }
     });
-  } catch {}
+  } catch { }
 
   // 2. Mettre à jour le registre des reçus du locataire (locatrust_tenant_receipts_v2)
   try {
@@ -519,7 +519,7 @@ export function signCautionReceipt(
         }
       }
     }
-  } catch {}
+  } catch { }
 
   // 3. Mettre à jour le message de chat contenant cette quittance
   try {
@@ -552,7 +552,7 @@ export function signCautionReceipt(
         }
       }
     }
-  } catch {}
+  } catch { }
 
   // 4. Si c'est le locataire qui signe, notifier immédiatement le propriétaire / l'agence et diffuser en temps réel
   const cleanNum = (target as any).receipt_number || (target.contract_number === 'LT-2026-CI-000492' || (target.tenant?.full_name || '').toLowerCase().includes('christian') ? 'REC-CAUTION-000492' : `REC-CAUT-${target.id.toUpperCase()}`);
@@ -575,7 +575,7 @@ export function signCautionReceipt(
       const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
       localStorage.setItem('locatrust_notifications', JSON.stringify([notifItem, ...(Array.isArray(curNotifs) ? curNotifs : [])]));
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-    } catch {}
+    } catch { }
 
     // Diffusion temps réel multi-appareils
     try {
@@ -591,8 +591,8 @@ export function signCautionReceipt(
           tenantSignatureUrl: signatureData,
           amount: target.amount_paid || target.amount_requested
         }
-      }).catch(() => {});
-    } catch {}
+      }).catch(() => { });
+    } catch { }
   }
 
   // 5. Émettre les événements de rafraîchissement
@@ -733,7 +733,7 @@ export function resolveDepositContractDetails(dep: Deposit) {
         }
       }
     }
-  } catch {}
+  } catch { }
 
   const contractNumber =
     matchedContract?.contract_number ||
@@ -834,7 +834,7 @@ export function resolveDepositContractDetails(dep: Deposit) {
           }
         }
       }
-    } catch {}
+    } catch { }
     if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawOwnerCandidate) || rawOwnerCandidate.startsWith('usr_')) {
       rawOwnerCandidate = 'kk';
     }
@@ -914,7 +914,7 @@ export function sendCautionReceiptToTenant(
   }
 ): Deposit | null {
   const all = getStoredDeposits();
-  let target = all.find((d) => 
+  let target = all.find((d) =>
     d.id === depositId ||
     d.id.toLowerCase() === depositId.toLowerCase() ||
     d.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
@@ -1035,7 +1035,7 @@ export function sendCautionReceiptToTenant(
         phone: resolved.tenantPhone
       }));
       localStorage.setItem('locatrust_active_chat_contact', receiverId);
-    } catch {}
+    } catch { }
   }
 
   // 3. Persistance dans Supabase pour synchronisation multi-appareils (Desktop & Mobile)
@@ -1083,7 +1083,7 @@ export function sendCautionReceiptToTenant(
         }
       }).then();
     }
-  } catch {}
+  } catch { }
 
   // 4. Notification in-app ciblée pour le locataire
   if (typeof window !== 'undefined') {
@@ -1120,10 +1120,10 @@ export function sendCautionReceiptToTenant(
           targetTab: 'guarantees'
         };
         localStorage.setItem('locatrust_tenant_notifications', JSON.stringify([tenantViewNotif, ...(Array.isArray(parsedTenantNotifs) ? parsedTenantNotifs : [])]));
-      } catch {}
+      } catch { }
 
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-    } catch {}
+    } catch { }
   }
 
   // 5. Broadcast Realtime pour tous les écrans connectés
@@ -1140,7 +1140,7 @@ export function sendCautionReceiptToTenant(
         actorName: finalActorName
       }
     });
-  } catch {}
+  } catch { }
 
   // 6. Émission des événements réactifs
   if (typeof window !== 'undefined') {
@@ -1234,8 +1234,8 @@ export function restituteCaution(params: {
   const status: Deposit['restitution_status'] = isImputation
     ? 'impute_loyers'
     : isPartial
-    ? 'restitue_partiel'
-    : 'restitue_total';
+      ? 'restitue_partiel'
+      : 'restitue_total';
 
   const updatedDeposit: Deposit = {
     ...target,
@@ -1254,9 +1254,8 @@ export function restituteCaution(params: {
   // 1. Audit trail record
   const auditDetails = isImputation
     ? `Caution de ${formatFCFA(target.amount_paid)} conservée et imputée sur les loyers de préavis (${params.monthsCovered || 'Préavis de fin de bail'}). Le locataire est dispensé du paiement des loyers pour cette période. Attestation N° ${receiptNumber}.`
-    : `Restitution de caution ${isPartial ? 'partielle' : 'totale'} : ${formatFCFA(params.amountRestituted)} restitués${
-        params.deductionAmount > 0 ? ` (Retenue: ${formatFCFA(params.deductionAmount)}, Motif: ${params.deductionReason})` : ''
-      }. Reçu N° ${receiptNumber}.`;
+    : `Restitution de caution ${isPartial ? 'partielle' : 'totale'} : ${formatFCFA(params.amountRestituted)} restitués${params.deductionAmount > 0 ? ` (Retenue: ${formatFCFA(params.deductionAmount)}, Motif: ${params.deductionReason})` : ''
+    }. Reçu N° ${receiptNumber}.`;
 
   recordCautionAudit({
     action: 'restitution_caution',
@@ -1273,9 +1272,8 @@ export function restituteCaution(params: {
     const existingMessages = getStoredMessages();
     const chatText = isImputation
       ? `Accord sur la caution — Préavis de fin de bail\nVotre bailleur a affecté votre caution de ${formatFCFA(target.amount_paid)} au règlement de vos derniers mois de loyer (${params.monthsCovered || 'période de préavis'}).\nVous n'avez aucun loyer à décaisser pour ces mois.`
-      : `Restitution de caution\nVotre caution concernant le contrat ${target.contract_id} a été restituée.\nMontant restitué : ${formatFCFA(params.amountRestituted)}.${
-          params.deductionAmount > 0 ? `\nRetenue : ${formatFCFA(params.deductionAmount)} (Motif : ${params.deductionReason})` : ''
-        }`;
+      : `Restitution de caution\nVotre caution concernant le contrat ${target.contract_id} a été restituée.\nMontant restitué : ${formatFCFA(params.amountRestituted)}.${params.deductionAmount > 0 ? `\nRetenue : ${formatFCFA(params.deductionAmount)} (Motif : ${params.deductionReason})` : ''
+      }`;
 
     const restitutionMessage: ChatMessage = {
       id: `msg_restitution_${Date.now()}`,
