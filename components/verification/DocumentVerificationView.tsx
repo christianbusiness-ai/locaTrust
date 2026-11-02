@@ -22,12 +22,11 @@ import {
 import { Logo } from '@/components/common/Logo';
 import { supabase } from '@/src/lib/supabase';
 import {
-  MOCK_VERIFICATION_REGISTRY,
   ContractVerificationRecord,
   ReceiptVerificationRecord,
   ProofDossierVerificationRecord,
   DocumentVerificationStatus,
-  UnifiedVerificationResult,
+  VerifyDocumentResult,
   verifyDocumentToken,
   maskPersonName
 } from '@/lib/verificationRegistry';
@@ -52,7 +51,7 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
   const [contractData, setContractData] = useState<ContractVerificationRecord | undefined>(undefined);
   const [receiptData, setReceiptData] = useState<ReceiptVerificationRecord | undefined>(undefined);
   const [proofData, setProofData] = useState<ProofDossierVerificationRecord | undefined>(undefined);
-  const [verificationResult, setVerificationResult] = useState<UnifiedVerificationResult | null>(null);
+  const [verificationResult, setVerificationResult] = useState<VerifyDocumentResult | null>(null);
 
   const fetchDocument = useCallback(async () => {
     setIsLoading(true);
@@ -625,25 +624,33 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                 </div>
 
                 {/* Conditions financières certifiées */}
-                <div className="flex flex-col gap-3">
-                  <span className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
-                    Conditions Financières Enregistrées
-                  </span>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-col gap-1">
-                      <span className="text-[11px] font-bold text-amber-900">Loyer Mensuel</span>
-                      <span className="text-base font-black text-amber-800">
-                        {formatFCFA(contractData.financials.rentAmount)}
-                      </span>
-                    </div>
-                    <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-col gap-1">
-                      <span className="text-[11px] font-bold text-amber-900">Caution (Dépôt de garantie)</span>
-                      <span className="text-base font-black text-amber-800">
-                        {formatFCFA(contractData.financials.cautionAmount)}
-                      </span>
+                {/* Conditions Financières - Masquées pour la protection de la vie privée */}
+                {contractData.financials?.rentAmount ? (
+                  <div className="flex flex-col gap-3">
+                    <span className="font-black text-slate-900 uppercase tracking-wider text-[11px]">
+                      Conditions Financières Enregistrées
+                    </span>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-col gap-1">
+                        <span className="text-[11px] font-bold text-amber-900">Loyer Mensuel</span>
+                        <span className="text-base font-black text-amber-800">
+                          {formatFCFA(contractData.financials.rentAmount)}
+                        </span>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-col gap-1">
+                        <span className="text-[11px] font-bold text-amber-900">Caution (Dépôt de garantie)</span>
+                        <span className="text-base font-black text-amber-800">
+                          {formatFCFA(contractData.financials.cautionAmount || 0)}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center gap-3 text-slate-600 text-xs">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                    <span>Conditions financières enregistrées et scellées sous séquestre certifié.</span>
+                  </div>
+                )}
 
 
               </div>
@@ -684,8 +691,6 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
 
                 <div className="flex flex-col gap-3">
                   {(contractData.relatedReceipts || []).map((rToken) => {
-                    const r = MOCK_VERIFICATION_REGISTRY.receipts[rToken];
-                    if (!r) return null;
                     return (
                       <div
                         key={rToken}
@@ -696,9 +701,9 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                             <Receipt className="w-5 h-5" />
                           </div>
                           <div className="flex flex-col">
-                            <span className="font-black text-slate-900">Quittance N° {r.receiptNumber}</span>
+                            <span className="font-black text-slate-900">Quittance Certifiée</span>
                             <span className="text-[11px] text-slate-500">
-                              Loyer : <strong>{r.periodCovered}</strong> — Montant : {formatFCFA(r.amountPaid)}
+                              Jeton : <code className="font-mono text-slate-700">{rToken}</code>
                             </span>
                           </div>
                         </div>
@@ -835,8 +840,10 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                 <span className="text-base font-black text-slate-900">{receiptData.periodCovered}</span>
               </div>
               <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col gap-1">
-                <span className="text-[10px] font-bold text-emerald-700 uppercase">Montant Encaissé & Certifié</span>
-                <span className="text-base font-black text-emerald-800">{formatFCFA(receiptData.amountPaid)}</span>
+                <span className="text-[10px] font-bold text-emerald-700 uppercase">Statut d'Encaissement</span>
+                <span className="text-base font-black text-emerald-800">
+                  {receiptData.amountPaid ? formatFCFA(receiptData.amountPaid) : 'Paiement Encaissé & Certifié'}
+                </span>
               </div>
             </div>
 

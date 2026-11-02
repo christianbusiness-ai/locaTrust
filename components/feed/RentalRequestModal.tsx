@@ -252,23 +252,6 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
           }
         });
       }
-          title: 'Nouvelle demande de location reçue',
-          description: `${applicantName} a soumis sa candidature pour le bien « ${property.title} ».`,
-          category: 'candidature',
-          targetTab: 'applications',
-          targetRole: 'proprietaire',
-          targetUserId: targetOwnerId,
-          senderUserId: applicantId,
-          senderAvatar: applicantAvatar,
-          payload: {
-            applicationId: newApp.id,
-            propertyId: property.id,
-            tenantId: applicantId,
-            agencyId: targetAgencyId,
-            ownerId: targetOwnerId
-          }
-        });
-      }
 
       // Stocker les coordonnées des deux interlocuteurs uniquement dans leurs espaces respectifs
       setActiveChatPartnerForUser(applicantId, primaryRecipientId);

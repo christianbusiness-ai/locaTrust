@@ -1,192 +1,34 @@
 // api/verify.js
 // Vercel Serverless Function pour la vérification publique et anonyme de tous les documents LocaTrust
 // Conforme Loi n° 2019-576 et AUDCG OHADA
-// Accessible publiquement par tout scanner QR (smartphones, banques, notaires, administrations) sans session préalable.
+// Accessible publiquement par tout scanner QR (smartphones, banques, notaires, administrations).
+// Interroge EXCLUSIVEMENT les fonctions RPC sécurisées (verify_contract et verify_receipt) par jeton aléatoire.
 
 export const config = {
   runtime: 'nodejs',
 };
 
-// Mask helper pour protéger la vie privée
-function maskName(fullName) {
-  if (!fullName) return 'Partie Certifiée';
-  const clean = fullName.trim();
-  if (clean.toLowerCase().startsWith('christian')) {
-    return 'Christian';
+// Limitation de débit par IP en mémoire pour la fonction serverless
+const rateLimitMap = new Map();
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxRequests = 30;
+
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, []);
   }
-  if (clean.length <= 3) return clean;
-  const parts = clean.split(/\s+/);
-  if (parts.length === 1) return parts[0];
-  const first = parts[0];
-  const lastInitial = parts[parts.length - 1].charAt(0).toUpperCase();
-  return `${first} ${lastInitial}.`;
+
+  const timestamps = rateLimitMap.get(ip).filter(t => now - t < windowMs);
+  if (timestamps.length >= maxRequests) {
+    return false;
+  }
+  timestamps.push(now);
+  rateLimitMap.set(ip, timestamps);
+  return true;
 }
 
-// Registre persistant officiel des documents existants certifiés LocaTrust
-const OFFICIAL_KNOWN_DOCUMENTS = {
-  // 1. REÇU DE PAIEMENT DE LOYER RÉEL (Scanné par l'utilisateur)
-  'tok_rec_ci2026_ljy8knh31z579ov2': {
-    type: 'recu',
-    subType: 'quittance',
-    token: 'tok_rec_ci2026_ljy8knh31z579ov2',
-    receiptNumber: 'ESP-135945',
-    contractNumber: 'LT-2026-CI-000492',
-    contractToken: 'tok_cnt_ci2026_000492',
-    status: 'valide',
-    statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-    statusDescription: 'Ce reçu de paiement de loyer a été vérifié avec succès et est certifié conforme et authentique sur LocaTrust.',
-    periodCovered: 'Octobre 2026',
-    amountPaid: 30000,
-    currency: 'FCFA',
-    paymentDate: '17/10/2026',
-    paymentMethod: 'Espèces (Règlement direct)',
-    transactionReference: 'ESP-135945',
-    sha256Hash: 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e',
-    parties: {
-      ownerName: 'KK',
-      tenantName: 'Christian'
-    },
-    property: {
-      type: 'Logement LocaTrust',
-      location: '100 villard, yamoussoukro - Côte d\'Ivoire'
-    },
-    isValidatedByOwner: true,
-    validatedAt: '17/10/2026 20:51'
-  },
-  // Alias pour ESP-135945
-  'tok_rec_ci2026_ljy5bhh3tz579ev2': {
-    type: 'recu',
-    subType: 'quittance',
-    token: 'tok_rec_ci2026_ljy5bhh3tz579ev2',
-    receiptNumber: 'ESP-135945',
-    contractNumber: 'LT-2026-CI-000492',
-    contractToken: 'tok_cnt_ci2026_000492',
-    status: 'valide',
-    statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-    statusDescription: 'Ce reçu de paiement de loyer a été vérifié avec succès et est certifié conforme et authentique sur LocaTrust.',
-    periodCovered: 'Octobre 2026',
-    amountPaid: 30000,
-    currency: 'FCFA',
-    paymentDate: '17/10/2026',
-    paymentMethod: 'Espèces (Règlement direct)',
-    transactionReference: 'ESP-135945',
-    sha256Hash: 'a7f9c2d4e8b15093a38419f86052ef1372b083d8a3915bc692095bf61908cf4e',
-    parties: {
-      ownerName: 'KK',
-      tenantName: 'Christian'
-    },
-    property: {
-      type: 'Logement LocaTrust',
-      location: '100 villard, yamoussoukro - Côte d\'Ivoire'
-    },
-    isValidatedByOwner: true,
-    validatedAt: '17/10/2026 20:51'
-  },
-  // 2. CONTRAT DE BAIL RÉEL
-  'tok_cnt_ci2026_000492': {
-    type: 'contrat',
-    token: 'tok_cnt_ci2026_000492',
-    contractNumber: 'LT-2026-CI-000492',
-    status: 'valide',
-    statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-    statusDescription: 'Ce contrat de bail certifié conforme à la Loi n° 2019-576 est scellé et authentique sur LocaTrust.',
-    currentVersion: 1,
-    totalVersions: 1,
-    createdAt: '16/10/2026',
-    signedAt: '16/10/2026 15:30',
-    finalizedAt: '16/10/2026 15:32',
-    sha256Hash: 'f4b1e9c7d0a23845b1948201fa67cb1209348571029384756192837465019283',
-    isRegisteredLocaTrust: true,
-    parties: {
-      ownerName: 'KK',
-      tenantName: 'Christian',
-      isOwnerSigned: true,
-      isTenantSigned: true,
-      ownerSignedAt: '16/10/2026 15:30',
-      tenantSignedAt: '16/10/2026 15:31'
-    },
-    property: {
-      propertyRef: 'BIEN-000492',
-      type: 'Logement LocaTrust',
-      location: '100 villard, yamoussoukro - Côte d\'Ivoire'
-    },
-    financials: {
-      rentAmount: 30000,
-      currency: 'FCFA',
-      cautionAmount: 60000
-    },
-    history: [
-      {
-        version: 1,
-        date: '16/10/2026',
-        title: 'Contrat de bail certifié original',
-        summary: 'Bail conforme à la Loi 2019-576 scellé cryptographiquement par LocaTrust.'
-      }
-    ],
-    relatedReceipts: ['tok_rec_ci2026_ljy8knh31z579ov2', 'tok_rec_caution_000492']
-  },
-  // 3. REÇU DE CAUTION CONTRACTUEL RÉEL
-  'tok_rec_caution_000492': {
-    type: 'recu',
-    subType: 'caution',
-    token: 'tok_rec_caution_000492',
-    receiptNumber: 'REC-CAUTION-000492',
-    contractNumber: 'LT-2026-CI-000492',
-    contractToken: 'tok_cnt_ci2026_000492',
-    status: 'valide',
-    statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-    statusDescription: 'Ce reçu de caution (dépôt de garantie légal) a été vérifié avec succès et est certifié conforme par LocaTrust.',
-    periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-    amountPaid: 60000,
-    currency: 'FCFA',
-    paymentDate: '16/10/2026',
-    paymentMethod: 'Wave CI / Mobile Money',
-    transactionReference: 'CAUT-000492-CONF',
-    sha256Hash: 'c8273b1849102837461928374650192837465019283746501928374650192837',
-    parties: {
-      ownerName: 'KK',
-      tenantName: 'Christian'
-    },
-    property: {
-      type: 'Logement LocaTrust',
-      location: '100 villard, yamoussoukro - Côte d\'Ivoire'
-    },
-    isValidatedByOwner: true,
-    validatedAt: '16/10/2026 15:45'
-  },
-  // 4. REÇU DE RESTITUTION DE CAUTION
-  'tok_rec_restitution_000492': {
-    type: 'recu',
-    subType: 'restitution',
-    token: 'tok_rec_restitution_000492',
-    receiptNumber: 'REC-RESTITUTION-000492',
-    contractNumber: 'LT-2026-CI-000492',
-    contractToken: 'tok_cnt_ci2026_000492',
-    status: 'valide',
-    statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-    statusDescription: 'Ce reçu de restitution de caution a été vérifié avec succès et est certifié conforme par LocaTrust.',
-    periodCovered: 'Restitution de Dépôt de Garantie en fin de bail',
-    amountPaid: 60000,
-    currency: 'FCFA',
-    paymentDate: '17/10/2026',
-    paymentMethod: 'Mobile Money / Virement',
-    transactionReference: 'REST-000492-CONF',
-    sha256Hash: 'e928374650192837461928374650192837465019283746501928374650192837',
-    parties: {
-      ownerName: 'KK',
-      tenantName: 'Christian'
-    },
-    property: {
-      type: 'Logement LocaTrust',
-      location: '100 villard, yamoussoukro - Côte d\'Ivoire'
-    },
-    isValidatedByOwner: true,
-    validatedAt: '17/10/2026 18:00'
-  }
-};
-
 export default async function handler(req, res) {
-  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -195,318 +37,115 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
+  const clientIp = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'anonymous';
+  if (!checkRateLimit(clientIp)) {
+    return res.status(429).json({
+      success: false,
+      isFound: false,
+      status: 'rate_limited',
+      statusLabel: 'Limite de requêtes atteinte',
+      statusDescription: 'Trop de vérifications successives. Veuillez patienter une minute avant de réessayer.'
+    });
+  }
+
   const queryToken = (req.query?.token || req.body?.token || '').toString().trim();
 
-  if (!queryToken) {
+  if (!queryToken || queryToken.length < 8) {
     return res.status(400).json({
       success: false,
       isFound: false,
       status: 'introuvable',
-      statusLabel: 'Code de vérification manquant',
-      statusDescription: 'Aucun token ou identifiant n\'a été fourni pour la vérification.'
+      statusLabel: 'Jeton de vérification manquant ou invalide',
+      statusDescription: 'Aucun jeton conforme n\'a été fourni pour la vérification.'
     });
   }
 
-  const tokenLower = queryToken.toLowerCase();
-
-  // 1. Vérification dans le registre persistant officiel
-  if (OFFICIAL_KNOWN_DOCUMENTS[queryToken]) {
-    const doc = OFFICIAL_KNOWN_DOCUMENTS[queryToken];
-    return res.status(200).json({
-      success: true,
-      isFound: true,
-      status: doc.status || 'valide',
-      statusLabel: doc.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
-      statusDescription: doc.statusDescription,
-      [doc.type]: doc,
-      receipt: doc.type === 'recu' ? doc : undefined,
-      contract: doc.type === 'contrat' ? doc : undefined,
-      recu: doc.type === 'recu' ? doc : undefined,
-      contrat: doc.type === 'contrat' ? doc : undefined,
-      diagnostics: {
-        tokenSearched: queryToken,
-        source: 'official_verified_registry',
-        verifiedAt: new Date().toISOString()
-      }
-    });
-  }
-
-  // Recherche par identifiant / numéro de document
-  for (const doc of Object.values(OFFICIAL_KNOWN_DOCUMENTS)) {
-    if (
-      doc.token.toLowerCase() === tokenLower ||
-      (doc.receiptNumber && doc.receiptNumber.toLowerCase() === tokenLower) ||
-      (doc.contractNumber && doc.contractNumber.toLowerCase() === tokenLower) ||
-      (doc.transactionReference && doc.transactionReference.toLowerCase() === tokenLower)
-    ) {
-      return res.status(200).json({
-        success: true,
-        isFound: true,
-        status: doc.status || 'valide',
-        statusLabel: doc.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
-        statusDescription: doc.statusDescription,
-        [doc.type]: doc,
-        receipt: doc.type === 'recu' ? doc : undefined,
-        contract: doc.type === 'contrat' ? doc : undefined,
-        recu: doc.type === 'recu' ? doc : undefined,
-        contrat: doc.type === 'contrat' ? doc : undefined,
-        diagnostics: {
-          tokenSearched: queryToken,
-          source: 'official_verified_registry',
-          verifiedAt: new Date().toISOString()
-        }
-      });
-    }
-  }
-
-  // 2. Interrogation directe de Supabase via REST API
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://owaxmnanqqvbjjzpouvo.supabase.co';
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93YXhtbmFucXF2YmpqenBvdXZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDk1MzAsImV4cCI6MjEwNjUyNTUzMH0.9Uvq3qcEB7upM93xiJ528e726RH_Rp8LxOOaZ9CYKj0';
+  const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93YXhtbmFucXF2YmpqenBvdXZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDk1MzAsImV4cCI6MjEwNjUyNTUzMH0.9Uvq3qcEB7upM93xiJ528e726RH_Rp8LxOOaZ9CYKj0';
 
   try {
-    // Interroger la table document_verifications si elle existe
-    const dvRes = await fetch(`${supabaseUrl}/rest/v1/document_verifications?or=(token.eq.${encodeURIComponent(queryToken)},document_number.eq.${encodeURIComponent(queryToken)})&limit=1`, {
+    // 1. Appel RPC verify_receipt
+    const receiptRes = await fetch(`${supabaseUrl}/rest/v1/rpc/verify_receipt`, {
+      method: 'POST',
       headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`
-      }
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      },
+      body: JSON.stringify({ p_token: queryToken })
     });
 
-    if (dvRes.ok) {
-      const dvList = await dvRes.json();
-      if (Array.isArray(dvList) && dvList.length > 0) {
-        const isContract = dvData.document_type === 'contrat';
-        const isDossier = dvData.document_type === 'dossier_preuve' || (dvData.token && dvData.token.startsWith('tok_prf_')) || (dvData.document_number && dvData.document_number.startsWith('PROOF-'));
-
-        const resultDoc = isDossier
-          ? {
-              type: 'dossier',
-              token: dvData.token,
-              proofId: dvData.document_number,
-              contractNumber: dvData.contract_number || 'LT-2026-CI-000492',
-              status: dvData.status || 'valide',
-              statusLabel: 'DOSSIER DE PREUVE AUTHENTIQUE',
-              statusDescription: 'Ce dossier de preuve récapitulatif officiel a été généré et certifié conforme par LocaTrust pour un contrat clos.',
-              generatedAt: new Date(dvData.created_at).toLocaleString('fr-FR'),
-              sha256Hash: dvData.document_hash,
-              parties: {
-                ownerName: maskName(dvData.owner_name),
-                tenantName: maskName(dvData.tenant_name),
-                isOwnerVerified: true,
-                isTenantVerified: true
-              },
-              property: {
-                type: dvData.property_title || 'Logement certifié',
-                location: dvData.property_address || 'Côte d\'Ivoire'
-              },
-              financialSummary: {
-                totalPaid: Number(dvData.amount || 0),
-                currency: dvData.currency || 'FCFA',
-                balance: 0
-              }
-            }
-          : isContract
-          ? {
-              type: 'contrat',
-              token: dvData.token,
-              contractNumber: dvData.document_number || dvData.contract_number,
-              status: dvData.status || 'valide',
-              currentVersion: 1,
-              totalVersions: 1,
-              createdAt: new Date(dvData.created_at).toLocaleDateString('fr-FR'),
-              signedAt: dvData.owner_signed_at ? new Date(dvData.owner_signed_at).toLocaleString('fr-FR') : 'Certifié',
-              sha256Hash: dvData.document_hash,
-              isRegisteredLocaTrust: true,
-              parties: {
-                ownerName: maskName(dvData.owner_name),
-                tenantName: maskName(dvData.tenant_name),
-                isOwnerSigned: Boolean(dvData.is_owner_signed),
-                isTenantSigned: Boolean(dvData.is_tenant_signed)
-              },
-              property: {
-                propertyRef: `BIEN-${(dvData.document_number || '000492').replace(/\D/g, '').slice(-6)}`,
-                type: dvData.property_title || 'Logement certifié',
-                location: dvData.property_address || 'Côte d\'Ivoire'
-              },
-              financials: {
-                rentAmount: Number(dvData.amount || 0),
-                currency: dvData.currency || 'FCFA',
-                cautionAmount: Number(dvData.amount ? dvData.amount * 2 : 0)
-              }
-            }
-          : {
-              type: 'recu',
-              subType: dvData.document_type === 'recu_caution' ? 'caution' : (dvData.document_type === 'recu_restitution' ? 'restitution' : 'quittance'),
-              token: dvData.token,
-              receiptNumber: dvData.document_number,
-              contractNumber: dvData.contract_number || 'LT-2026-CI-000492',
-              status: dvData.status || 'valide',
-              periodCovered: dvData.period_covered || 'Période courante',
-              amountPaid: Number(dvData.amount || 0),
-              currency: dvData.currency || 'FCFA',
-              paymentDate: new Date(dvData.created_at).toLocaleDateString('fr-FR'),
-              paymentMethod: dvData.payment_method || 'Règlement Validé',
-              transactionReference: dvData.transaction_reference || dvData.document_number,
-              sha256Hash: dvData.document_hash,
-              parties: {
-                ownerName: maskName(dvData.owner_name),
-                tenantName: maskName(dvData.tenant_name)
-              },
-              property: {
-                type: dvData.property_title || 'Logement certifié',
-                location: dvData.property_address || 'Abidjan'
-              },
-              isValidatedByOwner: true,
-              validatedAt: new Date(dvData.created_at).toLocaleString('fr-FR')
-            };
-
+    if (receiptRes.ok) {
+      const data = await receiptRes.json();
+      if (data && data.isFound) {
         return res.status(200).json({
           success: true,
           isFound: true,
-          status: resultDoc.status,
-          statusLabel: resultDoc.statusLabel || 'DOCUMENT LOCATRUST AUTHENTIQUE',
-          statusDescription: resultDoc.statusDescription || 'Ce document a été vérifié avec succès et est certifié conforme par LocaTrust.',
-          [resultDoc.type]: resultDoc,
-          proofData: resultDoc.type === 'dossier' ? resultDoc : undefined,
+          status: data.status,
+          statusLabel: data.status === 'valide' ? 'DOCUMENT LOCATRUST AUTHENTIQUE' : 'EN ATTENTE DE SIGNATURE',
+          statusDescription: data.status === 'valide' 
+            ? 'Ce reçu de paiement de loyer a été certifié conforme par LocaTrust.' 
+            : 'Ce reçu est en cours de validation.',
+          receipt: data,
+          recu: data,
           diagnostics: {
             tokenSearched: queryToken,
-            source: 'supabase_document_verifications',
+            source: 'rpc_verify_receipt',
             verifiedAt: new Date().toISOString()
           }
         });
       }
     }
 
-    // Interroger la table receipts par token ou receipt_number
-    const rRes = await fetch(`${supabaseUrl}/rest/v1/receipts?or=(token.eq.${encodeURIComponent(queryToken)},receipt_number.eq.${encodeURIComponent(queryToken)})&limit=1`, {
+    // 2. Appel RPC verify_contract
+    const contractRes = await fetch(`${supabaseUrl}/rest/v1/rpc/verify_contract`, {
+      method: 'POST',
       headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`
-      }
+        'Content-Type': 'application/json',
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      },
+      body: JSON.stringify({ p_token: queryToken })
     });
 
-    if (rRes.ok) {
-      const rList = await rRes.json();
-      if (Array.isArray(rList) && rList.length > 0) {
-        const rData = rList[0];
-        const isOwnerSigned = Boolean(rData.owner_signature || rData.owner_signature_url);
-        const isTenantSigned = Boolean(rData.tenant_signature || rData.tenant_signature_url);
-        const isFullyFinalized = isOwnerSigned && isTenantSigned;
-
-        const rec = {
-          type: 'recu',
-          subType: rData.type || 'quittance',
-          token: rData.token || rData.verification_token || queryToken,
-          receiptNumber: rData.receipt_number || queryToken,
-          contractNumber: rData.contract_id || 'LT-2026-CI-000492',
-          status: isFullyFinalized ? 'valide' : 'en_attente',
-          periodCovered: rData.period_covered || 'Période courante',
-          amountPaid: Number(rData.amount || 30000),
-          currency: 'FCFA',
-          paymentDate: new Date(rData.created_at || Date.now()).toLocaleDateString('fr-FR'),
-          paymentMethod: rData.payment_method || 'Paiement Validé',
-          transactionReference: rData.receipt_number || queryToken,
-          parties: {
-            ownerName: rData.signer_identity || 'KK',
-            tenantName: 'Christian',
-            isOwnerSigned,
-            isTenantSigned
-          },
-          property: {
-            type: 'Logement LocaTrust',
-            location: '100 villard, Yamoussoukro - Côte d\'Ivoire'
-          },
-          isValidatedByOwner: isOwnerSigned,
-          validatedAt: rData.owner_signed_at ? new Date(rData.owner_signed_at).toLocaleString('fr-FR') : new Date(rData.created_at || Date.now()).toLocaleString('fr-FR'),
-          finalizedAt: rData.finalized_at ? new Date(rData.finalized_at).toLocaleString('fr-FR') : null
-        };
-
+    if (contractRes.ok) {
+      const data = await contractRes.json();
+      if (data && data.isFound) {
         return res.status(200).json({
           success: true,
           isFound: true,
-          status: 'valide',
-          statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-          statusDescription: 'Ce reçu a été vérifié avec succès et est certifié conforme par LocaTrust.',
-          receipt: rec,
+          status: data.status,
+          statusLabel: data.status === 'valide' ? 'CONTRAT DE BAIL AUTHENTIQUE ET SCELLÉ' : 'CONTRAT EN ATTENTE DE SIGNATURE',
+          statusDescription: data.status === 'valide'
+            ? 'Ce contrat de bail certifié conforme à la Loi n° 2019-576 est scellé et authentique sur LocaTrust.'
+            : 'Ce contrat est en cours de formalisation contractuelle.',
+          contract: data,
+          contrat: data,
           diagnostics: {
             tokenSearched: queryToken,
-            source: 'supabase_receipts',
+            source: 'rpc_verify_contract',
             verifiedAt: new Date().toISOString()
           }
         });
       }
     }
 
-    // Interroger la table contracts par contract_number
-    const cRes = await fetch(`${supabaseUrl}/rest/v1/contracts?contract_number=eq.${encodeURIComponent(queryToken)}&limit=1`, {
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`
-      }
+    // 3. Document non trouvé
+    return res.status(200).json({
+      success: false,
+      isFound: false,
+      status: 'introuvable',
+      statusLabel: 'Document introuvable',
+      statusDescription: 'Ce jeton de vérification ne correspond à aucun document certifié et archivé sur le registre de LocaTrust.'
     });
-
-    if (cRes.ok) {
-      const cList = await cRes.json();
-      if (Array.isArray(cList) && cList.length > 0) {
-        const cData = cList[0];
-        const cnt = {
-          type: 'contrat',
-          token: queryToken,
-          contractNumber: cData.contract_number,
-          status: cData.status === 'resilie' ? 'revoque_annule' : 'valide',
-          currentVersion: 1,
-          totalVersions: 1,
-          createdAt: new Date(cData.created_at || Date.now()).toLocaleDateString('fr-FR'),
-          signedAt: 'Certifié',
-          isRegisteredLocaTrust: true,
-          parties: {
-            ownerName: 'KK',
-            tenantName: 'Christian',
-            isOwnerSigned: Boolean(cData.owner_signed || cData.owner_signature),
-            isTenantSigned: Boolean(cData.tenant_signed || cData.tenant_signature)
-          },
-          property: {
-            propertyRef: `BIEN-${cData.property_id ? cData.property_id.slice(0, 6).toUpperCase() : '000492'}`,
-            type: 'Logement certifié',
-            location: 'Côte d\'Ivoire'
-          },
-          financials: {
-            rentAmount: Number(cData.monthly_rent || 30000),
-            currency: 'FCFA',
-            cautionAmount: Number(cData.caution_amount || 60000)
-          }
-        };
-
-        return res.status(200).json({
-          success: true,
-          isFound: true,
-          status: cnt.status,
-          statusLabel: 'DOCUMENT LOCATRUST AUTHENTIQUE',
-          statusDescription: 'Ce contrat de bail est certifié conforme et archivé sur LocaTrust.',
-          contract: cnt,
-          diagnostics: {
-            tokenSearched: queryToken,
-            source: 'supabase_contracts',
-            verifiedAt: new Date().toISOString()
-          }
-        });
-      }
-    }
   } catch (err) {
-    console.error('Erreur API vérification backend:', err);
+    console.error('API verify error:', err);
+    return res.status(500).json({
+      success: false,
+      isFound: false,
+      status: 'erreur_serveur',
+      statusLabel: 'Erreur lors de la vérification',
+      statusDescription: 'Une anomalie technique temporaire empêche la vérification du document.'
+    });
   }
-
-  // 3. Document non trouvé
-  return res.status(404).json({
-    success: false,
-    isFound: false,
-    status: 'introuvable',
-    statusLabel: 'Document introuvable',
-    statusDescription: 'Ce code de vérification ne correspond à aucun document certifié et archivé sur le registre cryptographique de LocaTrust. Veuillez vérifier que le QR code scanné n\'est pas altéré.',
-    diagnostics: {
-      tokenSearched: queryToken,
-      source: 'none',
-      verifiedAt: new Date().toISOString()
-    }
-  });
 }

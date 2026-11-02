@@ -967,6 +967,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         });
         if (insertErr) {
           console.error('Erreur insertion Supabase contracts (DemandesView):', insertErr.message);
+          if (insertErr.code === '23505' || insertErr.message?.includes('idx_unique_active_contract_per_property')) {
+            alert("Ce bien a déjà un contrat actif. Impossible d'activer deux baux concurrents sur le même logement.");
+            return;
+          }
         } else {
           // Insérer la caution correspondante dans la table cautions de Supabase
           try {
