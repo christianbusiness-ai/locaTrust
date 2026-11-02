@@ -948,6 +948,15 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const contractUuid = crypto.randomUUID();
 
       if (targetPropId && targetTenantId && targetOwnerId) {
+        const resolvedCharges = Number(
+          matchedContract?.charges_amount ??
+          matchedContract?.charges ??
+          (app as any)?.charges_amount ??
+          (app as any)?.charges ??
+          matchedProperty?.charges ??
+          0
+        );
+
         const { error: insertErr } = await supabase.from('contracts').insert({
           id: contractUuid,
           contract_number: contractNumber,
@@ -956,7 +965,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           owner_id: targetOwnerId,
           monthly_rent: Number(app.rent_amount || 0),
           caution_amount: Number(app.caution_amount || 0),
-          charges_amount: Number(matchedProperty?.charges ?? 10000),
+          charges_amount: resolvedCharges,
           duration_months: 12,
           status: 'actif',
           start_date: new Date().toISOString().split('T')[0],
@@ -1024,7 +1033,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         rent_amount: app.rent_amount,
         caution: app.caution_amount,
         caution_amount: app.caution_amount,
-        charges: matchedProperty?.charges ?? 10000,
+        charges: resolvedCharges,
         payment_due_day: 5,
         duration_months: 12,
         owner: { id: user?.id, full_name: ownerName, phone: ownerPhone },
@@ -1176,12 +1185,34 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     }
   };
 
-  const filteredApps = applications.filter(
-    (app) =>
-      app.tenant_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.property_title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.tenant_phone.includes(searchQuery)
-  );
+  // Onglet de filtre pour séparer les demandes actives des contrats scellés/historiques (Règle 1 & 2)
+  const [activeTabFilter, setActiveTabFilter] = useState<'actives' | 'finalisees' | 'refusees'>('actives');
+
+  const filteredApps = applications.filter((app) => {
+    // 1. Filtrage par onglet métier
+    const isFinalized = app.status === 'contrat_actif';
+    const isRefused = app.status === 'refusee';
+
+    if (activeTabFilter === 'actives') {
+      if (isFinalized || isRefused) return false;
+    } else if (activeTabFilter === 'finalisees') {
+      if (!isFinalized) return false;
+    } else if (activeTabFilter === 'refusees') {
+      if (!isRefused) return false;
+    }
+
+    // 2. Recherche textuelle
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      return (
+        app.tenant_name.toLowerCase().includes(q) ||
+        app.property_title.toLowerCase().includes(q) ||
+        app.tenant_phone.includes(searchQuery)
+      );
+    }
+
+    return true;
+  });
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
@@ -1214,6 +1245,54 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
           />
         </div>
+      </div>
+
+      {/* Onglets de segmentation du cycle contractuel (Règle 1 & 2 : Séparation stricte Demandes vs Contrats Actifs) */}
+      <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
+        <button
+          type="button"
+          onClick={() => setActiveTabFilter('actives')}
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+            activeTabFilter === 'actives'
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span>Demandes en cours</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-100 text-blue-800">
+            {applications.filter(a => a.status !== 'contrat_actif' && a.status !== 'refusee').length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTabFilter('finalisees')}
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+            activeTabFilter === 'finalisees'
+              ? 'bg-white text-emerald-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span>Baux Actifs / Scellés</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800">
+            {applications.filter(a => a.status === 'contrat_actif').length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTabFilter('refusees')}
+          className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+            activeTabFilter === 'refusees'
+              ? 'bg-white text-rose-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span>Demandes clôturées</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-100 text-rose-800">
+            {applications.filter(a => a.status === 'refusee').length}
+          </span>
+        </button>
       </div>
 
       {/* Point 11: Notification banner pour la gestion multi-candidats */}
@@ -1905,7 +1984,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               mandantName: (matchedProperty as any)?.mandant_name,
               rentAmount: selectedApplicationForContract.rent_amount,
               cautionAmount: selectedApplicationForContract.caution_amount,
-              chargesAmount: matchedProperty?.charges ?? 10000,
+              chargesAmount: Number(
+                (selectedApplicationForContract as any)?.charges_amount ??
+                (selectedApplicationForContract as any)?.charges ??
+                matchedProperty?.charges ??
+                0
+              ),
               leaseType,
               usageDestination: leaseType,
               authorizedActivity: matchedProperty?.authorized_activity || '',

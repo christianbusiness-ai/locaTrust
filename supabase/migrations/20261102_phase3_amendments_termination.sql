@@ -173,3 +173,4 @@ REVOKE EXECUTE ON FUNCTION public.terminate_contract_and_restore_property(UUID, 
 GRANT EXECUTE ON FUNCTION public.terminate_contract_and_restore_property(UUID, DATE, TEXT, NUMERIC, NUMERIC, BOOLEAN) TO authenticated;
 
 COMMIT;
+

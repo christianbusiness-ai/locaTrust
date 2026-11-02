@@ -8,3 +8,4 @@ DROP FUNCTION IF EXISTS public.terminate_contract_and_restore_property(UUID, DAT
 DROP TABLE IF EXISTS public.contract_amendments CASCADE;
 
 COMMIT;
+

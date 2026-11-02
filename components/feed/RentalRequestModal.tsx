@@ -278,13 +278,6 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
     }
 
     try {
-      const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${property.title} ». ${message ? `Message : "${message}"` : ''}`;
-      sendChatMessage(applicantId, primaryRecipientId, introMsg);
-    } catch (msgErr) {
-      console.warn('Chat message warning:', msgErr);
-    }
-
-    try {
       const res = await createRentalApplication({
         id: newApp.id,
         property_id: property.id,

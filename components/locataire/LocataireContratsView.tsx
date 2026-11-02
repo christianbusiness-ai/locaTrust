@@ -164,12 +164,12 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         }
       } catch {}
 
-      // Récupération des candidatures finalisées (contrat_actif) directement depuis Supabase
+      // Récupération des candidatures en préparation ou finalisées directement depuis Supabase
       try {
         let appQuery = supabase
           .from('rental_applications')
           .select('*')
-          .in('status', ['contrat_actif', 'validee']);
+          .in('status', ['contrat_actif', 'validee', 'en_redaction_bail', 'en_attente_signature_locataire', 'contrat_signe_locataire']);
 
         if (user.id) {
           appQuery = appQuery.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
@@ -178,32 +178,35 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         const { data: dbApps } = await appQuery;
         if (dbApps && dbApps.length > 0) {
           dbApps.forEach((a: any) => {
-            if (a.contract_number || a.status === 'contrat_actif') {
-              localContracts.push({
-                id: `cnt_app_${a.id}`,
-                contract_number: a.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
-                property_id: a.property_id,
-                tenant_id: a.tenant_id || user.id,
-                owner_id: a.owner_id,
-                rent: Number(a.rent_amount || 0),
-                caution: Number(a.caution_amount || 0),
-                caution_amount: Number(a.caution_amount || 0),
-                charges: 10000,
-                status: 'actif',
-                start_date: a.date_received || new Date().toISOString(),
-                owner_signed: a.owner_signed ?? true,
-                tenant_signed: a.tenant_signed ?? true,
-                owner_signature_url: a.owner_signature_url,
-                tenant_signature_url: a.tenant_signature_url,
-                owner: { full_name: a.owner_name || 'Bailleur certifié', phone: a.owner_phone || '+225 00 00 00 00' },
-                tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
-                property: {
-                  title: a.property_title || 'Logement loué',
-                  city: 'Abidjan',
-                  address: a.property_address || 'Abidjan - Côte d\'Ivoire'
-                }
-              });
-            }
+            const isPrep = a.status === 'en_redaction_bail';
+            const isSignPending = a.status === 'en_attente_signature_locataire';
+            const isSignedByTenant = a.status === 'contrat_signe_locataire';
+            const isActif = a.status === 'contrat_actif';
+
+            localContracts.push({
+              id: a.contract_id || `cnt_app_${a.id}`,
+              contract_number: a.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
+              property_id: a.property_id,
+              tenant_id: a.tenant_id || user.id,
+              owner_id: a.owner_id,
+              rent: Number(a.rent_amount || 0),
+              caution: Number(a.caution_amount || 0),
+              caution_amount: Number(a.caution_amount || 0),
+              charges: Number(a.charges_amount || 0),
+              status: isActif ? 'actif' : (isPrep ? 'en_redaction_bail' : (isSignedByTenant ? 'contrat_signe_locataire' : 'en_attente_signature_locataire')),
+              start_date: a.date_received || new Date().toISOString(),
+              owner_signed: a.owner_signed ?? true,
+              tenant_signed: isSignedByTenant || isActif,
+              owner_signature_url: a.owner_signature_url,
+              tenant_signature_url: a.tenant_signature_url,
+              owner: { full_name: a.owner_name || 'Bailleur certifié', phone: a.owner_phone || '+225 00 00 00 00' },
+              tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
+              property: {
+                title: a.property_title || 'Logement loué',
+                city: 'Abidjan',
+                address: a.property_address || 'Abidjan - Côte d\'Ivoire'
+              }
+            });
           });
         }
       } catch (e) {
@@ -660,8 +663,30 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         </div>
       ) : (
         <>
+          {/* Alerte Contrat en Préparation (Point 5 du prompt) */}
+          {tenantRentals.some(r => r.rawContract?.status === 'en_redaction_bail') && (
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-6 rounded-3xl shadow-lg border border-blue-500/30 flex flex-col md:flex-row items-center justify-between gap-4 animate-fadeIn">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0">
+                  <FileText className="w-6 h-6 text-blue-300 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-blue-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
+                      Contrat en préparation
+                    </span>
+                    <h4 className="text-base font-black text-white">Votre bailleur rédige actuellement votre bail certifié</h4>
+                  </div>
+                  <p className="text-xs text-blue-200 mt-1 max-w-xl">
+                    Votre candidature a été retenue ! Le propriétaire prépare le contrat de bail officiel (Loi n° 2019-576). Vous recevrez une notification instantanée dès que le document sera scellé et prêt pour votre signature.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Alerte transmission directe de bail en attente de signature */}
-          {tenantRentals.some(r => !r.rawContract?.tenant_signed || r.rawContract?.status === 'en_attente_signature_locataire') && (
+          {tenantRentals.some(r => (!r.rawContract?.tenant_signed || r.rawContract?.status === 'en_attente_signature_locataire') && r.rawContract?.status !== 'en_redaction_bail') && (
             <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-6 rounded-3xl shadow-lg border border-blue-500/30 flex flex-col md:flex-row items-center justify-between gap-4 animate-fadeIn">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-2xl bg-amber-400/20 border border-amber-400/30 text-amber-300 flex items-center justify-center shrink-0">
