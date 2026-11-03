@@ -307,18 +307,6 @@ export function markNotificationAsRead(notifOrId: any, userId?: string) {
   safeUpdateSupabaseNotificationRead(userId, targetId);
 
   try {
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'mark_notification_read',
-        notificationId: targetId,
-        userId
-      })
-    }).catch(() => {});
-  } catch {}
-
-  try {
     broadcastLiveEvent('NOTIFICATION_READ' as any, {
       actorId: userId,
       targetUserId: userId,
@@ -364,18 +352,6 @@ export function markAllNotificationsAsRead(userId?: string) {
   } catch {}
 
   safeUpdateSupabaseNotificationRead(userId);
-
-  try {
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'mark_notification_read',
-        notificationIds: allIds,
-        userId
-      })
-    }).catch(() => {});
-  } catch {}
 
   try {
     broadcastLiveEvent('NOTIFICATION_READ' as any, {

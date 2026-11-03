@@ -1131,20 +1131,6 @@ export function markMessagesAsRead(
 
   if (changed || notifsChanged) {
     if (currentUserId) {
-      try {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'mark_messages_read',
-            contactId,
-            currentUserId,
-            messageIds: newlyReadIds,
-            readAt: nowIso
-          })
-        }).catch(() => {});
-      } catch {}
-
       // Mise à jour directe de la table messages dans Supabase (colonne 'read' boolean)
       const uuidMsgIds = newlyReadIds.filter(isValidUuid);
       if (uuidMsgIds.length > 0) {
@@ -1255,20 +1241,6 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   }
 
   if (currentUserId && (changed || notifsChanged)) {
-    try {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'mark_messages_read',
-          contactId: '__all__',
-          currentUserId,
-          messageIds: newlyReadIds,
-          readAt: nowIso
-        })
-      }).catch(() => {});
-    } catch {}
-
     const uuidMsgIds = newlyReadIds.filter(isValidUuid);
     if (uuidMsgIds.length > 0) {
       try {

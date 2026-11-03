@@ -144,29 +144,6 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         appsList.push(...data);
       }
 
-      // Compléter avec l'API centrale /api/sync
-      try {
-        const syncRes = await fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'sync_all', userId: user.id })
-        });
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          const serverApps = syncJson?.data?.applications;
-          if (Array.isArray(serverApps)) {
-            serverApps.forEach((sa: any) => {
-              const isMatch =
-                (user.id && sa.tenant_id === user.id) ||
-                (user.email && sa.tenant_email?.toLowerCase() === user.email.toLowerCase());
-              if (isMatch && !appsList.some((ex) => ex.id === sa.id || (ex.property_id === sa.property_id && ex.tenant_id === sa.tenant_id))) {
-                appsList.push(sa);
-              }
-            });
-          }
-        }
-      } catch {}
-
       // Compléter avec le cache local synchronisé si besoin
       try {
         const raw = localStorage.getItem('locatrust_rental_applications');
