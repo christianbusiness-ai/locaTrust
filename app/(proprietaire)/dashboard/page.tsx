@@ -179,6 +179,7 @@ export default function ProprietaireDashboardPage({
       {/* Main App Top Header */}
       <Header
         currentUser={currentUser}
+        activeTab={activeTab}
         onSearch={(term) => console.log('Recherche:', term)}
         onOpenMessages={() => handleSelectTab('messages')}
         onOpenNotifications={() => handleSelectTab('messages')}

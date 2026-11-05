@@ -58,7 +58,7 @@ export default function AdminDashboardPage({
       {/* Main App Top Header */}
       <Header
         currentUser={currentUser}
-        currentTab={activeTab}
+        activeTab={activeTab}
         onSearch={(t) => console.log('Recherche Admin:', t)}
         onOpenMessages={() => setActiveTab('support')}
         onOpenNotifications={() => setActiveTab('verifications')}

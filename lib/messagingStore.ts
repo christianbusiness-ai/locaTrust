@@ -452,6 +452,14 @@ export function isMessageRead(msg: ChatMessage, currentUserId?: string, allMessa
     return true;
   }
 
+  // Règle temps réel : si l'utilisateur est actuellement dans la conversation ouverte avec cet expéditeur, le message est déjà vu et lu
+  if (currentUserId) {
+    const activePartner = getActiveChatPartnerForUser(currentUserId);
+    if (activePartner && (msg.sender_id === activePartner || activePartner.includes(msg.sender_id) || msg.sender_id.includes(activePartner))) {
+      return true;
+    }
+  }
+
   ensureCounterV2Migration(currentUserId);
 
   const map = {
@@ -1365,11 +1373,8 @@ export function getAdminUnreadMessagesCount(): number {
   let unreadCount = 0;
   for (const m of allMsgs) {
     if (!m || !m.sender_id || !m.receiver_id) continue;
-    // Ignorer les messages envoyés par l'admin lui-même
     if (adminTargetIds.has(m.sender_id)) continue;
-    // Seulement les messages destinés au support ou à l'admin
     if (!adminTargetIds.has(m.receiver_id)) continue;
-    // Vérifier si le message est marqué lu
     if (m.read || m.is_read || m.status === 'read' || isMessageRead(m, 'usr_support', allMsgs)) continue;
     unreadCount++;
   }
@@ -1456,11 +1461,9 @@ export function markAdminClientMessagesAsRead(clientId: string) {
 
 export function getUnreadMessagesCountForUser(user?: { id?: string; email?: string; role?: string } | null): number {
   if (typeof window === 'undefined') return 0;
-
   if (user?.role === 'admin') {
     return getAdminUnreadMessagesCount();
   }
-
   const userId = user?.id || '';
   if (!userId) return 0;
 

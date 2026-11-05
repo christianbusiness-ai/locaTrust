@@ -885,9 +885,13 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
             }
 
             // 2. Ingestion du message dans le stockage scopé de l'utilisateur actif
+            let isCurrentlyInThisChat = false;
             try {
               import('@/lib/messagingStore')
                 .then((m) => {
+                  const activePartner = m.getActiveChatPartnerForUser(currentActiveUserId);
+                  isCurrentlyInThisChat = Boolean(activePartner && (activePartner === senderId || senderId.includes(activePartner) || activePartner.includes(senderId)));
+
                   const curMsgs = m.getStoredMessages(currentActiveUserId);
                   const exists = curMsgs.some(
                     (existing: any) =>
@@ -903,12 +907,18 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                       receiver_id: receiverId,
                       text: incomingMsg.text || '',
                       created_at: incomingMsg.created_at || new Date().toISOString(),
-                      status: incomingMsg.status || 'delivered',
+                      status: isCurrentlyInThisChat ? 'read' : (incomingMsg.status || 'delivered'),
+                      read: Boolean(isCurrentlyInThisChat || incomingMsg.read || incomingMsg.is_read),
+                      is_read: Boolean(isCurrentlyInThisChat || incomingMsg.read || incomingMsg.is_read),
+                      read_at: isCurrentlyInThisChat ? new Date().toISOString() : (incomingMsg.read_at || null),
                       quittance: incomingMsg.quittance,
                       contract: incomingMsg.contract,
                       declaration: incomingMsg.declaration
                     };
                     m.saveStoredMessages([...curMsgs, formattedMsg], currentActiveUserId);
+                    if (isCurrentlyInThisChat && incomingMsg.id) {
+                      m.markMessagesAsRead(senderId, currentActiveUserId, [incomingMsg.id]);
+                    }
                   }
                 })
                 .catch(() => {});
@@ -925,8 +935,16 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               } catch {}
             }
 
-            // 4. Notification in-app ciblée EXCLUSIVEMENT pour le destinataire (jamais pour l'expéditeur)
-            if (senderId !== receiverId && receiverId === currentActiveUserId && senderId !== currentActiveUserId) {
+            // 4. Notification in-app ciblée EXCLUSIVEMENT pour le destinataire (jamais pour l'expéditeur, ni si la discussion est déjà ouverte sous ses yeux)
+            let isUserInChat = false;
+            try {
+              const activePartner = typeof window !== 'undefined' && currentActiveUserId ? localStorage.getItem(`locatrust_active_chat_contact_${currentActiveUserId}`) : null;
+              if (activePartner && (activePartner === senderId || senderId.includes(activePartner) || activePartner.includes(senderId))) {
+                isUserInChat = true;
+              }
+            } catch {}
+
+            if (senderId !== receiverId && receiverId === currentActiveUserId && senderId !== currentActiveUserId && !isUserInChat) {
               try {
                 const notifsRaw = localStorage.getItem('locatrust_notifications');
                 const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];

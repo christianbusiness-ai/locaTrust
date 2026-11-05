@@ -95,6 +95,7 @@ export default function TenantDashboardPage({
       {/* Main App Top Header */}
       <Header
         currentUser={currentUser}
+        activeTab={activeTab}
         onSearch={(t) => console.log('Recherche Locataire:', t)}
         onOpenMessages={() => setActiveTab('messages')}
         onOpenNotifications={() => setActiveTab('notifications')}

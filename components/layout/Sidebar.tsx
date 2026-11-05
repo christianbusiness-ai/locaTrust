@@ -173,8 +173,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
         setCautionPendingCount(countCautions);
 
-        const countMsgs = getUnreadMessagesCountForUser(
-          user ? { id: user.id, email: user.email, role: effectiveRole } : { role: effectiveRole }
+        const countMsgs = activeTab === 'messages' ? 0 : getUnreadMessagesCountForUser(
+          user ? { id: user.id, email: user.email, role: user.role || currentRole } : { role: currentRole }
         );
         setMsgCount(countMsgs);
       } catch (e) {
@@ -198,14 +198,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       window.removeEventListener('locatrust:messages-updated', updateCounts);
       window.removeEventListener('locatrust:cautions_updated', updateCounts);
     };
-  }, [user?.id, user?.email, isLocataire, isProprietaire, isAgence, isAdmin, effectiveRole, activeTab]);
+  }, [user?.id, user?.email, isLocataire, isProprietaire, isAgence, activeTab]);
 
   // 1. LOCATAIRE SPECIFIC NAVIGATION
   const tenantItems = [
     { id: 'feed', name: "Fil d'actualité", icon: LayoutDashboard },
     { id: 'favorites', name: 'Favoris', icon: Heart },
     { id: 'applications', name: 'Demandes', icon: Eye, badge: appCount > 0 ? appCount : undefined },
-    { id: 'messages', name: 'Messages', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
+    { id: 'messages', name: 'Messages', icon: MessageSquare, badge: (activeTab !== 'messages' && msgCount > 0) ? msgCount : undefined },
     { id: 'visits', name: 'Visites', icon: Calendar },
     { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements', icon: CreditCard },
@@ -217,15 +217,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'support', name: 'Aide & Support', icon: HelpCircle },
   ];
 
-  // 2. ADMIN SPECIFIC NAVIGATION
-  // Règle formelle demandée par l'utilisateur :
-  // Le compteur global en rouge compte les nouveaux messages reçus (1, 2, 3...)
-  // Dès que l'admin ouvre le menu "Chat en direct" (activeTab === 'support'), le compteur global devient 0.
-  const adminChatGlobalBadge = activeTab === 'support' ? 0 : msgCount;
-
+  // 2. ADMIN SPECIFIC NAVIGATION (Fil d'actualité & Paramètres uniquement)
   const adminItems = [
     { id: 'supervision', name: "Fil d'actualité", icon: LayoutDashboard },
-    { id: 'support', name: 'Chat en direct', icon: MessageSquare, badge: adminChatGlobalBadge > 0 ? adminChatGlobalBadge : undefined },
     { id: 'settings', name: 'Paramètres', icon: Settings },
   ];
 
@@ -244,7 +238,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements & Loyers', icon: CreditCard },
     { id: 'guarantees', name: 'Cautions', icon: ShieldCheck, badge: cautionPendingCount > 0 ? cautionPendingCount : undefined },
-    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: msgCount > 0 ? msgCount : undefined },
+    { id: 'messages', name: 'Messagerie', icon: MessageSquare, badge: (activeTab !== 'messages' && msgCount > 0) ? msgCount : undefined },
     { id: 'visits', name: 'Visites', icon: Calendar },
     { id: 'documents', name: 'Documents', icon: Folder },
     { id: 'receipts', name: 'Reçus & Quittances', icon: Receipt },
@@ -357,7 +351,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                   {item.badge && (
                     <span
-                      className={`w-5 h-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${isActive ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
+                      className={`w-5 h-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${isActive ? 'bg-white text-blue-700' : item.id === 'messages' ? 'bg-rose-600 text-white shadow-sm' : 'bg-blue-600 text-white'
                         }`}
                     >
                       {item.badge}
@@ -376,7 +370,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {adminItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id || 
-                (item.id === 'supervision' && (activeTab === 'overview' || activeTab === 'supervision' || activeTab === 'verifications' || activeTab === 'disputes' || activeTab === 'users' || activeTab === 'subscriptions'));
+                (item.id === 'supervision' && (activeTab === 'overview' || activeTab === 'supervision' || activeTab === 'verifications' || activeTab === 'disputes' || activeTab === 'users' || activeTab === 'subscriptions' || activeTab === 'support'));
 
               return (
                 <button
@@ -391,13 +385,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                     <span>{item.name}</span>
                   </div>
-                  {item.badge && (
-                    <span
-                      className="min-w-[20px] h-5 px-1.5 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center shrink-0 shadow-md animate-pulse"
-                    >
-                      {item.badge}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -431,7 +418,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                     {item.badge && (
                       <span
-                        className={`w-5 h-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${isActive ? 'bg-white text-blue-700' : 'bg-amber-500 text-slate-950'
+                        className={`w-5 h-5 rounded-full text-[10px] font-extrabold flex items-center justify-center shrink-0 ${isActive ? 'bg-white text-blue-700' : item.id === 'messages' ? 'bg-rose-600 text-white shadow-sm' : 'bg-amber-500 text-slate-950'
                           }`}
                       >
                         {item.badge}

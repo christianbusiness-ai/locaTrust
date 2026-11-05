@@ -497,6 +497,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   const [showScrollDownBtn, setShowScrollDownBtn] = useState<boolean>(false);
   const prevContactIdRef = useRef<string>(selectedContactId);
   const prevMessagesCountRef = useRef<number>(0);
+  const activeContactRef = useRef<ChatContact | null>(null);
 
   // Load stored messages strictly scoped to currentUserId
   const refreshMessages = () => {
@@ -560,6 +561,12 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
         currentUserId &&
         (incoming.sender_id === currentUserId || incoming.receiver_id === currentUserId)
       ) {
+        if (activeContactRef.current?.id && incoming.sender_id === activeContactRef.current.id) {
+          incoming.read = true;
+          incoming.is_read = true;
+          incoming.status = 'read';
+          markMessagesAsRead(activeContactRef.current.id, currentUserId, [incoming.id]);
+        }
         setMessages((prev) => {
           if (prev.some((m) => m.id === incoming.id)) return prev;
           return [...prev, incoming];
@@ -593,8 +600,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
-        () => {
+        (payload: any) => {
           if (currentUserId) {
+            const newMsg = payload?.new;
+            if (newMsg && newMsg.id && activeContactRef.current?.id && newMsg.sender_id === activeContactRef.current.id && newMsg.receiver_id === currentUserId) {
+              supabase.from('messages').update({ read: true }).eq('id', newMsg.id).then();
+              markMessagesAsRead(activeContactRef.current.id, currentUserId, [newMsg.id]);
+            }
             fetchSupabaseMessages(currentUserId).then((updated) => {
               if (updated && updated.length > 0) refreshMessages();
             }).catch(() => {});
@@ -641,6 +653,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
   }, [messages.length, selectedContactId, isTyping]);
 
   const activeContact = roleContacts.find((c) => c.id === selectedContactId) || roleContacts[0] || null;
+  activeContactRef.current = activeContact;
 
   // Filter messages between current user and active contact with intelligent deduplication
   const currentConversationMessages = React.useMemo(() => {
@@ -718,25 +731,27 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     return clean;
   }, [messages, activeContact?.id, activeContact?.name, activeContact?.propertyTitle, myAliases]);
 
-  // Marquer les messages du contact actif comme lus uniquement lorsque l'utilisateur a effectivement ouvert/consulté cette conversation
+  // Marquer les messages du contact actif comme lus et maintenir le contact actif tant que la discussion est ouverte
   useEffect(() => {
-    if (
-      activeContact?.id &&
-      currentUserId &&
-      userConsultedContactId === activeContact.id &&
-      (typeof document === 'undefined' || document.hasFocus())
-    ) {
+    if (activeContact?.id && currentUserId) {
+      // Maintenir activement le contact actif pour que les futurs messages arrivant en direct soient immédiatement marqués comme vus
+      setActiveChatPartnerForUser(currentUserId, activeContact.id);
+
       const unreadMsgs = currentConversationMessages.filter(
         (m) => (!m.read || !m.is_read || m.status !== 'read') && m.sender_id !== currentUserId
       );
       if (unreadMsgs.length > 0) {
         markMessagesAsRead(activeContact.id, currentUserId, unreadMsgs.map((m) => m.id));
       }
-      if (typeof window !== 'undefined' && getActiveChatPartnerForUser(currentUserId) === activeContact.id) {
+    }
+
+    return () => {
+      // Nettoyer seulement lors du démontage ou changement de contact
+      if (currentUserId && activeContact?.id && getActiveChatPartnerForUser(currentUserId) === activeContact.id) {
         setActiveChatPartnerForUser(currentUserId, null);
       }
-    }
-  }, [activeContact?.id, currentUserId, userConsultedContactId]);
+    };
+  }, [activeContact?.id, currentUserId, currentConversationMessages.length]);
 
   // Filter contacts by search
   const filteredContacts = roleContacts.filter(
@@ -1597,14 +1612,16 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               );
               const lastMsg = contactMsgs[contactMsgs.length - 1];
 
-              // Nombre exact de messages non lus spécifiquement reçus de ce contact
-              const contactUnreadCount = getUnreadCountForConversation(
-                messages || [],
-                currentUserId,
-                myAliases,
-                contact.id,
-                contactAliases
-              );
+              // Nombre exact de messages non lus reçus de ce contact (disparaît immédiatement si la conversation est ouverte)
+              const contactUnreadCount = isSelected
+                ? 0
+                : getUnreadCountForConversation(
+                    messages || [],
+                    currentUserId,
+                    myAliases,
+                    contact.id,
+                    contactAliases
+                  );
 
               return (
                 <div
@@ -1613,6 +1630,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                     setSelectedContactId(contact.id);
                     setUserConsultedContactId(contact.id);
                     setShowMobileChat(true);
+                    setActiveChatPartnerForUser(currentUserId, contact.id);
                     markMessagesAsRead(
                       contact.id,
                       currentUserId,

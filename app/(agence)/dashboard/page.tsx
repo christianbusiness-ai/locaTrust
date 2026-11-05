@@ -135,6 +135,7 @@ export default function AgencyDashboardPage({
       {/* Main App Top Header */}
       <Header
         currentUser={currentUser}
+        activeTab={activeTab}
         onSearch={(t) => console.log('Recherche Agence:', t)}
         onOpenMessages={() => setActiveTab('messages')}
         onOpenNotifications={() => setActiveTab('messages')}
