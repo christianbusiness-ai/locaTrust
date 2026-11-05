@@ -1306,8 +1306,161 @@ export function getUnreadCountForConversation(
   return count;
 }
 
+export function getAdminStoredMessages(): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  const adminKeys = ['usr_support', 'admin_user', 'admin'];
+  try {
+    const lastAuthId = localStorage.getItem('locatrust_last_auth_user_id');
+    if (lastAuthId) adminKeys.push(lastAuthId);
+  } catch {}
+
+  const adminTargetIds = new Set(adminKeys);
+  const messageMap = new Map<string, ChatMessage>();
+
+  const loadFromKey = (k: string) => {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((m: any) => {
+            if (m && m.id && (adminTargetIds.has(m.sender_id) || adminTargetIds.has(m.receiver_id))) {
+              messageMap.set(m.id, m);
+            }
+          });
+        }
+      }
+    } catch {}
+  };
+
+  loadFromKey(STORAGE_KEY);
+  adminKeys.forEach((key) => loadFromKey(`${STORAGE_KEY}_${key}`));
+
+  // Scanner également toutes les clés utilisateur pour repérer les messages envoyés au support
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(`${STORAGE_KEY}_`)) {
+        loadFromKey(key);
+      }
+    }
+  } catch {}
+
+  return Array.from(messageMap.values()).sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+}
+
+export function getAdminUnreadMessagesCount(): number {
+  if (typeof window === 'undefined') return 0;
+  const allMsgs = getAdminStoredMessages();
+  if (!Array.isArray(allMsgs) || allMsgs.length === 0) return 0;
+
+  const adminTargetIds = new Set(['usr_support', 'admin_user', 'admin']);
+  try {
+    const lastAuthId = localStorage.getItem('locatrust_last_auth_user_id');
+    if (lastAuthId) adminTargetIds.add(lastAuthId);
+  } catch {}
+
+  let unreadCount = 0;
+  for (const m of allMsgs) {
+    if (!m || !m.sender_id || !m.receiver_id) continue;
+    // Ignorer les messages envoyés par l'admin lui-même
+    if (adminTargetIds.has(m.sender_id)) continue;
+    // Seulement les messages destinés au support ou à l'admin
+    if (!adminTargetIds.has(m.receiver_id)) continue;
+    // Vérifier si le message est marqué lu
+    if (m.read || m.is_read || m.status === 'read' || isMessageRead(m, 'usr_support', allMsgs)) continue;
+    unreadCount++;
+  }
+  return unreadCount;
+}
+
+export function getAdminUnreadCountForClient(clientId: string): number {
+  if (typeof window === 'undefined' || !clientId) return 0;
+  const allMsgs = getAdminStoredMessages();
+  if (!Array.isArray(allMsgs) || allMsgs.length === 0) return 0;
+
+  const adminTargetIds = new Set(['usr_support', 'admin_user', 'admin']);
+  try {
+    const lastAuthId = localStorage.getItem('locatrust_last_auth_user_id');
+    if (lastAuthId) adminTargetIds.add(lastAuthId);
+  } catch {}
+
+  let unreadCount = 0;
+  for (const m of allMsgs) {
+    if (!m || m.sender_id !== clientId) continue;
+    if (!adminTargetIds.has(m.receiver_id)) continue;
+    if (m.read || m.is_read || m.status === 'read' || isMessageRead(m, 'usr_support', allMsgs)) continue;
+    unreadCount++;
+  }
+  return unreadCount;
+}
+
+export function markAdminClientMessagesAsRead(clientId: string) {
+  if (typeof window === 'undefined' || !clientId) return;
+  const allMsgs = getAdminStoredMessages();
+  if (!Array.isArray(allMsgs) || allMsgs.length === 0) return;
+
+  const adminTargetIds = new Set(['usr_support', 'admin_user', 'admin']);
+  try {
+    const lastAuthId = localStorage.getItem('locatrust_last_auth_user_id');
+    if (lastAuthId) adminTargetIds.add(lastAuthId);
+  } catch {}
+
+  const unreadFromClient = allMsgs.filter(
+    (m) =>
+      m &&
+      m.sender_id === clientId &&
+      adminTargetIds.has(m.receiver_id) &&
+      !m.read &&
+      !m.is_read &&
+      m.status !== 'read' &&
+      !isMessageRead(m, 'usr_support', allMsgs)
+  );
+
+  if (unreadFromClient.length === 0) return;
+
+  const msgIds = unreadFromClient.map((m) => m.id);
+  markMessagesAsRead(clientId, 'usr_support', msgIds);
+  markMessagesAsRead(clientId, 'admin_user', msgIds);
+
+  const uuidIds = msgIds.filter(isValidUuid);
+  if (uuidIds.length > 0) {
+    supabase.from('messages').update({ read: true, status: 'read' }).in('id', uuidIds).then();
+  }
+
+  // Mettre à jour également dans le stockage local pour affichage immédiat
+  try {
+    const updateStorage = (k: string) => {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const updated = parsed.map((m: any) =>
+            m && msgIds.includes(m.id) ? { ...m, read: true, is_read: true, status: 'read' } : m
+          );
+          localStorage.setItem(k, JSON.stringify(updated));
+        }
+      }
+    };
+    updateStorage(STORAGE_KEY);
+    updateStorage(`${STORAGE_KEY}_usr_support`);
+    updateStorage(`${STORAGE_KEY}_admin_user`);
+    updateStorage(`${STORAGE_KEY}_${clientId}`);
+  } catch {}
+
+  window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+  window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+}
+
 export function getUnreadMessagesCountForUser(user?: { id?: string; email?: string; role?: string } | null): number {
   if (typeof window === 'undefined') return 0;
+
+  if (user?.role === 'admin') {
+    return getAdminUnreadMessagesCount();
+  }
+
   const userId = user?.id || '';
   if (!userId) return 0;
 

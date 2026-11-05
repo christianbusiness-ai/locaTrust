@@ -77,6 +77,7 @@ interface NotificationItem {
 
 interface HeaderProps {
   currentUser: UserType;
+  currentTab?: string;
   onSearch?: (term: string) => void;
   onOpenMessages?: () => void;
   onOpenNotifications?: () => void;
@@ -89,6 +90,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
+  currentTab,
   onSearch,
   onOpenMessages,
   onOpenNotifications,
@@ -181,6 +183,10 @@ export const Header: React.FC<HeaderProps> = ({
   useEffect(() => {
     const updateUnread = () => {
       try {
+        if (currentUser?.role === 'admin' && currentTab === 'support') {
+          setUnreadMessagesCount(0);
+          return;
+        }
         const count = getUnreadMessagesCountForUser(currentUser);
         setUnreadMessagesCount(count);
       } catch (e) {
@@ -195,7 +201,7 @@ export const Header: React.FC<HeaderProps> = ({
       window.removeEventListener('locatrust:messages_updated', updateUnread);
       window.removeEventListener('locatrust:messages-updated', updateUnread);
     };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, currentUser?.role, currentTab]);
 
   // Audit complet et silencieux du calendrier des loyers en arrière-plan (connecté à la base de données)
   useEffect(() => {
@@ -749,14 +755,16 @@ export const Header: React.FC<HeaderProps> = ({
               setShowNotifications(false);
               setSelectedNotification(null);
               if (onOpenMessages) onOpenMessages();
-              if (onNavigateTab) onNavigateTab('messages');
+              if (onNavigateTab) onNavigateTab(currentUser?.role === 'admin' ? 'support' : 'messages');
             }}
             className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"
-            title="Messagerie"
+            title={currentUser?.role === 'admin' ? "Chat en direct" : "Messagerie"}
           >
             <MessageSquare className="w-4 h-4" />
             {unreadMessagesCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] font-extrabold flex items-center justify-center border-2 border-white dark:border-slate-900">
+              <span className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[9px] font-black flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-md ${
+                currentUser?.role === 'admin' ? 'bg-rose-600 animate-pulse' : 'bg-blue-600'
+              }`}>
                 {unreadMessagesCount}
               </span>
             )}

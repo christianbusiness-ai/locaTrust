@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useAuth } from '@/src/context/AuthContext';
+import { sendChatMessage } from '@/lib/messagingStore';
 import {
   HelpCircle,
   MessageSquare,
@@ -58,6 +60,7 @@ interface LocataireSupportViewProps {
 export const LocataireSupportView: React.FC<LocataireSupportViewProps> = ({
   userRole = 'locataire'
 }) => {
+  const { user, profile } = useAuth();
   const [tickets, setTickets] = useState<SupportTicket[]>(INITIAL_TICKETS);
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
 
@@ -72,6 +75,10 @@ export const LocataireSupportView: React.FC<LocataireSupportViewProps> = ({
     e.preventDefault();
     if (!newSubject.trim() || !newMessage.trim()) return;
 
+    const senderId = user?.id || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_last_auth_user_id') : '') || 'usr_client';
+    const senderName = profile?.full_name || user?.user_metadata?.full_name || 'Locataire';
+    const senderPhone = profile?.phone || '+225 07 00 00 00 00';
+
     const newTicketId = `TK-2026-${Math.floor(1000 + Math.random() * 9000)}`;
     const newTicket: SupportTicket = {
       id: newTicketId,
@@ -81,6 +88,31 @@ export const LocataireSupportView: React.FC<LocataireSupportViewProps> = ({
       date: 'À l\'instant',
       status: 'en_attente',
     };
+
+    // Envoyer comme message réel au support admin
+    sendChatMessage(senderId, 'usr_support', `[${newCategory} - ${newSubject.trim()}] ${newMessage.trim()}`);
+
+    try {
+      const raw = localStorage.getItem('locatrust_support_tickets');
+      const list = raw ? JSON.parse(raw) : [];
+      const adminTicket = {
+        id: newTicketId,
+        sender_id: senderId,
+        sender_name: senderName,
+        sender_role: 'locataire',
+        sender_phone: senderPhone,
+        sender_email: user?.email || 'locataire@locatrust.ci',
+        subject: newSubject.trim(),
+        message: newMessage.trim(),
+        category: newCategory,
+        status: 'en_attente',
+        created_at: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+      };
+      localStorage.setItem('locatrust_support_tickets', JSON.stringify([adminTicket, ...(Array.isArray(list) ? list : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:support_tickets_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+    } catch {}
 
     setTickets([newTicket, ...tickets]);
     setIsSubmitted(true);

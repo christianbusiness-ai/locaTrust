@@ -174,7 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         setCautionPendingCount(countCautions);
 
         const countMsgs = getUnreadMessagesCountForUser(
-          user ? { id: user.id, email: user.email, role: user.role || currentRole } : { role: currentRole }
+          user ? { id: user.id, email: user.email, role: effectiveRole } : { role: effectiveRole }
         );
         setMsgCount(countMsgs);
       } catch (e) {
@@ -198,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       window.removeEventListener('locatrust:messages-updated', updateCounts);
       window.removeEventListener('locatrust:cautions_updated', updateCounts);
     };
-  }, [user?.id, user?.email, isLocataire, isProprietaire, isAgence]);
+  }, [user?.id, user?.email, isLocataire, isProprietaire, isAgence, isAdmin, effectiveRole, activeTab]);
 
   // 1. LOCATAIRE SPECIFIC NAVIGATION
   const tenantItems = [
@@ -217,9 +217,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'support', name: 'Aide & Support', icon: HelpCircle },
   ];
 
-  // 2. ADMIN SPECIFIC NAVIGATION (Fil d'actualité & Paramètres uniquement)
+  // 2. ADMIN SPECIFIC NAVIGATION
+  // Règle formelle demandée par l'utilisateur :
+  // Le compteur global en rouge compte les nouveaux messages reçus (1, 2, 3...)
+  // Dès que l'admin ouvre le menu "Chat en direct" (activeTab === 'support'), le compteur global devient 0.
+  const adminChatGlobalBadge = activeTab === 'support' ? 0 : msgCount;
+
   const adminItems = [
     { id: 'supervision', name: "Fil d'actualité", icon: LayoutDashboard },
+    { id: 'support', name: 'Chat en direct', icon: MessageSquare, badge: adminChatGlobalBadge > 0 ? adminChatGlobalBadge : undefined },
     { id: 'settings', name: 'Paramètres', icon: Settings },
   ];
 
@@ -370,7 +376,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {adminItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id || 
-                (item.id === 'supervision' && (activeTab === 'overview' || activeTab === 'supervision' || activeTab === 'verifications' || activeTab === 'disputes' || activeTab === 'users' || activeTab === 'subscriptions' || activeTab === 'support'));
+                (item.id === 'supervision' && (activeTab === 'overview' || activeTab === 'supervision' || activeTab === 'verifications' || activeTab === 'disputes' || activeTab === 'users' || activeTab === 'subscriptions'));
 
               return (
                 <button
@@ -385,6 +391,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                     <span>{item.name}</span>
                   </div>
+                  {item.badge && (
+                    <span
+                      className="min-w-[20px] h-5 px-1.5 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center shrink-0 shadow-md animate-pulse"
+                    >
+                      {item.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}

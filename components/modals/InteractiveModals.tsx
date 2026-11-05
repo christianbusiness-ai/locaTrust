@@ -39,6 +39,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { getAgencyMandates, saveAgencyMandate, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
 import { LegalContractGeneratorModal } from '@/components/contracts/LegalContractGeneratorModal';
+import { sendChatMessage } from '@/lib/messagingStore';
 
 // Helper pour compresser les vraies photos de l'utilisateur sans aucune perte de sujet
 const compressImageToDataUrl = (file: File, maxWidth = 1280, maxHeight = 1280, quality = 0.82): Promise<string> => {
@@ -1733,6 +1734,7 @@ export const AddPaymentAccountModal: React.FC<{ isOpen: boolean; onClose: () => 
 
 // 6. Support Modal - Formulaire d'envoi de message direct au Support LocaTrust (Sans numéros directs ni coordonnées brutes)
 export const SupportModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
+  const { user, profile } = useAuth();
   const [subject, setSubject] = React.useState('');
   const [category, setCategory] = React.useState('Question générale');
   const [message, setMessage] = React.useState('');
@@ -1743,6 +1745,40 @@ export const SupportModal: React.FC<{ isOpen: boolean; onClose: () => void }> = 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim() || !message.trim()) return;
+
+    const senderId = user?.id || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_last_auth_user_id') : '') || 'usr_client';
+    const senderName = profile?.full_name || user?.user_metadata?.full_name || 'Client LocaTrust';
+    const senderPhone = profile?.phone || '+225 07 00 00 00 00';
+    const senderRole = profile?.account_type || 'locataire';
+
+    // 1. Envoyer comme message réel dans le store de messagerie
+    sendChatMessage(senderId, 'usr_support', `[${category} - ${subject.trim()}] ${message.trim()}`);
+
+    // 2. Enregistrer le ticket d'assistance
+    const ticketId = `TK-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newTicket = {
+      id: ticketId,
+      sender_id: senderId,
+      sender_name: senderName,
+      sender_role: senderRole,
+      sender_phone: senderPhone,
+      sender_email: user?.email || 'client@locatrust.ci',
+      subject: subject.trim(),
+      message: message.trim(),
+      category,
+      status: 'en_attente',
+      created_at: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+    };
+
+    try {
+      const raw = localStorage.getItem('locatrust_support_tickets');
+      const list = raw ? JSON.parse(raw) : [];
+      localStorage.setItem('locatrust_support_tickets', JSON.stringify([newTicket, ...(Array.isArray(list) ? list : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:support_tickets_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+    } catch {}
+
     setIsSent(true);
   };
 
