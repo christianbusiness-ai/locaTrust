@@ -234,9 +234,38 @@ export function normalizeSemanticText(text: string): string {
 }
 
 /**
+ * Découpe une ligne contenant plusieurs obligations juxtaposées sans ponctuation
+ * (ex: "rendre propre l'entourage de la maison raparé les petit defaut dans la maison"
+ *  ou "vidé les fosse septique rechargé les compteur CIE payé les factures SODECI")
+ * en clauses individuelles distinctes.
+ */
+export function splitJuxtaposedObligations(line: string): string[] {
+  if (!line || !line.trim()) return [];
+  let working = line.trim();
+
+  // Découper sur les connecteurs explicites d'énumération d'obligations
+  working = working.replace(
+    /\s+(?:et\s+aussi|ainsi\s+que|de\s+plus|en\s+outre|par\s+ailleurs|puis)\s+(?=(?:le\s+|la\s+|les\s+|il\s+|ne\s+|pas\s+|interdit|obligat|rendre|repar|répar|rapar|vid|recharg|pay|nettoy|entret|balay|lav|repeind|chang|remplac|ferm|gard|respect|mainten|assur|fourni|remet|restitu))/gi,
+    ' ||| '
+  );
+
+  // Découper lorsque deux verbes d'action locatifs (à l'infinitif ou au participe passé mal orthographié -é)
+  // se succèdent sans ponctuation après un groupe nominal d'au moins 2 mots
+  const actionVerbBoundaryRegex =
+    /(?<=\b(?:maison|logement|appartement|cour|villa|chambre|salon|cuisine|douche|toilette|toilettes|fosse\s+septique|fosses\s+septiques|septique|compteur\s+cie|compteurs\s+cie|cie|facture\s+sodeci|factures\s+sodeci|sodeci|eau|courant|electricite|électricité|loyer|caution|avance|charges|factures?|compteurs?|murs?|peintures?|carreaux|faïence|faience|toiture|toit|plomberie|climatiseur|climatiseurs|clim|portail|porte|serrure|clés|cles|poubelles?|ordures?|voisinage|voisins?|bruit|animaux|contrat|bail|mois|jours?|heures?|entrée|sortie|état)\s+)(?=(?:rendre\s+propre|rapar[eé]r?|r[eé]par[eé]r?|vid[eé]r?|recharg[eé]r?|pay[eé]r?|r[eé]gl[eé]r?|nettoy[eé]r?|entretenir|entretenu|balay[eé]r?|lav[eé]r?|repeindre|repeint|refaire|chang[eé]r?|remplac[eé]r?|ferm[eé]r?|gard[eé]r?|respect[eé]r?|maintenir|assurer|assur[eé]r?|interdit\s+de|ne\s+pas\s+|pas\s+de\s+|il\s+faut\s+|le\s+locataire\s+doit|le\s+propri[eé]taire\s+doit|le\s+bailleur\s+doit|le\s+preneur\s+doit)\b)/gi;
+
+  working = working.replace(actionVerbBoundaryRegex, ' ||| ');
+
+  return working
+    .split(' ||| ')
+    .map((s) => cleanClauseLine(s))
+    .filter((s) => s.length >= 3);
+}
+
+/**
  * Découpe un bloc de texte en clauses logiques individuelles,
  * en gérant les retours à la ligne, les listes à puces, les numérotations,
- * et en fusionnant intelligemment les fragments de phrases coupés par les pauses micro.
+ * les obligations juxtaposées sans ponctuation, et les fragments coupés par le micro.
  */
 export function extractLogicalClauses(text: string): string[] {
   if (!text || !text.trim()) return [];
@@ -252,7 +281,9 @@ export function extractLogicalClauses(text: string): string[] {
     if (numberedSubClauses.length > 1) {
       for (const sub of numberedSubClauses) {
         const cleaned = cleanClauseLine(sub);
-        if (cleaned && cleaned.length >= 3) rawClauses.push(cleaned);
+        if (cleaned && cleaned.length >= 3) {
+          rawClauses.push(...splitJuxtaposedObligations(cleaned));
+        }
       }
       continue;
     }
@@ -262,44 +293,44 @@ export function extractLogicalClauses(text: string): string[] {
     if (bulletSubClauses.length > 1) {
       for (const sub of bulletSubClauses) {
         const cleaned = cleanClauseLine(sub);
-        if (cleaned && cleaned.length >= 3) rawClauses.push(cleaned);
+        if (cleaned && cleaned.length >= 3) {
+          rawClauses.push(...splitJuxtaposedObligations(cleaned));
+        }
       }
       continue;
     }
 
     // Détection de points-virgules séparant des clauses indépendantes
-    if (trimmed.includes(';') && trimmed.length > 35) {
+    if (trimmed.includes(';') && trimmed.length > 20) {
       const semiClauses = trimmed.split(/\s*;\s*/);
       for (const sub of semiClauses) {
         const cleaned = cleanClauseLine(sub);
-        if (cleaned && cleaned.length >= 3) rawClauses.push(cleaned);
+        if (cleaned && cleaned.length >= 3) {
+          rawClauses.push(...splitJuxtaposedObligations(cleaned));
+        }
       }
       continue;
     }
 
     const cleaned = cleanClauseLine(trimmed);
     if (cleaned && cleaned.length >= 3) {
-      rawClauses.push(cleaned);
+      rawClauses.push(...splitJuxtaposedObligations(cleaned));
     }
   }
 
-  // Fusion intelligente des fragments de phrases coupés lors de la dictée
-  // (ex: si la ligne précédente ne se termine pas par un point et que la suivante continue la phrase)
+  // Fusion uniquement si la ligne précédente se termine par un mot de liaison inachevé (pause micro au milieu d'un syntagme)
   const mergedClauses: string[] = [];
+  const danglingConnectorRegex = /\b(?:de|du|des|à|a|au|aux|pour|avec|sans|dans|sur|sous|par|en|vers|chez|entre|contre|le|la|les|un|une|ce|cet|cette|ces|mon|ma|mes|ton|ta|tes|son|sa|ses|notre|nos|votre|vos|leur|leurs|que|qui|dont|où|et|ou|mais|car|comme)$/i;
+
   for (let i = 0; i < rawClauses.length; i++) {
     const current = rawClauses[i];
 
     if (mergedClauses.length > 0) {
       const prev = mergedClauses[mergedClauses.length - 1];
       const prevEndsWithPunct = /[.!?:]$/.test(prev.trim());
-      const isContinuation = !prevEndsWithPunct && (
-        /^[a-zà-ÿ]/.test(current) ||
-        current.length < 25 ||
-        prev.length < 35
-      );
+      const prevEndsWithDanglingWord = !prevEndsWithPunct && danglingConnectorRegex.test(prev.trim());
 
-      if (isContinuation) {
-        // Fusionner avec la précédente
+      if (prevEndsWithDanglingWord) {
         mergedClauses[mergedClauses.length - 1] = `${prev.trim().replace(/\.+$/, '')} ${current.trim()}`;
         continue;
       }
@@ -314,7 +345,6 @@ export function extractLogicalClauses(text: string): string[] {
 
   for (const c of mergedClauses) {
     let clean = c.trim();
-    // Nettoyer les pointillés en fin de phrase
     clean = clean.replace(/\.{2,}$/, '.').replace(/\s*\.+$/, '.');
     if (clean.length < 4) continue;
 
@@ -1077,6 +1107,14 @@ function analyzeSingleWrittenClause(
   // DOMAINE 11 : CLAUSE GÉNÉRALE PERSONNALISÉE VALIDE
   // --------------------------------------------------------------------------
   // Comprend toute autre phrase personnalisée écrite par le propriétaire ou locataire
+  const orthoRes = analyzeAndFixFrenchOrthographyAndStyle(cleaned);
+  const mappedField =
+    sourceParty === 'locataire' ? 'tenant' : sourceParty === 'logement' ? 'property' : 'owner';
+  const sustainedClause =
+    orthoRes.hadLinguisticErrors || orthoRes.hadInformalOrIncompleteStyle
+      ? reformulateIntoSustainedLegalFrench(orthoRes.correctedText, mappedField, mappedField, isHabitation)
+      : cleaned;
+
   return {
     id: `custom_valid_${sourceParty}_${lineIndex}`,
     rawText: cleaned,
@@ -1096,7 +1134,7 @@ function analyzeSingleWrittenClause(
     status: 'conforme',
     title: 'Condition particulière licite convenue entre les parties',
     understoodMeaning:
-      `Engagement particulier formulé par le ${actualParty === 'proprietaire' ? 'propriétaire' : 'locataire'} : « ${cleaned} ».`,
+      `Engagement particulier formulé par le ${actualParty === 'proprietaire' ? 'propriétaire' : 'locataire'} : « ${sustainedClause} ».`,
     explanation:
       'Clause licite conclue dans le cadre de la liberté contractuelle en conformité avec l\'ordre public.',
     legalBasis: {
@@ -1106,7 +1144,7 @@ function analyzeSingleWrittenClause(
       verified: true
     },
     recommendedAction: 'Clause validée.',
-    reformulatedText: `Les parties conviennent expressément de la disposition suivante : ${cleaned.charAt(0).toUpperCase() + cleaned.slice(1)}.`,
+    reformulatedText: sustainedClause,
     fieldSource,
     lineIndex
   };
@@ -1555,6 +1593,7 @@ export interface ReorganizedClauseLog {
   reformulatedText: string;
   legalCitation?: string;
   isCorrectedAbuse?: boolean;
+  hasLegalViolation?: boolean;
   abuseReason?: string;
   caseCategory?: 'A' | 'B' | 'C' | 'D';
   caseLabel?: string;
@@ -1562,18 +1601,266 @@ export interface ReorganizedClauseLog {
 
 /**
  * Nettoie les répétitions de mots ou groupes de mots consécutifs issues de la dictée vocale
- * (ex: "le locataire doit... le locataire doit..." -> "le locataire doit...")
+ * ainsi que les tics de langage oraux ("euh", "hum", "bon ben", etc.)
  */
 export function cleanDictationRepetitions(text: string): string {
   if (!text) return '';
   let cleaned = text.trim();
-  // 1. Éliminer les répétitions de phrases ou groupes de 1 à 5 mots consécutifs
-  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ0-9']+(?:\s+[a-zA-ZÀ-ÿ0-9']+){0,4})\s+(?:\.{2,}\s*)?\1\b/gi, '$1');
-  // 2. Nettoyer les bégaiements d'un seul mot
-  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ0-9']{2,})\s+\1\b/gi, '$1');
-  // 3. Nettoyer les pointillés multiples
-  cleaned = cleaned.replace(/\.{2,}/g, '.');
+  // 0. Supprimer les tics de dictée vocale
+  cleaned = cleaned.replace(/\b(?:euh+|hum+|bah+|ben\s+voil[aà]|voil[aà]\s+quoi|tu\s+vois|en\s+fait\s+euh)\b[,]?\s*/gi, '');
+  // 1. Éliminer les répétitions de phrases ou groupes de 1 à 6 mots consécutifs
+  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ0-9']+(?:\s+[a-zA-ZÀ-ÿ0-9']+){0,5})\s+(?:\.{2,}\s*|,?\s+)?\1\b/gi, '$1');
+  // 2. Nettoyer les bégaiements d'un seul mot (y compris articles "le le", "la la", "de de", "à à")
+  cleaned = cleaned.replace(/\b([a-zA-ZÀ-ÿ0-9']{1,})\s+\1\b/gi, '$1');
+  // 3. Nettoyer les pointillés multiples et espaces doubles
+  cleaned = cleaned.replace(/\.{2,}/g, '.').replace(/\s{2,}/g, ' ');
   return cleaned.trim();
+}
+
+/**
+ * Corrige l'orthographe, la grammaire, les confusions -é/-er, les accords pluriels,
+ * les erreurs de transcription vocale et évalue si la phrase originale comportait des erreurs.
+ */
+function analyzeAndFixFrenchOrthographyAndStyle(raw: string): {
+  correctedText: string;
+  hadLinguisticErrors: boolean;
+  hadInformalOrIncompleteStyle: boolean;
+} {
+  const originalTrimmed = raw.trim();
+  let text = cleanDictationRepetitions(originalTrimmed);
+  let hadLinguisticErrors = text.toLowerCase() !== originalTrimmed.toLowerCase();
+
+  const rules: Array<[RegExp, string]> = [
+    // Fautes courantes & dictée vocale
+    [/\brapar[eé]r?\b/gi, 'réparer'],
+    [/\brepar[eé]\b/gi, 'réparer'],
+    [/\br[eé]par[eé]\s+(?=le|la|les|un|une|des|tout|toute|tous)/gi, 'réparer '],
+    [/\bvid[eé]\s+(?=le|la|les|un|une|des|fosse)/gi, 'vider '],
+    [/\brecharg[eé]\s+(?=le|la|les|un|une|des|compteur)/gi, 'recharger '],
+    [/\bpay[eé]\s+(?=le|la|les|un|une|des|son|sa|ses|facture|loyer|caution|eau|courant)/gi, 'payer '],
+    [/\br[eé]gl[eé]\s+(?=le|la|les|un|une|des|son|sa|ses|facture|loyer)/gi, 'régler '],
+    [/\bnettoy[eé]\s+(?=le|la|les|un|une|des|cour|maison|logement|entourage|partie)/gi, 'nettoyer '],
+    [/\bbalay[eé]\s+(?=le|la|les|un|une|des|cour|maison|devant)/gi, 'balayer '],
+    [/\blav[eé]\s+(?=le|la|les|un|une|des|cour|sol|carreau)/gi, 'laver '],
+    [/\bgard[eé]\s+(?=le|la|les|un|une|des|maison|cour|propre)/gi, 'garder '],
+    [/\bferm[eé]\s+(?=le|la|les|un|une|des|portail|porte)/gi, 'fermer '],
+    [/\bchang[eé]\s+(?=le|la|les|un|une|des|ampoule|serrure|robinet)/gi, 'changer '],
+    [/\bremplac[eé]\s+(?=le|la|les|un|une|des)/gi, 'remplacer '],
+    [/\brespect[eé]\s+(?=le|la|les|un|une|des|voisin|calme|r[eè]glement)/gi, 'respecter '],
+    [/\bcass[eé]\s+(?=le|la|les|un|une|des|mur|carreau)/gi, 'casser '],
+    [/\bperc[eé]\s+(?=le|la|les|un|une|des|mur|carreau|fa[iï]ence)/gi, 'percer '],
+    // Accords pluriels et genres fréquents
+    [/\bles\s+petit\s+d[eé]fauts?\b/gi, 'les petits défauts'],
+    [/\bpetit\s+d[eé]faut\b/gi, 'petits défauts'],
+    [/\bles\s+petite\s+r[eé]parations?\b/gi, 'les petites réparations'],
+    [/\bles\s+grosse\s+r[eé]parations?\b/gi, 'les grosses réparations'],
+    [/\bles\s+fosse\s+septiques?\b/gi, 'la fosse septique'],
+    [/\bfausse\s+septiques?\b/gi, 'fosse septique'],
+    [/\bfosse\s+sceptiques?\b/gi, 'fosse septique'],
+    [/\bles\s+compteur\s+cie\b/gi, 'le compteur CIE'],
+    [/\ble\s+compteurs?\s+cie\b/gi, 'le compteur CIE'],
+    [/\bles\s+compteur\b/gi, 'les compteurs'],
+    [/\bles\s+facture\b/gi, 'les factures'],
+    [/\bsodeci\b/gi, 'SODECI'],
+    [/\bcie\b/gi, 'CIE'],
+    [/\bles\s+charge\b/gi, 'les charges'],
+    [/\bles\s+carreau\b/gi, 'les carreaux'],
+    [/\bles\s+mur\b/gi, 'les murs'],
+    [/\bles\s+voisin\b/gi, 'les voisins'],
+    [/\bles\s+poubelle\b/gi, 'les poubelles'],
+    [/\bles\s+ordure\s+m[eé]nag[eè]re\b/gi, 'les ordures ménagères'],
+    [/\bles\s+partie\s+commune\b/gi, 'les parties communes'],
+    [/\bles\s+cl[eé]\b/gi, 'les clés'],
+    // Orthographe et accents manquants
+    [/\bd[e]faut(s?)\b/gi, 'défaut$1'],
+    [/\br[e]parer\b/gi, 'réparer'],
+    [/\br[e]paration(s?)\b/gi, 'réparation$1'],
+    [/\bpropret[e]\b/gi, 'propreté'],
+    [/\b[e]lectricit[e]\b/gi, 'électricité'],
+    [/\bs[e]curit[e]\b/gi, 'sécurité'],
+    [/\b[e]tanch[e]it[e]\b/gi, 'étanchéité'],
+    [/\br[e]glement\b/gi, 'règlement'],
+    [/\bpropri[e]taire\b/gi, 'propriétaire'],
+    [/\bd[e]g[aâ]t(s?)\b/gi, 'dégât$1'],
+    [/\bpr[e]avis\b/gi, 'préavis'],
+    [/\bp[e]nalit[e](s?)\b/gi, 'pénalité$1'],
+    [/\br[e]siliation\b/gi, 'résiliation'],
+    [/\b[e]tat\s+des\s+lieux\b/gi, 'état des lieux'],
+    [/\ba\s+(?=payer|r[eé]parer|vider|recharger|nettoyer|entretenir|la\s+charge|temps|bonne\s+date|partir)/gi, 'à '],
+    [/\bce\s+(?=charger|conformer|soumettre|comporter)/gi, 'se ']
+  ];
+
+  for (const [pattern, replacement] of rules) {
+    if (pattern.test(text)) {
+      hadLinguisticErrors = true;
+      text = text.replace(pattern, replacement);
+    }
+  }
+
+  // Vérifier si la phrase initiale commençait sans majuscule ou sans ponctuation finale ou style télégraphique/familier
+  const startsWithLower = /^[a-zà-ÿ]/.test(originalTrimmed);
+  const lacksEndPunct = !/[.!?]$/.test(originalTrimmed);
+
+  // Détection de langage familier, de la rue, ou style télégraphique (infinitif brut sans structure juridique)
+  const norm = normalizeSemanticText(text);
+  const hasColloquialMarkers =
+    /\b(?:rendre\s+propre\s+l\s*entourage|petits?\s+defauts?|dans\s+la\s+maison|vider\s+la\s+fosse|recharger\s+le\s+compteur|payer\s+les\s+factures|faut\s+pas|il\s+faut|je\s+veux|on\s+doit|gater|arranger|palabre|bagarre|histoires?\s+dans\s+la\s+cour|proprio|patron|courant\s+cie|mettre\s+dehors|pas\s+de\s+bruit|pas\s+d\s*animaux|interdit\s+chien|mettre\s+clou)\b/i.test(norm);
+
+  const startsWithBareInfinitive =
+    /^(?:rendre|réparer|vider|recharger|payer|régler|nettoyer|balayer|laver|garder|fermer|changer|remplacer|respecter|entretenir|repeindre|maintenir|assurer|interdire|éviter|ne\s+pas|pas\s+de)\b/i.test(text.trim());
+
+  const hadInformalOrIncompleteStyle =
+    hasColloquialMarkers || startsWithBareInfinitive || startsWithLower || lacksEndPunct || originalTrimmed.length < 22;
+
+  return {
+    correctedText: text.trim(),
+    hadLinguisticErrors,
+    hadInformalOrIncompleteStyle
+  };
+}
+
+/**
+ * Transforme une clause (corrigée orthographiquement) en français juridique soutenu,
+ * en comprenant exactement l'intention du propriétaire, du locataire ou de l'agence.
+ */
+function reformulateIntoSustainedLegalFrench(
+  correctedClause: string,
+  assignedField: 'owner' | 'tenant' | 'property',
+  sourceField: 'owner' | 'tenant' | 'property',
+  isHabitation: boolean
+): string {
+  const norm = normalizeSemanticText(correctedClause);
+
+  // 1. Propreté de l'entourage / de la cour / des abords de la maison
+  if (/(?:rendre\s+propre|garder\s+propre|nettoyer|balayer|proprete|entretenir)\s*.*(?:entourage|cour|abords|devanture|exterieur|autour\s+de\s+la\s+maison)/.test(norm)) {
+    return "Le Preneur s'engage à maintenir les abords immédiats, la cour ainsi que l'entourage du bien loué en parfait état de propreté et de salubrité tout au long de l'exécution du bail.";
+  }
+
+  // 2. Réparation des petits défauts / menues réparations dans la maison
+  if (/(?:reparer|raparer|arranger|corriger|refaire)\s*.*(?:petits?\s+defauts?|petites?\s+reparations?|menues?\s+reparations?|petites?\s+pannes?|ampoules?|robinets?|serrures?)/.test(norm)) {
+    if (sourceField === 'tenant' && /(?:avant|entree|proprietaire|bailleur)/.test(norm)) {
+      return "Le Bailleur s'engage à remédier aux menues défectuosités constatées dans le logement préalablement à l'entrée en jouissance du Preneur, conformément à l'article 424 de la Loi n° 2019-576.";
+    }
+    return "Le Preneur est tenu d'assurer l'entretien courant du bien loué et d'effectuer à ses frais l'ensemble des menues réparations et remises en état d'usage, conformément à l'article 435 de la Loi n° 2019-576.";
+  }
+
+  // 3. Vidange de la fosse septique
+  if (/(?:vider|vidange|vidanger|curer|curage|entretenir)\s*.*(?:fosse\s+septique|fosses\s+septiques|fausse\s+septique|puisard|regards?)/.test(norm)) {
+    if (sourceField === 'owner') {
+      return "Le Preneur s'engage à assurer l'entretien régulier et la vidange périodique de la fosse septique afin de garantir en permanence l'hygiène et le bon fonctionnement des installations d'assainissement.";
+    }
+    return "Les parties conviennent que la vidange périodique et l'entretien fonctionnel de la fosse septique seront scrupuleusement assurés afin de préserver la salubrité des installations sanitaires des lieux loués.";
+  }
+
+  // 4. Recharge du compteur CIE (électricité prépayée)
+  if (/(?:recharger|recharge|mettre\s+unites?|acheter\s+unites?|alimenter|approvisionner|payer)\s*.*(?:compteurs?\s*cie|cie|compteurs?\s*electrique|courant|electricite)/.test(norm) && !/sodeci/.test(norm)) {
+    return "Le Preneur assure à sa charge exclusive le rechargement régulier du compteur d'électricité (CIE) et le règlement intégral de ses consommations électriques pendant toute la durée du bail.";
+  }
+
+  // 5. Paiement des factures SODECI (eau)
+  if (/(?:payer|regler|acquitter|factures?)\s*.*(?:sodeci|factures?\s+d\s*eau|consommation\s+d\s*eau)/.test(norm) && !/cie/.test(norm)) {
+    return "Le Preneur s'oblige à s'acquitter ponctuellement de l'intégralité des factures de consommation d'eau potable (SODECI) afférentes au logement loué jusqu'à la restitution effective des clés.";
+  }
+
+  // 6. Eau (SODECI) et Électricité (CIE) combinés
+  if (/(?:cie|electricite|courant)/.test(norm) && /(?:sodeci|eau)/.test(norm)) {
+    return "Le Preneur s'engage à s'acquitter régulièrement de ses consommations d'eau potable (SODECI) et d'électricité (rechargement du compteur ou factures CIE) pendant toute la durée de son occupation.";
+  }
+
+  // 7. Tranquillité du voisinage / Bruit / Tapage / Palabres
+  if (/(?:bruit|tapage|calme|silence|palabre|bagarre|voisin|voisinage|musique\s+forte|fete\s+nocturne)/.test(norm)) {
+    return "Le Preneur s'engage à user paisiblement des lieux loués, à s'abstenir de tout tapage nocturne ou trouble de voisinage, et à préserver la tranquillité de l'ensemble des occupants de l'immeuble.";
+  }
+
+  // 8. Interdiction de percer les murs / carreaux / faïence
+  if (/(?:percer|trou|trous|clou|clous|vis|carreau|carreaux|faience|degrader\s+les\s+murs)/.test(norm)) {
+    return "Il est formellement interdit au Preneur de percer les revêtements muraux ou les carreaux de faïence sans l'autorisation préalable du Bailleur, toute dégradation constatée à la sortie demeurant à la charge du Preneur.";
+  }
+
+  // 9. Peinture / remise en état des murs
+  if (/(?:peinture|repeindre|salir\s+les\s+murs|tacher\s+les\s+murs)/.test(norm)) {
+    if (sourceField === 'tenant' && /(?:avant|entree|proprietaire|bailleur|refaire)/.test(norm)) {
+      return "Le Bailleur s'engage à faire procéder au rafraîchissement des peintures intérieures du logement préalablement à l'entrée en jouissance du Preneur.";
+    }
+    return "Le Preneur s'engage à maintenir les peintures intérieures en bon état de propreté et à ne procéder à aucun changement de teinte sans l'accord écrit et préalable du Bailleur.";
+  }
+
+  // 10. Fermeture du portail / sécurité des accès
+  if (/(?:fermer|verrouiller|cle|portail|porte\s+principale|acces\s+de\s+la\s+cour)/.test(norm) && /(?:portail|cour|nuit|soir|securite|toujours)/.test(norm)) {
+    return "Par mesure de sécurité collective, le Preneur s'engage à veiller à la fermeture systématique et au verrouillage du portail d'accès après chaque passage, particulièrement durant les heures nocturnes.";
+  }
+
+  // 11. Gestion des ordures ménagères et poubelles
+  if (/(?:ordure|ordures|poubelle|poubelles|dechet|dechets|salete)/.test(norm)) {
+    return "Le Preneur est tenu de déposer ses ordures ménagères exclusivement dans les bacs et emplacements prévus à cet effet, dans le strict respect des règles d'hygiène et de salubrité de la copropriété.";
+  }
+
+  // 12. Sous-location
+  if (/(?:sous\s*louer|sous\s*location|ceder\s+le\s+bail|donner\s+la\s+maison\s+a\s+un\s+tiers|mettre\s+quelqu\s+un)/.test(norm)) {
+    return isHabitation
+      ? "Toute sous-location, totale ou partielle, ainsi que toute cession du présent bail sont formellement interdites sans l'accord écrit et préalable du Bailleur, conformément à l'article 437 de la Loi n° 2019-576."
+      : "Toute sous-location totale ou partielle des locaux loués est strictement soumise à l'autorisation expresse et écrite du Bailleur, conformément à l'article 118 de l'Acte Uniforme OHADA (AUDCG).";
+  }
+
+  // 13. Animaux domestiques
+  if (/(?:animal|animaux|chien|chiens|chat|chats|elevage)/.test(norm)) {
+    return "La détention d'animaux susceptibles de causer des nuisances sonores, olfactives ou des dégradations dans l'enceinte du bien loué est soumise à l'autorisation préalable du Bailleur.";
+  }
+
+  // 14. Climatisation
+  if (/(?:clim|climatiseur|climatiseurs|climatisation|split)/.test(norm)) {
+    return "L'entretien courant et le nettoyage périodique des filtres des appareils de climatisation mis à disposition incombent au Preneur pendant toute la durée du bail.";
+  }
+
+  // 15. Paiement ponctuel du loyer
+  if (/(?:payer\s+le\s+loyer|regler\s+le\s+loyer|retard\s+de\s+loyer|avant\s+le\s+5|a\s+bonne\s+date)/.test(norm)) {
+    return "Le Preneur s'oblige à s'acquitter ponctuellement du loyer mensuel convenu aux échéances stipulées au contrat, tout défaut de paiement ouvrant droit aux voies de recours légales après mise en demeure.";
+  }
+
+  // 16. Transformation générale en français soutenu pour toute autre phrase
+  let elevated = correctedClause.trim();
+
+  // Remplacer les expressions familières ou banales par des tournures juridiques soutenues
+  elevated = elevated
+    .replace(/\bdans\s+la\s+maison\b/gi, 'au sein du logement loué')
+    .replace(/\bde\s+la\s+maison\b/gi, 'du bien loué')
+    .replace(/\bla\s+maison\b/gi, 'le logement loué')
+    .replace(/\bg[aâ]ter\b/gi, 'endommager')
+    .replace(/\barranger\b/gi, 'remettre en état')
+    .replace(/\bfaire\s+palabre\b/gi, 'occasionner des troubles de voisinage')
+    .replace(/\ble\s+proprio\b/gi, 'le Bailleur')
+    .replace(/\ble\s+propri[eé]taire\s+doit\b/gi, "le Bailleur s'engage à")
+    .replace(/\ble\s+bailleur\s+doit\b/gi, "le Bailleur s'engage à")
+    .replace(/\ble\s+locataire\s+doit\b/gi, "le Preneur s'engage à")
+    .replace(/\ble\s+preneur\s+doit\b/gi, "le Preneur s'engage à")
+    .replace(/\bje\s+veux\s+que\s+le\s+locataire\b/gi, 'Il est convenu que le Preneur')
+    .replace(/\bje\s+veux\s+que\b/gi, 'Il est expressément convenu que')
+    .replace(/\bfaut\s+pas\b/gi, 'il est formellement interdit de')
+    .replace(/\bil\s+ne\s+faut\s+pas\b/gi, 'il est formellement interdit de')
+    .replace(/\bne\s+pas\b/gi, 'Il est interdit de')
+    .replace(/\binterdit\s+de\b/gi, 'Il est formellement interdit de')
+    .replace(/\bil\s+faut\s+que\b/gi, 'Les parties conviennent que')
+    .replace(/\bil\s+faut\b/gi, 'Il incombe aux parties de');
+
+  // Si la phrase commence par un verbe à l'infinitif brut (ex: "Réparer...", "Entretenir...", "Vider..."),
+  // l'encadrer dans une proposition juridique complète et soutenue selon la partie concernée
+  if (/^(?:rendre|réparer|vider|recharger|payer|régler|nettoyer|balayer|laver|garder|fermer|changer|remplacer|respecter|entretenir|repeindre|maintenir|assurer|veiller|procéder|fournir|remettre|restituer)\b/i.test(elevated)) {
+    const lowerFirst = elevated.charAt(0).toLowerCase() + elevated.slice(1).replace(/\.+$/, '');
+    if (assignedField === 'owner') {
+      elevated = `Le Preneur s'engage formellement à ${lowerFirst} durant toute l'exécution du contrat.`;
+    } else if (assignedField === 'tenant') {
+      elevated = `Il est expressément convenu que le Preneur devra ${lowerFirst} conformément aux modalités du présent bail.`;
+    } else {
+      elevated = `Au titre des règles de bonne tenue des lieux, le Preneur est tenu de ${lowerFirst}.`;
+    }
+  } else {
+    elevated = elevated.charAt(0).toUpperCase() + elevated.slice(1);
+    if (!/[.!?]$/.test(elevated)) {
+      elevated += '.';
+    }
+  }
+
+  return elevated;
 }
 
 export interface ReorganizationResult {
@@ -1584,6 +1871,7 @@ export interface ReorganizationResult {
   movedCount: number;
   reformulatedCount: number;
   correctedViolationsCount: number;
+  allAlreadyCorrect?: boolean;
 }
 
 export function reorganizeAndReformulateClauses({
@@ -1594,21 +1882,28 @@ export function reorganizeAndReformulateClauses({
 }: ReorganizationInput): ReorganizationResult {
   const isHabitation = leaseType === 'habitation';
 
-  // 1. Nettoyer les répétitions de dictée vocale et extraire les clauses réelles
-  const rawItems: Array<{ text: string; sourceField: 'owner' | 'tenant' | 'property' }> = [];
+  // 1. Extraire et découper intelligemment les clauses (y compris les phrases juxtaposées sans ponctuation)
+  const rawItems: Array<{ text: string; sourceField: 'owner' | 'tenant' | 'property'; wasSplitFromRunOn: boolean }> = [];
 
-  for (const clause of extractLogicalClauses(cleanDictationRepetitions(ownerText || ''))) {
-    const cClean = cleanDictationRepetitions(clause);
-    if (cClean) rawItems.push({ text: cClean, sourceField: 'owner' });
-  }
-  for (const clause of extractLogicalClauses(cleanDictationRepetitions(tenantText || ''))) {
-    const cClean = cleanDictationRepetitions(clause);
-    if (cClean) rawItems.push({ text: cClean, sourceField: 'tenant' });
-  }
-  for (const clause of extractLogicalClauses(cleanDictationRepetitions(propertyText || ''))) {
-    const cClean = cleanDictationRepetitions(clause);
-    if (cClean) rawItems.push({ text: cClean, sourceField: 'property' });
-  }
+  const collectFromField = (rawFieldText: string, sourceField: 'owner' | 'tenant' | 'property') => {
+    if (!rawFieldText || !rawFieldText.trim()) return;
+    const rawLines = rawFieldText
+      .split(/\r?\n/)
+      .map((l) => cleanClauseLine(l))
+      .filter((l) => l.length >= 3);
+    const extracted = extractLogicalClauses(cleanDictationRepetitions(rawFieldText));
+    const wasSplit = extracted.length > rawLines.length;
+    for (const clause of extracted) {
+      const cClean = cleanDictationRepetitions(clause);
+      if (cClean) {
+        rawItems.push({ text: cClean, sourceField, wasSplitFromRunOn: wasSplit });
+      }
+    }
+  };
+
+  collectFromField(ownerText || '', 'owner');
+  collectFromField(tenantText || '', 'tenant');
+  collectFromField(propertyText || '', 'property');
 
   const logs: ReorganizedClauseLog[] = [];
   const categorizedOwner: string[] = [];
@@ -1624,26 +1919,28 @@ export function reorganizeAndReformulateClauses({
     if (!raw || raw.length < 3) continue;
 
     const norm = normalizeSemanticText(raw);
+    const orthoCheck = analyzeAndFixFrenchOrthographyAndStyle(raw);
 
     let assignedField: 'owner' | 'tenant' | 'property' = item.sourceField;
     let reformulated = raw;
     let legalCitation: string | undefined;
     let isCorrectedAbuse = false;
+    let hasLegalViolation = false;
     let abuseReason: string | undefined;
     let caseCategory: 'A' | 'B' | 'C' | 'D' = 'A';
-    let caseLabel = 'Clause compatible';
+    let caseLabel = 'Clause reformulée en français soutenu';
 
     // ------------------------------------------------------------------------
     // CLASSIFICATION SÉMANTIQUE AUTOMATIQUE DANS LES 3 ZONES
     // ------------------------------------------------------------------------
     const mentionsPropertyAndBuilding =
-      /(?:bruit|calme|tapage|voisin|voisinage|22h|nuit|fete|silence|repos|animal|animaux|chien|chiens|chat|chats|dangereux|elevage|ordure|ordures|poubelle|poubelles|local poubelle|dechet|tri|commun|communs|partie commune|parties communes|escalier|couloir|cour|cour commune|parking|stationnement|garage|vehicule|voiture|moto|place reservee|percer|perforation|trou|trous|carreau|carreaux|faience|clim|climatiseur|climatiseurs|filtre|filtres|cuisine|hotte|facade|linge|balcon)/.test(norm);
+      /(?:bruit|calme|tapage|voisin|voisinage|22h|nuit|fete|silence|repos|animal|animaux|chien|chiens|chat|chats|dangereux|elevage|ordure|ordures|poubelle|poubelles|local poubelle|dechet|tri|commun|communs|partie commune|parties communes|escalier|couloir|cour commune|parking|stationnement|garage|vehicule|voiture|moto|place reservee|percer|perforation|trou|trous|carreau|carreaux|faience|clim|climatiseur|climatiseurs|filtre|filtres|hotte|facade|linge|balcon|portail|entourage de la maison|abords)/.test(norm);
 
     const mentionsTenantRequestsOrPayments =
-      /(?:wave|orange money|mtn|moov|mobile money|virement|cheque|espece|especes|5 du mois|cinq du mois|terme echu|paiement loyer|serrure|haute securite|blindee|grille|barreaudage|moustiquaire|peinture interieure|amenagement|etageres|placard|compteur|cie|sodeci|internet|fibre|box)/.test(norm);
+      /(?:wave|orange money|mtn|moov|mobile money|virement|cheque|espece|especes|5 du mois|cinq du mois|terme echu|paiement loyer|serrure|haute securite|blindee|grille|barreaudage|moustiquaire|amenagement|etageres|placard|compteur|cie|sodeci|internet|fibre|box|fosse septique)/.test(norm);
 
     const mentionsOwnerObligations =
-      /(?:remise des cles|cles|grosse reparation|grosses reparations|toit|toiture|etancheite|fissure structurelle|gros murs|visite annuelle|droit de visite|quittance|quittances|recu de loyer|restitution caution|restitution depot)/.test(norm);
+      /(?:remise des cles|grosse reparation|grosses reparations|toit|toiture|etancheite|fissure structurelle|gros murs|visite annuelle|droit de visite|quittance|quittances|recu de loyer|restitution caution|restitution depot|petit defaut|petits defauts|menues reparations)/.test(norm);
 
     if (mentionsPropertyAndBuilding && !mentionsOwnerObligations && !mentionsTenantRequestsOrPayments) {
       assignedField = 'property';
@@ -1658,135 +1955,139 @@ export function reorganizeAndReformulateClauses({
       else assignedField = 'property';
     }
 
-    if (assignedField !== item.sourceField) {
+    const wasMoved = assignedField !== item.sourceField;
+    if (wasMoved) {
       movedCount++;
     }
 
     // ------------------------------------------------------------------------
-    // CONTRÔLE DE CONFORMITÉ & CLASSIFICATION EN 4 CAS (A, B, C, D)
+    // CONTRÔLE DE CONFORMITÉ LÉGALE (SIGNALÉ EN ROUGE SI CONTRAIRE À LA LOI)
     // ------------------------------------------------------------------------
 
-    // CAS C : CLAUSE PROBLÉMATIQUE (CONTRAIRE À L'ORDRE PUBLIC)
-    // C.1 Caution excessive (> 2 mois en habitation)
+    // CAS C : ERREUR DE DEMANDE OU DE CONDITION SELON LA LOI (SIGNALÉ EN ROUGE)
+    // C.1 Caution ou avance excessive (> 2 mois en habitation)
     if (/(?:caution|depot de garantie|avance|mois d avance)/.test(norm) && /(?:[3-9]|1[0-2])\s*mois/.test(norm)) {
       caseCategory = 'C';
-      caseLabel = 'Clause problématique (Ordre public)';
+      caseLabel = '🔴 Condition illégale (Violation de la loi)';
       isCorrectedAbuse = true;
+      hasLegalViolation = true;
       correctedViolationsCount++;
       legalCitation = isHabitation
         ? 'Loi n° 2019-576, Art. 414 & 415'
         : 'Acte Uniforme OHADA AUDCG, Art. 101';
       abuseReason = isHabitation
-        ? 'L\'Article 414 de la Loi 2019-576 plafonne impérativement le dépôt de garantie à deux (2) mois de loyer hors charges.'
+        ? "ERREUR LÉGALE : L'Article 414 et l'Article 415 de la Loi n° 2019-576 interdisent formellement d'exiger plus de deux (2) mois de caution ou plus de deux (2) mois d'avance de loyer."
         : 'Plafonnement des garanties locatives proportionné aux usages commerciaux OHADA.';
       reformulated = isHabitation
-        ? 'Le dépôt de garantie est fixé à deux (2) mois de loyer hors charges, conformément au plafond légal de l\'Article 414 de la Loi N° 2019-576.'
+        ? "Le dépôt de garantie ainsi que l'avance sur loyer sont strictement fixés à deux (2) mois de loyer hors charges maximum, conformément aux articles 414 et 415 de la Loi n° 2019-576."
         : 'Le dépôt de garantie commercial est fixé à deux (2) mois de loyer hors charges en garantie des obligations contractuelles.';
       assignedField = 'owner';
     }
     // C.2 Transfert illégal des grosses réparations ou de la toiture au locataire
     else if (
-      /(?:locatair|locataire|preneur)\s*.*(?:paye|paie|supporte|repare|prend en charge).*(?:tout|tous les travaux|toutes les reparations|toiture|toit|etancheite|grosse reparation|gros murs|structure)/.test(norm) ||
-      /(?:bailleur|proprietaire)\s*.*(?:ne repare rien|decline toute reparation|ne prend pas en charge)/.test(norm)
+      /(?:locatair|locataire|preneur)\s*.*(?:paye|paie|supporte|repare|prend en charge).*(?:tout|tous les travaux|toutes les reparations|toiture|toit|etancheite|grosse reparation|gros murs|structure|fissure)/.test(norm) ||
+      /(?:bailleur|proprietaire)\s*.*(?:ne repare rien|decline toute reparation|ne prend pas en charge)/.test(norm) ||
+      /(?:toiture|grosse reparation|gros oeuvre|murs porteurs)\s*.*(?:charge du locataire|frais du locataire|par le locataire)/.test(norm)
     ) {
       caseCategory = 'C';
-      caseLabel = 'Clause problématique (Ordre public)';
+      caseLabel = '🔴 Condition illégale (Violation de la loi)';
       isCorrectedAbuse = true;
+      hasLegalViolation = true;
       correctedViolationsCount++;
       legalCitation = isHabitation
         ? 'Loi n° 2019-576, Art. 428 & 435'
         : 'Acte Uniforme OHADA AUDCG, Art. 106';
       abuseReason = isHabitation
-        ? 'L\'Article 428 met impérativement à la charge du bailleur les grosses réparations (clos, couvert, structure, toiture).'
-        : 'L\'Article 106 OHADA AUDCG met obligatoirement les grosses réparations à la charge du bailleur.';
-      reformulated = 'Le Bailleur conserve l\'entière charge des grosses réparations structurelles (toiture, clos et couvert) conformément à la loi. Le Preneur assume l\'entretien locatif courant et les menues réparations.';
+        ? "ERREUR LÉGALE : L'Article 428 de la Loi n° 2019-576 met impérativement à la charge exclusive du Bailleur les grosses réparations (toiture, gros murs, structure, étanchéité). Seules les menues réparations locatives incombent au Preneur."
+        : "ERREUR LÉGALE : L'Article 106 de l'AUDCG OHADA met obligatoirement les grosses réparations à la charge du Bailleur.";
+      reformulated = "Le Bailleur conserve l'entière charge des grosses réparations structurelles (toiture, clos et couvert) conformément à la loi. Le Preneur assume l'entretien locatif courant et les menues réparations d'usage.";
       assignedField = 'owner';
     }
     // C.3 Droit de visite inopiné / intrusion sans préavis
     else if (
-      /(?:proprietaire|bailleur)\s*.*(?:entre quand il veut|rentrer n importe quand|visite sans prevenir|passe quand il veut)/.test(norm) ||
-      /(?:acces a tout moment sans preavis)/.test(norm)
+      /(?:proprietaire|bailleur)\s*.*(?:entre quand il veut|rentrer n importe quand|visite sans prevenir|passe quand il veut|visite sans preavis)/.test(norm) ||
+      /(?:acces a tout moment sans preavis|visiter sans preavis)/.test(norm)
     ) {
       caseCategory = 'C';
-      caseLabel = 'Clause problématique (Ordre public)';
+      caseLabel = '🔴 Condition illégale (Violation de la loi)';
       isCorrectedAbuse = true;
+      hasLegalViolation = true;
       correctedViolationsCount++;
       legalCitation = 'Loi n° 2019-576, Art. 430';
-      abuseReason = 'L\'Article 430 impose un préavis écrit d\'au moins 48 heures pour toute visite du bailleur.';
-      reformulated = 'Le Bailleur ou son mandataire dispose d\'un droit de visite annuel pour contrôle de l\'état d\'entretien, exercé après notification d\'un préavis écrit d\'au moins 48 heures convenu avec le Preneur.';
+      abuseReason = "ERREUR LÉGALE : L'Article 430 de la Loi n° 2019-576 impose un préavis écrit obligatoire d'au moins 48 heures avant toute visite du Bailleur afin de protéger la vie privée et la jouissance paisible du Preneur.";
+      reformulated = "Le Bailleur ou son mandataire dispose d'un droit de visite pour contrôle de l'état d'entretien, exercé après notification d'un préavis écrit d'au moins quarante-huit (48) heures convenu avec le Preneur (Art. 430).";
       assignedField = 'owner';
     }
     // C.4 Discrimination familiale / interdiction d'enfants
     else if (/(?:interdit|pas)\s*.*(?:enfant|enfants|femme enceinte|famille|bebe)/.test(norm)) {
       caseCategory = 'C';
-      caseLabel = 'Clause problématique (Ordre public)';
+      caseLabel = '🔴 Condition illégale (Violation de la loi)';
       isCorrectedAbuse = true;
+      hasLegalViolation = true;
       correctedViolationsCount++;
       legalCitation = 'Loi n° 2019-576, Art. 429';
-      abuseReason = 'Clause réputée non écrite : atteinte au droit de mener une vie familiale normale.';
-      reformulated = 'L\'occupation des lieux est réservée au Preneur et aux membres de sa famille nucléaire déclarée, dans la stricte limite de la capacité d\'habitabilité normale du logement.';
+      abuseReason = "ERREUR LÉGALE : Toute clause interdisant la présence d'enfants ou portant atteinte à la vie familiale normale du Preneur est illicite et réputée non écrite.";
+      reformulated = "L'occupation des lieux est réservée au Preneur et aux membres de sa famille déclarée, dans le respect de la capacité d'habitabilité normale du logement.";
       assignedField = 'property';
     }
     // C.5 Expulsion de fait ou coupure sauvage d'eau/courant
-    else if (/(?:expulsion sans juge|couper le courant|couper l eau|bloquer la porte|changer serrure si retard)/.test(norm)) {
+    else if (/(?:expulsion sans juge|expulsion immediate|mettre dehors sans preavis|couper le courant|couper l eau|bloquer la porte|changer serrure si retard|cadenas sur la porte)/.test(norm)) {
       caseCategory = 'C';
-      caseLabel = 'Clause problématique (Ordre public)';
+      caseLabel = '🔴 Condition illégale (Violation de la loi)';
       isCorrectedAbuse = true;
+      hasLegalViolation = true;
       correctedViolationsCount++;
       legalCitation = 'Loi n° 2025-221 du 28 mars 2025 & Art. 450';
-      abuseReason = 'Toute expulsion de fait ou voie de fait sans titre exécutoire est pénalement et civilement prohibée.';
-      reformulated = 'Toute résiliation pour manquement financier intervient après mise en demeure d\'un mois (Art. 450) et procédure légale exclusive devant la juridiction compétente (Loi n° 2025-221).';
+      abuseReason = "ERREUR LÉGALE : Toute expulsion de fait, coupure d'eau/électricité ou blocage d'accès sans décision de justice exécutoire et intervention d'un Commissaire de Justice est formellement interdite par la Loi n° 2025-221.";
+      reformulated = "Toute résiliation pour manquement contractuel intervient après mise en demeure régulière d'un (1) mois restée infructueuse (Art. 450) et selon la procédure légale exclusive devant la juridiction compétente (Loi n° 2025-221).";
       assignedField = 'owner';
     }
-    // CAS B : CLAUSE IMPRÉCISE (À CLARIFIER TOUT EN RESPECTANT LE SENS STRICT)
-    else if (raw.length < 15 || /^(?:clim|peinture|animaux|bruit|caution|travaux|cl[eé]s?|porte)$/i.test(raw)) {
-      caseCategory = 'B';
-      caseLabel = 'Clause imprécise (Clarifiée)';
-      if (/clim/i.test(raw)) {
-        reformulated = 'Entretien et nettoyage régulier des filtres de climatisation à la diligence et aux frais du Preneur.';
-        legalCitation = isHabitation ? 'Loi n° 2019-576, Art. 435' : 'Usage locatif conforme';
-      } else if (/peinture/i.test(raw)) {
-        reformulated = 'Maintien des peintures intérieures en bon état d\'entretien et interdiction de modifications de teintes sans accord écrit préalable.';
-        legalCitation = isHabitation ? 'Loi n° 2019-576, Art. 436' : 'Usage locatif conforme';
-      } else if (/bruit/i.test(raw)) {
-        reformulated = 'Respect du calme et tranquillité du voisinage, sans nuisances sonores excessives de jour comme de nuit.';
-        legalCitation = 'Règlement d\'immeuble & Art. 435';
-      } else {
-        reformulated = `Obligation convenue entre les parties concernant : ${raw}.`;
-        legalCitation = 'Liberté contractuelle';
-      }
-    }
-    // CAS D : CLAUSE NON RECONNUE / SANS FONDEMENT JURIDIQUE IDENTIFIABLE
+    // CAS D : CLAUSE ILLICITE D'ATTEINTE AUX LIBERTÉS FONDAMENTALES
     else if (
       /(?:politique|religion|vote|visite ami interdit|pas de visiteur|pas inviter|fouiller sacs|confisquer)/.test(norm)
     ) {
       caseCategory = 'D';
-      caseLabel = 'Clause à vérifier / non justifiée juridiquement';
-      legalCitation = 'Fondement juridique non identifié';
-      abuseReason = 'Cette condition ne correspond pas à une disposition juridique identifiée applicable à ce contrat. Elle ne sera pas automatiquement intégrée au contrat final.';
-      reformulated = raw; // Préservée dans le log mais NON insérée dans le contrat final
+      caseLabel = '🔴 Condition illicite / Non retenue';
+      hasLegalViolation = true;
+      correctedViolationsCount++;
+      legalCitation = 'Ordre public & Libertés fondamentales';
+      abuseReason = "ERREUR LÉGALE : Cette exigence porte atteinte aux libertés fondamentales et à la jouissance paisible du logement. Elle est écartée du contrat.";
+      reformulated = raw;
     }
-    // CAS A : CLAUSE COMPATIBLE (FORMALISATION FIDÈLE SANS AJOUT SILENCIEUX)
+    // CAS A & B : CLAUSE LÉGALEMENT VALIDE -> VÉRIFIER SI ELLE EST DÉJÀ CORRECTE OU SI ELLE DOIT ÊTRE CORRIGÉE/REFORMULÉE
     else {
-      caseCategory = 'A';
-      caseLabel = 'Clause compatible';
-      legalCitation = isHabitation ? 'Loi n° 2019-576 (Liberté contractuelle)' : 'Acte Uniforme OHADA AUDCG';
+      const needsCorrectionOrReformulation =
+        orthoCheck.hadLinguisticErrors ||
+        orthoCheck.hadInformalOrIncompleteStyle ||
+        item.wasSplitFromRunOn ||
+        wasMoved;
 
-      // Reformuler fidèlement en français juridique sans changer le fond ni inventer de règles
-      let formatted = raw.trim();
-      formatted = formatted.charAt(0).toUpperCase() + formatted.slice(1);
-      if (!/[.!?]$/.test(formatted)) formatted += '.';
+      if (!needsCorrectionOrReformulation) {
+        // LA PHRASE EST DÉJÀ CORRECTE : Ne pas inventer une reformulation inutile !
+        if (assignedField === 'owner') {
+          categorizedOwner.push(raw);
+        } else if (assignedField === 'tenant') {
+          categorizedTenant.push(raw);
+        } else {
+          categorizedProperty.push(raw);
+        }
+        continue;
+      }
 
-      // Retoucher légèrement les tournures familières tout en gardant exactement le sens saisi
-      formatted = formatted
-        .replace(/\bje veux que\b/gi, "Il est expressément convenu que")
-        .replace(/\ble locataire doit\b/gi, "Le Preneur s'engage à")
-        .replace(/\ble proprietaire doit\b/gi, "Le Bailleur s'engage à")
-        .replace(/\ble proprio doit\b/gi, "Le Bailleur s'engage à")
-        .replace(/\binterdit de\b/gi, "Il est formellement interdit de")
-        .replace(/\bil faut\b/gi, "Les parties conviennent d'");
+      caseCategory = orthoCheck.hadLinguisticErrors ? 'B' : 'A';
+      caseLabel = orthoCheck.hadLinguisticErrors
+        ? 'Correction orthographique & Français soutenu'
+        : 'Reformulation en français soutenu';
+      legalCitation = isHabitation
+        ? 'Loi n° 2019-576 (Art. 424 & 435)'
+        : 'Acte Uniforme OHADA AUDCG';
 
-      reformulated = formatted;
+      reformulated = reformulateIntoSustainedLegalFrench(
+        orthoCheck.correctedText,
+        assignedField,
+        item.sourceField,
+        isHabitation
+      );
     }
 
     if (reformulated !== raw) {
@@ -1800,13 +2101,13 @@ export function reorganizeAndReformulateClauses({
       reformulatedText: reformulated,
       legalCitation,
       isCorrectedAbuse,
+      hasLegalViolation,
       abuseReason,
       caseCategory,
       caseLabel
     });
 
-    // Dédoublonnage et intégration : Seules les clauses Cas A, B et C corrigé sont insérées dans le contrat final
-    // Les clauses Cas D (non reconnues / sans fondement) sont exclues du contrat final
+    // Dédoublonnage et intégration dans le texte final
     if (caseCategory !== 'D') {
       const normRef = normalizeSemanticText(reformulated);
       if (assignedField === 'owner') {
@@ -1825,18 +2126,25 @@ export function reorganizeAndReformulateClauses({
     }
   }
 
-  // Formatage numéroté propre des listes
-  const formatList = (items: string[]) =>
-    items.map((it, idx) => `${idx + 1}. ${it.replace(/^\d+[\.)]\s*/, '')}`).join('\n');
+  const allAlreadyCorrect = rawItems.length > 0 && logs.length === 0;
+
+  // Formatage propre des listes
+  const formatList = (items: string[], originalText: string) => {
+    if (allAlreadyCorrect) return originalText.trim();
+    if (items.length === 0) return '';
+    if (items.length === 1) return items[0].replace(/^\d+[\.)]\s*/, '');
+    return items.map((it, idx) => `${idx + 1}. ${it.replace(/^\d+[\.)]\s*/, '')}`).join('\n');
+  };
 
   return {
-    ownerFormattedText: formatList(categorizedOwner),
-    tenantFormattedText: formatList(categorizedTenant),
-    propertyFormattedText: formatList(categorizedProperty),
+    ownerFormattedText: formatList(categorizedOwner, ownerText || ''),
+    tenantFormattedText: formatList(categorizedTenant, tenantText || ''),
+    propertyFormattedText: formatList(categorizedProperty, propertyText || ''),
     logs,
     movedCount,
     reformulatedCount,
-    correctedViolationsCount
+    correctedViolationsCount,
+    allAlreadyCorrect
   };
 }
 

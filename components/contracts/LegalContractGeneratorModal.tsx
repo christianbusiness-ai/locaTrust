@@ -179,12 +179,37 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [ownerEmail, setOwnerEmail] = useState<string>(
     initialData?.ownerEmail || user?.email || (profile as any)?.email || 'contact@locatrust.ci'
   );
-  const [ownerAddress, setOwnerAddress] = useState<string>(
-    initialData?.ownerAddress ||
-    (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_address') : null) ||
-    (profile?.commune && profile?.city
-      ? `${profile.commune}, ${profile.city}`
-      : profile?.city || profile?.commune || (profile as any)?.address || 'Côte d\'Ivoire')
+  const formatCleanPartyAddress = (rawAddr?: string | null, commune?: string | null, city?: string | null): string => {
+    const abidjanCommunes = ['cocody', 'plateau', 'marcory', 'treichville', 'koumassi', 'port-bouët', 'port-bouet', 'yopougon', 'abobo', 'adjamé', 'adjame', 'attécoubé', 'attecoube', 'bingerville', 'songon', 'anyama'];
+    let candidate = (rawAddr || '').trim();
+    if (candidate) {
+      const parts = candidate.split(',').map((p) => p.trim()).filter(Boolean);
+      if (parts.length === 2 && parts[1].toLowerCase() === 'abidjan' && !abidjanCommunes.includes(parts[0].toLowerCase())) {
+        return parts[0];
+      }
+      if (parts.length === 2 && parts[0].toLowerCase() === parts[1].toLowerCase()) {
+        return parts[0];
+      }
+      return candidate;
+    }
+    const cleanCommune = (commune || '').trim();
+    const cleanCity = (city || '').trim();
+    if (cleanCommune && cleanCity) {
+      if (cleanCommune.toLowerCase() === cleanCity.toLowerCase()) return cleanCommune;
+      if (cleanCity.toLowerCase() === 'abidjan' && !abidjanCommunes.includes(cleanCommune.toLowerCase())) {
+        return cleanCommune;
+      }
+      return `${cleanCommune}, ${cleanCity}`;
+    }
+    return cleanCommune || cleanCity || 'Côte d\'Ivoire';
+  };
+
+  const [ownerAddress, setOwnerAddress] = useState<string>(() =>
+    formatCleanPartyAddress(
+      initialData?.ownerAddress || (profile as any)?.address || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_address') : null),
+      profile?.commune,
+      profile?.city
+    )
   );
   const [ownerCni, setOwnerCni] = useState<string>(
     initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A'
@@ -317,10 +342,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (initialData.ownerEmail) setOwnerEmail(initialData.ownerEmail);
         else if (user?.email || (profile as any)?.email) setOwnerEmail(user?.email || (profile as any)?.email);
 
-        if (initialData.ownerAddress) setOwnerAddress(initialData.ownerAddress);
-        else if (profile?.commune && profile?.city) setOwnerAddress(`${profile.commune}, ${profile.city}`);
-        else if (profile?.city || profile?.commune) setOwnerAddress(profile?.city || profile?.commune || 'Côte d\'Ivoire');
-        else if (typeof window !== 'undefined' && localStorage.getItem('locatrust_user_address')) setOwnerAddress(localStorage.getItem('locatrust_user_address')!);
+        setOwnerAddress(
+          formatCleanPartyAddress(
+            initialData.ownerAddress || (profile as any)?.address || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_address') : null),
+            profile?.commune,
+            profile?.city
+          )
+        );
 
         if (initialData.ownerCni) setOwnerCni(initialData.ownerCni);
         else if (profile?.cni_number) setOwnerCni(profile.cni_number);
@@ -492,13 +520,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   );
 
   // Real Handwritten Signature States (LocaTrust Legal Digital Signatures)
-  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    return initialData?.ownerSignatureUrl || getStoredOwnerSignature() || null;
-  });
+  // Chaque nouveau contrat exige obligatoirement une nouvelle signature apposée sur ce document précis (aucune réutilisation automatique)
+  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(null);
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
-  // Synchronisation dynamique de l'étape et de la signature uniquement à l'ouverture initiale du modal
+  // Synchronisation dynamique de l'étape à l'ouverture initiale du modal (sans pré-remplir d'ancienne signature)
   const isFirstOpenRef = React.useRef(false);
   React.useEffect(() => {
     if (isOpen && !isFirstOpenRef.current) {
@@ -507,10 +534,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       if (targetStep) {
         setCurrentStep(targetStep);
       }
-      const existingOwnerSig = initialData?.ownerSignatureUrl || getStoredOwnerSignature();
-      if (existingOwnerSig) {
-        setOwnerSignatureUrl(existingOwnerSig);
-      }
+      setOwnerSignatureUrl((initialData as any)?.contractFinalized ? (initialData?.ownerSignatureUrl || null) : null);
+      setTenantSignatureUrl((initialData as any)?.tenantSigned ? (initialData?.tenantSignatureUrl || null) : null);
     } else if (!isOpen) {
       isFirstOpenRef.current = false;
     }
@@ -742,16 +767,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
     try {
       const result = reorganizeAndReformulateClauses({
-        ownerText: cleanDictationRepetitions(ownerCustomConditions),
-        tenantText: cleanDictationRepetitions(tenantCustomRequests),
-        propertyText: cleanDictationRepetitions(propertySpecificRules),
+        ownerText: ownerCustomConditions,
+        tenantText: tenantCustomRequests,
+        propertyText: propertySpecificRules,
         leaseType
       });
 
-      // Mettre à jour les 3 zones avec les textes restructurés et reformulés
-      setOwnerCustomConditions(result.ownerFormattedText);
-      setTenantCustomRequests(result.tenantFormattedText);
-      setPropertySpecificRules(result.propertyFormattedText);
+      if (!result.allAlreadyCorrect) {
+        // Mettre à jour les 3 zones uniquement si des erreurs ou reformulations ont été nécessaires
+        setOwnerCustomConditions(result.ownerFormattedText);
+        setTenantCustomRequests(result.tenantFormattedText);
+        setPropertySpecificRules(result.propertyFormattedText);
+      }
       setReorganizationReport(result);
     } catch (err) {
       console.error('Reorganization error:', err);
@@ -926,20 +953,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [activeVerificationToken, setActiveVerificationToken] = useState<string>('tok_cnt_ci2026_000492');
 
   const handleFinalSignAndTransmit = async () => {
-    // 0. Le bailleur doit obligatoirement avoir apposé sa propre signature
-    let effectiveOwnerSig = ownerSignatureUrl || initialData?.ownerSignatureUrl || getStoredOwnerSignature();
+    // 0. Le bailleur doit obligatoirement avoir apposé une nouvelle signature pour ce contrat
+    const effectiveOwnerSig = ownerSignatureUrl;
     if (!effectiveOwnerSig) {
-      try {
-        const { getCertifiedSignatureDataUrl } = await import('@/lib/signatureHelper');
-        effectiveOwnerSig = getCertifiedSignatureDataUrl(ownerName || 'Bailleur Certifié', 'Bailleur Certifié');
-        setOwnerSignatureUrl(effectiveOwnerSig);
-      } catch (e) {
-        console.warn('Fallback signature error:', e);
-      }
-    }
-
-    if (!effectiveOwnerSig) {
-      alert("Veuillez d'abord apposer votre signature manuscrite certifiée en tant que bailleur.");
+      alert("Veuillez d'abord apposer votre signature manuscrite certifiée sur ce contrat en tant que bailleur.");
       setActiveSigningParty('proprietaire');
       return;
     }
@@ -2119,107 +2136,121 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
                 {/* Audit & Rapport de reformulation */}
                 {reorganizationReport && (
-                  <div className="p-3.5 bg-white rounded-xl border border-blue-200 text-xs flex flex-col gap-3 animate-fadeIn">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span className="font-black text-slate-900">
-                          Clauses analysées, classées et reformulées avec succès
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[11px]">
-                        {reorganizationReport.movedCount > 0 && (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold">
-                            {reorganizationReport.movedCount} clause(s) reclassée(s)
-                          </span>
-                        )}
-                        <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 font-bold">
-                          {reorganizationReport.reformulatedCount} clause(s) formalisée(s)
-                        </span>
-                        {reorganizationReport.correctedViolationsCount > 0 && (
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-bold">
-                            {reorganizationReport.correctedViolationsCount} correction(s) d'ordre public
-                          </span>
-                        )}
-                      </div>
+                  reorganizationReport.allAlreadyCorrect || reorganizationReport.logs.length === 0 ? (
+                    <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-300 text-xs flex items-center gap-2.5 text-emerald-900 font-bold animate-fadeIn">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Aucune erreur détectée. Aucun résultat à corriger.</span>
                     </div>
-
-                    {/* Détail des clauses traitées */}
-                    <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
-                      {reorganizationReport.logs.map((log, idx) => (
-                        <div
-                          key={idx}
-                          className={`p-3 rounded-xl border text-[11px] flex flex-col gap-1.5 ${
-                            log.caseCategory === 'C' || log.isCorrectedAbuse
-                              ? 'bg-amber-50/80 border-amber-300 text-amber-950'
-                              : log.caseCategory === 'D'
-                              ? 'bg-rose-50/80 border-rose-300 text-rose-950'
-                              : log.caseCategory === 'B'
-                              ? 'bg-blue-50/70 border-blue-200 text-blue-950'
-                              : 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <span className="font-extrabold text-slate-800">
-                              {log.assignedField === 'owner'
-                                ? '→ Conditions Propriétaire'
-                                : log.assignedField === 'tenant'
-                                  ? '→ Demandes Locataire'
-                                  : '→ Règles Copropriété'}
+                  ) : (
+                    <div className="p-3.5 bg-white rounded-xl border border-blue-200 text-xs flex flex-col gap-3 animate-fadeIn">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span className="font-black text-slate-900">
+                            Clauses analysées, corrigées et reformulées en français soutenu
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          {reorganizationReport.movedCount > 0 && (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold">
+                              {reorganizationReport.movedCount} clause(s) reclassée(s)
                             </span>
-                            <div className="flex items-center gap-1.5">
-                              {log.caseCategory && (
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                                    log.caseCategory === 'A'
-                                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                      : log.caseCategory === 'B'
-                                      ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                                      : log.caseCategory === 'C'
-                                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                      : 'bg-rose-100 text-rose-900 border border-rose-300'
-                                  }`}
-                                >
-                                  {log.caseLabel || `Cas ${log.caseCategory}`}
-                                </span>
-                              )}
-                              {log.legalCitation && (
-                                <span className="text-[10px] font-mono text-slate-600 bg-white/80 px-2 py-0.5 rounded border">
-                                  {log.legalCitation}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-slate-500 line-through text-[10.5px]">
-                            Phrase d'origine : « {log.rawText} »
-                          </div>
-                          <div className="font-bold text-slate-900">
-                            {log.caseCategory === 'D'
-                              ? `Non retenue : ${log.reformulatedText}`
-                              : `Reformulation légale : ${log.reformulatedText}`}
-                          </div>
-                          {log.abuseReason && (
-                            <div className="text-[10px] font-medium italic mt-0.5 opacity-90">
-                              ⚖️ Note juridique : {log.abuseReason}
-                            </div>
+                          )}
+                          <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 font-bold">
+                            {reorganizationReport.reformulatedCount} clause(s) corrigée(s)
+                          </span>
+                          {reorganizationReport.correctedViolationsCount > 0 && (
+                            <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white font-bold">
+                              {reorganizationReport.correctedViolationsCount} erreur(s) légale(s) signalée(s)
+                            </span>
                           )}
                         </div>
-                      ))}
-                    </div>
+                      </div>
 
-                    <div className="flex items-center justify-between pt-2 border-t text-[11px]">
-                      <span className="text-slate-500">
-                        Les 3 zones ci-dessus ont été mises à jour avec les clauses conformes prêtes pour le bail.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleRestoreOriginalClauses}
-                        className="text-blue-600 hover:text-blue-800 font-bold underline"
-                      >
-                        Rétablir le texte brut initial
-                      </button>
+                      {/* Détail des clauses traitées */}
+                      <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+                        {reorganizationReport.logs.map((log, idx) => {
+                          const isLegalError =
+                            log.caseCategory === 'C' ||
+                            log.caseCategory === 'D' ||
+                            log.isCorrectedAbuse ||
+                            log.hasLegalViolation;
+                          return (
+                            <div
+                              key={idx}
+                              className={`p-3 rounded-xl border text-[11px] flex flex-col gap-1.5 ${
+                                isLegalError
+                                  ? 'bg-rose-50 border-2 border-rose-500 text-rose-950 shadow-xs'
+                                  : log.caseCategory === 'B'
+                                  ? 'bg-blue-50/70 border-blue-200 text-blue-950'
+                                  : 'bg-emerald-50/60 border-emerald-200 text-emerald-950'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span className={`font-extrabold ${isLegalError ? 'text-rose-900' : 'text-slate-800'}`}>
+                                  {log.assignedField === 'owner'
+                                    ? '→ Conditions Propriétaire'
+                                    : log.assignedField === 'tenant'
+                                      ? '→ Demandes Locataire'
+                                      : '→ Règles Copropriété'}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  {log.caseCategory && (
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                        isLegalError
+                                          ? 'bg-rose-600 text-white border border-rose-700'
+                                          : log.caseCategory === 'B'
+                                          ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                                          : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                      }`}
+                                    >
+                                      {log.caseLabel || `Cas ${log.caseCategory}`}
+                                    </span>
+                                  )}
+                                  {log.legalCitation && (
+                                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                                      isLegalError
+                                        ? 'bg-rose-100 text-rose-900 border-rose-300 font-bold'
+                                        : 'text-slate-600 bg-white/80'
+                                    }`}>
+                                      {log.legalCitation}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className={`${isLegalError ? 'text-rose-700' : 'text-slate-500'} line-through text-[10.5px]`}>
+                                Phrase d'origine : « {log.rawText} »
+                              </div>
+                              <div className={`font-bold ${isLegalError ? 'text-rose-950' : 'text-slate-900'}`}>
+                                {log.caseCategory === 'D'
+                                  ? `Non retenue (illicite) : ${log.reformulatedText}`
+                                  : `Reformulation légale : ${log.reformulatedText}`}
+                              </div>
+                              {log.abuseReason && (
+                                <div className="text-[10.5px] font-bold text-rose-800 bg-white/90 p-2 rounded-lg border border-rose-300 mt-0.5">
+                                  ⚠️ {log.abuseReason}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t text-[11px]">
+                        <span className="text-slate-500">
+                          Les zones ci-dessus ont été mises à jour avec les clauses corrigées et reformulées en français soutenu.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleRestoreOriginalClauses}
+                          className="text-blue-600 hover:text-blue-800 font-bold underline"
+                        >
+                          Rétablir le texte brut initial
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  )
                 )}
               </div>
             </div>
@@ -2726,8 +2757,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 <span className="font-black text-blue-900 text-xs uppercase tracking-wide">
                   ARTICLE 1 : DÉSIGNATION DU BIEN
                 </span>
-                <p className="text-xs text-slate-600">
-                  Le bailleur donne en location au preneur qui accepte, le bien immobilier suivant :
+                <p className="text-xs text-slate-700 leading-relaxed">
+                  M./Mme <strong>{ownerName}</strong>, ci-après dénommé(e) « le Bailleur », donne en location à M./Mme <strong>{tenantName}</strong>, ci-après dénommé(e) « le Preneur », qui accepte, le bien immobilier désigné ci-après :
                 </p>
 
                 <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row gap-4 items-center">

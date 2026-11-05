@@ -8,6 +8,24 @@ export interface ContractPartyResolutionInput {
   matchedProperty?: any;
   currentProfile?: UserProfile | null;
   currentUser?: any;
+  ownerId?: string;
+  tenantId?: string;
+  ownerFallback?: {
+    name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    cni?: string;
+    signatureUrl?: string | null;
+  };
+  tenantFallback?: {
+    name?: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    cni?: string;
+    signatureUrl?: string | null;
+  };
 }
 
 export interface ResolvedContractParties {
@@ -25,70 +43,115 @@ export interface ResolvedContractParties {
   tenantEmail: string;
   tenantSignatureUrl: string;
 
+  owner: {
+    name: string;
+    phone: string;
+    email: string;
+    address: string;
+    cni: string;
+    signatureUrl: string;
+  };
+  tenant: {
+    name: string;
+    phone: string;
+    email: string;
+    address: string;
+    cni: string;
+    signatureUrl: string;
+  };
+
   isAgency: boolean;
   mandantName?: string;
 }
 
-/**
- * Persists an owner's or agency's handwritten signature across all storage layers
- * so it is automatically re-used on all generated contracts and downloads.
- */
-export function persistOwnerSignature(signatureUrl: string, ownerId?: string): void {
-  if (typeof window === 'undefined' || !signatureUrl) return;
-  try {
-    localStorage.setItem('locatrust_owner_signature', signatureUrl);
-    if (ownerId) {
-      localStorage.setItem(`locatrust_saved_signature_${ownerId}`, signatureUrl);
-    }
-  } catch (e) {
-    console.warn('Error saving owner signature locally:', e);
-  }
-}
+const ABIDJAN_COMMUNES = [
+  'cocody',
+  'plateau',
+  'marcory',
+  'treichville',
+  'koumassi',
+  'port-bouët',
+  'port-bouet',
+  'yopougon',
+  'abobo',
+  'adjamé',
+  'adjame',
+  'attécoubé',
+  'attecoube',
+  'bingerville',
+  'songon',
+  'anyama'
+];
 
-/**
- * Persists a tenant's handwritten signature across all storage layers
- */
-export function persistTenantSignature(signatureUrl: string, tenantId?: string): void {
-  if (typeof window === 'undefined' || !signatureUrl) return;
-  try {
-    localStorage.setItem('locatrust_tenant_signature', signatureUrl);
-    if (tenantId) {
-      localStorage.setItem(`locatrust_saved_signature_${tenantId}`, signatureUrl);
+export function formatPartyLocalityAddress(
+  rawAddress?: string | null,
+  commune?: string | null,
+  city?: string | null
+): string | null {
+  const cleanAddr = (rawAddress || '').trim();
+  if (cleanAddr) {
+    const parts = cleanAddr.split(',').map((p) => p.trim()).filter(Boolean);
+    if (
+      parts.length === 2 &&
+      parts[1].toLowerCase() === 'abidjan' &&
+      !ABIDJAN_COMMUNES.includes(parts[0].toLowerCase())
+    ) {
+      return parts[0];
     }
-  } catch (e) {
-    console.warn('Error saving tenant signature locally:', e);
+    if (parts.length === 2 && parts[0].toLowerCase() === parts[1].toLowerCase()) {
+      return parts[0];
+    }
+    return cleanAddr;
   }
-}
 
-/**
- * Retrieves the stored hand-drawn signature for the owner / agency
- */
-export function getStoredOwnerSignature(ownerId?: string): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    if (ownerId) {
-      const specific = localStorage.getItem(`locatrust_saved_signature_${ownerId}`);
-      if (specific) return specific;
+  const cleanCommune = (commune || '').trim();
+  const cleanCity = (city || '').trim();
+
+  if (cleanCommune && cleanCity) {
+    if (cleanCommune.toLowerCase() === cleanCity.toLowerCase()) return cleanCommune;
+    if (cleanCity.toLowerCase() === 'abidjan' && !ABIDJAN_COMMUNES.includes(cleanCommune.toLowerCase())) {
+      return cleanCommune;
     }
-    const global = localStorage.getItem('locatrust_owner_signature');
-    if (global) return global;
-  } catch {}
+    return `${cleanCommune}, ${cleanCity}`;
+  }
+
+  if (cleanCommune) return cleanCommune;
+  if (cleanCity) return cleanCity;
   return null;
 }
 
-/**
- * Retrieves the stored hand-drawn signature for the tenant
- */
-export function getStoredTenantSignature(tenantId?: string): string | null {
-  if (typeof window === 'undefined') return null;
+function clearGlobalSignatureStorage(userId?: string): void {
+  if (typeof window === 'undefined') return;
   try {
-    if (tenantId) {
-      const specific = localStorage.getItem(`locatrust_saved_signature_${tenantId}`);
-      if (specific) return specific;
+    localStorage.removeItem('locatrust_owner_signature');
+    localStorage.removeItem('locatrust_tenant_signature');
+    localStorage.removeItem('locatrust_user_signature');
+    localStorage.removeItem('locatrust_signature_url');
+    if (userId) {
+      localStorage.removeItem(`locatrust_saved_signature_${userId}`);
     }
-    const global = localStorage.getItem('locatrust_tenant_signature');
-    if (global) return global;
   } catch {}
+}
+
+/**
+ * Les signatures ne sont JAMAIS stockées globalement pour être réutilisées automatiquement
+ * sur un autre contrat ou un autre reçu. Chaque document requiert sa propre signature.
+ */
+export function persistOwnerSignature(_signatureUrl: string, ownerId?: string): void {
+  clearGlobalSignatureStorage(ownerId);
+}
+
+export function persistTenantSignature(_signatureUrl: string, tenantId?: string): void {
+  clearGlobalSignatureStorage(tenantId);
+}
+
+export function getStoredOwnerSignature(ownerId?: string): string | null {
+  clearGlobalSignatureStorage(ownerId);
+  return null;
+}
+
+export function getStoredTenantSignature(tenantId?: string): string | null {
+  clearGlobalSignatureStorage(tenantId);
   return null;
 }
 
@@ -99,10 +162,11 @@ export function getStoredTenantSignature(tenantId?: string): string | null {
 export async function resolveContractParties(
   input: ContractPartyResolutionInput
 ): Promise<ResolvedContractParties> {
-  const { contract, app, matchedProperty, currentProfile, currentUser } = input;
+  const { contract, app, matchedProperty, currentProfile, currentUser, ownerFallback, tenantFallback } = input;
 
   // Determine owner & tenant IDs
   const rawOwnerId =
+    input.ownerId ||
     contract?.owner_id ||
     contract?.owner?.id ||
     app?.owner_id ||
@@ -111,6 +175,7 @@ export async function resolveContractParties(
     currentUser?.id;
 
   const rawTenantId =
+    input.tenantId ||
     contract?.tenant_id ||
     contract?.tenant?.id ||
     app?.tenant_id ||
@@ -160,6 +225,7 @@ export async function resolveContractParties(
     undefined;
 
   const ownerName =
+    ownerFallback?.name ||
     (isOwnerCurrent ? currentProfile?.full_name : null) ||
     dbOwnerProfile?.full_name ||
     contract?.owner?.full_name ||
@@ -169,6 +235,7 @@ export async function resolveContractParties(
     'Bailleur';
 
   const ownerPhone =
+    ownerFallback?.phone ||
     (isOwnerCurrent ? currentProfile?.phone : null) ||
     dbOwnerProfile?.phone ||
     contract?.owner?.phone ||
@@ -179,6 +246,7 @@ export async function resolveContractParties(
     '+225 07 00 00 00 00';
 
   const ownerCni =
+    ownerFallback?.cni ||
     (isOwnerCurrent ? currentProfile?.cni_number : null) ||
     dbOwnerProfile?.cni_number ||
     contract?.owner?.cni_number ||
@@ -190,46 +258,40 @@ export async function resolveContractParties(
     'CI-002891048-A';
 
   const ownerAddress =
-    (isOwnerCurrent && (currentProfile as any)?.address ? (currentProfile as any).address : null) ||
-    dbOwnerProfile?.address ||
-    (dbOwnerProfile?.commune ? `${dbOwnerProfile.commune}, ${dbOwnerProfile.city || 'Abidjan'}` : null) ||
-    contract?.owner?.address ||
-    contract?.ownerAddress ||
-    app?.owner_address ||
-    'Abidjan - Côte d\'Ivoire';
+    formatPartyLocalityAddress(
+      ownerFallback?.address ||
+        (isOwnerCurrent && (currentProfile as any)?.address ? (currentProfile as any).address : null) ||
+        dbOwnerProfile?.address ||
+        contract?.owner?.address ||
+        contract?.ownerAddress ||
+        app?.owner_address,
+      (isOwnerCurrent ? currentProfile?.commune : null) || dbOwnerProfile?.commune,
+      (isOwnerCurrent ? currentProfile?.city : null) || dbOwnerProfile?.city
+    ) || 'Côte d\'Ivoire';
 
   const ownerEmail =
+    ownerFallback?.email ||
     (isOwnerCurrent ? (currentProfile as any)?.email || currentUser?.email : null) ||
     dbOwnerProfile?.email ||
     contract?.owner?.email ||
     app?.owner_email ||
     'contact@locatrust.ci';
 
-  // Real Hand-drawn Owner Signature resolution
+  // Signature du propriétaire strictement liée à CE contrat précis (aucune réutilisation automatique)
   const resolvedOwnerSig =
+    ownerFallback?.signatureUrl ||
     contract?.owner_signature_url ||
     contract?.owner_signature ||
     contract?.ownerSignatureUrl ||
     app?.owner_signature_url ||
     app?.owner_signature ||
-    getStoredOwnerSignature(rawOwnerId) ||
-    (isOwnerCurrent && (currentProfile as any)?.signature_url ? (currentProfile as any).signature_url : null) ||
-    getCertifiedSignatureDataUrl(
-      ownerName,
-      isAgency ? 'agence' : 'bailleur',
-      null,
-      '01/10/2026 à 10:30'
-    );
-
-  // If a real signature URL was found, persist it locally for future contracts
-  if (resolvedOwnerSig && resolvedOwnerSig.startsWith('data:image/')) {
-    persistOwnerSignature(resolvedOwnerSig, rawOwnerId);
-  }
+    '';
 
   // --- RESOLVE TENANT DATA ---
   const isTenantCurrent = currentProfile && currentProfile.account_type === 'locataire';
 
   const tenantName =
+    tenantFallback?.name ||
     (isTenantCurrent ? currentProfile?.full_name : null) ||
     dbTenantProfile?.full_name ||
     app?.tenant_name ||
@@ -239,6 +301,7 @@ export async function resolveContractParties(
     'Locataire';
 
   const tenantPhone =
+    tenantFallback?.phone ||
     (isTenantCurrent ? currentProfile?.phone : null) ||
     dbTenantProfile?.phone ||
     app?.tenant_phone ||
@@ -249,6 +312,7 @@ export async function resolveContractParties(
     '+225 05 00 00 00 00';
 
   const tenantCni =
+    tenantFallback?.cni ||
     (isTenantCurrent ? currentProfile?.cni_number : null) ||
     dbTenantProfile?.cni_number ||
     app?.tenant_cni ||
@@ -259,40 +323,34 @@ export async function resolveContractParties(
     'CI-001948271-B';
 
   const tenantAddress =
-    (isTenantCurrent && (currentProfile as any)?.address ? (currentProfile as any).address : null) ||
-    dbTenantProfile?.address ||
-    (dbTenantProfile?.commune ? `${dbTenantProfile.commune}, ${dbTenantProfile.city || 'Abidjan'}` : null) ||
-    contract?.tenant?.address ||
-    contract?.tenantAddress ||
-    app?.tenant_address ||
-    'Abidjan - Côte d\'Ivoire';
+    formatPartyLocalityAddress(
+      tenantFallback?.address ||
+        (isTenantCurrent && (currentProfile as any)?.address ? (currentProfile as any).address : null) ||
+        dbTenantProfile?.address ||
+        contract?.tenant?.address ||
+        contract?.tenantAddress ||
+        app?.tenant_address,
+      (isTenantCurrent ? currentProfile?.commune : null) || dbTenantProfile?.commune,
+      (isTenantCurrent ? currentProfile?.city : null) || dbTenantProfile?.city
+    ) || 'Côte d\'Ivoire';
 
   const tenantEmail =
+    tenantFallback?.email ||
     (isTenantCurrent ? (currentProfile as any)?.email || currentUser?.email : null) ||
     dbTenantProfile?.email ||
     app?.tenant_email ||
     contract?.tenant?.email ||
     'locataire@locatrust.ci';
 
-  // Real Hand-drawn Tenant Signature resolution
+  // Signature du locataire strictement liée à CE contrat précis (aucune réutilisation automatique)
   const resolvedTenantSig =
+    tenantFallback?.signatureUrl ||
     contract?.tenant_signature_url ||
     contract?.tenant_signature ||
     contract?.tenantSignatureUrl ||
     app?.tenant_signature_url ||
     app?.tenant_signature ||
-    getStoredTenantSignature(rawTenantId) ||
-    (isTenantCurrent && (currentProfile as any)?.signature_url ? (currentProfile as any).signature_url : null) ||
-    getCertifiedSignatureDataUrl(
-      tenantName,
-      'locataire',
-      null,
-      '01/10/2026 à 11:15'
-    );
-
-  if (resolvedTenantSig && resolvedTenantSig.startsWith('data:image/')) {
-    persistTenantSignature(resolvedTenantSig, rawTenantId);
-  }
+    '';
 
   return {
     ownerName,
@@ -308,6 +366,23 @@ export async function resolveContractParties(
     tenantAddress,
     tenantEmail,
     tenantSignatureUrl: resolvedTenantSig,
+
+    owner: {
+      name: ownerName,
+      phone: ownerPhone,
+      email: ownerEmail,
+      address: ownerAddress,
+      cni: ownerCni,
+      signatureUrl: resolvedOwnerSig,
+    },
+    tenant: {
+      name: tenantName,
+      phone: tenantPhone,
+      email: tenantEmail,
+      address: tenantAddress,
+      cni: tenantCni,
+      signatureUrl: resolvedTenantSig,
+    },
 
     isAgency,
     mandantName

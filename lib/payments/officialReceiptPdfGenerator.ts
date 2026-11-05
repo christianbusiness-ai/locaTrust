@@ -279,45 +279,27 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       (data.ownerName || '').trim().toUpperCase() === 'KK' ||
       (typeof window !== 'undefined' && localStorage.getItem('locatrust_agency_name') != null);
 
-    // Résolution robuste et inaltérable de la signature du propriétaire / agence
-    let resolvedOwnerSig = data.ownerSignatureUrl;
-    if (
-      !resolvedOwnerSig ||
-      typeof resolvedOwnerSig !== 'string' ||
-      (!resolvedOwnerSig.startsWith('data:image/') &&
-       !resolvedOwnerSig.startsWith('http://') &&
-       !resolvedOwnerSig.startsWith('https://') &&
-       !resolvedOwnerSig.startsWith('blob:'))
-    ) {
-      const storedSig = getStoredOwnerSignature((data as any)?.owner_id || (data as any)?.ownerId);
-      if (storedSig && (storedSig.startsWith('data:image/') || storedSig.startsWith('http') || storedSig.startsWith('blob:'))) {
-        resolvedOwnerSig = storedSig;
-      } else {
-        const agencyOrOwnerName = isAgency ? (data.ownerName?.toUpperCase() === 'KK' ? 'KK' : data.ownerName) : data.ownerName;
-        resolvedOwnerSig = getCertifiedSignatureDataUrl(
-          agencyOrOwnerName || 'KK',
-          isAgency ? 'agence' : 'bailleur',
-          null,
-          `${cleanPdf(data.paymentDate, '19/10/2026')} à 10:30`
-        );
-      }
-    }
+    // Résolution de la signature du propriétaire / agence apposée sur ce reçu spécifique
+    const resolvedOwnerSig =
+      data.ownerSignatureUrl &&
+      typeof data.ownerSignatureUrl === 'string' &&
+      (data.ownerSignatureUrl.startsWith('data:image/') ||
+       data.ownerSignatureUrl.startsWith('http://') ||
+       data.ownerSignatureUrl.startsWith('https://') ||
+       data.ownerSignatureUrl.startsWith('blob:'))
+        ? data.ownerSignatureUrl
+        : undefined;
 
-    // Résolution de la signature du locataire
-    let resolvedTenantSig = data.tenantSignatureUrl;
-    if (
-      !resolvedTenantSig ||
-      typeof resolvedTenantSig !== 'string' ||
-      (!resolvedTenantSig.startsWith('data:image/') &&
-       !resolvedTenantSig.startsWith('http://') &&
-       !resolvedTenantSig.startsWith('https://') &&
-       !resolvedTenantSig.startsWith('blob:'))
-    ) {
-      const storedTenant = getStoredTenantSignature((data as any)?.tenant_id || (data as any)?.tenantId);
-      if (storedTenant && (storedTenant.startsWith('data:image/') || storedTenant.startsWith('http') || storedTenant.startsWith('blob:'))) {
-        resolvedTenantSig = storedTenant;
-      }
-    }
+    // Résolution de la signature du locataire apposée sur ce reçu spécifique
+    const resolvedTenantSig =
+      data.tenantSignatureUrl &&
+      typeof data.tenantSignatureUrl === 'string' &&
+      (data.tenantSignatureUrl.startsWith('data:image/') ||
+       data.tenantSignatureUrl.startsWith('http://') ||
+       data.tenantSignatureUrl.startsWith('https://') ||
+       data.tenantSignatureUrl.startsWith('blob:'))
+        ? data.tenantSignatureUrl
+        : undefined;
 
     // Check if both parties have actually signed graphically
     const isRealOwnerSig = Boolean(

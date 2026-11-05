@@ -259,40 +259,18 @@ export function resolveRealReceiptData(
     item?.target_month
   );
 
-  let ownerSignatureUrl =
+  const ownerSignatureUrl =
     item?.owner_signature ||
     item?.owner_signature_url ||
     item?.ownerSignatureUrl ||
-    matchedContract?.owner_signature ||
-    matchedContract?.owner_signature_url ||
-    matchedContract?.ownerSignatureUrl ||
-    matchedApplication?.owner_signature ||
-    matchedApplication?.owner_signature_url ||
-    getStoredOwnerSignature(matchedContract?.owner_id || item?.owner_id) ||
-    getStoredOwnerSignature() ||
-    (typeof window !== 'undefined'
-      ? (localStorage.getItem('locatrust_owner_signature') ||
-         localStorage.getItem('locatrust_user_signature') ||
-         localStorage.getItem('locatrust_signature_url'))
+    (!isReceiptOrPayment
+      ? (matchedContract?.owner_signature ||
+         matchedContract?.owner_signature_url ||
+         matchedContract?.ownerSignatureUrl ||
+         matchedApplication?.owner_signature ||
+         matchedApplication?.owner_signature_url ||
+         null)
       : null);
-
-  if (
-    (!ownerSignatureUrl ||
-      typeof ownerSignatureUrl !== 'string' ||
-      (!ownerSignatureUrl.startsWith('data:image/') &&
-       !ownerSignatureUrl.startsWith('http://') &&
-       !ownerSignatureUrl.startsWith('https://') &&
-       !ownerSignatureUrl.startsWith('blob:'))) &&
-    (isReceiptOrPayment || item?.status === 'confirme' || item?.status === 'valide' || item?.status === 'en_attente_signature_locataire')
-  ) {
-    const isAgencyRole = (ownerName || '').toLowerCase().includes('agence') || (ownerName || '').trim().toUpperCase() === 'KK';
-    ownerSignatureUrl = getCertifiedSignatureDataUrl(
-      ownerName || 'KK',
-      isAgencyRole ? 'agence' : 'bailleur',
-      null,
-      '19/10/2026 à 10:30'
-    );
-  }
 
   const tenantSignatureUrl =
     item?.tenant_signature ||
@@ -304,11 +282,7 @@ export function resolveRealReceiptData(
          matchedContract?.tenantSignatureUrl ||
          matchedApplication?.applicant_signature ||
          matchedApplication?.tenant_signature ||
-         getStoredTenantSignature(matchedContract?.tenant_id || item?.tenant_id) ||
-         getStoredTenantSignature() ||
-         (typeof window !== 'undefined'
-           ? localStorage.getItem('locatrust_tenant_signature')
-           : null))
+         null)
       : null);
 
   // --- QR Code Dynamique Scannable ---

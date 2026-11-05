@@ -2037,7 +2037,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               ownerName: profile?.full_name || user?.user_metadata?.full_name || ((profile?.role as any) === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
               ownerPhone: profile?.phone || user?.user_metadata?.phone || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_phone') : null) || '+225 07 00 00 00 00',
               ownerCni: profile?.cni_number || user?.user_metadata?.cni_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A',
-              ownerAddress: (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : 'Abidjan - Côte d\'Ivoire'),
+              ownerAddress: (profile as any)?.address || profile?.commune || profile?.city || 'Côte d\'Ivoire',
               tenantName: selectedApplicationForContract.tenant_name,
               tenantPhone: selectedApplicationForContract.tenant_phone,
               tenantCni: selectedApplicationForContract.tenant_cni,
@@ -2074,7 +2074,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               propertyType: matchedProperty?.type || '',
               ownerDestinationAuthorized: matchedProperty?.owner_destination_authorized ?? true,
               tenantSignatureUrl: (selectedApplicationForContract as any).tenant_signature_url,
-              ownerSignatureUrl: (selectedApplicationForContract as any).owner_signature_url || getStoredOwnerSignature(user?.id)
+              ownerSignatureUrl: (selectedApplicationForContract as any).owner_signature_url || undefined
             }}
           />
         );

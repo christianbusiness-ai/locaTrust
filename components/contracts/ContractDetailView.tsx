@@ -468,7 +468,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         name: ownerDisplayName,
         phone: ownerDisplayPhone,
         email: realContract?.owner?.email || user?.email || (profile as any)?.email,
-        address: realContract?.owner?.address || (profile as any)?.address || (profile?.commune ? `${profile.commune}, ${profile.city || 'Abidjan'}` : undefined),
+        address: realContract?.owner?.address || (profile as any)?.address || profile?.commune || profile?.city,
         cni: realContract?.owner?.cni_number || profile?.cni_number || (profile as any)?.rccm_number,
         signatureUrl: ownerSignatureUrl,
       },
@@ -986,7 +986,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   <Mail className="w-3 h-3" /> {contract?.owner?.email || 'contact@locatrust.ci'}
                 </span>
                 <span className="text-slate-500 flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> Cocody, Abidjan - Côte d'Ivoire
+                  <MapPin className="w-3 h-3" /> {contract?.owner?.address || contract?.owner?.commune || (profile as any)?.address || profile?.commune || profile?.city || 'Côte d\'Ivoire'}
                 </span>
               </div>
             </div>
@@ -1233,7 +1233,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             {/* ARTICLE 1 & 2 */}
             <div className="p-4 rounded-xl bg-blue-50/40 border border-blue-100 flex flex-col gap-2">
               <h5 className="font-extrabold text-blue-950 uppercase tracking-wide">ARTICLE 1 : DÉSIGNATION DU BIEN</h5>
-              <p>Le bailleur donne en location au preneur qui accepte, le bien immobilier décrit ci-dessus à usage d'habitation.</p>
+              <p>
+                M./Mme <strong>{ownerDisplayName}</strong>, ci-après dénommé(e) « le Bailleur », donne en location à M./Mme <strong>{tenantData.name}</strong>, ci-après dénommé(e) « le Preneur », qui accepte, le bien immobilier désigné ci-après :
+              </p>
               
               <h5 className="font-extrabold text-blue-950 uppercase tracking-wide mt-2">ARTICLE 2 : DURÉE DU CONTRAT</h5>
               <p>Le présent contrat est conclu pour une durée déterminée de <strong>{tenantData.duration} mois</strong>, commençant le <strong>{tenantData.startDate}</strong> et prenant fin le <strong>{tenantData.periode.split(' au ')[1] || 'terme convenu'}</strong>. Il se renouvelle tacitement par période de même durée sauf dénonciation.</p>
@@ -1494,14 +1496,6 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                 .from('contracts')
                 .update(updatePayload)
                 .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
-
-              // Enregistrer la signature sur le profil de l'utilisateur
-              if (user?.id) {
-                await supabase
-                  .from('profiles')
-                  .update({ signature_url: signatureUrl })
-                  .eq('id', user.id);
-              }
 
               // Si le locataire signe, mettre à jour la candidature correspondante
               if (!isOwner) {

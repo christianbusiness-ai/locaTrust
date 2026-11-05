@@ -343,7 +343,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFontSize(6.4);
       doc.setTextColor(51, 65, 85);
 
-      const article1ProIntro = `${bailleurDesignation}, donne à bail à usage professionnel à ${preneurDesignation} qui accepte, les locaux professionnels désignés ci-après :`;
+      const article1ProIntro = `M./Mme ${cleanOwnerName}, ci-après dénommé(e) « le Bailleur », donne en location à M./Mme ${cleanTenantName}, ci-après dénommé(e) « le Preneur », qui accepte, le bien immobilier désigné ci-après :`;
       printWrapped(article1ProIntro, 15, 73, 168, 2.7);
 
       doc.setFillColor(248, 250, 252);
@@ -495,7 +495,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.3);
       doc.setTextColor(51, 65, 85);
-      const article1HabIntro = `${bailleurDesignation}, donne en location à ${preneurDesignation}, qui accepte, le bien immobilier dont la consistance réelle est désignée ci-après :`;
+      const article1HabIntro = `M./Mme ${cleanOwnerName}, ci-après dénommé(e) « le Bailleur », donne en location à M./Mme ${cleanTenantName}, ci-après dénommé(e) « le Preneur », qui accepte, le bien immobilier désigné ci-après :`;
       printWrapped(article1HabIntro, 15, 73.2, 168, 2.7);
 
       doc.setFillColor(248, 250, 252);
@@ -653,24 +653,10 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     doc.roundedRect(15, 212, 85, 30, 2, 2, 'FD');
     doc.roundedRect(105, 212, 85, 30, 2, 2, 'FD');
 
-    // Résolution des signatures certifiées
-    const resolvedOwnerSig = await ensureImageDataUrl(
-      getCertifiedSignatureDataUrl(
-        ownerName,
-        isAgency ? 'agence' : 'bailleur',
-        data.ownerSignatureUrl,
-        `${startDate} à 10:30`
-      )
-    );
+    // Résolution des signatures certifiées apposées sur ce contrat spécifique
+    const resolvedOwnerSig = await ensureImageDataUrl(data.ownerSignatureUrl);
 
-    const resolvedTenantSig = await ensureImageDataUrl(
-      getCertifiedSignatureDataUrl(
-        tenantName,
-        'locataire',
-        data.tenantSignatureUrl,
-        `${startDate} à 11:15`
-      )
-    );
+    const resolvedTenantSig = await ensureImageDataUrl(data.tenantSignatureUrl);
 
     const getImgFormat = (dataUrl?: string | null) => {
       if (!dataUrl) return 'PNG';

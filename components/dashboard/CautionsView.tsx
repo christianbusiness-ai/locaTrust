@@ -929,8 +929,6 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     });
 
     if (res) {
-      // Auto-set owner signature for restitution (using existing real signature if available)
-      signRestitutionReceipt(depositToRestitute.id, 'owner', depositToRestitute.owner_signature || 'SIG_RESTITUTION_OWNER_CERTIFIED');
       reloadDeposits();
 
       const tenantName = depositToRestitute.tenant?.full_name || 'Locataire';
@@ -958,7 +956,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   // Étape 4 & 5 : Téléchargement du reçu de caution avec DOUBLE SIGNATURE OBLIGATOIRE
   const handleDownloadCautionReceipt = async (dep: Deposit) => {
     // Vérification stricte des deux signatures
-    const ownerSigned = Boolean(dep.owner_signature || dep.confirmed_by);
+    const ownerSigned = Boolean(dep.owner_signature);
     const tenantSigned = Boolean(dep.tenant_signature);
 
     if (!ownerSigned || !tenantSigned) {
@@ -999,7 +997,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
   // Point 2 Étape 5 : Téléchargement du reçu de restitution avec DOUBLE SIGNATURE OBLIGATOIRE
   const handleDownloadRestitutionReceipt = async (dep: Deposit) => {
-    const ownerSigned = Boolean(dep.restitution_owner_signature || dep.confirmed_by);
+    const ownerSigned = Boolean(dep.restitution_owner_signature);
     const tenantSigned = Boolean(dep.restitution_tenant_signature);
 
     if (!ownerSigned || !tenantSigned) {
@@ -1026,8 +1024,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       restitutionDate: dep.restituted_at ? new Date(dep.restituted_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
       paymentMethod: isImp ? 'Compensation sur loyers' : getDisplayPaymentMethod(dep),
       transactionReference: `TXN-${receiptNum}`,
-      ownerSignatureUrl: dep.restitution_owner_signature || dep.owner_signature || 'SIG_OWNER',
-      tenantSignatureUrl: dep.restitution_tenant_signature || dep.tenant_signature || 'SIG_TENANT'
+      ownerSignatureUrl: dep.restitution_owner_signature || '',
+      tenantSignatureUrl: dep.restitution_tenant_signature || ''
     });
   };
 
@@ -1331,7 +1329,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 dep.status === 'caution_a_confirmer' ||
                 (dep.status as any) === 'declare' ||
                 (dep.status as any) === 'en_attente';
-              const ownerSigned = Boolean(dep.owner_signature || dep.confirmed_by);
+              const ownerSigned = Boolean(isRestituted ? dep.restitution_owner_signature : dep.owner_signature);
               const tenantSigned = Boolean(isRestituted ? dep.restitution_tenant_signature : dep.tenant_signature);
 
               return (
@@ -2197,7 +2195,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex flex-col gap-3 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-700 dark:text-slate-300">Signature Propriétaire / Bailleur :</span>
-                {signatureAlertDoc.deposit.owner_signature || signatureAlertDoc.deposit.confirmed_by ? (
+                {(signatureAlertDoc.type === 'restitution' ? signatureAlertDoc.deposit.restitution_owner_signature : signatureAlertDoc.deposit.owner_signature) ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" />
                     <span>✅ Signé</span>

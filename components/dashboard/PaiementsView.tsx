@@ -74,13 +74,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const [rentSchedule, setRentSchedule] = useState<MonthlyScheduleItem[]>([]);
   const [lastAllocationResult, setLastAllocationResult] = useState<AllocationResult | null>(null);
 
-  // Signatures d'état partagées (Bailleur & Locataire)
-  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('locatrust_owner_signature') || localStorage.getItem('locatrust_user_signature') || null;
-    }
-    return null;
-  });
+  // Signatures d'état propres au document en cours (jamais pré-remplies depuis un ancien document)
+  const [ownerSignatureUrl, setOwnerSignatureUrl] = useState<string | null>(null);
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(null);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
 
@@ -361,16 +356,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       ? 'Espèces'
       : (pmt as any).payment_method || (pmt as any).method || (sampleRef.startsWith('OM') ? 'Orange Money CI' : sampleRef.startsWith('WAVE') ? 'Wave Mobile Money' : sampleRef.startsWith('MTN') ? 'MTN Mobile Money' : 'Mobile Money');
 
-    const existingSig =
-      ownerSignatureUrl ||
+    // Chaque nouveau reçu nécessite une nouvelle signature sur le document concerné
+    const existingDocSig =
       (pmt as any).owner_signature_url ||
       (pmt as any).owner_signature ||
-      getStoredOwnerSignature(user?.id) ||
-      getStoredOwnerSignature();
-
-    if (existingSig && !ownerSignatureUrl) {
-      setOwnerSignatureUrl(existingSig);
-    }
+      null;
+    setOwnerSignatureUrl(existingDocSig);
 
     setExtractedOcrData({
       reference: sampleRef,
