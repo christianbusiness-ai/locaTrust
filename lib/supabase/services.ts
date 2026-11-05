@@ -476,29 +476,6 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
     console.warn('Vérification doublon candidature:', checkErr);
   }
 
-  // Contrôle doublon dans le cache local également
-  if (typeof window !== 'undefined') {
-    try {
-      const appsRaw = localStorage.getItem('locatrust_rental_applications');
-      if (appsRaw) {
-        const localList = JSON.parse(appsRaw);
-        if (Array.isArray(localList)) {
-          const matchLocal = localList.find(
-            (a: any) =>
-              a.property_id === app.property_id &&
-              a.status !== 'refusee' &&
-              ((app.tenant_id && a.tenant_id === app.tenant_id) ||
-                (app.tenant_email && a.tenant_email?.toLowerCase() === app.tenant_email.toLowerCase()) ||
-                (app.tenant_name && a.tenant_name === app.tenant_name))
-          );
-          if (matchLocal) {
-            return { data: matchLocal, error: null, alreadyExists: true };
-          }
-        }
-      }
-    } catch {}
-  }
-
   // Construction du payload avec les seules colonnes réelles de rental_applications
   const docsObject: Record<string, any> = typeof app.documents === 'object' && app.documents !== null ? { ...app.documents } : {};
   if (app.message) docsObject.message = app.message;

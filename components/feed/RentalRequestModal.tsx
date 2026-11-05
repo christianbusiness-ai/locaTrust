@@ -307,6 +307,14 @@ export const RentalRequestModal: React.FC<RentalRequestModalProps> = ({
         const updatedList = [syncedApp, ...currentApps.filter((a: any) => a.id !== newApp.id && a.id !== res.data.id)];
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedList));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: updatedList } }));
+
+        broadcastLiveEvent('APPLICATION_SUBMITTED', {
+          actorId: applicantId,
+          targetUserId: targetAgencyId || targetOwnerId,
+          propertyId: property.id,
+          data: syncedApp,
+          timestamp: new Date().toISOString()
+        });
       }
     } catch (dbErr) {
       console.warn('Erreur création rental application Supabase:', dbErr);

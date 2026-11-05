@@ -490,10 +490,22 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         loadFromDatabase();
       }
     };
+    const channel = supabase
+      .channel('demandes_view_rental_applications_sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'rental_applications' },
+        () => {
+          loadFromDatabase();
+        }
+      )
+      .subscribe();
+
     window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
     window.addEventListener('locatrust:contracts-updated', loadFromDatabase);
     window.addEventListener('storage', handleStorage);
     return () => {
+      supabase.removeChannel(channel);
       window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
       window.removeEventListener('locatrust:contracts-updated', loadFromDatabase);
       window.removeEventListener('storage', handleStorage);

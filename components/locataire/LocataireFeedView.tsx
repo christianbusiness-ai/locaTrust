@@ -40,8 +40,12 @@ import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
 import { createRentalApplication } from '@/lib/supabase/services';
+import { supabase } from '@/src/lib/supabase';
 import { sendChatMessage, sendRealChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+
+const isValidUuid = (str?: string | null): boolean =>
+  Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
 interface LocataireFeedViewProps {
   onOpenMessages?: (landlordName?: string) => void;
@@ -264,11 +268,15 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     setIsSubmittingApp(true);
 
     try {
-      const applicantId = user?.id || profile?.id || 'usr_tenant';
-      const applicantName = profile?.full_name || user?.user_metadata?.full_name || (user?.email ? user.email.split('@')[0] : 'Candidat Locataire');
-      const applicantPhone = profile?.phone || user?.user_metadata?.phone || '+225 07 00 00 00 00';
-      const applicantEmail = user?.email || (profile as any)?.email || 'locataire@locatrust.ci';
+      // 0. Récupération robuste de l'utilisateur et de la session Supabase
+      const sessionRes = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      const activeUser = sessionRes?.data?.session?.user || user;
+      const applicantId = activeUser?.id || profile?.id || 'usr_tenant';
+      const applicantName = profile?.full_name || activeUser?.user_metadata?.full_name || (activeUser?.email ? activeUser.email.split('@')[0] : 'Candidat Locataire');
+      const applicantPhone = profile?.phone || activeUser?.user_metadata?.phone || '+225 07 00 00 00 00';
+      const applicantEmail = activeUser?.email || (profile as any)?.email || 'locataire@locatrust.ci';
       const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+
       let targetAgencyId = selectedRental.agencyId || selectedRental.agency_id;
       let targetOwnerId = selectedRental.ownerId || selectedRental.owner_id || selectedRental.owner?.id || selectedRental.mandant_id;
       let realRent = Number(selectedRental.price || selectedRental.rent || 0);
@@ -281,8 +289,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       let realAddress = selectedRental.location || (selectedRental as any).property_address || (selectedRental as any).address || 'Côte d\'Ivoire';
       let realOwnerName = selectedRental.authorName || selectedRental.ownerName || (selectedRental as any).owner_name;
 
-      // Si ownerId ou rent manque, interroger Supabase directement sur la propriété
-      if ((!targetOwnerId || !isValidUuid(targetOwnerId) || realRent === 0) && isValidUuid(selectedRental.id)) {
+      // Résolution certifiée directe depuis la table Supabase properties
+      if (isValidUuid(selectedRental.id)) {
         try {
           const { data: propRow } = await supabase
             .from('properties')
@@ -368,38 +376,46 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         return;
       }
 
-      // 1. Insertion directe et prioritaire dans Supabase rental_applications avec colonnes réelles
-      if (isValidUuid(generatedAppId) && isValidUuid(selectedRental.id)) {
-        try {
-          await supabase.from('rental_applications').insert({
-            id: generatedAppId,
-            property_id: selectedRental.id,
-            tenant_id: isValidUuid(applicantId) ? applicantId : null,
-            owner_id: isValidUuid(targetOwnerId) ? targetOwnerId : null,
-            agency_id: isValidUuid(targetAgencyId) ? targetAgencyId : null,
-            tenant_name: applicantName,
-            tenant_phone: applicantPhone,
-            tenant_email: applicantEmail,
-            tenant_avatar: applicantAvatar,
-            tenant_cni: 'CI-ABJ-2024-B-89412',
-            property_title: realTitle,
-            property_address: realAddress,
-            rent_amount: realRent,
-            caution_amount: realCaution,
-            status: 'en_attente',
-            dossier_status: 'complet',
-            documents: newApp.documents
-          });
-        } catch (dbErr) {
-          console.warn('Erreur Supabase insert rental_applications:', dbErr);
+      // 1. Sauvegarde certifiée et prioritaire dans Supabase (Source Unique de Vérité)
+      let persistedAppId = generatedAppId;
+      try {
+        const createRes = await createRentalApplication({
+          id: generatedAppId,
+          property_id: selectedRental.id,
+          owner_id: targetOwnerId,
+          agency_id: targetAgencyId,
+          tenant_id: isValidUuid(applicantId) ? applicantId : undefined,
+          tenant_name: applicantName,
+          tenant_email: applicantEmail,
+          tenant_phone: applicantPhone,
+          tenant_avatar: applicantAvatar,
+          property_title: realTitle,
+          property_address: realAddress,
+          rent_amount: realRent,
+          caution_amount: realCaution,
+          status: 'en_attente',
+          dossier_status: 'complet',
+          monthly_income: realRent * 3,
+          profession: 'Locataire vérifié',
+          message: applyComment,
+          comment: applyComment,
+          documents: newApp.documents as any
+        });
+        if (createRes?.data?.id) {
+          persistedAppId = createRes.data.id;
         }
+      } catch (dbErr) {
+        console.warn('Notice insertion Supabase createRentalApplication:', dbErr);
       }
 
-      const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
+      newApp.id = persistedAppId;
+
+      // 2. Mise à jour de l'état local et événement de synchronisation
+      const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id && a.id !== generatedAppId)];
       localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
-      // Synchronisation temps réel immédiate multi-appareils (Bailleur + Agence)
+      // 3. Synchronisation temps réel immédiate multi-appareils (Bailleur + Agence)
       broadcastLiveEvent('APPLICATION_SUBMITTED', {
         actorId: applicantId,
         targetUserId: primaryRecipientId,
@@ -408,17 +424,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         timestamp: new Date().toISOString()
       });
 
-      // Synchronisation persistante avec le serveur central /api/sync
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'submit_application',
-          application: newApp
-        })
-      }).catch((syncErr) => console.warn('API /api/sync submit_application notice:', syncErr));
-
-      // 2. Notification persistante dans Supabase notifications avec colonnes certifiées (sans colonne link non existante)
+      // 4. Notification persistante dans Supabase notifications
       if (isValidUuid(primaryRecipientId)) {
         try {
           await supabase.from('notifications').insert({
@@ -538,7 +544,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         });
       }
 
-      // 2. Envoi message automatique dans la messagerie du propriétaire / agence
+      // 5. Envoi message automatique dans la messagerie du propriétaire / agence
       try {
         const introMsg = `Bonjour, je viens de déposer ma candidature certifiée pour le bien « ${selectedRental.title} ». ${applyComment ? `Message : "${applyComment}"` : ''}`;
         sendRealChatMessage(applicantId, primaryRecipientId, introMsg, {
@@ -548,31 +554,6 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       } catch (msgErr) {
         console.warn('Chat message warning:', msgErr);
       }
-
-      // 3. Sauvegarde asynchrone Supabase (avec toutes les métadonnées réelles)
-      try {
-        createRentalApplication({
-          id: newApp.id,
-          property_id: selectedRental.id,
-          owner_id: targetOwnerId,
-          agency_id: targetAgencyId,
-          tenant_id: applicantId,
-          tenant_name: applicantName,
-          tenant_email: applicantEmail,
-          tenant_phone: applicantPhone,
-          tenant_avatar: applicantAvatar,
-          property_title: selectedRental.title,
-          property_address: selectedRental.location,
-          rent_amount: realRent,
-          caution_amount: realCaution,
-          status: 'en_attente',
-          dossier_status: 'complet',
-          monthly_income: realRent * 3,
-          profession: 'Locataire vérifié',
-          message: applyComment,
-          documents: newApp.documents as any
-        }).catch((err) => console.warn('Supabase createRentalApplication warning:', err));
-      } catch {}
 
       // Fermeture immédiate du modal et déclenchement de la célébration
       setIsApplyModalOpen(false);
