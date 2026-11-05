@@ -421,20 +421,56 @@ export async function fetchRentalApplications(propertyId?: string): Promise<Rent
 }
 
 export async function createRentalApplication(app: Partial<RentalApplication> & Record<string, any>) {
-  const isValidUuid = (str?: string) =>
+  const isValidUuid = (str?: string | null) =>
     Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
-  // Contrôle serveur : rejet immédiat si le logement est déjà loué ou possède un bail scellé
+  let resolvedTenantId = isValidUuid(app.tenant_id) ? app.tenant_id! : '';
+  let resolvedTenantEmail = (app.tenant_email || '').trim();
+  let resolvedTenantName = (app.tenant_name || '').trim();
+  let resolvedTenantPhone = (app.tenant_phone || '').trim();
+  let resolvedTenantCni = (app.tenant_cni || '').trim();
+
+  if (!resolvedTenantId || !resolvedTenantEmail) {
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const authUser = authData?.user;
+      if (authUser) {
+        if (!resolvedTenantId && isValidUuid(authUser.id)) resolvedTenantId = authUser.id;
+        if (!resolvedTenantEmail && authUser.email) resolvedTenantEmail = authUser.email;
+        if (!resolvedTenantName && authUser.user_metadata?.full_name) resolvedTenantName = authUser.user_metadata.full_name;
+        if (!resolvedTenantPhone && authUser.user_metadata?.phone) resolvedTenantPhone = authUser.user_metadata.phone;
+      }
+    } catch {}
+  }
+
+  let resolvedOwnerId = isValidUuid(app.owner_id) ? app.owner_id! : '';
+  let resolvedAgencyId = isValidUuid(app.agency_id) ? app.agency_id! : '';
+  let resolvedRent = Number(app.rent_amount || 0);
+  let resolvedCaution = Number(app.caution_amount || 0);
+  let resolvedTitle = (app.property_title || '').trim();
+  let resolvedAddress = (app.property_address || '').trim();
+
+  // Contrôle serveur + enrichissement automatique depuis public.properties
   try {
-    if (app.property_id) {
+    if (isValidUuid(app.property_id)) {
       const { data: propData } = await supabase
         .from('properties')
-        .select('status')
+        .select('status, owner_id, agency_id, rent, caution, title, city, commune')
         .eq('id', app.property_id)
         .maybeSingle();
 
-      if (propData && propData.status === 'loue') {
-        return { data: null, error: "Ce logement est déjà loué et n'accepte plus de candidatures.", alreadyRented: true };
+      if (propData) {
+        if (propData.status === 'loue') {
+          return { data: null, error: "Ce logement est déjà loué et n'accepte plus de candidatures.", alreadyRented: true };
+        }
+        if (!resolvedOwnerId && isValidUuid(propData.owner_id)) resolvedOwnerId = propData.owner_id;
+        if (!resolvedAgencyId && isValidUuid(propData.agency_id)) resolvedAgencyId = propData.agency_id;
+        if (resolvedRent <= 0 && Number(propData.rent) > 0) resolvedRent = Number(propData.rent);
+        if (resolvedCaution <= 0 && Number(propData.caution) > 0) resolvedCaution = Number(propData.caution);
+        if (!resolvedTitle && propData.title) resolvedTitle = propData.title;
+        if (!resolvedAddress && (propData.commune || propData.city)) {
+          resolvedAddress = `${propData.commune ? propData.commune + ', ' : ''}${propData.city || 'Abidjan'}`;
+        }
       }
 
       const { data: activeContracts } = await supabase
@@ -452,24 +488,41 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
     console.warn('Vérification disponibilité logement:', propCheckErr);
   }
 
+  if (resolvedCaution <= 0 && resolvedRent > 0) {
+    resolvedCaution = resolvedRent * 2;
+  }
+
   // Contrôle strict anti-doublon (Point 3 : Locataire A + Logement B = 1 seule demande active)
   try {
-    if (app.property_id) {
+    if (isValidUuid(app.property_id) && (resolvedTenantId || resolvedTenantEmail)) {
       let checkQuery = supabase
         .from('rental_applications')
         .select('*')
         .eq('property_id', app.property_id)
         .neq('status', 'refusee');
 
-      if (isValidUuid(app.tenant_id)) {
-        checkQuery = checkQuery.eq('tenant_id', app.tenant_id);
-      } else if (app.tenant_email) {
-        checkQuery = checkQuery.eq('tenant_email', app.tenant_email);
+      if (resolvedTenantId) {
+        checkQuery = checkQuery.eq('tenant_id', resolvedTenantId);
+      } else {
+        checkQuery = checkQuery.eq('tenant_email', resolvedTenantEmail);
       }
 
       const { data: existingApps } = await checkQuery.limit(1);
       if (existingApps && existingApps.length > 0) {
-        return { data: existingApps[0], error: null, alreadyExists: true };
+        const existingRow = existingApps[0];
+        if (!existingRow.owner_id && resolvedOwnerId) {
+          await supabase
+            .from('rental_applications')
+            .update({
+              owner_id: resolvedOwnerId,
+              agency_id: resolvedAgencyId || null,
+              rent_amount: resolvedRent || existingRow.rent_amount || 0,
+              caution_amount: resolvedCaution || existingRow.caution_amount || 0,
+              property_title: resolvedTitle || existingRow.property_title || ''
+            })
+            .eq('id', existingRow.id);
+        }
+        return { data: existingRow, error: null, alreadyExists: true };
       }
     }
   } catch (checkErr) {
@@ -483,45 +536,79 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
   if (app.monthly_income) docsObject.monthly_income = app.monthly_income;
   if (app.profession) docsObject.profession = app.profession;
 
+  // Ne pas stocker une chaîne base64 géante (> 2048 caractères) dans rental_applications.tenant_avatar
+  // car DemandesView charge déjà avatar_url directement depuis public.profiles.
+  const rawAvatar = typeof app.tenant_avatar === 'string' ? app.tenant_avatar : '';
+  const safeAvatar = rawAvatar.startsWith('data:') && rawAvatar.length > 2048 ? '' : rawAvatar;
+
   const payload: Record<string, any> = {
     property_id: app.property_id,
-    tenant_name: app.tenant_name || 'Candidat Locataire',
-    tenant_phone: app.tenant_phone || '',
-    tenant_email: app.tenant_email || '',
-    tenant_cni: app.tenant_cni || '',
-    tenant_avatar: app.tenant_avatar || '',
-    property_title: app.property_title || '',
-    property_address: app.property_address || '',
-    rent_amount: Number(app.rent_amount || 0),
-    caution_amount: Number(app.caution_amount || 0),
+    tenant_name: resolvedTenantName || 'Candidat Locataire',
+    tenant_phone: resolvedTenantPhone || '',
+    tenant_email: resolvedTenantEmail || '',
+    tenant_cni: resolvedTenantCni || '',
+    tenant_avatar: safeAvatar,
+    property_title: resolvedTitle || 'Logement',
+    property_address: resolvedAddress || 'Côte d\'Ivoire',
+    rent_amount: resolvedRent,
+    caution_amount: resolvedCaution,
     status: app.status || 'en_attente',
     dossier_status: app.dossier_status || 'complet',
     documents: docsObject
   };
 
-  if (isValidUuid(app.tenant_id)) {
-    payload.tenant_id = app.tenant_id;
+  if (resolvedTenantId) {
+    payload.tenant_id = resolvedTenantId;
   }
-  if (isValidUuid(app.owner_id)) {
-    payload.owner_id = app.owner_id;
+  if (resolvedOwnerId) {
+    payload.owner_id = resolvedOwnerId;
   }
-  if (isValidUuid(app.agency_id)) {
-    payload.agency_id = app.agency_id;
+  if (resolvedAgencyId) {
+    payload.agency_id = resolvedAgencyId;
   }
   if (isValidUuid(app.id)) {
     payload.id = app.id;
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('rental_applications')
     .insert([payload])
     .select()
     .maybeSingle();
 
+  // Fallback automatique minimal si une colonne optionnelle ou FK bloque l'insertion primaire
+  if (error || !data) {
+    console.warn('Repli insertion Supabase rental_applications:', error?.message);
+    const fallbackPayload: Record<string, any> = {
+      property_id: app.property_id,
+      tenant_name: payload.tenant_name,
+      tenant_phone: payload.tenant_phone,
+      tenant_email: payload.tenant_email,
+      property_title: payload.property_title,
+      property_address: payload.property_address,
+      rent_amount: payload.rent_amount,
+      caution_amount: payload.caution_amount,
+      status: 'en_attente',
+      dossier_status: 'complet'
+    };
+    if (resolvedTenantId) fallbackPayload.tenant_id = resolvedTenantId;
+    if (resolvedOwnerId) fallbackPayload.owner_id = resolvedOwnerId;
+    if (resolvedAgencyId) fallbackPayload.agency_id = resolvedAgencyId;
+    const retryRes = await supabase
+      .from('rental_applications')
+      .insert([fallbackPayload])
+      .select()
+      .maybeSingle();
+    if (retryRes.data) {
+      data = retryRes.data;
+      error = null;
+    }
+  }
+
   if (error) {
     console.error('Erreur insertion Supabase rental_applications:', error.message);
-  } else if (payload.owner_id || payload.agency_id) {
-    const targetUserId = payload.owner_id || payload.agency_id;
+  } else if (resolvedOwnerId || resolvedAgencyId) {
+    const targetUserId = resolvedAgencyId || resolvedOwnerId;
     try {
       await supabase.from('notifications').insert([{
         id: crypto.randomUUID(),

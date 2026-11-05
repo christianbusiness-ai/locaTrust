@@ -141,7 +141,16 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       const { data, error: appErr } = await query;
       const appsList: any[] = [];
       if (data && Array.isArray(data)) {
-        appsList.push(...data);
+        data.forEach((d: any) => {
+          if (
+            d &&
+            d.id !== '11111111-2222-4333-8444-555555555555' &&
+            d.id !== 'bab5a822-a484-49f3-929b-72ad62e0e97b' &&
+            !String(d.id || '').startsWith('app_demo_')
+          ) {
+            appsList.push(d);
+          }
+        });
       }
 
       // Compléter avec le cache local synchronisé si besoin
@@ -151,6 +160,14 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             parsed.forEach((pa: any) => {
+              if (
+                !pa ||
+                pa.id === '11111111-2222-4333-8444-555555555555' ||
+                pa.id === 'bab5a822-a484-49f3-929b-72ad62e0e97b' ||
+                String(pa.id || '').startsWith('app_demo_')
+              ) {
+                return;
+              }
               const isMatch =
                 (user.id && pa.tenant_id === user.id) ||
                 (user.email && pa.tenant_email?.toLowerCase() === user.email.toLowerCase());
@@ -162,7 +179,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         }
       } catch {}
 
-      // Réconciliation avec les contrats
+      // Réconciliation avec les contrats (strictement avec identifiants non vides)
       try {
         const rawContracts = localStorage.getItem('locatrust_contracts');
         if (rawContracts) {
@@ -171,15 +188,18 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
             appsList.forEach((app, idx) => {
               const matchedContract = parsedContracts.find((c: any) =>
                 (c.tenant_id === user.id || (c.tenant?.id === user.id)) &&
-                (c.property_id === app.property_id || c.contract_number === app.contract_number)
+                (Boolean(app.property_id && (c.property_id === app.property_id || c.property?.id === app.property_id)) ||
+                 Boolean(app.contract_number && c.contract_number && c.contract_number === app.contract_number))
               );
               if (matchedContract) {
                 appsList[idx] = {
                   ...app,
-                  contract_number: matchedContract.contract_number,
+                  contract_number: matchedContract.contract_number || app.contract_number,
                   contract_transmitted: true,
                   tenant_signed: Boolean(matchedContract.tenant_signed),
-                  status: matchedContract.status === 'actif' ? 'contrat_actif' : (matchedContract.tenant_signed ? 'validee' : 'en_attente_signature_locataire')
+                  status: (matchedContract.status === 'actif' || matchedContract.status === 'contrat_actif')
+                    ? 'contrat_actif'
+                    : (matchedContract.tenant_signed ? 'validee' : 'en_attente_signature_locataire')
                 };
               }
             });
@@ -187,12 +207,32 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         }
       } catch {}
 
+      // Exclure les contrats déjà créés et actifs : ils doivent rester uniquement dans le menu Contrats
+      const pendingAppsOnly = appsList.filter(
+        (app) =>
+          app &&
+          app.status !== 'contrat_actif' &&
+          app.status !== 'actif' &&
+          !Boolean(app.contract_finalized)
+      );
+
+      // Déduplication par logement pour éviter les doublons d'affichage
+      const dedupedApps: any[] = [];
+      const seenPropKeys = new Set<string>();
+      pendingAppsOnly.forEach((app) => {
+        const key = app.property_id || app.id;
+        if (key && !seenPropKeys.has(key)) {
+          seenPropKeys.add(key);
+          dedupedApps.push(app);
+        }
+      });
+
       // Enrichir les candidatures avec les informations réelles du bien et du bailleur
       const ownerIdsToFetch = new Set<string>();
       const propIdsToFetch = new Set<string>();
 
-      appsList.forEach((app) => {
-        if (!app.rent_amount || Number(app.rent_amount) <= 0 || !app.caution_amount) {
+      dedupedApps.forEach((app) => {
+        if (!app.rent_amount || Number(app.rent_amount) <= 0 || !app.caution_amount || !app.property_title) {
           if (app.property_id) propIdsToFetch.add(app.property_id);
         }
         if (!app.owner_name && app.owner_id) {
@@ -205,7 +245,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         try {
           const { data: pData } = await supabase
             .from('properties')
-            .select('id, rent, caution, title, address, owner_id, agency_id')
+            .select('id, rent, caution, title, city, commune, owner_id, agency_id')
             .in('id', Array.from(propIdsToFetch));
           if (pData) {
             pData.forEach((p) => {
@@ -229,13 +269,15 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         } catch {}
       }
 
-      appsList.forEach((app, idx) => {
+      dedupedApps.forEach((app, idx) => {
         const prop = fetchedPropsMap.get(app.property_id);
         const ownerId = app.owner_id || prop?.owner_id;
         const ownerProfile = ownerId ? fetchedProfilesMap.get(ownerId) : null;
 
-        appsList[idx] = {
+        dedupedApps[idx] = {
           ...app,
+          property_title: app.property_title || prop?.title || 'Logement LocaTrust',
+          property_address: app.property_address || (prop ? `${prop.commune ? prop.commune + ', ' : ''}${prop.city || 'Abidjan'}` : 'Côte d\'Ivoire'),
           rent_amount: Number(app.rent_amount || 0) > 0 ? Number(app.rent_amount) : Number(prop?.rent || 0),
           caution_amount: Number(app.caution_amount || 0) > 0 ? Number(app.caution_amount) : Number(prop?.caution || 0),
           owner_name: app.owner_name || ownerProfile?.full_name || (ownerProfile?.account_type === 'agence' ? 'Agence Immobilière Agréée' : 'Bailleur'),
@@ -243,7 +285,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         };
       });
 
-      setTenantApplications(appsList);
+      setTenantApplications(dedupedApps);
     } catch (e) {
       console.warn('Erreur chargement candidatures locataire:', e);
     } finally {
@@ -499,8 +541,21 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         (realRent > 0 ? realRent * 2 : 0)
       );
 
+      const rawTenantAvatar = profile?.avatar_url || '';
+      const safeTenantAvatar = rawTenantAvatar.startsWith('data:') && rawTenantAvatar.length > 2048
+        ? ''
+        : (rawTenantAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`);
+      const rawOwnerAvatar = (selectedProperty.owner as any)?.avatar_url || (selectedProperty as any).owner_avatar || '';
+      const safeOwnerAvatar = rawOwnerAvatar.startsWith('data:') && rawOwnerAvatar.length > 2048
+        ? ''
+        : (rawOwnerAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || 'Bailleur')}&background=1E40AF&color=fff`);
+
+      const generatedAppId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `00000000-0000-4000-8005-${Date.now().toString(16).padStart(12, '0')}`;
+
       const newApp = {
-        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8005-${Date.now().toString(16).padStart(12, '0')}`,
+        id: generatedAppId,
         property_id: selectedProperty.id,
         property_title: selectedProperty.title,
         property_address: `${selectedProperty.location?.commune || selectedProperty.location?.quartier || ''}, ${selectedProperty.location?.city || 'Abidjan'}`,
@@ -511,14 +566,14 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         dossier_status: 'complet' as const,
         tenant_id: applicantId,
         tenant_name: applicantName,
-        tenant_avatar: profile?.avatar_url || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_avatar') : null) || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`,
+        tenant_avatar: safeTenantAvatar,
         tenant_phone: applicantPhone,
         tenant_email: applicantEmail,
-        tenant_cni: 'CI-ABJ-2024-B-89412',
+        tenant_cni: (profile as any)?.cni_number || 'CI-ABJ-2024-B-89412',
         owner_id: targetOwnerId,
         owner_name: (selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || (selectedProperty as any).owner_name || (selectedProperty as any).mandant_name || 'Propriétaire Bailleur',
         owner_phone: (selectedProperty.owner as any)?.phone || (selectedProperty as any).owner_phone || '+225 07 00 00 00 00',
-        owner_avatar: (selectedProperty.owner as any)?.avatar_url || (selectedProperty as any).owner_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent((selectedProperty as any).agency_name || (selectedProperty.owner as any)?.full_name || 'Bailleur')}&background=1E40AF&color=fff`,
+        owner_avatar: safeOwnerAvatar,
         agency_id: targetAgencyId,
         agency_name: (selectedProperty as any).agency_name || (isAgencyProp ? ((selectedProperty.owner as any)?.full_name || (selectedProperty as any).owner_name) : undefined),
         mandant_id: (selectedProperty as any).mandant_id,
@@ -532,27 +587,56 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         }
       };
 
+      // 1. Synchronisation directe et prioritaire avec Supabase (Source unique de vérité)
+      const createRes = await createRentalApplication({
+        id: newApp.id,
+        property_id: selectedProperty.id,
+        tenant_id: applicantId,
+        owner_id: targetOwnerId,
+        agency_id: targetAgencyId,
+        tenant_name: applicantName,
+        tenant_email: applicantEmail,
+        tenant_phone: applicantPhone,
+        tenant_cni: (profile as any)?.cni_number || '',
+        tenant_avatar: safeTenantAvatar,
+        property_title: selectedProperty.title,
+        property_address: (selectedProperty as any).address || `${selectedProperty.commune || ''}, ${selectedProperty.city || 'Abidjan'}`.trim(),
+        rent_amount: realRent,
+        caution_amount: realCaution,
+        status: 'en_attente',
+        dossier_status: 'complet',
+        monthly_income: realRent * 3,
+        profession: 'Candidat certifié LocaTrust',
+        message: applyMessage,
+        documents: newApp.documents as any
+      });
+
+      if (createRes?.alreadyExists) {
+        setShowApplyModal(false);
+        setIsSubmitting(false);
+        setDuplicateAppModal(true);
+        return;
+      }
+
+      if (createRes?.data?.id) {
+        newApp.id = createRes.data.id;
+      }
+
       try {
         const existingRaw = localStorage.getItem('locatrust_rental_applications');
         let currentApps: any[] = [];
         if (existingRaw) {
           try { currentApps = JSON.parse(existingRaw); } catch {}
         }
-        const isAlreadyActive = currentApps.some(
-          (a: any) =>
-            a.property_id === selectedProperty.id &&
-            a.status !== 'refusee' &&
-            ((applicantId && a.tenant_id === applicantId) ||
-              (applicantEmail && a.tenant_email?.toLowerCase() === applicantEmail.toLowerCase()))
-        );
-        if (isAlreadyActive) {
-          setShowApplyModal(false);
-          setIsSubmitting(false);
-          setDuplicateAppModal(true);
-          return;
+        const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id && a.id !== generatedAppId)];
+        try {
+          localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+        } catch {
+          try {
+            localStorage.removeItem('locatrust_properties');
+            localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+          } catch {}
         }
-        const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id)];
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
         // Notification ciblée pour le bailleur ou l'agence
@@ -600,7 +684,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           phone: newApp.owner_phone,
           role: newApp.is_agency ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur',
           propertyTitle: selectedProperty.title,
-          avatar: newApp.owner_avatar,
+          avatar: safeOwnerAvatar,
           online: true,
         });
         saveUserScopedContact(primaryRecipientId, {
@@ -609,7 +693,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           phone: applicantPhone,
           role: 'Locataire',
           propertyTitle: selectedProperty.title,
-          avatar: newApp.tenant_avatar,
+          avatar: safeTenantAvatar,
           online: true,
         });
       } catch (err) {
@@ -623,29 +707,6 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         propertyId: selectedProperty.id,
         data: newApp,
         timestamp: new Date().toISOString()
-      });
-
-      // Synchronisation directe avec Supabase (Source unique de vérité)
-      await createRentalApplication({
-        id: newApp.id,
-        property_id: selectedProperty.id,
-        tenant_id: applicantId,
-        owner_id: targetOwnerId,
-        agency_id: targetAgencyId,
-        tenant_name: applicantName,
-        tenant_email: applicantEmail,
-        tenant_phone: applicantPhone,
-        tenant_avatar: newApp.tenant_avatar,
-        property_title: selectedProperty.title,
-        property_address: (selectedProperty as any).address || `${selectedProperty.commune || ''}, ${selectedProperty.city || 'Abidjan'}`.trim(),
-        rent_amount: Number(selectedProperty.rent || (selectedProperty as any).rent_amount || 0),
-        caution_amount: Number(selectedProperty.caution || (selectedProperty as any).caution_amount || 0),
-        status: 'en_attente',
-        dossier_status: 'complet',
-        monthly_income: Number(selectedProperty.rent || 0) * 3,
-        profession: 'Candidat certifié LocaTrust',
-        message: applyMessage,
-        documents: newApp.documents as any
       });
 
       setActionFeedback(`Votre dossier de candidature pour « ${selectedProperty.title} » a été transmis avec succès au bailleur !`);

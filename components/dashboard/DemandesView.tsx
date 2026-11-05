@@ -366,10 +366,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       // Filtrer strictement les candidatures appartenant à l'utilisateur (Propriétaire ou Agence)
       const isRelevantForUser = (appItem: any) => {
         if (!appItem) return false;
-        // Éliminer toute donnée fictive
+        // Éliminer toute donnée fictive ou de test
         if (
           appItem.id === 'app_demo_1' ||
           appItem.id === 'app_demo_2' ||
+          appItem.id === '11111111-2222-4333-8444-555555555555' ||
+          appItem.id === 'bab5a822-a484-49f3-929b-72ad62e0e97b' ||
           appItem.id?.startsWith('app_demo_') ||
           appItem.tenant_name === 'Kouassi Jean-Philippe' ||
           appItem.tenant_name === 'Awa Touré'
@@ -440,7 +442,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         if (rawC) contractsList = JSON.parse(rawC);
       } catch {}
 
-      const reconciledApps = combined.map((app) => {
+      const reconciledAppsRaw = combined.map((app) => {
         const matchingC = contractsList.find((c: any) =>
           (app.contract_number && (c.contract_number === app.contract_number || c.id === app.contract_number)) ||
           ((c.property_id === app.property_id || c.property?.id === app.property_id) &&
@@ -467,9 +469,26 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         return app;
       });
 
+      // Déduplication par (logement + locataire)
+      const reconciledApps: RentalApplication[] = [];
+      const seenKeys = new Set<string>();
+      reconciledAppsRaw.forEach((app) => {
+        const key = `${app.property_id || ''}_${(app.tenant_id || app.tenant_email || app.tenant_name || app.id).toLowerCase()}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          reconciledApps.push(app);
+        }
+      });
+
       setApplications(reconciledApps);
       if (typeof window !== 'undefined') {
-        localStorage.setItem('locatrust_rental_applications', JSON.stringify(reconciledApps));
+        try {
+          const lightApps = reconciledApps.map((a) => ({
+            ...a,
+            tenant_avatar: typeof a.tenant_avatar === 'string' && a.tenant_avatar.startsWith('data:') && a.tenant_avatar.length > 2048 ? '' : a.tenant_avatar
+          }));
+          localStorage.setItem('locatrust_rental_applications', JSON.stringify(lightApps));
+        } catch {}
       }
     } catch (err: any) {
       console.warn('Erreur chargement candidatures:', err);

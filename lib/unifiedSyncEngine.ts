@@ -107,13 +107,50 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     if (role === 'locataire') {
       appQuery = appQuery.eq('tenant_id', userId);
     } else {
-      appQuery = appQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+      const ownedPropIds = Array.isArray(serverProps)
+        ? serverProps.map((p: any) => p?.id).filter((id: any) => isValidUuid(id))
+        : [];
+      if (ownedPropIds.length > 0) {
+        appQuery = appQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId},property_id.in.(${ownedPropIds.join(',')})`);
+      } else {
+        appQuery = appQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+      }
     }
 
-    const { data: serverApps, error: appErr } = await appQuery;
+    const { data: serverAppsRaw, error: appErr } = await appQuery;
 
-    if (!appErr && typeof window !== 'undefined' && Array.isArray(serverApps)) {
+    if (!appErr && typeof window !== 'undefined' && Array.isArray(serverAppsRaw)) {
+      const serverApps = serverAppsRaw.filter(
+        (a: any) =>
+          a &&
+          a.id !== '11111111-2222-4333-8444-555555555555' &&
+          a.id !== 'bab5a822-a484-49f3-929b-72ad62e0e97b' &&
+          !String(a.id || '').startsWith('app_demo_')
+      );
       try {
+        // Pousser toute candidature locale récente non encore enregistrée sur Supabase avant d'écraser
+        const rawLocalApps = localStorage.getItem('locatrust_rental_applications');
+        if (rawLocalApps) {
+          const parsedLocal = JSON.parse(rawLocalApps);
+          if (Array.isArray(parsedLocal)) {
+            const { createRentalApplication } = await import('@/lib/supabase/services');
+            for (const la of parsedLocal) {
+              if (
+                la &&
+                la.tenant_id === userId &&
+                isValidUuid(la.property_id) &&
+                !serverApps.some((sa: any) => sa.id === la.id || (sa.property_id === la.property_id && sa.tenant_id === la.tenant_id))
+              ) {
+                const res = await createRentalApplication(la);
+                if (res?.data) {
+                  serverApps.unshift(res.data);
+                } else {
+                  serverApps.unshift(la);
+                }
+              }
+            }
+          }
+        }
         localStorage.setItem('locatrust_rental_applications', JSON.stringify(serverApps));
         window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps: serverApps, applications: serverApps } }));
       } catch {}

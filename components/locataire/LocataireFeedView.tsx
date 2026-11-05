@@ -271,11 +271,16 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       // 0. Récupération robuste de l'utilisateur et de la session Supabase
       const sessionRes = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
       const activeUser = sessionRes?.data?.session?.user || user;
-      const applicantId = activeUser?.id || profile?.id || 'usr_tenant';
+      const applicantId = activeUser?.id || profile?.id || user?.id || 'usr_tenant';
       const applicantName = profile?.full_name || activeUser?.user_metadata?.full_name || (activeUser?.email ? activeUser.email.split('@')[0] : 'Candidat Locataire');
       const applicantPhone = profile?.phone || activeUser?.user_metadata?.phone || '+225 07 00 00 00 00';
       const applicantEmail = activeUser?.email || (profile as any)?.email || 'locataire@locatrust.ci';
-      const applicantAvatar = profile?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`;
+      const rawApplicantAvatar = profile?.avatar_url || '';
+      const applicantAvatar = rawApplicantAvatar.startsWith('data:') && rawApplicantAvatar.length > 2048
+        ? ''
+        : (rawApplicantAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(applicantName)}&background=0284c7&color=fff`);
+      const rawOwnerAvatar = typeof selectedRental.authorAvatar === 'string' ? selectedRental.authorAvatar : '';
+      const safeOwnerAvatar = rawOwnerAvatar.startsWith('data:') && rawOwnerAvatar.length > 2048 ? '' : rawOwnerAvatar;
 
       let targetAgencyId = selectedRental.agencyId || selectedRental.agency_id;
       let targetOwnerId = selectedRental.ownerId || selectedRental.owner_id || selectedRental.owner?.id || selectedRental.mandant_id;
@@ -337,7 +342,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         tenant_avatar: applicantAvatar,
         tenant_phone: applicantPhone,
         tenant_email: applicantEmail,
-        tenant_cni: 'CI-ABJ-2024-B-89412',
+        tenant_cni: (profile as any)?.cni_number || 'CI-ABJ-2024-B-89412',
         owner_id: targetOwnerId,
         agency_id: targetAgencyId,
         agency_name: isAgencyProp ? realOwnerName : undefined,
@@ -345,7 +350,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         mandant_id: selectedRental.mandant_id,
         owner_name: realOwnerName || 'Propriétaire Bailleur',
         owner_phone: selectedRental.ownerPhone || '+225 07 00 00 00 00',
-        owner_avatar: selectedRental.authorAvatar || '',
+        owner_avatar: safeOwnerAvatar,
         tenant_signed: false,
         comment: applyComment,
         documents: {
@@ -355,29 +360,15 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         }
       };
 
-      // Contrôle strict anti-doublon (Point 3 : 1 seule demande active par locataire et bien)
       const existingRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_rental_applications') : null;
       let currentApps: any[] = [];
       if (existingRaw) {
         try { currentApps = JSON.parse(existingRaw); } catch {}
       }
-      const isAlreadyActive = currentApps.some(
-        (a: any) =>
-          a.property_id === selectedRental.id &&
-          a.status !== 'refusee' &&
-          ((applicantId && a.tenant_id === applicantId) ||
-            (applicantEmail && a.tenant_email?.toLowerCase() === applicantEmail.toLowerCase()))
-      );
-
-      if (isAlreadyActive) {
-        setIsApplyModalOpen(false);
-        setIsSubmittingApp(false);
-        setDuplicateAppModal(true);
-        return;
-      }
 
       // 1. Sauvegarde certifiée et prioritaire dans Supabase (Source Unique de Vérité)
       let persistedAppId = generatedAppId;
+      let alreadyExistsOnServer = false;
       try {
         const createRes = await createRentalApplication({
           id: generatedAppId,
@@ -388,6 +379,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           tenant_name: applicantName,
           tenant_email: applicantEmail,
           tenant_phone: applicantPhone,
+          tenant_cni: (profile as any)?.cni_number || '',
           tenant_avatar: applicantAvatar,
           property_title: realTitle,
           property_address: realAddress,
@@ -401,6 +393,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           comment: applyComment,
           documents: newApp.documents as any
         });
+        if (createRes?.alreadyExists) {
+          alreadyExistsOnServer = true;
+        }
         if (createRes?.data?.id) {
           persistedAppId = createRes.data.id;
         }
@@ -408,11 +403,25 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         console.warn('Notice insertion Supabase createRentalApplication:', dbErr);
       }
 
+      if (alreadyExistsOnServer) {
+        setIsApplyModalOpen(false);
+        setIsSubmittingApp(false);
+        setDuplicateAppModal(true);
+        return;
+      }
+
       newApp.id = persistedAppId;
 
-      // 2. Mise à jour de l'état local et événement de synchronisation
+      // 2. Mise à jour de l'état local et événement de synchronisation (protégée contre QuotaExceededError)
       const updatedApps = [newApp, ...currentApps.filter((a: any) => a.id !== newApp.id && a.id !== generatedAppId)];
-      localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+      try {
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+      } catch {
+        try {
+          localStorage.removeItem('locatrust_properties');
+          localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+        } catch {}
+      }
       window.dispatchEvent(new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } }));
 
       // 3. Synchronisation temps réel immédiate multi-appareils (Bailleur + Agence)
