@@ -606,13 +606,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       }
       const textToSend = directMessageText.trim() || 'Bonjour, ce logement est-il toujours disponible ? Je souhaiterais planifier une visite.';
 
-      // Envoi réel dans Supabase + Cache Local
-      await sendRealChatMessage(applicantId, targetOwnerId, textToSend, {
-        propertyId: selectedRental.id,
-        propertyTitle: selectedRental.title
-      });
-
-      // Mémoriser le contact actif pour que la messagerie ouvre directement la bonne discussion
+      // 1. Mémoriser le contact actif AVANT l'envoi pour que la diffusion Realtime contienne toutes les métadonnées
       if (typeof window !== 'undefined') {
         const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Christian';
         const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
@@ -638,6 +632,15 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           online: true
         };
         saveUserScopedContact(applicantId, contactInfo);
+      }
+
+      // 2. Envoi réel dans Supabase + Cache Local + Diffusion Realtime
+      await sendRealChatMessage(applicantId, targetOwnerId, textToSend, {
+        propertyId: selectedRental.id,
+        propertyTitle: selectedRental.title
+      });
+
+      if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
       }
 

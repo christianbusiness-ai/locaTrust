@@ -861,68 +861,83 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               break;
             }
 
-            // 1. Sauvegarder la fiche de contact de l'interlocuteur dans le registre scopé de l'utilisateur actif
-            if (senderId !== currentActiveUserId) {
-              try {
-                const contactName = incomingMsg.sender_name;
-                const contactAvatar = incomingMsg.sender_avatar;
-                const contactRole = incomingMsg.sender_role || 'Locataire';
-                const propertyTitle = incomingMsg.property_title || 'Échange direct';
+            // 1 & 2. Sauvegarder la fiche de contact de l'interlocuteur ET ingérer le message AVANT d'émettre l'événement UI
+            import('@/lib/messagingStore')
+              .then((m) => {
+                if (senderId !== currentActiveUserId) {
+                  try {
+                    const contactName = incomingMsg.sender_name;
+                    const contactAvatar = incomingMsg.sender_avatar;
+                    const contactRole = incomingMsg.sender_role || 'Locataire';
+                    const propertyTitle = incomingMsg.property_title || 'Échange direct';
 
-                import('@/lib/messagingStore')
-                  .then((m) => {
                     m.saveUserScopedContact(currentActiveUserId, {
                       id: senderId,
-                      name: contactName || (contactRole.toLowerCase().includes('proprietaire') ? 'Propriétaire Bailleur' : contactRole.toLowerCase().includes('agence') ? 'Agence Immobilière Agréée' : 'Locataire'),
+                      name:
+                        contactName ||
+                        (contactRole.toLowerCase().includes('proprietaire')
+                          ? 'Propriétaire Bailleur'
+                          : contactRole.toLowerCase().includes('agence')
+                          ? 'Agence Immobilière Agréée'
+                          : 'Locataire'),
                       role: contactRole,
                       propertyTitle: propertyTitle,
                       avatar: contactAvatar || '',
                       online: true
                     });
-                  })
-                  .catch(() => {});
-              } catch {}
-            }
+                  } catch {}
+                }
 
-            // 2. Ingestion du message dans le stockage scopé de l'utilisateur actif
-            let isCurrentlyInThisChat = false;
-            try {
-              import('@/lib/messagingStore')
-                .then((m) => {
-                  const activePartner = m.getActiveChatPartnerForUser(currentActiveUserId);
-                  isCurrentlyInThisChat = Boolean(activePartner && (activePartner === senderId || senderId.includes(activePartner) || activePartner.includes(senderId)));
+                const activePartner = m.getActiveChatPartnerForUser(currentActiveUserId);
+                const isCurrentlyInThisChat = Boolean(
+                  activePartner &&
+                    (activePartner === senderId ||
+                      senderId.includes(activePartner) ||
+                      activePartner.includes(senderId))
+                );
 
-                  const curMsgs = m.getStoredMessages(currentActiveUserId);
-                  const exists = curMsgs.some(
-                    (existing: any) =>
-                      existing.id === incomingMsg.id ||
-                      (existing.sender_id === senderId &&
-                        existing.text === incomingMsg.text &&
-                        Math.abs(new Date(existing.created_at).getTime() - new Date(incomingMsg.created_at).getTime()) < 60000)
-                  );
-                  if (!exists) {
-                    const formattedMsg = {
-                      id: incomingMsg.id || `msg_${Date.now()}`,
-                      sender_id: senderId,
-                      receiver_id: receiverId,
-                      text: incomingMsg.text || '',
-                      created_at: incomingMsg.created_at || new Date().toISOString(),
-                      status: isCurrentlyInThisChat ? 'read' : (incomingMsg.status || 'delivered'),
-                      read: Boolean(isCurrentlyInThisChat || incomingMsg.read || incomingMsg.is_read),
-                      is_read: Boolean(isCurrentlyInThisChat || incomingMsg.read || incomingMsg.is_read),
-                      read_at: isCurrentlyInThisChat ? new Date().toISOString() : (incomingMsg.read_at || null),
-                      quittance: incomingMsg.quittance,
-                      contract: incomingMsg.contract,
-                      declaration: incomingMsg.declaration
-                    };
-                    m.saveStoredMessages([...curMsgs, formattedMsg], currentActiveUserId);
-                    if (isCurrentlyInThisChat && incomingMsg.id) {
-                      m.markMessagesAsRead(senderId, currentActiveUserId, [incomingMsg.id]);
-                    }
+                const curMsgs = m.getStoredMessages(currentActiveUserId);
+                const exists = curMsgs.some(
+                  (existing: any) =>
+                    existing.id === incomingMsg.id ||
+                    (existing.sender_id === senderId &&
+                      existing.text === incomingMsg.text &&
+                      Math.abs(
+                        new Date(existing.created_at).getTime() -
+                          new Date(incomingMsg.created_at).getTime()
+                      ) < 60000)
+                );
+                if (!exists) {
+                  const formattedMsg = {
+                    id: incomingMsg.id || `msg_${Date.now()}`,
+                    sender_id: senderId,
+                    receiver_id: receiverId,
+                    text: incomingMsg.text || '',
+                    created_at: incomingMsg.created_at || new Date().toISOString(),
+                    status: isCurrentlyInThisChat ? ('read' as const) : (incomingMsg.status || 'delivered'),
+                    read: Boolean(isCurrentlyInThisChat || incomingMsg.read || incomingMsg.is_read),
+                    is_read: Boolean(isCurrentlyInThisChat || incomingMsg.read || incomingMsg.is_read),
+                    read_at: isCurrentlyInThisChat ? new Date().toISOString() : (incomingMsg.read_at || null),
+                    quittance: incomingMsg.quittance,
+                    contract: incomingMsg.contract,
+                    declaration: incomingMsg.declaration,
+                    restitution: incomingMsg.restitution,
+                    attachment: incomingMsg.attachment
+                  };
+                  m.saveStoredMessages([...curMsgs, formattedMsg], currentActiveUserId, { silent: true });
+                  if (isCurrentlyInThisChat && incomingMsg.id) {
+                    m.markMessagesAsRead(senderId, currentActiveUserId, [incomingMsg.id]);
                   }
-                })
-                .catch(() => {});
-            } catch {}
+                }
+
+                // Émettre l'événement UI APRÈS que localStorage contient le message et le contact
+                window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
+                window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
+              })
+              .catch(() => {
+                window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
+                window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
+              });
 
             // 3. Si le message transporte une quittance ou un reçu de caution
             if (incomingMsg.quittance && incomingMsg.quittance.receiptNumber && receiverId === currentActiveUserId) {
@@ -988,8 +1003,6 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               } catch {}
             }
           }
-          window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: payload }));
-          window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: payload }));
         }
         break;
 

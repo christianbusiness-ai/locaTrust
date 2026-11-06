@@ -11,7 +11,9 @@ import {
   ensureCounterV2Migration,
   setActiveMessagingUser,
   getStoredMessages,
-  saveStoredMessages
+  saveStoredMessages,
+  findOrCreateSupabaseConversation,
+  insertMessageRowResilient
 } from '@/lib/messagingStore';
 import { deduplicateAndNormalizeNotifications } from '@/lib/waitingListNotifications';
 import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
@@ -292,6 +294,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     } catch {}
 
     const userConvs = Array.from(convMapById.values());
+    const localMsgs: any[] = typeof window !== 'undefined' ? getStoredMessages(userId) : [];
 
     if (userConvs.length > 0) {
       const convIds = userConvs.map(c => c.id);
@@ -304,7 +307,6 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       if (!msgErr && Array.isArray(serverMessages)) {
         if (typeof window !== 'undefined') {
           try {
-            const localMsgs: any[] = getStoredMessages(userId);
             const localMap = new Map<string, any>();
             if (Array.isArray(localMsgs)) {
               localMsgs.forEach((lm: any) => {
@@ -312,8 +314,23 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               });
             }
 
-            // Décoder le contenu structuré des messages et PRÉSERVER impérativement le statut lu
-            const normalizedMsgs = serverMessages
+            // Réconcilier les messages locaux avec leurs équivalents serveur (sans jamais supprimer les messages locaux récents)
+            const reconciledLocal = (Array.isArray(localMsgs) ? localMsgs : []).map((local: any) => {
+              const matchingDbMsg = serverMessages.find(
+                (m: any) =>
+                  m.id === local.id ||
+                  (m.sender_id === local.sender_id &&
+                    (m.content === local.text || (typeof m.content === 'string' && m.content.includes(local.text))) &&
+                    Math.abs(new Date(local.created_at).getTime() - new Date(m.created_at).getTime()) < 120000)
+              );
+              if (matchingDbMsg && matchingDbMsg.id !== local.id) {
+                return { ...local, id: matchingDbMsg.id };
+              }
+              return local;
+            });
+
+            // Décoder le contenu structuré des messages serveur
+            const rawServerCandidates = serverMessages
               .map(m => {
                 const conv = userConvs.find(c => c.id === m.conversation_id);
                 if (!conv) return null;
@@ -330,22 +347,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                   } catch {}
                 }
 
-                const existingLocal = localMap.get(m.id);
-
-                const candidateMsg: any = {
-                  id: m.id,
-                  sender_id: m.sender_id,
-                  receiver_id: receiverId,
-                  text: parsedContent?.text || m.content,
-                  created_at: m.created_at,
-                  status: m.status || 'delivered',
-                  is_read: Boolean(m.is_read || m.read || m.status === 'read')
-                };
-
-                const alreadyRead =
-                  (existingLocal && isMessageRead(existingLocal, userId, localMsgs)) ||
-                  isMessageRead(candidateMsg, userId, localMsgs);
-
+                const dbReadFlag = Boolean(m.read === true || m.is_read === true || m.status === 'read');
                 return {
                   id: m.id,
                   sender_id: m.sender_id,
@@ -353,10 +355,9 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                   text: parsedContent?.text || m.content,
                   media_url: m.attachment_url,
                   created_at: m.created_at,
-                  status: alreadyRead ? ('read' as const) : ((m.status as any) || 'delivered'),
-                  is_read: alreadyRead,
-                  read: alreadyRead,
-                  read_at: existingLocal?.read_at || (alreadyRead ? m.created_at : null),
+                  status: dbReadFlag ? ('read' as const) : ((m.status as any) || 'delivered'),
+                  is_read: dbReadFlag,
+                  read: dbReadFlag,
                   contract: parsedContent?.contract,
                   quittance: parsedContent?.quittance,
                   restitution: parsedContent?.restitution,
@@ -366,19 +367,38 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               })
               .filter(Boolean) as any[];
 
-            const cleanMsgs = deduplicateMessageList(normalizedMsgs);
+            const allContextMsgs = [...reconciledLocal, ...rawServerCandidates];
 
-            saveStoredMessages(cleanMsgs, userId);
-            window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: cleanMsgs } }));
-            window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: cleanMsgs } }));
+            const normalizedMsgs = rawServerCandidates.map(candidateMsg => {
+              const existingLocal = localMap.get(candidateMsg.id);
+              const alreadyRead =
+                candidateMsg.read === true ||
+                candidateMsg.is_read === true ||
+                (existingLocal && isMessageRead(existingLocal, userId, allContextMsgs)) ||
+                isMessageRead(candidateMsg, userId, allContextMsgs);
+
+              return {
+                ...candidateMsg,
+                status: alreadyRead ? ('read' as const) : (candidateMsg.status || 'delivered'),
+                is_read: alreadyRead,
+                read: alreadyRead,
+                read_at: existingLocal?.read_at || (alreadyRead ? candidateMsg.created_at : null)
+              };
+            });
+
+            // Fusionner impérativement les messages locaux et serveur (sans jamais écraser ni perdre un message récent)
+            const cleanMsgs = deduplicateMessageList([...reconciledLocal, ...normalizedMsgs]);
+
+            saveStoredMessages(cleanMsgs, userId, { silent: true });
+            window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { fromLocalSave: true, messages: cleanMsgs } }));
+            window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { fromLocalSave: true, messages: cleanMsgs } }));
           } catch {}
         }
       }
-    } else if (typeof window !== 'undefined') {
+    } else if (typeof window !== 'undefined' && Array.isArray(localMsgs) && localMsgs.length > 0) {
       try {
-        saveStoredMessages([], userId);
-        window.dispatchEvent(new CustomEvent('locatrust:messages_updated', { detail: { messages: [] } }));
-        window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { messages: [] } }));
+        const cleanLocal = deduplicateMessageList(localMsgs);
+        saveStoredMessages(cleanLocal, userId, { silent: true });
       } catch {}
     }
 
@@ -392,7 +412,31 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     if (!notifErr && Array.isArray(serverNotifs)) {
       if (typeof window !== 'undefined') {
         try {
+          let existingLocalNotifs: any[] = [];
+          try {
+            const rawLocalNotifs = localStorage.getItem('locatrust_notifications');
+            if (rawLocalNotifs) {
+              const parsed = JSON.parse(rawLocalNotifs);
+              if (Array.isArray(parsed)) {
+                existingLocalNotifs = parsed.filter((ln: any) => ln && (!ln.targetUserId || ln.targetUserId === userId));
+              }
+            }
+          } catch {}
+
           const normalizedNotifs = serverNotifs.map(n => {
+            const resolvedPayload = n.payload || n.data || {};
+            const resolvedSenderId = resolvedPayload?.contactId || resolvedPayload?.sender_id || n.sender_id;
+            const resolvedTargetTab =
+              n.type === 'caution'
+                ? 'guarantees'
+                : n.type === 'contrat'
+                ? 'contracts'
+                : n.type === 'paiement'
+                ? 'payments'
+                : String(n.title || '').toLowerCase().includes('message')
+                ? 'messages'
+                : 'applications';
+
             const candidate = {
               id: n.id,
               title: n.title,
@@ -400,7 +444,11 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               created_at: n.created_at,
               read: Boolean(n.read || n.is_read),
               is_read: Boolean(n.read || n.is_read),
-              targetUserId: n.user_id || userId
+              targetUserId: n.user_id || userId,
+              senderUserId: resolvedSenderId,
+              targetTab: resolvedTargetTab,
+              payload: resolvedPayload,
+              data: resolvedPayload
             };
             const isRead = isNotificationRead(candidate, userId);
             return {
@@ -415,13 +463,14 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
               time: n.created_at ? new Date(n.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : "À l'instant",
               type: n.type || 'info',
               category: n.type === 'caution' ? 'caution' : n.type === 'contrat' ? 'contrat' : n.type === 'paiement' ? 'paiement' : 'demande',
-              targetTab: n.type === 'caution' ? 'guarantees' : n.type === 'contrat' ? 'contracts' : n.type === 'paiement' ? 'payments' : (String(n.title || '').toLowerCase().includes('message') ? 'messages' : 'applications'),
+              targetTab: resolvedTargetTab,
               targetUserId: n.user_id || userId,
-              payload: n.payload
+              senderUserId: resolvedSenderId,
+              payload: resolvedPayload
             };
           });
 
-          const cleanNotifs = deduplicateAndNormalizeNotifications(normalizedNotifs, userId);
+          const cleanNotifs = deduplicateAndNormalizeNotifications([...normalizedNotifs, ...existingLocalNotifs], userId);
 
           localStorage.setItem('locatrust_notifications', JSON.stringify(cleanNotifs));
           window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: cleanNotifs } }));
@@ -621,6 +670,65 @@ async function pushPendingLocalDataToServer(userId: string) {
         }
       } catch (tckErr) {
         console.warn('pushPendingLocalDataToServer maintenance notice:', tckErr);
+      }
+    }
+
+    // F. Messages locaux envoyés par l'utilisateur non encore inscrits dans Supabase (rattrapage silencieux sans re-diffusion)
+    if (isValidUuid(userId)) {
+      try {
+        const localMsgs = getStoredMessages(userId);
+        const myUnsyncedCandidates = (Array.isArray(localMsgs) ? localMsgs : []).filter(
+          (m) => m && m.sender_id === userId && isValidUuid(m.receiver_id) && m.receiver_id !== userId && m.text
+        );
+        if (myUnsyncedCandidates.length > 0) {
+          let userRole = 'locataire';
+          try {
+            const uRaw = localStorage.getItem('locatrust_user');
+            if (uRaw) {
+              const pu = JSON.parse(uRaw);
+              userRole = pu?.account_type || pu?.role || 'locataire';
+            }
+          } catch {}
+
+          for (const m of myUnsyncedCandidates.slice(-20)) {
+            if (isValidUuid(m.id)) {
+              const { data: existingMsg } = await supabase
+                .from('messages')
+                .select('id')
+                .eq('id', m.id)
+                .limit(1);
+              if (Array.isArray(existingMsg) && existingMsg.length > 0) {
+                continue;
+              }
+            }
+            const convId = await findOrCreateSupabaseConversation(m.sender_id, m.receiver_id, userRole);
+            if (!convId) continue;
+
+            // Vérifier qu'un message identique n'est pas déjà dans cette conversation
+            const { data: sameContentRows } = await supabase
+              .from('messages')
+              .select('id, created_at')
+              .eq('conversation_id', convId)
+              .eq('sender_id', m.sender_id)
+              .eq('content', m.text)
+              .limit(1);
+            if (Array.isArray(sameContentRows) && sameContentRows.length > 0) {
+              continue;
+            }
+
+            await insertMessageRowResilient({
+              id: isValidUuid(m.id) ? m.id : undefined,
+              conversationId: convId,
+              senderId: m.sender_id,
+              receiverId: m.receiver_id,
+              content: m.text,
+              createdAt: m.created_at,
+              read: Boolean(m.read || m.is_read)
+            });
+          }
+        }
+      } catch (msgErr) {
+        console.warn('pushPendingLocalDataToServer messages notice:', msgErr);
       }
     }
   } catch (err) {

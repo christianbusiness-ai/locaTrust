@@ -55,13 +55,7 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
     setErrorMessage(null);
 
     try {
-      // 1. Enregistrement réel dans Supabase et diffusion
-      await sendRealChatMessage(applicantId, targetOwnerId, textToSend, {
-        propertyId: property.id,
-        propertyTitle: property.title
-      });
-
-      // 2. Sauvegarder les métadonnées de contact strictement pour l'utilisateur courant
+      // 1. Sauvegarder les métadonnées de contact AVANT l'envoi pour enrichir la diffusion Realtime
       if (typeof window !== 'undefined') {
         const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Locataire Certifié';
         const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
@@ -87,6 +81,15 @@ export const ContactOwnerModal: React.FC<ContactOwnerModalProps> = ({
           avatar: property.owner?.avatar_url || undefined,
           online: true,
         });
+      }
+
+      // 2. Enregistrement réel dans Supabase et diffusion
+      await sendRealChatMessage(applicantId, targetOwnerId, textToSend, {
+        propertyId: property.id,
+        propertyTitle: property.title
+      });
+
+      if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId: targetOwnerId } }));
       }
 

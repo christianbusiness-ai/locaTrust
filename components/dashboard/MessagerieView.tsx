@@ -554,6 +554,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
     }
 
     const handleMessagesUpdated = (e?: any) => {
+      if (e?.detail?.fromLocalSave) {
+        refreshMessages();
+        return;
+      }
       const incoming = e?.detail?.data;
       if (
         incoming &&
@@ -567,10 +571,10 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
           incoming.status = 'read';
           markMessagesAsRead(activeContactRef.current.id, currentUserId, [incoming.id]);
         }
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === incoming.id)) return prev;
-          return [...prev, incoming];
-        });
+        const curStored = getStoredMessages(currentUserId);
+        if (!curStored.some((m) => m.id === incoming.id)) {
+          saveStoredMessages([...curStored, incoming], currentUserId, { silent: true });
+        }
       }
       refreshMessages();
       if (currentUserId && isValidUuid(currentUserId)) {
@@ -728,6 +732,13 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       clean.push(m);
     }
 
+    clean.sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (isNaN(ta) || isNaN(tb)) return 0;
+      return ta - tb;
+    });
+
     return clean;
   }, [messages, activeContact?.id, activeContact?.name, activeContact?.propertyTitle, myAliases]);
 
@@ -740,9 +751,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       const unreadMsgs = currentConversationMessages.filter(
         (m) => (!m.read || !m.is_read || m.status !== 'read') && m.sender_id !== currentUserId
       );
-      if (unreadMsgs.length > 0) {
-        markMessagesAsRead(activeContact.id, currentUserId, unreadMsgs.map((m) => m.id));
-      }
+      markMessagesAsRead(activeContact.id, currentUserId, unreadMsgs.map((m) => m.id));
     }
 
     return () => {
@@ -1605,11 +1614,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 `tenant_${contact.id}`,
                 `owner_${contact.id}`
               ]);
-              const contactMsgs = (messages || []).filter(
-                (m) =>
-                  (myAliases.has(m.sender_id) && (contactAliases.has(m.receiver_id) || m.receiver_id === contact.id || (contact.propertyTitle && m.contract?.propertyTitle === contact.propertyTitle))) ||
-                  ((contactAliases.has(m.sender_id) || m.sender_id === contact.id || (contact.propertyTitle && m.contract?.propertyTitle === contact.propertyTitle)) && myAliases.has(m.receiver_id))
-              );
+              const contactMsgs = (messages || [])
+                .filter(
+                  (m) =>
+                    (myAliases.has(m.sender_id) && (contactAliases.has(m.receiver_id) || m.receiver_id === contact.id || (contact.propertyTitle && m.contract?.propertyTitle === contact.propertyTitle))) ||
+                    ((contactAliases.has(m.sender_id) || m.sender_id === contact.id || (contact.propertyTitle && m.contract?.propertyTitle === contact.propertyTitle)) && myAliases.has(m.receiver_id))
+                )
+                .sort((a, b) => {
+                  const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+                  const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+                  return ta - tb;
+                });
               const lastMsg = contactMsgs[contactMsgs.length - 1];
 
               // Nombre exact de messages non lus reçus de ce contact (disparaît immédiatement si la conversation est ouverte)
@@ -1804,7 +1819,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             onScroll={handleChatScroll}
             className="flex-1 p-4 sm:p-6 flex flex-col gap-3.5 overflow-y-auto bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] dark:bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px]"
           >
-            {currentConversationMessages.length === 0 ? (
+            {currentConversationMessages.length === 0 && (
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center my-auto">
                 <div className="w-12 h-12 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 flex items-center justify-center mb-2 shadow-sm">
                   <MessageSquare className="w-6 h-6" />
@@ -1814,23 +1829,43 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                   Écrivez votre message ci-dessous pour échanger avec {activeContact?.name || 'votre correspondant'}.
                 </span>
               </div>
-            ) : (
-              <>
-                {/* Date Separator */}
-                <div className="flex items-center justify-center my-1">
-                  <span className="px-3 py-1 rounded-full bg-white/90 dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                    Aujourd'hui
-                  </span>
-                </div>
-              </>
             )}
 
-            {currentConversationMessages.map((m) => {
+            {currentConversationMessages.map((m, idx) => {
               const isMe = m.sender_id === currentUserId;
-              const timeStr = new Date(m.created_at).toLocaleTimeString('fr-FR', {
-                hour: '2-digit',
-                minute: '2-digit'
-              });
+              const msgDateObj = m.created_at ? new Date(m.created_at) : new Date();
+              const prevMsg = idx > 0 ? currentConversationMessages[idx - 1] : null;
+              const prevDateObj = prevMsg?.created_at ? new Date(prevMsg.created_at) : null;
+              const msgDayKey = !isNaN(msgDateObj.getTime())
+                ? `${msgDateObj.getFullYear()}-${msgDateObj.getMonth()}-${msgDateObj.getDate()}`
+                : 'today';
+              const prevDayKey = prevDateObj && !isNaN(prevDateObj.getTime())
+                ? `${prevDateObj.getFullYear()}-${prevDateObj.getMonth()}-${prevDateObj.getDate()}`
+                : null;
+              const showDateHeader = idx === 0 || msgDayKey !== prevDayKey;
+
+              const dateHeaderLabel = (() => {
+                if (isNaN(msgDateObj.getTime())) return "Aujourd'hui";
+                const now = new Date();
+                const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+                if (msgDayKey === todayKey) return "Aujourd'hui";
+                const yesterday = new Date(now);
+                yesterday.setDate(now.getDate() - 1);
+                const yesterdayKey = `${yesterday.getFullYear()}-${yesterday.getMonth()}-${yesterday.getDate()}`;
+                if (msgDayKey === yesterdayKey) return 'Hier';
+                return msgDateObj.toLocaleDateString('fr-FR', {
+                  day: '2-digit',
+                  month: 'long',
+                  year: 'numeric'
+                });
+              })();
+
+              const timeStr = !isNaN(msgDateObj.getTime())
+                ? msgDateObj.toLocaleTimeString('fr-FR', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })
+                : '';
 
               // Déballage intelligent du message si le texte est un JSON sérialisé
               let textToDisplay = m.text || '';
@@ -1854,12 +1889,19 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
               }
 
               return (
-                <div
-                  key={m.id}
-                  className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${
-                    isMe ? 'ml-auto items-end' : 'mr-auto items-start'
-                  }`}
-                >
+                <React.Fragment key={m.id}>
+                  {showDateHeader && (
+                    <div className="flex items-center justify-center my-1">
+                      <span className="px-3 py-1 rounded-full bg-white/90 dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                        {dateHeaderLabel}
+                      </span>
+                    </div>
+                  )}
+                  <div
+                    className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${
+                      isMe ? 'ml-auto items-end' : 'mr-auto items-start'
+                    }`}
+                  >
                   <div
                     className={`p-3.5 rounded-2xl text-xs font-medium leading-relaxed shadow-sm transition-all ${
                       isMe
@@ -2414,7 +2456,8 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                       {isMe && <CheckCheck className="w-3.5 h-3.5 text-sky-200" />}
                     </div>
                   </div>
-                </div>
+                  </div>
+                </React.Fragment>
               );
             })}
 
