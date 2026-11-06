@@ -829,7 +829,15 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-slate-400">
-                          {app.date_received || (app.created_at ? new Date(app.created_at).toLocaleDateString('fr-FR') : 'Date récente')}
+                          {(() => {
+                            const rawDate = app.date_received || app.created_at;
+                            if (!rawDate) return 'Date récente';
+                            const parsed = new Date(rawDate);
+                            if (!isNaN(parsed.getTime()) && String(rawDate).includes('-')) {
+                              return `Demande du ${parsed.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+                            }
+                            return `Demande du ${String(rawDate).split('T')[0]}`;
+                          })()}
                         </span>
 
                         {isRefused ? (

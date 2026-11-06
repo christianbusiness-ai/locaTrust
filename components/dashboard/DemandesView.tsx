@@ -341,13 +341,26 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           try { localStorage.setItem(`locatrust_user_avatar_${dbA.tenant_id}`, realProfileAvatar); } catch {}
         }
 
+        const formatCleanReceivedDate = (raw?: string) => {
+          if (!raw) return new Date().toLocaleDateString('fr-FR');
+          const d = new Date(raw);
+          if (!isNaN(d.getTime())) {
+            return d.toLocaleDateString('fr-FR', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+            });
+          }
+          return raw.split('T')[0];
+        };
+
         return {
           ...dbA,
           property_title: pInfo?.title || dbA.property_title || dbA.property?.title || 'Bien immobilier',
           property_address: pInfo?.commune ? `${pInfo.commune}, ${pInfo.city || 'Abidjan'}` : (dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`),
           rent_amount: rent,
           caution_amount: caution,
-          date_received: dbA.date_received || (dbA.created_at ? new Date(dbA.created_at).toISOString().split('T')[0] : '2026-10-10'),
+          date_received: formatCleanReceivedDate(dbA.date_received || dbA.created_at),
           dossier_status: dbA.dossier_status || 'complet',
           status: dbA.status || 'en_attente',
           tenant_name: prof?.full_name || dbA.tenant_name || 'Candidat Locataire',
@@ -1471,7 +1484,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               }`}
             >
               {/* 1. Candidat Profil avec Vraie Photo */}
-              <div className="flex items-center gap-3 min-w-0 sm:min-w-[180px]">
+              <div className="flex items-center gap-2.5 min-w-0 sm:w-[155px] shrink-0">
                 <UserAvatar
                   src={app.tenant_avatar}
                   name={app.tenant_name}
@@ -1489,19 +1502,32 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 </div>
               </div>
 
-              {/* 2. Bien Demandé */}
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
-                  <FileText className="w-3.5 h-3.5" />
+              {/* 2. Bien Demandé (Titre + Loyer + Caution bien visibles sans être écrasés) */}
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                  <FileText className="w-4 h-4" />
                 </div>
-                <div className="flex flex-col min-w-0">
-                  <span
-                    className="font-bold text-slate-900 truncate cursor-help"
-                    title={app.property_title}
-                  >
-                    {compactTitle}
-                  </span>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 truncate">
+                <div className="flex flex-col min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className="font-extrabold text-xs sm:text-sm text-slate-900 truncate"
+                      title={app.property_title}
+                    >
+                      {compactTitle}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2 py-0.5 rounded-md whitespace-nowrap">
+                      {(() => {
+                        const raw = app.date_received;
+                        if (!raw) return '';
+                        const parsed = new Date(raw);
+                        if (!isNaN(parsed.getTime()) && raw.includes('-')) {
+                          return parsed.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                        }
+                        return raw.split('T')[0];
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 flex-wrap mt-0.5">
                     <span className="font-extrabold text-blue-700 whitespace-nowrap">
                       {formatFCFA(app.rent_amount)}/mois
                     </span>
@@ -1513,11 +1539,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 </div>
               </div>
 
-              {/* 3. Date & Statut */}
+              {/* 3. Statut */}
               <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap hidden sm:inline">
-                  {app.date_received}
-                </span>
 
                 {/* Badges de statut stricts */}
                 {isRefused ? (
@@ -1911,7 +1934,15 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                   <div className="flex flex-col">
                     <span className="font-bold text-slate-900">Fiche de renseignements locataire</span>
                     <span className="text-[10px] text-emerald-600 font-bold">
-                      ✓ Complétée le {selectedDossierApp.date_received ? new Date(selectedDossierApp.date_received).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Récemment'}
+                      ✓ Complétée le {(() => {
+                        const raw = selectedDossierApp.date_received;
+                        if (!raw) return 'Récemment';
+                        if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
+                        const d = new Date(raw);
+                        return !isNaN(d.getTime())
+                          ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
+                          : raw.split('T')[0];
+                      })()}
                     </span>
                   </div>
                 </div>
