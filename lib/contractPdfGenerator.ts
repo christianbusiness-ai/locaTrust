@@ -314,7 +314,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     if (bathrooms && Number(bathrooms) > 0) roomParts.push(`${bathrooms} salle(s) d'eau`);
     const roomsCompositionText = roomParts.length > 0 ? roomParts.join(' • ') : 'Non renseigné';
 
-    let equipmentsRealText = 'Aucun équipement spécifique renseigné';
+    let equipmentsRealText = '';
     if (Array.isArray(rawEquipments)) {
       const validEq = rawEquipments.filter((e) => typeof e === 'string' && e.trim().length > 0);
       if (validEq.length > 0) equipmentsRealText = validEq.join(', ');
@@ -513,7 +513,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(30, 41, 59);
       doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 78.8);
       doc.text(`• Consistance réelle : Surface habitable : ${surfaceHabText} | Composition : ${roomsHabList || 'Information non renseignée'}`, 18, 82.5);
-      doc.text(`• Équipements réels : ${equipmentsList || 'Aucun équipement spécifique renseigné'}`, 18, 86.2);
+      doc.text(`• Équipements déclarés : ${equipmentsList || ''}`, 18, 86.2);
       doc.text('• Destination exclusive : Logement d\'habitation principale (Art. 409 & 410 Loi 2019-576). Exploitation commerciale prohibée.', 18, 89.8);
 
       // ARTICLE 2 : DURÉE

@@ -214,13 +214,21 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   const propertyDetails = React.useMemo(() => {
     const p = realContract?.property || {};
+    const declaredEq =
+      realContract?.declared_equipments ??
+      p.declared_equipments ??
+      (Array.isArray(realContract?.equipments)
+        ? realContract.equipments.join(', ')
+        : Array.isArray(p.equipments)
+        ? p.equipments.join(', ')
+        : realContract?.equipments || p.equipments || '');
     return {
       image: p.main_image || p.image_url || p.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=600&q=80',
       surface: p.surface || realContract?.surface || 85,
       rooms: p.rooms || realContract?.rooms || 3,
       bedrooms: p.bedrooms || realContract?.bedrooms || 2,
       bathrooms: p.bathrooms || realContract?.bathrooms || 1,
-      equipments: Array.isArray(p.equipments) ? p.equipments.join(', ') : (p.equipments || 'Eau CIE/SODECI, compteur individuel, accès sécurisé'),
+      equipments: declaredEq,
       type: p.property_type || p.type || 'Logement loué'
     };
   }, [realContract]);
@@ -434,7 +442,10 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     let rooms = (contract?.property as any)?.rooms;
     let bedrooms = (contract?.property as any)?.bedrooms;
     let bathrooms = (contract?.property as any)?.bathrooms;
-    let equipments = (contract?.property as any)?.equipments;
+    let equipments =
+      realContract?.declared_equipments !== undefined
+        ? (realContract.declared_equipments ? [realContract.declared_equipments] : [])
+        : (contract?.property as any)?.equipments;
     let propertyDescription = (contract?.property as any)?.description;
 
     try {
@@ -451,7 +462,6 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           rooms = rooms || match.rooms;
           bedrooms = bedrooms || match.bedrooms;
           bathrooms = bathrooms || match.bathrooms;
-          equipments = equipments || match.equipments;
           propertyDescription = propertyDescription || match.description;
         }
       }

@@ -451,7 +451,12 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     let rooms = cnt.property?.rooms;
     let bedrooms = cnt.property?.bedrooms;
     let bathrooms = cnt.property?.bathrooms;
-    let equipments = cnt.property?.equipments;
+    let equipments =
+      cnt.declared_equipments !== undefined
+        ? (cnt.declared_equipments ? [cnt.declared_equipments] : [])
+        : cnt.property?.declared_equipments !== undefined
+        ? (cnt.property.declared_equipments ? [cnt.property.declared_equipments] : [])
+        : cnt.property?.equipments;
     let propertyDescription = cnt.property?.description;
 
     if (!surface) {
@@ -468,7 +473,6 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
             rooms = match.rooms;
             bedrooms = match.bedrooms;
             bathrooms = match.bathrooms;
-            equipments = match.equipments;
             propertyDescription = match.description;
           }
         }

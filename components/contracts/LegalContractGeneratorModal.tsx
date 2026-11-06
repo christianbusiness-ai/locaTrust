@@ -115,6 +115,7 @@ interface LegalContractGeneratorModalProps {
     dueDay?: number;
     paymentFrequency?: 'mensuel' | 'trimestriel';
     mandantName?: string;
+    declaredEquipments?: string;
     ownerSignatureUrl?: string | null;
     tenantSignatureUrl?: string | null;
   };
@@ -122,11 +123,17 @@ interface LegalContractGeneratorModalProps {
     contractNumber: string;
     tenantName: string;
     propertyTitle: string;
+    durationMonths?: number;
+    startDate?: string;
+    declaredEquipments?: string;
   }) => void;
   onContractTransmitted?: (contractData: {
     contractNumber: string;
     tenantName: string;
     propertyTitle: string;
+    durationMonths?: number;
+    startDate?: string;
+    declaredEquipments?: string;
   }) => void;
 }
 
@@ -295,8 +302,16 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     initialData?.ownerDestinationAuthorized ?? true
   );
   const [fiscalStatus, setFiscalStatus] = useState<'non_enregistre' | 'en_cours' | 'enregistre'>('en_cours');
-  const [startDate, setStartDate] = useState<string>(initialData?.startDate || '2026-10-01');
-  const [durationMonths, setDurationMonths] = useState<number>(initialData?.durationMonths || 12);
+  const [startDate, setStartDate] = useState<string>(initialData?.startDate || new Date().toISOString().split('T')[0]);
+  const [durationInput, setDurationInput] = useState<string>(
+    initialData?.durationMonths ? String(initialData.durationMonths) : ''
+  );
+  const durationMonths = durationInput.trim() ? Math.max(1, Number(durationInput.trim()) || 0) : 0;
+
+  // Équipements déclarés saisis par le propriétaire ou l'agence à la création du contrat
+  const [declaredEquipments, setDeclaredEquipments] = useState<string>(
+    initialData?.declaredEquipments || ''
+  );
 
   // Real Property Characteristics published by Landlord (Loi 2019-576 & bail certifié)
   const [propertySurface, setPropertySurface] = useState<number | undefined>(initialData?.propertySurface);
@@ -315,7 +330,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const prevIsOpenRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (isOpen && !prevIsOpenRef.current) {
+    const isOpeningNow = isOpen && !prevIsOpenRef.current;
+    prevIsOpenRef.current = isOpen;
+
+    if (isOpeningNow) {
       const stepToStart = startAtStep || initialData?.startAtStep || 'form';
       setCurrentStep(stepToStart);
       if (initialData?.tenantName) {
@@ -323,10 +341,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           `Bonjour ${initialData.tenantName}, voici le contrat de bail d'habitation certifié conforme Loi n° 2019-576 pour « ${initialData.propertyTitle || 'le logement'} ».\nJ'y ai apposé ma signature électronique certifiée. Merci de bien vouloir le relire et y apposer votre signature manuscrite pour finaliser la location.`
         );
       }
-    }
-    prevIsOpenRef.current = isOpen;
 
-    if (isOpen) {
       if (initialData) {
         if (initialData.tenantName) setTenantName(initialData.tenantName);
         if (initialData.tenantPhone) setTenantPhone(initialData.tenantPhone);
@@ -379,7 +394,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (typeof initialData.cautionAmount === 'number') setCautionPaidAmount(initialData.cautionAmount);
         if (typeof initialData.dueDay === 'number') setDueDay(initialData.dueDay);
         if (typeof initialData.chargesAmount === 'number') setChargesAmount(initialData.chargesAmount);
-        if (typeof initialData.durationMonths === 'number') setDurationMonths(initialData.durationMonths);
+        if (typeof initialData.durationMonths === 'number' && initialData.durationMonths > 0) {
+          setDurationInput(String(initialData.durationMonths));
+        } else {
+          setDurationInput('');
+        }
+        setDeclaredEquipments(initialData.declaredEquipments || '');
         if (initialData.startDate) setStartDate(initialData.startDate);
         if (initialData.leaseType || initialData.usageDestination) {
           setLeaseType(initialData.leaseType || initialData.usageDestination || 'habitation');
@@ -461,42 +481,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         setPropertyEquipments(resEquipments);
         setPropertyPhotos(resPhotos);
         setPropertyDescription(resDesc);
-
-        if (initialData.tenantSignatureUrl) setTenantSignatureUrl(initialData.tenantSignatureUrl);
-        if (initialData.ownerSignatureUrl) setOwnerSignatureUrl(initialData.ownerSignatureUrl);
       }
     }
-  }, [
-    isOpen,
-    initialData?.tenantName,
-    initialData?.tenantPhone,
-    initialData?.tenantCni,
-    initialData?.propertyId,
-    initialData?.propertyTitle,
-    initialData?.propertyAddress,
-    initialData?.propertyCity,
-    initialData?.propertyCommune,
-    initialData?.propertySurface,
-    initialData?.propertyRooms,
-    initialData?.propertyBedrooms,
-    initialData?.propertyBathrooms,
-    initialData?.propertyEquipments,
-    initialData?.propertyPhotos,
-    initialData?.propertyDescription,
-    initialData?.rentAmount,
-    initialData?.cautionAmount,
-    initialData?.chargesAmount,
-    initialData?.dueDay,
-    initialData?.durationMonths,
-    initialData?.startDate,
-    initialData?.leaseType,
-    initialData?.usageDestination,
-    initialData?.authorizedActivity,
-    initialData?.propertyType,
-    initialData?.ownerDestinationAuthorized,
-    initialData?.tenantSignatureUrl,
-    initialData?.ownerSignatureUrl
-  ]);
+  }, [isOpen, initialData]);
 
   // Conditions Particulières Saisies (Sections 1, 3, 4 du Cahier des Charges)
   // Strictement initialisées vides ou avec les données réelles saisies (aucune clause fictive pré-enregistrée)
@@ -932,6 +919,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   // Vérification de compatibilité globale pour la continuation
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!durationInput.trim() || durationMonths <= 0) {
+      alert("Veuillez sélectionner ou saisir la durée du contrat (en mois) avant de continuer.");
+      return;
+    }
     if (!depositValidation.valid) {
       alert(`⛔ ${depositValidation.error}`);
       return;
@@ -1002,6 +993,9 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 candidate_selected: true,
                 contract_number: contractNumber,
                 contract_transmitted: true,
+                duration_months: durationMonths,
+                start_date: startDate,
+                declared_equipments: declaredEquipments.trim(),
                 owner_signed: true,
                 owner_signature_url: effectiveOwnerSig,
                 tenant_signed: Boolean(tenantSignatureUrl),
@@ -1034,12 +1028,17 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     }
 
     // Inscription directe dans la table Supabase contracts avec les colonnes exactes
+    const generatedContractUuid = crypto.randomUUID();
+    let finalOwnerId: string | null = null;
+    let finalTenantId: string | null = null;
+    let finalPropId: string | null = null;
+
     try {
       const isValidUuid = (str?: string) =>
         Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
       const rawPropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
-      let finalOwnerId = isValidUuid(targetOwnerId) ? targetOwnerId : (user?.id && isValidUuid(user.id) ? user.id : null);
+      finalOwnerId = isValidUuid(targetOwnerId) ? targetOwnerId : (user?.id && isValidUuid(user.id) ? user.id : null);
       if (!finalOwnerId) {
         const { data: ownerProfile } = await supabase
           .from('profiles')
@@ -1050,7 +1049,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         finalOwnerId = ownerProfile?.id || null;
       }
 
-      let finalTenantId = isValidUuid(targetTenantId) ? targetTenantId : null;
+      finalTenantId = isValidUuid(targetTenantId) ? targetTenantId : null;
       if (!finalTenantId) {
         const { data: tenantProfile } = await supabase
           .from('profiles')
@@ -1061,15 +1060,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         finalTenantId = tenantProfile?.id || null;
       }
 
-      let finalPropId = isValidUuid(rawPropId) ? rawPropId : null;
+      finalPropId = isValidUuid(rawPropId) ? rawPropId : null;
       if (!finalPropId) {
         const { data: userProps } = await supabase.from('properties').select('id').limit(1);
         if (userProps && userProps[0]?.id) {
           finalPropId = userProps[0].id;
         }
       }
-
-      const generatedContractUuid = crypto.randomUUID();
 
       if (finalOwnerId && finalTenantId && finalPropId) {
         const { error: cntErr } = await supabase.from('contracts').insert({
@@ -1082,7 +1079,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           caution_amount: Number(effectiveCautionAmount || 0),
           deposit_amount: Number(effectiveCautionAmount || 0),
           charges_amount: Number(chargesAmount || 0),
-          duration_months: Number(durationMonths || 12),
+          duration_months: Number(durationMonths),
           start_date: startDate || new Date().toISOString().split('T')[0],
           status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
           owner_signed: true,
@@ -1123,6 +1120,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     }
 
     // 4. Inscription dans le registre des contrats (locatrust_contracts)
+    const finalEquipmentsArray = declaredEquipments.trim() ? [declaredEquipments.trim()] : [];
     try {
       const contractsRaw = localStorage.getItem('locatrust_contracts');
       const existingContracts = contractsRaw ? JSON.parse(contractsRaw) : [];
@@ -1152,7 +1150,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           rooms: propertyRooms,
           bedrooms: propertyBedrooms,
           bathrooms: propertyBathrooms,
-          equipments: propertyEquipments,
+          equipments: finalEquipmentsArray,
+          declared_equipments: declaredEquipments.trim(),
           status: tenantSignatureUrl ? 'loue' : 'disponible'
         },
         owner: {
@@ -1180,7 +1179,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         rooms: propertyRooms,
         bedrooms: propertyBedrooms,
         bathrooms: propertyBathrooms,
-        equipments: propertyEquipments
+        equipments: finalEquipmentsArray,
+        declared_equipments: declaredEquipments.trim()
       };
       const updatedContracts = [
         newContractRecord,
@@ -1263,7 +1263,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         onContractTransmitted({
           contractNumber,
           tenantName,
-          propertyTitle
+          propertyTitle,
+          durationMonths,
+          startDate,
+          declaredEquipments: declaredEquipments.trim()
         });
       } catch (e) {
         console.warn('onContractTransmitted error:', e);
@@ -1291,7 +1294,10 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           onContractFinalized({
             contractNumber,
             tenantName,
-            propertyTitle
+            propertyTitle,
+            durationMonths,
+            startDate,
+            declaredEquipments: declaredEquipments.trim()
           });
         } catch (e) {
           console.warn('onContractFinalized error:', e);
@@ -1339,8 +1345,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       rooms: propertyRooms,
       bedrooms: propertyBedrooms,
       bathrooms: propertyBathrooms,
-      equipments: propertyEquipments,
-      amenities: propertyEquipments,
+      equipments: declaredEquipments.trim() ? [declaredEquipments.trim()] : [],
+      amenities: declaredEquipments.trim() ? [declaredEquipments.trim()] : [],
       propertyDescription: propertyDescription,
       durationMonths,
       startDate,
@@ -1485,7 +1491,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 </div>
               </div>
 
-              {/* Ligne 2 : Titre & Destination */}
+              {/* Ligne 2 : Titre, Destination & Équipements déclarés */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1 text-[11px] sm:text-xs">
@@ -1511,6 +1517,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     onChange={(e) => setPropertyDestination(e.target.value)}
                     className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
                     placeholder="Ex: Habitation Principale ou Usage Commercial"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px] sm:text-xs">
+                    Équipements déclarés (optionnel)
+                  </label>
+                  <input
+                    type="text"
+                    value={declaredEquipments}
+                    onChange={(e) => setDeclaredEquipments(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
+                    placeholder="Saisir les équipements déclarés (ex: Compteurs CIE/SODECI individuels, sanitaires...). Laisser vide si aucun."
                   />
                 </div>
               </div>
@@ -1607,10 +1625,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               <div className="p-3.5 rounded-xl bg-white/90 border border-amber-300/80 flex flex-col gap-2.5">
                 <div className="flex items-center justify-between">
                   <label className="font-extrabold text-amber-950 text-xs flex items-center gap-1.5">
-                    <span>Durée du Contrat de Bail & Prise d'Effet</span>
+                    <span>Durée du Contrat de Bail & Prise d'Effet *</span>
                   </label>
                   <span className="text-[11px] font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                    {durationMonths} mois ({Math.floor(durationMonths / 12) > 0 ? `${Math.floor(durationMonths / 12)} an${Math.floor(durationMonths / 12) > 1 ? 's' : ''}` : ''}{durationMonths % 12 > 0 ? ` ${durationMonths % 12} mois` : ''})
+                    {durationMonths > 0
+                      ? `${durationMonths} mois${Math.floor(durationMonths / 12) > 0 ? ` (${Math.floor(durationMonths / 12)} an${Math.floor(durationMonths / 12) > 1 ? 's' : ''}${durationMonths % 12 > 0 ? ` ${durationMonths % 12} mois` : ''})` : ''}`
+                      : 'À sélectionner ou saisir'}
                   </span>
                 </div>
 
@@ -1619,11 +1639,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   <div className="flex flex-col gap-1.5">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[10px] text-slate-500 font-semibold mr-1">Raccourcis :</span>
-                      {[6, 12, 24, 36].map((m) => (
+                      {[1, 2, 3, 6, 12, 24, 36].map((m) => (
                         <button
                           key={m}
                           type="button"
-                          onClick={() => setDurationMonths(m)}
+                          onClick={() => setDurationInput(String(m))}
                           className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all ${durationMonths === m
                               ? 'bg-amber-600 text-white shadow-xs'
                               : 'bg-amber-100/70 text-amber-950 hover:bg-amber-200/70 border border-amber-300'
@@ -1636,13 +1656,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     <div className="flex items-center gap-2">
                       <div className="relative flex-1">
                         <input
-                          type="number"
-                          min={1}
-                          max={120}
+                          type="text"
+                          inputMode="numeric"
                           required
-                          value={durationMonths}
-                          onChange={(e) => setDurationMonths(Math.max(1, Number(e.target.value) || 1))}
-                          placeholder="Ex: 12"
+                          value={durationInput}
+                          onChange={(e) => setDurationInput(e.target.value.replace(/[^0-9]/g, ''))}
+                          placeholder="Saisir la durée en mois (ex: 6, 12)"
                           className="w-full h-10 px-3 pr-14 rounded-xl border border-amber-300 font-extrabold text-xs bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-amber-900 pointer-events-none">
@@ -2787,9 +2806,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     </div>
                     <div className="sm:col-span-2">
                       <strong>Équipements déclarés :</strong>{' '}
-                      {propertyEquipments && propertyEquipments.length > 0
-                        ? propertyEquipments.join(', ')
-                        : 'Compteurs CIE/SODECI individuels, sanitaires privatifs'}
+                      {declaredEquipments.trim()}
                     </div>
                     <div className="sm:col-span-2"><strong>Usage :</strong> {propertyDestination}</div>
                   </div>

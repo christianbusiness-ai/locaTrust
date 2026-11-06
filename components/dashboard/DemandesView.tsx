@@ -951,23 +951,48 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const contractUuid = crypto.randomUUID();
 
+      let matchedContract: any = null;
+      try {
+        const rawC = localStorage.getItem('locatrust_contracts');
+        if (rawC) {
+          const contracts = JSON.parse(rawC);
+          if (Array.isArray(contracts)) {
+            matchedContract = contracts.find((c: any) =>
+              (contractNumber && (c.contract_number === contractNumber || c.id === contractNumber)) ||
+              ((c.property_id === app.property_id || c.property?.id === app.property_id) &&
+               (c.tenant_id === app.tenant_id || c.tenant?.id === app.tenant_id || c.tenant?.full_name === app.tenant_name))
+            );
+          }
+        }
+      } catch {}
+
+      const resolvedCharges = Number(
+        matchedContract?.charges_amount ??
+        matchedContract?.charges ??
+        (app as any)?.charges_amount ??
+        (app as any)?.charges ??
+        matchedProperty?.charges ??
+        0
+      );
+
+      const resolvedDurationMonths = Number(
+        matchedContract?.duration_months ??
+        (app as any)?.duration_months ??
+        matchedProperty?.duration_months ??
+        12
+      );
+
+      const resolvedStartDate =
+        matchedContract?.start_date ||
+        (app as any)?.start_date ||
+        new Date().toISOString().split('T')[0];
+
+      const resolvedDeclaredEquipments =
+        matchedContract?.declared_equipments ??
+        (app as any)?.declared_equipments ??
+        (Array.isArray(matchedContract?.equipments) ? matchedContract.equipments.join(', ') : '');
+
       if (targetPropId && targetTenantId && targetOwnerId) {
-        const resolvedCharges = Number(
-          matchedContract?.charges_amount ??
-          matchedContract?.charges ??
-          (app as any)?.charges_amount ??
-          (app as any)?.charges ??
-          matchedProperty?.charges ??
-          0
-        );
-
-        const resolvedDurationMonths = Number(
-          matchedContract?.duration_months ??
-          (app as any)?.duration_months ??
-          matchedProperty?.duration_months ??
-          12
-        );
-
         // Vérifier si le contrat a déjà été inséré lors de la transmission
         const { data: existingContract } = await supabase
           .from('contracts')
@@ -1006,7 +1031,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             charges_amount: resolvedCharges,
             duration_months: resolvedDurationMonths,
             status: 'actif',
-            start_date: new Date().toISOString().split('T')[0],
+            start_date: resolvedStartDate,
             owner_signed: true,
             owner_signed_at: new Date().toISOString(),
             tenant_signed: true,
@@ -1102,8 +1127,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       const rawContracts = localStorage.getItem('locatrust_contracts');
       const currentContracts = rawContracts ? JSON.parse(rawContracts) : [];
+      const finalEquipmentsArray = resolvedDeclaredEquipments ? [resolvedDeclaredEquipments] : [];
       const newContractRecord = {
-        id: contractUuid,
+        ...matchedContract,
+        id: matchedContract?.id || contractUuid,
         contract_number: contractNumber,
         property_id: targetPropId || app.property_id,
         tenant_id: targetTenantId || app.tenant_id,
@@ -1120,27 +1147,35 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         property: {
           id: app.property_id,
           title: app.property_title,
-          location: { city: matchedProperty?.city || 'Abidjan', quartier: matchedProperty?.quartier || 'Riviera', commune: matchedProperty?.commune || 'Cocody' },
+          location: { city: matchedProperty?.city || '', quartier: matchedProperty?.quartier || '', commune: matchedProperty?.commune || '' },
           surface: matchedProperty?.surface,
           rooms: matchedProperty?.rooms,
           bedrooms: matchedProperty?.bedrooms,
           bathrooms: matchedProperty?.bathrooms,
-          equipments: matchedProperty?.equipments,
+          equipments: finalEquipmentsArray,
+          declared_equipments: resolvedDeclaredEquipments,
           status: 'loue'
         },
         surface: matchedProperty?.surface,
         rooms: matchedProperty?.rooms,
         bedrooms: matchedProperty?.bedrooms,
         bathrooms: matchedProperty?.bathrooms,
-        equipments: matchedProperty?.equipments,
+        equipments: finalEquipmentsArray,
+        declared_equipments: resolvedDeclaredEquipments,
         owner_signature_url: ownerSigUrl,
         tenant_signature_url: tenantSigUrl,
         status: 'actif',
         signed_date: new Date().toLocaleDateString('fr-FR'),
-        start_date: new Date().toLocaleDateString('fr-FR'),
-        created_at: new Date().toISOString()
+        start_date: resolvedStartDate,
+        created_at: matchedContract?.created_at || new Date().toISOString()
       };
-      localStorage.setItem('locatrust_contracts', JSON.stringify([newContractRecord, ...currentContracts]));
+      localStorage.setItem(
+        'locatrust_contracts',
+        JSON.stringify([
+          newContractRecord,
+          ...currentContracts.filter((c: any) => c.contract_number !== contractNumber)
+        ])
+      );
 
       // Diffusion temps réel multi-appareils (Desktop ↔ Mobile)
       broadcastLiveEvent('CONTRACT_FINALIZED', {
@@ -1226,6 +1261,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         currentUser: user
       });
 
+      const resolvedDeclaredEquipments =
+        matchedContract?.declared_equipments ??
+        (app as any)?.declared_equipments ??
+        (Array.isArray(matchedContract?.equipments) ? matchedContract.equipments.join(', ') : '');
+      const resolvedEquipmentsList = resolvedDeclaredEquipments ? [resolvedDeclaredEquipments] : [];
+
       await generateOfficialContractPdf({
         contractNumber: app.contract_number || matchedContract?.contract_number || 'LT-2026-CI-000492',
         isAgency: resolved.isAgency,
@@ -1246,11 +1287,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         rooms: matchedProperty?.rooms,
         bedrooms: matchedProperty?.bedrooms,
         bathrooms: matchedProperty?.bathrooms,
-        equipments: matchedProperty?.equipments,
-        amenities: matchedProperty?.equipments,
+        equipments: resolvedEquipmentsList,
+        amenities: resolvedEquipmentsList,
         propertyDescription: matchedProperty?.description,
-        durationMonths: app.duration_months || matchedContract?.duration_months || matchedProperty?.duration_months || (leaseType === 'professionnel' ? 24 : 12),
-        startDate: app.signed_date || (app.signed_at ? new Date(app.signed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
+        durationMonths: matchedContract?.duration_months || app.duration_months || matchedProperty?.duration_months || (leaseType === 'professionnel' ? 24 : 12),
+        startDate: matchedContract?.start_date || (app as any)?.start_date || app.signed_date || (app.signed_at ? new Date(app.signed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         rent: app.rent_amount || matchedContract?.monthly_rent || matchedProperty?.rent || 0,
         cautionMonths: matchedProperty?.caution_months || (leaseType === 'professionnel' ? 3 : 2),
         chargesAmount: resolvedCharges,
@@ -1987,20 +2028,58 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       {selectedApplicationForContract && (() => {
         const matchedProperty = getPropertyForApp(selectedApplicationForContract.property_id);
         const leaseType = (matchedProperty?.usage_destination || 'habitation') as 'habitation' | 'professionnel';
+        let existingAppContract: any = null;
+        try {
+          const rawC = localStorage.getItem('locatrust_contracts');
+          if (rawC) {
+            const contracts = JSON.parse(rawC);
+            if (Array.isArray(contracts)) {
+              existingAppContract = contracts.find((c: any) =>
+                (selectedApplicationForContract.contract_number &&
+                  c.contract_number === selectedApplicationForContract.contract_number) ||
+                ((c.property_id === selectedApplicationForContract.property_id ||
+                  c.property?.id === selectedApplicationForContract.property_id) &&
+                  (c.tenant_id === selectedApplicationForContract.tenant_id ||
+                    c.tenant?.id === selectedApplicationForContract.tenant_id ||
+                    c.tenant?.full_name === selectedApplicationForContract.tenant_name))
+              );
+            }
+          }
+        } catch {}
+
+        const savedDurationMonths =
+          (selectedApplicationForContract as any)?.duration_months ??
+          existingAppContract?.duration_months;
+
+        const savedDeclaredEquipments =
+          (selectedApplicationForContract as any)?.declared_equipments ??
+          existingAppContract?.declared_equipments ??
+          '';
+
         return (
           <LegalContractGeneratorModal
             isOpen={true}
             onClose={() => setSelectedApplicationForContract(null)}
             startAtStep={contractModalStartStep}
             isAgency={(profile?.role as any) === 'agence' || (profile?.role as any) === 'agent'}
-            onContractFinalized={async ({ contractNumber, tenantName, propertyTitle }) => {
+            onContractFinalized={async ({ contractNumber, tenantName, propertyTitle, durationMonths, startDate, declaredEquipments }) => {
               const chosenApp = selectedApplicationForContract;
               const competing = applications.filter(
                 (a) => a.property_id === chosenApp.property_id && a.id !== chosenApp.id
               );
               const competingNames = competing.map((c) => c.tenant_name).join(', ');
               const updated = applications.map((a) => {
-                if (a.id === chosenApp.id) return { ...a, status: 'contrat_actif' as const, contract_number: contractNumber, contract_finalized: true };
+                if (a.id === chosenApp.id) {
+                  return {
+                    ...a,
+                    status: 'contrat_actif' as const,
+                    contract_number: contractNumber,
+                    contract_finalized: true,
+                    duration_months: durationMonths ?? (a as any).duration_months,
+                    start_date: startDate ?? (a as any).start_date,
+                    declared_equipments: declaredEquipments ?? (a as any).declared_equipments
+                  };
+                }
                 if (a.property_id === chosenApp.property_id) {
                   return { ...a, status: 'refusee' as const };
                 }
@@ -2042,7 +2121,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 `🎉 Bail N° ${contractNumber} finalisé avec ${tenantName} pour « ${propertyTitle} » ! Les candidats en liste d'attente (${competingNames || 'demandeurs'}) ont été automatiquement notifiés que le logement n'est plus disponible.`
               );
             }}
-            onContractTransmitted={({ contractNumber, tenantName, propertyTitle }) => {
+            onContractTransmitted={({ contractNumber, tenantName, propertyTitle, durationMonths, startDate, declaredEquipments }) => {
               const chosenApp = selectedApplicationForContract;
               const updated = applications.map((a) => {
                 if (a.id === chosenApp.id) {
@@ -2050,7 +2129,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                     ...a,
                     status: 'en_attente_signature_locataire' as const,
                     contract_number: contractNumber,
-                    contract_transmitted: true
+                    contract_transmitted: true,
+                    duration_months: durationMonths ?? (a as any).duration_months,
+                    start_date: startDate ?? (a as any).start_date,
+                    declared_equipments: declaredEquipments ?? (a as any).declared_equipments
                   };
                 }
                 return a;
@@ -2077,12 +2159,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               propertyAddress: selectedApplicationForContract.property_address,
               propertyCity: matchedProperty?.city,
               propertyCommune: matchedProperty?.commune,
-              durationMonths: Number(
-                (selectedApplicationForContract as any)?.duration_months ??
-                matchedProperty?.duration_months ??
-                12
-              ),
-              startDate: (selectedApplicationForContract as any)?.start_date || new Date().toISOString().split('T')[0],
+              durationMonths: savedDurationMonths ? Number(savedDurationMonths) : undefined,
+              declaredEquipments: savedDeclaredEquipments,
+              startDate: (selectedApplicationForContract as any)?.start_date || existingAppContract?.start_date || new Date().toISOString().split('T')[0],
               propertySurface: matchedProperty?.surface,
               propertyRooms: matchedProperty?.rooms,
               propertyBedrooms: matchedProperty?.bedrooms,
