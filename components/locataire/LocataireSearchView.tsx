@@ -192,14 +192,21 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
                  Boolean(app.contract_number && c.contract_number && c.contract_number === app.contract_number))
               );
               if (matchedContract) {
+                const isContractTerminated =
+                  matchedContract.status === 'termine' ||
+                  matchedContract.status === 'resilie' ||
+                  matchedContract.status === 'cloture';
+
                 appsList[idx] = {
                   ...app,
                   contract_number: matchedContract.contract_number || app.contract_number,
                   contract_transmitted: true,
                   tenant_signed: Boolean(matchedContract.tenant_signed),
-                  status: (matchedContract.status === 'actif' || matchedContract.status === 'contrat_actif')
-                    ? 'contrat_actif'
-                    : (matchedContract.tenant_signed ? 'validee' : 'en_attente_signature_locataire')
+                  status: isContractTerminated
+                    ? 'termine'
+                    : ((matchedContract.status === 'actif' || matchedContract.status === 'contrat_actif')
+                      ? 'contrat_actif'
+                      : (matchedContract.tenant_signed ? 'contrat_signe_locataire' : 'en_attente_signature_locataire'))
                 };
               }
             });
@@ -207,14 +214,60 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
         }
       } catch {}
 
-      // Exclure les contrats déjà créés et actifs : ils doivent rester uniquement dans le menu Contrats
-      const pendingAppsOnly = appsList.filter(
-        (app) =>
-          app &&
-          app.status !== 'contrat_actif' &&
-          app.status !== 'actif' &&
-          !Boolean(app.contract_finalized)
-      );
+      // Réconciliation avec les notifications pour détecter les contrats transmis
+      try {
+        const rawNotifs = localStorage.getItem('locatrust_notifications');
+        if (rawNotifs) {
+          const parsedNotifs = JSON.parse(rawNotifs);
+          if (Array.isArray(parsedNotifs)) {
+            parsedNotifs.forEach((n: any) => {
+              const p = n?.data || n?.payload || {};
+              const cNum = p.contractNumber || p.contract_number;
+              const propId = p.property_id || p.propertyId;
+              const propTitle = p.property_title || p.propertyTitle;
+
+              if (cNum) {
+                appsList.forEach((app, idx) => {
+                  const matchProp = (propId && app.property_id === propId) ||
+                    (propTitle && app.property_title && app.property_title.trim().toLowerCase() === propTitle.trim().toLowerCase());
+                  if (matchProp && app.status === 'en_attente') {
+                    appsList[idx] = {
+                      ...app,
+                      contract_number: cNum,
+                      contract_transmitted: true,
+                      status: 'en_attente_signature_locataire'
+                    };
+                  }
+                });
+              }
+            });
+          }
+        }
+      } catch {}
+
+      // Exclure formellement toute demande qui a déjà un contrat (signé, actif, terminé ou résilié) :
+      // Dès que le locataire a signé son contrat ou que le bail est actif/scellé, cette demande disparaît
+      // définitivement de "Mes Demandes de Location" et ne revient plus jamais, même après la fin du contrat.
+      const pendingAppsOnly = appsList.filter((app) => {
+        if (!app) return false;
+        const docs = app.documents && typeof app.documents === 'object' ? app.documents : {};
+        const isSignedOrActive =
+          app.status === 'contrat_actif' ||
+          app.status === 'actif' ||
+          app.status === 'contrat_signe_locataire' ||
+          app.status === 'termine' ||
+          app.status === 'resilie' ||
+          Boolean(app.tenant_signed) ||
+          Boolean(app.contract_finalized) ||
+          Boolean(docs.tenant_signed) ||
+          Boolean(docs.contract_finalized) ||
+          docs.contract_status === 'contrat_actif' ||
+          docs.contract_status === 'contrat_signe_locataire' ||
+          docs.contract_status === 'termine' ||
+          docs.contract_status === 'resilie';
+
+        return !isSignedOrActive;
+      });
 
       // Déduplication par logement pour éviter les doublons d'affichage
       const dedupedApps: any[] = [];

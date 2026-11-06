@@ -493,6 +493,7 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
   }
 
   // Contrôle strict anti-doublon (Point 3 : Locataire A + Logement B = 1 seule demande active)
+  // Exception : Si le contrat précédent a été terminé ou résilié et que le bien est redevenu disponible, l'ancien enregistrement est réinitialisé ou remplacé
   try {
     if (isValidUuid(app.property_id) && (resolvedTenantId || resolvedTenantEmail)) {
       let checkQuery = supabase
@@ -510,19 +511,35 @@ export async function createRentalApplication(app: Partial<RentalApplication> & 
       const { data: existingApps } = await checkQuery.limit(1);
       if (existingApps && existingApps.length > 0) {
         const existingRow = existingApps[0];
-        if (!existingRow.owner_id && resolvedOwnerId) {
-          await supabase
-            .from('rental_applications')
-            .update({
-              owner_id: resolvedOwnerId,
-              agency_id: resolvedAgencyId || null,
-              rent_amount: resolvedRent || existingRow.rent_amount || 0,
-              caution_amount: resolvedCaution || existingRow.caution_amount || 0,
-              property_title: resolvedTitle || existingRow.property_title || ''
-            })
-            .eq('id', existingRow.id);
+        const existingDocs = existingRow.documents && typeof existingRow.documents === 'object' ? existingRow.documents : {};
+        const isPastOrTerminated =
+          existingRow.status === 'termine' ||
+          existingRow.status === 'resilie' ||
+          existingRow.status === 'annulee' ||
+          existingDocs.contract_status === 'termine' ||
+          existingDocs.contract_status === 'resilie' ||
+          (existingRow.status === 'contrat_actif' && (propertyCheckData?.status === 'disponible' || isPropertyAvailable));
+
+        if (!isPastOrTerminated) {
+          if (!existingRow.owner_id && resolvedOwnerId) {
+            await supabase
+              .from('rental_applications')
+              .update({
+                owner_id: resolvedOwnerId,
+                agency_id: resolvedAgencyId || null,
+                rent_amount: resolvedRent || existingRow.rent_amount || 0,
+                caution_amount: resolvedCaution || existingRow.caution_amount || 0,
+                property_title: resolvedTitle || existingRow.property_title || ''
+              })
+              .eq('id', existingRow.id);
+          }
+          return { data: existingRow, error: null, alreadyExists: true };
+        } else {
+          // L'ancien contrat/bail pour ce bien est terminé : on purge ou recycle cette ligne pour permettre la nouvelle candidature
+          try {
+            await supabase.from('rental_applications').delete().eq('id', existingRow.id);
+          } catch {}
         }
-        return { data: existingRow, error: null, alreadyExists: true };
       }
     }
   } catch (checkErr) {

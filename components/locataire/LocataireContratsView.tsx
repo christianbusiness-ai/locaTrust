@@ -124,7 +124,17 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     setLoadError(null);
     try {
       const { data: cntData, error: cntError } = await getContracts(user.id, 'locataire');
-      const loadedDbContracts: any[] = cntData || [];
+      const loadedDbContracts: any[] = (cntData || []).map((c: any) => {
+        // Normaliser les statuts Supabase (qui peuvent être 'brouillon' ou 'en_attente')
+        const isSigned = Boolean(c.tenant_signed);
+        const normalizedStatus = isSigned
+          ? (c.status === 'resilie' || c.status === 'termine' ? c.status : 'actif')
+          : 'en_attente_signature_locataire';
+        return {
+          ...c,
+          status: normalizedStatus
+        };
+      });
 
       // Fusion avec les contrats du stockage local pour le locataire connecté
       const localContracts: any[] = [];
@@ -146,12 +156,11 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         }
       } catch {}
 
-      // Récupération des candidatures en préparation ou finalisées directement depuis Supabase
+      // Récupération des candidatures en préparation, transmises ou finalisées directement depuis Supabase
       try {
         let appQuery = supabase
           .from('rental_applications')
-          .select('*')
-          .in('status', ['contrat_actif', 'validee', 'en_redaction_bail', 'en_attente_signature_locataire', 'contrat_signe_locataire']);
+          .select('*');
 
         if (user.id) {
           appQuery = appQuery.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
@@ -160,33 +169,50 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         const { data: dbApps } = await appQuery;
         if (dbApps && dbApps.length > 0) {
           dbApps.forEach((a: any) => {
+            const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+            const hasContractNum = Boolean(a.contract_number || docs.contract_number);
+            const isTransmitted = a.status === 'en_attente_signature_locataire' || Boolean(docs.contract_transmitted) || hasContractNum;
+            const isSignedByTenant = Boolean(a.tenant_signed || docs.tenant_signed || a.status === 'contrat_signe_locataire' || docs.contract_status === 'contrat_signe_locataire');
+            const isActif = a.status === 'contrat_actif' || Boolean(a.contract_finalized) || Boolean(docs.contract_finalized);
             const isPrep = a.status === 'en_redaction_bail';
-            const isSignPending = a.status === 'en_attente_signature_locataire';
-            const isSignedByTenant = a.status === 'contrat_signe_locataire';
-            const isActif = a.status === 'contrat_actif';
+
+            if (!isTransmitted && !isActif && !isPrep && a.status !== 'validee') {
+              return;
+            }
 
             localContracts.push({
-              id: a.contract_id || `cnt_app_${a.id}`,
-              contract_number: a.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
+              id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
+              contract_number: a.contract_number || docs.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
               property_id: a.property_id,
               tenant_id: a.tenant_id || user.id,
               owner_id: a.owner_id,
-              rent: Number(a.rent_amount || 0),
-              caution: Number(a.caution_amount || 0),
-              caution_amount: Number(a.caution_amount || 0),
-              charges: Number(a.charges_amount || 0),
+              rent: Number(a.rent_amount || docs.rent_amount || 0),
+              caution: Number(a.caution_amount || docs.caution_amount || 0),
+              caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
+              charges: Number(a.charges_amount || docs.charges_amount || 0),
               status: isActif ? 'actif' : (isPrep ? 'en_redaction_bail' : (isSignedByTenant ? 'contrat_signe_locataire' : 'en_attente_signature_locataire')),
-              start_date: a.date_received || new Date().toISOString(),
-              owner_signed: a.owner_signed ?? true,
+              start_date: docs.start_date || a.date_received || new Date().toISOString(),
+              duration_months: docs.duration_months || a.duration_months || 12,
+              owner_signed: a.owner_signed ?? docs.owner_signed ?? true,
               tenant_signed: isSignedByTenant || isActif,
-              owner_signature_url: a.owner_signature_url,
-              tenant_signature_url: a.tenant_signature_url,
-              owner: { full_name: a.owner_name || 'Bailleur certifié', phone: a.owner_phone || '+225 00 00 00 00' },
-              tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
+              owner_signature_url: a.owner_signature_url || docs.owner_signature_url,
+              tenant_signature_url: a.tenant_signature_url || docs.tenant_signature_url,
+              owner: { full_name: a.owner_name || docs.owner_name || 'Bailleur certifié', phone: a.owner_phone || docs.owner_phone || '+225 00 00 00 00' },
+              tenant: { full_name: a.tenant_name || docs.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || docs.tenant_phone || user.phone || '' },
               property: {
-                title: a.property_title || 'Logement loué',
-                city: 'Abidjan',
-                address: a.property_address || 'Abidjan - Côte d\'Ivoire'
+                id: a.property_id,
+                title: a.property_title || docs.property_title || 'Logement loué',
+                city: docs.property_city || 'Abidjan',
+                commune: docs.property_commune,
+                address: a.property_address || docs.property_address || 'Abidjan - Côte d\'Ivoire',
+                rent: Number(a.rent_amount || docs.rent_amount || 0),
+                caution: Number(a.caution_amount || docs.caution_amount || 0),
+                surface: docs.surface,
+                rooms: docs.rooms,
+                bedrooms: docs.bedrooms,
+                bathrooms: docs.bathrooms,
+                equipments: docs.declared_equipments ? [docs.declared_equipments] : [],
+                declared_equipments: docs.declared_equipments
               }
             });
           });
@@ -194,6 +220,51 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       } catch (e) {
         console.warn('Erreur lecture Supabase rental_applications pour locataire:', e);
       }
+
+      // Récupération depuis les notifications (pour récupérer immédiatement un contrat transmis comme LT-2026-CI-75105489)
+      try {
+        const rawNotifs = localStorage.getItem('locatrust_notifications');
+        if (rawNotifs) {
+          const parsedNotifs = JSON.parse(rawNotifs);
+          if (Array.isArray(parsedNotifs)) {
+            parsedNotifs.forEach((n: any) => {
+              const p = n?.data || n?.payload || {};
+              const cNum = p.contractNumber || p.contract_number;
+              if (cNum) {
+                localContracts.push({
+                  id: p.contract_id || `cnt_${cNum}`,
+                  contract_number: cNum,
+                  property_id: p.property_id,
+                  tenant_id: p.tenant_id || user.id,
+                  owner_id: p.owner_id,
+                  rent: Number(p.rent || 0),
+                  caution: Number(p.caution || 0),
+                  caution_amount: Number(p.caution || 0),
+                  charges: Number(p.charges || 0),
+                  duration_months: Number(p.duration_months || 12),
+                  start_date: p.start_date || new Date().toISOString(),
+                  status: 'en_attente_signature_locataire',
+                  owner_signed: true,
+                  tenant_signed: false,
+                  owner_signature_url: p.owner_signature_url,
+                  owner: { full_name: p.owner_name || 'Bailleur certifié', phone: p.owner_phone || '+225 00 00 00 00' },
+                  tenant: { full_name: p.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: p.tenant_phone || user.phone || '' },
+                  property: {
+                    id: p.property_id,
+                    title: p.property_title || 'Logement loué',
+                    city: p.property_city || 'Bouaké',
+                    commune: p.property_commune,
+                    address: p.property_address || 'Côte d\'Ivoire',
+                    rent: Number(p.rent || 0),
+                    caution: Number(p.caution || 0),
+                    declared_equipments: p.declared_equipments
+                  }
+                });
+              }
+            });
+          }
+        }
+      } catch {}
 
       // Fusion additionnelle avec les candidatures locales
       try {

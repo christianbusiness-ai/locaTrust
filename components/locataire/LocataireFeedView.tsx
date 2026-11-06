@@ -29,7 +29,9 @@ import {
   AlertCircle,
   ShieldAlert,
   ArrowRight,
-  Loader2
+  Loader2,
+  FileText,
+  PenTool
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { getAvailableProperties } from '@/src/lib/db';
@@ -687,22 +689,76 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const { data, error } = await getAvailableProperties();
       const dbProps = data || [];
 
-      // Identifiants des biens déjà loués / avec contrat actif
+      // Identifiants des biens déjà loués / avec contrat actif (localStorage + Supabase contracts & rental_applications)
       const rentedPropertyIds = new Set<string>();
+      const terminatedPropertyIds = new Set<string>();
+
       try {
         const contractsRaw = localStorage.getItem('locatrust_contracts');
         if (contractsRaw) {
           const contractsList = JSON.parse(contractsRaw);
           if (Array.isArray(contractsList)) {
             contractsList.forEach((c: any) => {
-              if (c.status === 'actif' || c.status === 'contrat_actif' || (c.owner_signed && c.tenant_signed)) {
-                if (c.property_id) rentedPropertyIds.add(c.property_id);
-                if (c.property?.id) rentedPropertyIds.add(c.property.id);
+              const pId = c.property_id || c.property?.id;
+              if (!pId) return;
+              if (c.status === 'termine' || c.status === 'resilie' || c.status === 'cloture') {
+                terminatedPropertyIds.add(pId);
+              } else if (c.status === 'actif' || c.status === 'contrat_actif' || Boolean(c.tenant_signed)) {
+                rentedPropertyIds.add(pId);
               }
             });
           }
         }
       } catch {}
+
+      try {
+        const { data: sbContracts } = await supabase
+          .from('contracts')
+          .select('property_id, status, owner_signed, tenant_signed');
+        if (sbContracts && Array.isArray(sbContracts)) {
+          sbContracts.forEach((c: any) => {
+            if (!c.property_id) return;
+            if (c.status === 'termine' || c.status === 'resilie' || c.status === 'cloture') {
+              terminatedPropertyIds.add(c.property_id);
+            } else if (c.status === 'actif' || c.status === 'contrat_actif' || Boolean(c.tenant_signed)) {
+              rentedPropertyIds.add(c.property_id);
+            }
+          });
+        }
+      } catch {}
+
+      try {
+        const { data: sbApps } = await supabase
+          .from('rental_applications')
+          .select('property_id, status, documents');
+        if (sbApps && Array.isArray(sbApps)) {
+          sbApps.forEach((a: any) => {
+            if (!a.property_id) return;
+            const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+            const isTerminated =
+              a.status === 'termine' ||
+              a.status === 'resilie' ||
+              docs.contract_status === 'termine' ||
+              docs.contract_status === 'resilie' ||
+              terminatedPropertyIds.has(a.property_id);
+            if (!isTerminated && (a.status === 'contrat_actif' || a.status === 'contrat_signe_locataire' || Boolean(docs.tenant_signed) || Boolean(docs.contract_finalized))) {
+              rentedPropertyIds.add(a.property_id);
+            }
+          });
+        }
+      } catch {}
+
+      // Si un logement a été explicitement remis 'disponible' après la fin d'un contrat, il n'est plus considéré comme loué
+      dbProps.forEach((p: any) => {
+        if (p && p.id && p.status === 'disponible' && terminatedPropertyIds.has(p.id)) {
+          rentedPropertyIds.delete(p.id);
+        }
+      });
+      localProps.forEach((p: any) => {
+        if (p && p.id && p.status === 'disponible' && terminatedPropertyIds.has(p.id)) {
+          rentedPropertyIds.delete(p.id);
+        }
+      });
 
       // 3. Fusion unifiée sans doublons : SEULS les logements disponibles (non loués, non archivés)
       const map = new Map<string, any>();
@@ -731,16 +787,312 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     }
   };
 
+  // Notifications de contrats et reçus à signer affichées sous la barre de recherche du fil d'actualité
+  const [signBanners, setSignBanners] = useState<Array<{
+    id: string;
+    dedupKey: string;
+    docKind: 'contrat' | 'quittance';
+    title: string;
+    description: string;
+    contractNumber?: string;
+    receiptNumber?: string;
+    targetTab: string;
+  }>>([]);
+
+  const loadSignDocumentBanners = async () => {
+    if (!user?.id) {
+      setSignBanners([]);
+      return;
+    }
+
+    const clickedStorageKey = `locatrust_clicked_sign_notifs_${user.id}`;
+    let clickedSet = new Set<string>();
+    try {
+      const rawClicked = localStorage.getItem(clickedStorageKey);
+      if (rawClicked) {
+        const parsedClicked = JSON.parse(rawClicked);
+        if (Array.isArray(parsedClicked)) {
+          parsedClicked.forEach((k) => {
+            if (k) clickedSet.add(String(k));
+          });
+        }
+      }
+    } catch {}
+
+    const bannersMap = new Map<string, {
+      id: string;
+      dedupKey: string;
+      docKind: 'contrat' | 'quittance';
+      title: string;
+      description: string;
+      contractNumber?: string;
+      receiptNumber?: string;
+      targetTab: string;
+    }>();
+
+    // Contrats déjà signés par le locataire (pour ne jamais afficher une bannière sur un contrat déjà signé)
+    const signedContractNumbers = new Set<string>();
+    try {
+      const rawCnts = localStorage.getItem('locatrust_contracts');
+      if (rawCnts) {
+        const parsedCnts = JSON.parse(rawCnts);
+        if (Array.isArray(parsedCnts)) {
+          parsedCnts.forEach((c: any) => {
+            if (c?.contract_number && (c.tenant_signed || c.status === 'actif' || c.status === 'contrat_actif' || c.status === 'termine' || c.status === 'resilie')) {
+              signedContractNumbers.add(String(c.contract_number));
+            }
+          });
+        }
+      }
+    } catch {}
+
+    const tryAddNotifBanner = (n: any) => {
+      if (!n) return;
+      const isRead = Boolean(n.read || n.is_read);
+      if (isRead) return;
+
+      const type = String(n.type || n.category || '').toLowerCase();
+      const title = String(n.title || '');
+      const titleLower = title.toLowerCase();
+      const desc = String(n.description || n.content || n.message || '');
+      const descLower = desc.toLowerCase();
+      const dataObj = n.data || n.payload || {};
+      const action = String(dataObj.action || '').toLowerCase();
+
+      const isContractSign =
+        type === 'contrat' ||
+        action === 'sign_contract' ||
+        titleLower.includes('contrat de bail à signer') ||
+        ((titleLower.includes('contrat') || titleLower.includes('bail')) &&
+          (titleLower.includes('signer') || titleLower.includes('signature') || descLower.includes('signer') || descLower.includes('signature')));
+
+      const isReceiptSign =
+        type === 'quittance' ||
+        type === 'quittance_signature_requise' ||
+        action === 'sign_receipt' ||
+        titleLower.includes('reçu de paiement vous a été transmis') ||
+        titleLower.includes('quittance de loyer') ||
+        ((titleLower.includes('reçu') || titleLower.includes('quittance')) &&
+          (titleLower.includes('signer') || titleLower.includes('signature') || descLower.includes('signer') || descLower.includes('signature')));
+
+      if (!isContractSign && !isReceiptSign) return;
+
+      const contractNum = dataObj.contractNumber || dataObj.contract_number || undefined;
+      const receiptNum = dataObj.receiptNumber || dataObj.receipt_number || dataObj.reference || undefined;
+
+      if (contractNum && signedContractNumbers.has(String(contractNum))) return;
+
+      const dedupKey = contractNum
+        ? `cnt_${contractNum}`
+        : receiptNum
+        ? `rcp_${receiptNum}`
+        : `notif_${n.id || title}`;
+
+      if (
+        clickedSet.has(dedupKey) ||
+        (n.id && clickedSet.has(String(n.id))) ||
+        (contractNum && clickedSet.has(String(contractNum))) ||
+        (receiptNum && clickedSet.has(String(receiptNum)))
+      ) {
+        return;
+      }
+
+      if (!bannersMap.has(dedupKey)) {
+        bannersMap.set(dedupKey, {
+          id: String(n.id || dedupKey),
+          dedupKey,
+          docKind: isContractSign ? 'contrat' : 'quittance',
+          title: title || (isContractSign ? 'Nouveau contrat de bail à signer' : 'Nouveau reçu à signer'),
+          description:
+            desc ||
+            (isContractSign
+              ? "Votre contrat de bail vous a été transmis. Cliquez ici pour rejoindre le menu Contrats et apposer votre signature."
+              : "Un reçu de paiement vous a été transmis. Cliquez ici pour rejoindre le menu Paiements et signer le document."),
+          contractNumber: contractNum,
+          receiptNumber: receiptNum,
+          targetTab: isContractSign ? 'contracts' : 'payments'
+        });
+      }
+    };
+
+    // 1. Notifications Supabase
+    if (isValidUuid(user.id)) {
+      try {
+        const { data: sbNotifs } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (sbNotifs && Array.isArray(sbNotifs)) {
+          sbNotifs.forEach(tryAddNotifBanner);
+        }
+      } catch {}
+
+      // 2. Candidatures / contrats en attente de signature du locataire dans Supabase
+      try {
+        const { data: sbApps } = await supabase
+          .from('rental_applications')
+          .select('*')
+          .eq('tenant_id', user.id)
+          .order('created_at', { ascending: false });
+        if (sbApps && Array.isArray(sbApps)) {
+          sbApps.forEach((a: any) => {
+            const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+            const isTransmitted = a.status === 'en_attente_signature_locataire' || Boolean(docs.contract_transmitted);
+            const isSigned =
+              Boolean(a.tenant_signed) ||
+              Boolean(docs.tenant_signed) ||
+              a.status === 'contrat_signe_locataire' ||
+              a.status === 'contrat_actif' ||
+              docs.contract_status === 'contrat_signe_locataire' ||
+              docs.contract_status === 'contrat_actif';
+            const cNum = a.contract_number || docs.contract_number;
+            if (cNum && isSigned) {
+              signedContractNumbers.add(String(cNum));
+              bannersMap.delete(`cnt_${cNum}`);
+              return;
+            }
+            if (isTransmitted && !isSigned) {
+              const propTitle = a.property_title || docs.property_title || 'votre logement';
+              const dedupKey = cNum ? `cnt_${cNum}` : `cnt_app_${a.id}`;
+              if (clickedSet.has(dedupKey) || (cNum && clickedSet.has(String(cNum)))) return;
+              if (!bannersMap.has(dedupKey)) {
+                bannersMap.set(dedupKey, {
+                  id: `app_sign_${a.id}`,
+                  dedupKey,
+                  docKind: 'contrat',
+                  title: 'Nouveau contrat de bail à signer',
+                  description: `Votre contrat de bail pour « ${propTitle} » vous a été transmis. Cliquez ici pour rejoindre le menu Contrats et apposer votre signature certifiée.`,
+                  contractNumber: cNum,
+                  targetTab: 'contracts'
+                });
+              }
+            }
+          });
+        }
+      } catch {}
+    }
+
+    // 3. Notifications locales
+    try {
+      const rawNotifs = localStorage.getItem('locatrust_notifications');
+      if (rawNotifs) {
+        const parsedNotifs = JSON.parse(rawNotifs);
+        if (Array.isArray(parsedNotifs)) {
+          parsedNotifs.forEach((n: any) => {
+            const forMe =
+              n?.targetUserId === user.id ||
+              (!n?.targetUserId && n?.targetRole === 'locataire');
+            if (forMe) tryAddNotifBanner(n);
+          });
+        }
+      }
+    } catch {}
+
+    setSignBanners(Array.from(bannersMap.values()));
+  };
+
+  const handleClickSignBanner = async (banner: {
+    id: string;
+    dedupKey: string;
+    docKind: 'contrat' | 'quittance';
+    contractNumber?: string;
+    receiptNumber?: string;
+    targetTab: string;
+  }) => {
+    // 1. Retirer immédiatement la notification de l'affichage
+    setSignBanners((prev) => prev.filter((b) => b.dedupKey !== banner.dedupKey && b.id !== banner.id));
+
+    // 2. Mémoriser le clic pour que cette notification ne réapparaisse plus
+    if (user?.id) {
+      const clickedStorageKey = `locatrust_clicked_sign_notifs_${user.id}`;
+      try {
+        const rawClicked = localStorage.getItem(clickedStorageKey);
+        const list: string[] = rawClicked ? JSON.parse(rawClicked) : [];
+        const updatedSet = new Set<string>(Array.isArray(list) ? list : []);
+        updatedSet.add(banner.dedupKey);
+        updatedSet.add(banner.id);
+        if (banner.contractNumber) updatedSet.add(banner.contractNumber);
+        if (banner.receiptNumber) updatedSet.add(banner.receiptNumber);
+        localStorage.setItem(clickedStorageKey, JSON.stringify(Array.from(updatedSet)));
+      } catch {}
+    }
+
+    // 3. Marquer comme lu dans localStorage et Supabase notifications
+    try {
+      const rawNotifs = localStorage.getItem('locatrust_notifications');
+      if (rawNotifs) {
+        const parsed = JSON.parse(rawNotifs);
+        if (Array.isArray(parsed)) {
+          const updated = parsed.map((n: any) => {
+            const dataObj = n?.data || n?.payload || {};
+            const matchId = n?.id === banner.id;
+            const matchCnt = banner.contractNumber && (dataObj.contractNumber === banner.contractNumber || dataObj.contract_number === banner.contractNumber);
+            const matchRcp = banner.receiptNumber && (dataObj.receiptNumber === banner.receiptNumber || dataObj.receipt_number === banner.receiptNumber || dataObj.reference === banner.receiptNumber);
+            if (matchId || matchCnt || matchRcp) {
+              return { ...n, read: true, is_read: true, unread: false };
+            }
+            return n;
+          });
+          localStorage.setItem('locatrust_notifications', JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+        }
+      }
+    } catch {}
+
+    if (user?.id && isValidUuid(user.id)) {
+      try {
+        if (isValidUuid(banner.id)) {
+          await supabase.from('notifications').update({ read: true }).eq('id', banner.id);
+        } else {
+          await supabase
+            .from('notifications')
+            .update({ read: true })
+            .eq('user_id', user.id)
+            .in('type', banner.docKind === 'contrat' ? ['contrat'] : ['quittance', 'quittance_signature_requise']);
+        }
+      } catch {}
+    }
+
+    // 4. Rediriger directement vers le menu où le locataire doit signer le document
+    if (banner.docKind === 'contrat') {
+      if (banner.contractNumber) {
+        try {
+          localStorage.setItem('locatrust_selected_contract_number', banner.contractNumber);
+        } catch {}
+      }
+      if (onNavigateTab) onNavigateTab('contracts');
+    } else {
+      if (banner.receiptNumber) {
+        try {
+          localStorage.setItem('locatrust_selected_receipt_to_sign', banner.receiptNumber);
+        } catch {}
+      }
+      if (onNavigateTab) onNavigateTab('payments');
+    }
+  };
+
   useEffect(() => {
     fetchProperties();
+    loadSignDocumentBanners();
     const handleUpdate = () => {
       fetchProperties();
+      loadSignDocumentBanners();
     };
     window.addEventListener('locatrust:properties-updated', handleUpdate);
+    window.addEventListener('locatrust:contracts-updated', handleUpdate);
+    window.addEventListener('locatrust:applications-updated', handleUpdate);
+    window.addEventListener('locatrust:notifications-updated', handleUpdate);
+    window.addEventListener('locatrust:receipts_updated', handleUpdate);
     return () => {
       window.removeEventListener('locatrust:properties-updated', handleUpdate);
+      window.removeEventListener('locatrust:contracts-updated', handleUpdate);
+      window.removeEventListener('locatrust:applications-updated', handleUpdate);
+      window.removeEventListener('locatrust:notifications-updated', handleUpdate);
+      window.removeEventListener('locatrust:receipts_updated', handleUpdate);
     };
-  }, []);
+  }, [user?.id]);
 
   // Transformation des biens réels Supabase en items de fil certifiés (Stricte fidélité)
   const ALL_FEED_ITEMS = properties.map((p) => {
@@ -1380,6 +1732,52 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
             )}
           </div>
         </div>
+
+        {/* NOTIFICATIONS DE CONTRATS ET REÇUS À SIGNER (Affichées directement sous les filtres, disparaissent au clic) */}
+        {signBanners.length > 0 && (
+          <div className="flex flex-col gap-3 animate-fadeIn">
+            {signBanners.map((banner) => (
+              <div
+                key={banner.dedupKey}
+                onClick={() => handleClickSignBanner(banner)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleClickSignBanner(banner);
+                  }
+                }}
+                className="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-blue-400/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5 cursor-pointer transition-all active:scale-[0.99]"
+              >
+                <div className="flex items-start gap-3.5">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-400/20 border border-amber-300/40 text-amber-300 flex items-center justify-center shrink-0 mt-0.5">
+                    <PenTool className="w-5 h-5 text-amber-300 animate-pulse" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase tracking-wider">
+                        {banner.docKind === 'contrat' ? 'Contrat à signer' : 'Reçu à signer'}
+                      </span>
+                      <h4 className="text-sm sm:text-base font-black text-white">
+                        {banner.title}
+                      </h4>
+                    </div>
+                    <p className="text-xs text-blue-100 leading-relaxed font-medium">
+                      {banner.description}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-md flex items-center justify-center gap-1.5 shrink-0">
+                  <PenTool className="w-3.5 h-3.5" />
+                  <span>{banner.docKind === 'contrat' ? 'Aller signer mon contrat' : 'Aller signer mon reçu'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* ÉTATS : LOADER, ERREUR, OU VIDE */}
         {(isLoading && properties.length === 0) ? (

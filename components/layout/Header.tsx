@@ -108,13 +108,40 @@ export const Header: React.FC<HeaderProps> = ({
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+
+  const isTenantDocumentToSignNotification = (n: any, role?: string) => {
+    if (role !== 'locataire' || !n) return false;
+    const type = String(n.type || n.category || '').toLowerCase();
+    const title = String(n.title || '').toLowerCase();
+    const desc = String(n.description || n.content || n.message || '').toLowerCase();
+    const action = String(n.payload?.action || n.data?.action || '').toLowerCase();
+
+    if (
+      type === 'contrat' ||
+      type === 'quittance' ||
+      type === 'quittance_signature_requise' ||
+      action === 'sign_contract' ||
+      action === 'sign_receipt' ||
+      title.includes('contrat de bail à signer') ||
+      title.includes('reçu de paiement vous a été transmis') ||
+      title.includes('quittance de loyer') ||
+      ((title.includes('contrat') || title.includes('bail') || title.includes('reçu') || title.includes('quittance')) &&
+        (title.includes('signer') || title.includes('signature') || desc.includes('signer') || desc.includes('signature')))
+    ) {
+      return true;
+    }
+    return false;
+  };
+
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     if (typeof window !== 'undefined') {
       try {
         const raw = localStorage.getItem('locatrust_notifications');
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) return parsed;
+          if (Array.isArray(parsed)) {
+            return parsed.filter((n: any) => !isTenantDocumentToSignNotification(n, currentUser?.role));
+          }
         }
       } catch (e) {}
     }
@@ -231,7 +258,16 @@ export const Header: React.FC<HeaderProps> = ({
               const myApps = validApps.filter((a: any) =>
                 ((currentUser.email && a.tenant_email?.toLowerCase() === currentUser.email.toLowerCase()) ||
                  (currentUser.id && a.tenant_id === currentUser.id)) &&
-                a.status !== 'refusee'
+                a.status !== 'refusee' &&
+                a.status !== 'contrat_actif' &&
+                a.status !== 'actif' &&
+                a.status !== 'contrat_signe_locataire' &&
+                a.status !== 'termine' &&
+                a.status !== 'resilie' &&
+                !Boolean(a.tenant_signed) &&
+                !Boolean(a.contract_finalized) &&
+                !Boolean(a.documents?.tenant_signed) &&
+                !Boolean(a.documents?.contract_finalized)
               );
               // Deduplicate by property_id to guarantee one count per real property demanded (Points 14, 15, 16)
               const uniqueProperties = new Set(myApps.map((a: any) => a.property_id || a.id));
@@ -363,6 +399,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           const isNotificationForMe = (n: any) => {
             if (!n) return false;
+            if (isTenantDocumentToSignNotification(n, userRole)) return false;
             const id = String(n.id || '');
             if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
             if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;
@@ -437,6 +474,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         const cleanedRaw = e.detail.notifications.filter((n: any) => {
           if (!n) return false;
+          if (isTenantDocumentToSignNotification(n, userRole)) return false;
           const id = String(n.id || '');
           if (id.startsWith('notif_1') || id.startsWith('notif_2') || id.startsWith('notif_3') || id.startsWith('notif_4') || id.startsWith('notif_5') || id.startsWith('notif_6') || id.startsWith('notif_t')) return false;
           if (id.includes('app_kwame') || id.includes('app_moussa') || id.includes('app_awa') || id.includes('app_bamba')) return false;

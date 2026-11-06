@@ -942,12 +942,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   };
 
   const [activeVerificationToken, setActiveVerificationToken] = useState<string>('tok_cnt_ci2026_000492');
+  const [transmitAfterOwnerSignature, setTransmitAfterOwnerSignature] = useState<boolean>(false);
 
-  const handleFinalSignAndTransmit = async () => {
+  const handleFinalSignAndTransmit = async (overrideOwnerSig?: string | any) => {
     // 0. Le bailleur doit obligatoirement avoir apposé une nouvelle signature pour ce contrat
-    const effectiveOwnerSig = ownerSignatureUrl;
+    const effectiveOwnerSig = (typeof overrideOwnerSig === 'string' && overrideOwnerSig) ? overrideOwnerSig : ownerSignatureUrl;
     if (!effectiveOwnerSig) {
-      alert("Veuillez d'abord apposer votre signature manuscrite certifiée sur ce contrat en tant que bailleur.");
+      setTransmitAfterOwnerSignature(true);
       setActiveSigningParty('proprietaire');
       return;
     }
@@ -955,6 +956,25 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     setIsTransmitting(true);
     const targetTenantId = (initialData as any)?.tenant_id || (initialData as any)?.tenantId || 'usr_tenant';
     const targetOwnerId = (initialData as any)?.owner_id || (initialData as any)?.ownerId || user?.id || 'usr_owner';
+    const targetAppId = (initialData as any)?.id;
+    const rawPropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
+    const generatedContractUuid = crypto.randomUUID();
+
+    const computedStartDate = startDate || new Date().toISOString().split('T')[0];
+    const computedEndDate = (() => {
+      try {
+        const d = new Date(computedStartDate);
+        if (isNaN(d.getTime())) {
+          const fallback = new Date();
+          fallback.setMonth(fallback.getMonth() + Number(durationMonths || 12));
+          return fallback.toISOString().split('T')[0];
+        }
+        d.setMonth(d.getMonth() + Number(durationMonths || 12));
+        return d.toISOString().split('T')[0];
+      } catch {
+        return computedStartDate;
+      }
+    })();
 
     // 1. Enregistrement automatique et dynamique dans le registre de vérification officiel LocaTrust
     try {
@@ -973,103 +993,260 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       console.warn('Contract registry error:', err);
     }
 
-    // 2. Mise à jour de la candidature dans le localStorage pour verrouiller l'état
-    try {
-      const appsRaw = localStorage.getItem('locatrust_rental_applications');
-      if (appsRaw) {
-        const appsList = JSON.parse(appsRaw);
-        if (Array.isArray(appsList)) {
-          const targetAppId = (initialData as any)?.id;
-          const updatedApps = appsList.map((a: any) => {
-            const isMatch =
-              (targetAppId && a.id === targetAppId) ||
-              (a.tenant_name === tenantName && a.property_title === propertyTitle) ||
-              (a.property_id && (initialData as any)?.propertyId && a.property_id === (initialData as any)?.propertyId && a.tenant_name === tenantName);
-
-            if (isMatch) {
-              return {
-                ...a,
-                status: tenantSignatureUrl ? ('contrat_actif' as const) : ('en_attente_signature_locataire' as const),
-                candidate_selected: true,
-                contract_number: contractNumber,
-                contract_transmitted: true,
-                duration_months: durationMonths,
-                start_date: startDate,
-                declared_equipments: declaredEquipments.trim(),
-                owner_signed: true,
-                owner_signature_url: effectiveOwnerSig,
-                tenant_signed: Boolean(tenantSignatureUrl),
-                tenant_signature_url: tenantSignatureUrl || a.tenant_signature_url
-              };
-            }
-            return a;
-          });
-          localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
-          window.dispatchEvent(
-            new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } })
-          );
-
-          if (targetAppId) {
-            try {
-              await supabase.from('rental_applications').update({
-                status: tenantSignatureUrl ? 'contrat_actif' : 'en_attente_signature_locataire',
-                contract_number: contractNumber,
-                tenant_signed: Boolean(tenantSignatureUrl),
-                contract_finalized: Boolean(tenantSignatureUrl)
-              }).eq('id', targetAppId);
-            } catch (err: any) {
-              console.warn('Erreur mise à jour rental_applications:', err?.message);
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Erreur mise à jour candidatures:', e);
-    }
-
-    // Inscription directe dans la table Supabase contracts avec les colonnes exactes
-    const generatedContractUuid = crypto.randomUUID();
+    // 2. Résolution fiable des UUID (Propriétaire, Locataire, Logement, Candidature)
     let finalOwnerId: string | null = null;
     let finalTenantId: string | null = null;
     let finalPropId: string | null = null;
+    let resolvedAppRow: any = null;
+
+    const isValidUuid = (str?: string) =>
+      Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
     try {
-      const isValidUuid = (str?: string) =>
-        Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
-
-      const rawPropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
-      finalOwnerId = isValidUuid(targetOwnerId) ? targetOwnerId : (user?.id && isValidUuid(user.id) ? user.id : null);
-      if (!finalOwnerId) {
-        const { data: ownerProfile } = await supabase
-          .from('profiles')
-          .select('id')
-          .in('account_type', ['proprietaire', 'agence'])
-          .limit(1)
+      if (targetAppId && isValidUuid(targetAppId)) {
+        const { data: appData } = await supabase
+          .from('rental_applications')
+          .select('*')
+          .eq('id', targetAppId)
           .maybeSingle();
-        finalOwnerId = ownerProfile?.id || null;
-      }
-
-      finalTenantId = isValidUuid(targetTenantId) ? targetTenantId : null;
-      if (!finalTenantId) {
-        const { data: tenantProfile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('account_type', 'locataire')
-          .limit(1)
-          .maybeSingle();
-        finalTenantId = tenantProfile?.id || null;
-      }
-
-      finalPropId = isValidUuid(rawPropId) ? rawPropId : null;
-      if (!finalPropId) {
-        const { data: userProps } = await supabase.from('properties').select('id').limit(1);
-        if (userProps && userProps[0]?.id) {
-          finalPropId = userProps[0].id;
+        if (appData) {
+          resolvedAppRow = appData;
         }
       }
 
+      finalOwnerId = isValidUuid(targetOwnerId)
+        ? targetOwnerId
+        : (user?.id && isValidUuid(user.id)
+          ? user.id
+          : (resolvedAppRow?.owner_id && isValidUuid(resolvedAppRow.owner_id) ? resolvedAppRow.owner_id : null));
+
+      finalTenantId = isValidUuid(targetTenantId)
+        ? targetTenantId
+        : (resolvedAppRow?.tenant_id && isValidUuid(resolvedAppRow.tenant_id) ? resolvedAppRow.tenant_id : null);
+
+      if (!finalTenantId && (tenantEmail || tenantName || tenantPhone)) {
+        try {
+          if (tenantEmail) {
+            const { data: profByEmail } = await supabase
+              .from('profiles')
+              .select('id')
+              .ilike('email', tenantEmail.trim())
+              .limit(1)
+              .maybeSingle();
+            if (profByEmail?.id) finalTenantId = profByEmail.id;
+          }
+          if (!finalTenantId && tenantName) {
+            const { data: profByName } = await supabase
+              .from('profiles')
+              .select('id')
+              .ilike('full_name', tenantName.trim())
+              .limit(1)
+              .maybeSingle();
+            if (profByName?.id) finalTenantId = profByName.id;
+          }
+        } catch {}
+      }
+
+      finalPropId = isValidUuid(rawPropId)
+        ? rawPropId
+        : (resolvedAppRow?.property_id && isValidUuid(resolvedAppRow.property_id) ? resolvedAppRow.property_id : null);
+
+      if (!finalPropId && propertyTitle) {
+        try {
+          let propQ = supabase.from('properties').select('id, owner_id').ilike('title', propertyTitle.trim()).limit(1);
+          if (finalOwnerId) propQ = propQ.eq('owner_id', finalOwnerId);
+          const { data: matchedProps } = await propQ;
+          if (matchedProps && matchedProps[0]?.id) {
+            finalPropId = matchedProps[0].id;
+            if (!finalOwnerId && matchedProps[0].owner_id) finalOwnerId = matchedProps[0].owner_id;
+          }
+        } catch {}
+      }
+
+      if (!resolvedAppRow && finalTenantId && finalPropId) {
+        try {
+          const { data: foundApp } = await supabase
+            .from('rental_applications')
+            .select('*')
+            .eq('property_id', finalPropId)
+            .eq('tenant_id', finalTenantId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (foundApp) resolvedAppRow = foundApp;
+        } catch {}
+      }
+    } catch (resolveErr) {
+      console.warn('Resolution UUID notice:', resolveErr);
+    }
+
+    // 3. Mise à jour de la candidature dans localStorage ET dans Supabase (avec métadonnées complètes dans documents JSONB)
+    const nextAppStatus = tenantSignatureUrl ? 'contrat_actif' : 'en_attente_signature_locataire';
+    const existingDocsObj =
+      resolvedAppRow?.documents && typeof resolvedAppRow.documents === 'object' && !Array.isArray(resolvedAppRow.documents)
+        ? resolvedAppRow.documents
+        : {};
+    const contractDocsPayload = {
+      ...existingDocsObj,
+      contract_id: generatedContractUuid,
+      contract_number: contractNumber,
+      contract_transmitted: true,
+      contract_status: nextAppStatus,
+      candidate_selected: true,
+      owner_signed: true,
+      owner_signature_url: effectiveOwnerSig,
+      tenant_signed: Boolean(tenantSignatureUrl),
+      tenant_signature_url: tenantSignatureUrl || null,
+      duration_months: Number(durationMonths),
+      start_date: computedStartDate,
+      end_date: computedEndDate,
+      declared_equipments: declaredEquipments.trim(),
+      owner_id: finalOwnerId || targetOwnerId,
+      owner_name: ownerName,
+      owner_phone: ownerPhone,
+      tenant_id: finalTenantId || targetTenantId,
+      tenant_name: tenantName,
+      tenant_phone: tenantPhone,
+      property_id: finalPropId || rawPropId,
+      property_title: propertyTitle,
+      property_address: propertyAddress,
+      property_city: propertyCity,
+      property_commune: propertyCommune,
+      rent_amount: Number(rent || 0),
+      caution_amount: Number(effectiveCautionAmount || 0),
+      charges_amount: Number(chargesAmount || 0),
+      surface: propertySurface,
+      rooms: propertyRooms,
+      bedrooms: propertyBedrooms,
+      bathrooms: propertyBathrooms
+    };
+
+    try {
+      const appsRaw = localStorage.getItem('locatrust_rental_applications');
+      const appsList = appsRaw ? JSON.parse(appsRaw) : [];
+      if (Array.isArray(appsList)) {
+        let matchedLocal = false;
+        const updatedApps = appsList.map((a: any) => {
+          const isMatch =
+            (targetAppId && a.id === targetAppId) ||
+            (resolvedAppRow?.id && a.id === resolvedAppRow.id) ||
+            (a.tenant_name === tenantName && a.property_title === propertyTitle) ||
+            (a.property_id && (finalPropId || rawPropId) && a.property_id === (finalPropId || rawPropId) && (a.tenant_id === finalTenantId || a.tenant_name === tenantName));
+
+          if (isMatch) {
+            matchedLocal = true;
+            return {
+              ...a,
+              status: nextAppStatus,
+              candidate_selected: true,
+              contract_id: generatedContractUuid,
+              contract_number: contractNumber,
+              contract_transmitted: true,
+              duration_months: Number(durationMonths),
+              start_date: computedStartDate,
+              declared_equipments: declaredEquipments.trim(),
+              owner_signed: true,
+              owner_signature_url: effectiveOwnerSig,
+              tenant_signed: Boolean(tenantSignatureUrl),
+              tenant_signature_url: tenantSignatureUrl || a.tenant_signature_url,
+              documents: contractDocsPayload
+            };
+          }
+          return a;
+        });
+
+        if (!matchedLocal && (targetAppId || resolvedAppRow?.id)) {
+          updatedApps.unshift({
+            ...(resolvedAppRow || {}),
+            id: targetAppId || resolvedAppRow?.id,
+            property_id: finalPropId || rawPropId,
+            property_title: propertyTitle,
+            property_address: propertyAddress,
+            owner_id: finalOwnerId || targetOwnerId,
+            owner_name: ownerName,
+            tenant_id: finalTenantId || targetTenantId,
+            tenant_name: tenantName,
+            tenant_phone: tenantPhone,
+            rent_amount: Number(rent || 0),
+            caution_amount: Number(effectiveCautionAmount || 0),
+            status: nextAppStatus,
+            candidate_selected: true,
+            contract_id: generatedContractUuid,
+            contract_number: contractNumber,
+            contract_transmitted: true,
+            duration_months: Number(durationMonths),
+            start_date: computedStartDate,
+            declared_equipments: declaredEquipments.trim(),
+            owner_signed: true,
+            owner_signature_url: effectiveOwnerSig,
+            tenant_signed: Boolean(tenantSignatureUrl),
+            tenant_signature_url: tenantSignatureUrl || null,
+            documents: contractDocsPayload
+          });
+        }
+
+        localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+        window.dispatchEvent(
+          new CustomEvent('locatrust:applications-updated', { detail: { updatedApps } })
+        );
+      }
+    } catch (e) {
+      console.warn('Erreur mise à jour candidatures localStorage:', e);
+    }
+
+    // Mise à jour résiliente multi-étapes dans Supabase rental_applications
+    const appIdToUpdate = (targetAppId && isValidUuid(targetAppId)) ? targetAppId : resolvedAppRow?.id;
+    if (appIdToUpdate) {
+      try {
+        const { error: upErr1 } = await supabase
+          .from('rental_applications')
+          .update({
+            status: nextAppStatus,
+            contract_number: contractNumber,
+            tenant_signed: Boolean(tenantSignatureUrl),
+            contract_finalized: Boolean(tenantSignatureUrl),
+            documents: contractDocsPayload
+          })
+          .eq('id', appIdToUpdate);
+
+        if (upErr1) {
+          const { error: upErr2 } = await supabase
+            .from('rental_applications')
+            .update({
+              status: nextAppStatus,
+              documents: contractDocsPayload
+            })
+            .eq('id', appIdToUpdate);
+
+          if (upErr2) {
+            const { error: upErr3 } = await supabase
+              .from('rental_applications')
+              .update({
+                status: 'acceptee',
+                documents: contractDocsPayload
+              })
+              .eq('id', appIdToUpdate);
+
+            if (upErr3) {
+              await supabase
+                .from('rental_applications')
+                .update({ documents: contractDocsPayload })
+                .eq('id', appIdToUpdate);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('Erreur mise à jour Supabase rental_applications:', err?.message);
+      }
+    }
+
+    // 4. Inscription résiliente dans la table Supabase contracts (compatible avec toutes les contraintes CHECK)
+    try {
       if (finalOwnerId && finalTenantId && finalPropId) {
-        const { error: cntErr } = await supabase.from('contracts').insert({
+        let insertedOk = false;
+
+        // Tentative 1 : Schéma complet avec status en_attente_signature_locataire + end_date
+        const { error: cntErr1 } = await supabase.from('contracts').insert({
           id: generatedContractUuid,
           contract_number: contractNumber,
           owner_id: finalOwnerId,
@@ -1079,19 +1256,89 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           caution_amount: Number(effectiveCautionAmount || 0),
           deposit_amount: Number(effectiveCautionAmount || 0),
           charges_amount: Number(chargesAmount || 0),
-          duration_months: Number(durationMonths),
-          start_date: startDate || new Date().toISOString().split('T')[0],
+          duration_months: Number(durationMonths || 12),
+          start_date: computedStartDate,
+          end_date: computedEndDate,
           status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
           owner_signed: true,
           owner_signed_at: new Date().toISOString(),
           tenant_signed: Boolean(tenantSignatureUrl),
           tenant_signed_at: tenantSignatureUrl ? new Date().toISOString() : null,
-          owner_signature: ownerSignatureUrl || null,
+          owner_signature: effectiveOwnerSig,
           tenant_signature: tenantSignatureUrl || null
         });
-        if (cntErr) {
-          console.error('Erreur insertion Supabase contracts:', cntErr.message);
+
+        if (!cntErr1) {
+          insertedOk = true;
         } else {
+          // Tentative 2 : Avec status 'brouillon' (accepté par toutes les contraintes CHECK et triggers RLS)
+          const { error: cntErr2 } = await supabase.from('contracts').insert({
+            id: generatedContractUuid,
+            contract_number: contractNumber,
+            owner_id: finalOwnerId,
+            tenant_id: finalTenantId,
+            property_id: finalPropId,
+            monthly_rent: Number(rent || 0),
+            caution_amount: Number(effectiveCautionAmount || 0),
+            deposit_amount: Number(effectiveCautionAmount || 0),
+            charges_amount: Number(chargesAmount || 0),
+            duration_months: Number(durationMonths || 12),
+            start_date: computedStartDate,
+            end_date: computedEndDate,
+            status: tenantSignatureUrl ? 'actif' : 'brouillon',
+            owner_signed: true,
+            owner_signed_at: new Date().toISOString(),
+            tenant_signed: Boolean(tenantSignatureUrl),
+            tenant_signed_at: tenantSignatureUrl ? new Date().toISOString() : null,
+            owner_signature: effectiveOwnerSig,
+            tenant_signature: tenantSignatureUrl || null
+          });
+
+          if (!cntErr2) {
+            insertedOk = true;
+          } else {
+            // Tentative 3 : Colonnes standard 20260923_owner_espace.sql
+            const { error: cntErr3 } = await supabase.from('contracts').insert({
+              id: generatedContractUuid,
+              contract_number: contractNumber,
+              owner_id: finalOwnerId,
+              tenant_id: finalTenantId,
+              property_id: finalPropId,
+              monthly_rent: Number(rent || 0),
+              caution_amount: Number(effectiveCautionAmount || 0),
+              charges_amount: Number(chargesAmount || 0),
+              duration_months: Number(durationMonths || 12),
+              start_date: computedStartDate,
+              end_date: computedEndDate,
+              status: tenantSignatureUrl ? 'actif' : 'brouillon',
+              owner_signed: true,
+              tenant_signed: Boolean(tenantSignatureUrl)
+            });
+
+            if (!cntErr3) {
+              insertedOk = true;
+            } else {
+              // Tentative 4 : Colonnes standard 20261003_profiles_and_rls.sql
+              const { error: cntErr4 } = await supabase.from('contracts').insert({
+                id: generatedContractUuid,
+                contract_number: contractNumber,
+                owner_id: finalOwnerId,
+                tenant_id: finalTenantId,
+                property_id: finalPropId,
+                monthly_rent: Number(rent || 0),
+                deposit_amount: Number(effectiveCautionAmount || 0),
+                charges_amount: Number(chargesAmount || 0),
+                duration_months: Number(durationMonths || 12),
+                start_date: computedStartDate,
+                end_date: computedEndDate,
+                status: tenantSignatureUrl ? 'actif' : 'brouillon'
+              });
+              if (!cntErr4) insertedOk = true;
+            }
+          }
+        }
+
+        if (insertedOk) {
           try {
             await supabase.from('cautions').upsert({
               id: crypto.randomUUID(),
@@ -1102,7 +1349,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               amount_paid: Number(effectiveCautionAmount || 0),
               status: 'caution_a_confirmer'
             });
-          } catch { }
+          } catch {}
 
           try {
             broadcastLiveEvent('CONTRACT_FINALIZED', {
@@ -1112,14 +1359,14 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               propertyId: finalPropId,
               data: { contractNumber, rent, caution: effectiveCautionAmount }
             });
-          } catch { }
+          } catch {}
         }
       }
     } catch (dbErr) {
       console.warn('Supabase contract insert notice:', dbErr);
     }
 
-    // 4. Inscription dans le registre des contrats (locatrust_contracts)
+    // 5. Inscription dans le registre des contrats (locatrust_contracts)
     const finalEquipmentsArray = declaredEquipments.trim() ? [declaredEquipments.trim()] : [];
     try {
       const contractsRaw = localStorage.getItem('locatrust_contracts');
@@ -1127,7 +1374,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       const newContractRecord = {
         id: generatedContractUuid,
         contract_number: contractNumber,
-        property_id: finalPropId || (initialData as any)?.propertyId || (initialData as any)?.property_id,
+        property_id: finalPropId || rawPropId,
         tenant_id: finalTenantId || targetTenantId,
         owner_id: finalOwnerId || targetOwnerId,
         lease_type: normalizedLegalLeaseType,
@@ -1138,7 +1385,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         deposit_currency: 'FCFA',
         deposit_rules_version: '2019-576-v1',
         property: {
-          id: (initialData as any)?.propertyId || (initialData as any)?.property_id || `prop_${Date.now()}`,
+          id: finalPropId || rawPropId || `prop_${Date.now()}`,
           title: propertyTitle,
           city: propertyCity,
           commune: propertyCommune,
@@ -1155,25 +1402,28 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           status: tenantSignatureUrl ? 'loue' : 'disponible'
         },
         owner: {
-          id: targetOwnerId,
+          id: finalOwnerId || targetOwnerId,
           full_name: ownerName,
           phone: ownerPhone
         },
         tenant: {
-          id: targetTenantId,
+          id: finalTenantId || targetTenantId,
           full_name: tenantName,
           phone: tenantPhone
         },
         rent,
+        monthly_rent: rent,
         caution: effectiveCautionAmount,
         caution_amount: effectiveCautionAmount,
         charges: chargesAmount,
+        charges_amount: chargesAmount,
         duration_months: durationMonths,
-        start_date: startDate,
+        start_date: computedStartDate,
+        end_date: computedEndDate,
         status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
         owner_signed: true,
         tenant_signed: Boolean(tenantSignatureUrl),
-        owner_signature_url: ownerSignatureUrl,
+        owner_signature_url: effectiveOwnerSig,
         tenant_signature_url: tenantSignatureUrl,
         surface: propertySurface,
         rooms: propertyRooms,
@@ -1192,7 +1442,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       );
 
       // Si le locataire a déjà signé, marquer immédiatement le logement comme 'loue'
-      const activePropId = (initialData as any)?.propertyId || (initialData as any)?.property_id;
+      const activePropId = finalPropId || rawPropId;
       if (tenantSignatureUrl && activePropId) {
         try {
           await supabase.from('properties').update({ status: 'loue' }).eq('id', activePropId);
@@ -1204,55 +1454,100 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               localStorage.setItem('locatrust_properties', JSON.stringify(uList));
             }
           }
-        } catch { }
+        } catch {}
         broadcastLiveEvent('PROPERTY_RENTED', { propertyId: activePropId, data: { status: 'loue' } });
       }
 
       broadcastLiveEvent('CONTRACT_TRANSMITTED', {
         propertyId: activePropId,
         contractId: contractNumber,
-        targetUserId: targetTenantId,
+        targetUserId: finalTenantId || targetTenantId,
         data: { contract: newContractRecord }
       });
     } catch (e) {
       console.warn('Erreur registre contrats:', e);
     }
 
-    // Notification réelle et persistante au locataire pour l'inviter à signer son bail directement dans l'onglet Contrats
+    // 6. Notification réelle et persistante au locataire (avec snapshot complet du contrat dans payload/data)
+    const notifPayloadData = {
+      action: 'sign_contract',
+      contract_id: generatedContractUuid,
+      contractNumber,
+      property_id: finalPropId || rawPropId,
+      property_title: propertyTitle,
+      property_address: propertyAddress,
+      property_city: propertyCity,
+      property_commune: propertyCommune,
+      owner_id: finalOwnerId || targetOwnerId,
+      owner_name: ownerName,
+      owner_phone: ownerPhone,
+      tenant_id: finalTenantId || targetTenantId,
+      tenant_name: tenantName,
+      tenant_phone: tenantPhone,
+      rent: Number(rent || 0),
+      caution: Number(effectiveCautionAmount || 0),
+      charges: Number(chargesAmount || 0),
+      duration_months: Number(durationMonths || 12),
+      start_date: computedStartDate,
+      end_date: computedEndDate,
+      declared_equipments: declaredEquipments.trim(),
+      owner_signature_url: effectiveOwnerSig,
+      surface: propertySurface,
+      rooms: propertyRooms,
+      bedrooms: propertyBedrooms,
+      bathrooms: propertyBathrooms,
+      targetTab: 'contracts'
+    };
+
     try {
       pushGlobalNotification({
         title: 'Nouveau contrat de bail à signer',
         description: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
         category: 'contrat',
-        targetUserId: targetTenantId,
+        targetUserId: finalTenantId || targetTenantId,
         targetTab: 'contracts',
         targetRole: 'locataire',
-        link: '/dashboard'
+        link: '/dashboard',
+        payload: notifPayloadData
       });
 
-      if (finalTenantId) {
-        supabase.from('notifications').insert({
-          user_id: finalTenantId,
+      const recipientTenantId = finalTenantId || (isValidUuid(targetTenantId) ? targetTenantId : null);
+      if (recipientTenantId) {
+        const { error: nErr1 } = await supabase.from('notifications').insert({
+          user_id: recipientTenantId,
           title: 'Nouveau contrat de bail à signer',
-          message: `Votre contrat de bail pour « ${propertyTitle} » est prêt. Veuillez le signer dans l'onglet Contrats.`,
-          description: `Votre contrat de bail pour « ${propertyTitle} » est prêt. Veuillez le signer dans l'onglet Contrats.`,
-          content: `Votre contrat de bail pour « ${propertyTitle} » est prêt. Veuillez le signer dans l'onglet Contrats.`,
+          message: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
+          description: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
+          content: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
           type: 'contrat',
           category: 'contrat',
           target_role: 'locataire',
           read: false,
           is_read: false,
-          data: {
-            contract_id: generatedContractUuid,
-            contractNumber,
-            targetTab: 'contracts'
-          },
-          payload: {
-            contract_id: generatedContractUuid,
-            contractNumber,
-            targetTab: 'contracts'
+          data: notifPayloadData,
+          payload: notifPayloadData
+        });
+
+        if (nErr1) {
+          const { error: nErr2 } = await supabase.from('notifications').insert({
+            user_id: recipientTenantId,
+            title: 'Nouveau contrat de bail à signer',
+            content: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
+            type: 'contrat',
+            read: false,
+            payload: notifPayloadData
+          });
+          if (nErr2) {
+            await supabase.from('notifications').insert({
+              user_id: recipientTenantId,
+              title: 'Nouveau contrat de bail à signer',
+              message: `Votre contrat de bail pour « ${propertyTitle} » vous a été transmis. Veuillez l'examiner et apposer votre signature certifiée dans l'onglet Contrats.`,
+              type: 'contrat',
+              is_read: false,
+              data: notifPayloadData
+            });
           }
-        }).then();
+        }
       }
     } catch (notifErr) {
       console.warn('Erreur notification locataire contrat:', notifErr);
@@ -1265,7 +1560,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           tenantName,
           propertyTitle,
           durationMonths,
-          startDate,
+          startDate: computedStartDate,
           declaredEquipments: declaredEquipments.trim()
         });
       } catch (e) {
@@ -1273,8 +1568,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       }
     }
 
-    // 5. Notification automatique aux demandeurs en liste d'attente pour ce logement
-    // (Uniquement si le bail est scellé/finalisé avec les 2 signatures)
+    // 7. Notification automatique aux demandeurs en liste d'attente si le bail est déjà scellé
     if (tenantSignatureUrl) {
       try {
         const notified = notifyWaitingListCandidatesOnLeaseFinalized({
@@ -1288,7 +1582,6 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         console.warn('Waiting list notification error:', notifErr);
       }
 
-      // Callback parent optionnel (ex: DemandesView)
       if (onContractFinalized) {
         try {
           onContractFinalized({
@@ -1296,7 +1589,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
             tenantName,
             propertyTitle,
             durationMonths,
-            startDate,
+            startDate: computedStartDate,
             declaredEquipments: declaredEquipments.trim()
           });
         } catch (e) {
@@ -1305,23 +1598,19 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       }
     }
 
-    // 6. Animation festive et vivante de célébration
+    // 8. Animation festive de célébration + Fermeture immédiate de tous les dossiers de création de contrat
     try {
       const confettiModule = await import('canvas-confetti');
       const fn = (confettiModule as any)?.default || confettiModule;
       if (typeof fn === 'function') {
         fn({ particleCount: 80, spread: 70, origin: { y: 0.6 }, colors: ['#0038FF', '#10B981', '#F59E0B', '#EC4899'] });
-        setTimeout(() => {
-          fn({ particleCount: 60, spread: 90, origin: { y: 0.4 }, colors: ['#34D399', '#60A5FA', '#FBBF24'] });
-        }, 300);
       }
     } catch (e) {
       console.warn('Confetti error:', e);
     }
 
-    // 7. Bascule vers l'écran de confirmation
     setIsTransmitting(false);
-    setCurrentStep('success');
+    onClose();
   };
 
   const handleExportPDF = async () => {
@@ -3113,17 +3402,19 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 )}
                 <button
                   type="button"
+                  disabled={isTransmitting}
                   onClick={() => {
                     if (!ownerSignatureUrl) {
+                      setTransmitAfterOwnerSignature(true);
                       setActiveSigningParty('proprietaire');
                     } else {
-                      setCurrentStep('transmission');
+                      handleFinalSignAndTransmit(ownerSignatureUrl);
                     }
                   }}
-                  className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs shadow-lg flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Transmettre le contrat</span>
+                  <span>{isTransmitting ? 'Transmission en cours...' : 'Transmettre le contrat'}</span>
                 </button>
               </div>
             </div>
@@ -3143,7 +3434,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                   Prêt pour transmission immédiate au locataire
                 </h4>
                 <p className="text-xs text-blue-800 leading-relaxed">
-                  Le contrat de bail 41-points va être envoyé directement dans la messagerie interne de <strong>{tenantName}</strong> avec vos signatures et le QR Code légal d'authenticité.
+                  Le contrat de bail 41-points va être envoyé directement dans l'espace de <strong>{tenantName}</strong> avec votre signature et le QR Code légal d'authenticité.
                 </p>
               </div>
             </div>
@@ -3166,7 +3457,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 <div className="flex flex-wrap items-center gap-3 mt-2 text-xs text-slate-600 font-semibold">
                   <span>Loyer : <strong className="text-slate-900">{formatFCFA(rent)}/mois</strong></span>
                   <span>•</span>
-                  <span>Caution : <strong className="text-slate-900">{formatFCFA(rent * cautionMonths)}</strong></span>
+                  <span>Caution : <strong className="text-slate-900">{formatFCFA(effectiveCautionAmount)}</strong></span>
                   <span>•</span>
                   <span>Durée : <strong className="text-slate-900">{durationMonths} mois</strong></span>
                 </div>
@@ -3217,21 +3508,6 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               )}
             </div>
 
-            {/* Accompanying message textarea */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-black text-slate-700 flex items-center justify-between">
-                <span>Message d'accompagnement dans la messagerie</span>
-                <span className="text-[11px] text-slate-400 font-normal">Personnalisable</span>
-              </label>
-              <textarea
-                rows={4}
-                value={accompanyingMessage}
-                onChange={(e) => setAccompanyingMessage(e.target.value)}
-                className="w-full p-3.5 rounded-2xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-600 focus:outline-none bg-slate-50/50 leading-relaxed"
-                placeholder="Écrivez un message accompagnant la transmission du bail..."
-              />
-            </div>
-
             {/* Actions */}
             <div className="flex items-center justify-between pt-4 border-t gap-3">
               <button
@@ -3245,110 +3521,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
               <button
                 type="button"
                 disabled={isTransmitting}
-                onClick={handleFinalSignAndTransmit}
-                className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-xs shadow-lg flex items-center gap-2 transition-all disabled:opacity-50"
+                onClick={() => handleFinalSignAndTransmit(ownerSignatureUrl)}
+                className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-black text-xs shadow-lg flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 <Send className="w-4 h-4" />
-                <span>{isTransmitting ? 'Envoi en cours...' : 'Envoyer le contrat au locataire'}</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 4: SUCCESS CONFIRMATION SCREEN (Design épuré, compact et élégant) */}
-        {currentStep === 'success' && (
-          <div className="flex flex-col items-center text-center gap-4 sm:gap-5 py-4 sm:py-6 animate-fadeIn">
-            {/* Animated Celebration Icon */}
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-md animate-bounce">
-              <CheckCircle2 className="w-9 h-9" />
-            </div>
-
-            <div className="flex flex-col gap-1.5 max-w-md">
-              <span className="px-3 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider w-fit mx-auto">
-                Bail Officiellement Certifié & Transmis
-              </span>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                Contrat N° {contractNumber}
-              </h2>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Le document <strong>41-points légaux</strong> intégrant le QR Code d'authenticité et les signatures électroniques a été transmis avec succès dans l'espace du preneur (<strong>{tenantName}</strong>).
-              </p>
-            </div>
-
-            {/* Notification automatique des candidats en liste d'attente */}
-            {notifiedCandidates.length > 0 && (
-              <div className="w-full p-4 rounded-2xl bg-blue-50 border border-blue-200 flex items-start gap-3 text-left animate-fadeIn">
-                <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
-                  <Bell className="w-4 h-4" />
-                </div>
-                <div className="flex flex-col gap-1 text-xs flex-1">
-                  <span className="font-extrabold text-blue-950">
-                    📢 Notification automatique envoyée aux demandeurs en liste d'attente
-                  </span>
-                  <p className="text-[11px] text-blue-800 leading-relaxed">
-                    Les candidats en liste d'attente (<strong>{notifiedCandidates.map((c) => c.candidateName).join(', ')}</strong>) ont été automatiquement notifiés par message et dans leur espace que le logement « <strong>{propertyTitle}</strong> » n'est plus disponible car le bail a été finalisé avec {tenantName}.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Security & Authenticity Card */}
-            <div className="w-full p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 text-left">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div className="flex flex-col text-xs">
-                  <span className="font-extrabold text-slate-900">Horodatage & Preuve Cryptographique</span>
-                  <span className="text-[11px] text-slate-500">
-                    {leaseType === 'professionnel'
-                      ? "Conforme à l'AUDCG OHADA sur le bail professionnel et commercial"
-                      : "Conforme à la Loi n° 2019-576 & Loi n° 2025-221 sur le bail d'habitation"}
-                  </span>
-                  <span className="text-[10px] text-emerald-700 font-bold mt-0.5">✓ Enregistré au registre officiel de vérification</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col items-center gap-1.5 shrink-0">
-                <div
-                  onClick={() => setShowQrZoomModal(true)}
-                  className="w-20 h-20 sm:w-24 sm:h-24 bg-white border-2 border-blue-400/50 hover:border-blue-600 rounded-xl p-1.5 flex items-center justify-center shadow-sm cursor-pointer transition-all"
-                  title="Cliquer pour agrandir le QR Code"
-                >
-                  <img
-                    src={LOCATRUST_QR_CODE_DATA_URL}
-                    alt="QR Code Officiel LocaTrust"
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <a
-                  href={`/verification/contrat/${activeVerificationToken}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-blue-600 font-black hover:underline flex items-center gap-1"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Tester la vérification
-                </a>
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 w-full pt-3 border-t">
-              <button
-                type="button"
-                onClick={handleExportPDF}
-                className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Télécharger Contrat PDF</span>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition-all"
-              >
-                <span>Terminer & Retourner</span>
+                <span>{isTransmitting ? 'Transmission en cours...' : 'Transmettre le contrat'}</span>
               </button>
             </div>
           </div>
@@ -3360,17 +3537,23 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       {activeSigningParty && (
         <SignatureModal
           isOpen={!!activeSigningParty}
-          onClose={() => setActiveSigningParty(null)}
+          onClose={() => {
+            setTransmitAfterOwnerSignature(false);
+            setActiveSigningParty(null);
+          }}
           onConfirmSignature={(signatureUrl) => {
             if (activeSigningParty === 'proprietaire') {
               setOwnerSignatureUrl(signatureUrl);
-              persistOwnerSignature(signatureUrl, user?.id);
-              setCurrentStep('transmission');
+              const shouldAutoTransmit = transmitAfterOwnerSignature;
+              setTransmitAfterOwnerSignature(false);
+              setActiveSigningParty(null);
+              if (shouldAutoTransmit) {
+                handleFinalSignAndTransmit(signatureUrl);
+              }
             } else {
               setTenantSignatureUrl(signatureUrl);
-              persistTenantSignature(signatureUrl, (initialData as any)?.tenantId);
+              setActiveSigningParty(null);
             }
-            setActiveSigningParty(null);
           }}
           signerName={activeSigningParty === 'proprietaire' ? ownerName : tenantName}
           signerRole={activeSigningParty}

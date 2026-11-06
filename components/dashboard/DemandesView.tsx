@@ -354,23 +354,44 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           return raw.split('T')[0];
         };
 
+        const docsObj = dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
+          ? dbA.documents
+          : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' };
+
+        const resolvedStatus =
+          docsObj.contract_status ||
+          (docsObj.contract_finalized ? 'contrat_actif' : undefined) ||
+          (docsObj.tenant_signed && docsObj.contract_transmitted ? 'contrat_signe_locataire' : undefined) ||
+          (docsObj.contract_transmitted ? 'en_attente_signature_locataire' : undefined) ||
+          dbA.status ||
+          'en_attente';
+
         return {
           ...dbA,
-          property_title: pInfo?.title || dbA.property_title || dbA.property?.title || 'Bien immobilier',
-          property_address: pInfo?.commune ? `${pInfo.commune}, ${pInfo.city || 'Abidjan'}` : (dbA.property_address || `${dbA.property?.location?.city || 'Abidjan'}`),
-          rent_amount: rent,
-          caution_amount: caution,
+          property_title: pInfo?.title || dbA.property_title || docsObj.property_title || dbA.property?.title || 'Bien immobilier',
+          property_address: pInfo?.commune ? `${pInfo.commune}, ${pInfo.city || 'Abidjan'}` : (dbA.property_address || docsObj.property_address || `${dbA.property?.location?.city || 'Abidjan'}`),
+          rent_amount: rent > 0 ? rent : Number(docsObj.rent_amount || 0),
+          caution_amount: caution > 0 ? caution : Number(docsObj.caution_amount || 0),
           date_received: formatCleanReceivedDate(dbA.date_received || dbA.created_at),
           dossier_status: dbA.dossier_status || 'complet',
-          status: dbA.status || 'en_attente',
-          tenant_name: prof?.full_name || dbA.tenant_name || 'Candidat Locataire',
-          tenant_phone: prof?.phone || dbA.tenant_phone || '+225 07 00 00 00 00',
+          status: resolvedStatus,
+          contract_number: dbA.contract_number || docsObj.contract_number,
+          contract_transmitted: Boolean(dbA.contract_transmitted || docsObj.contract_transmitted),
+          contract_finalized: Boolean(dbA.contract_finalized || docsObj.contract_finalized),
+          candidate_selected: Boolean(dbA.candidate_selected || docsObj.candidate_selected || docsObj.contract_transmitted),
+          owner_signed: Boolean(dbA.owner_signed ?? docsObj.owner_signed),
+          owner_signature_url: dbA.owner_signature_url || docsObj.owner_signature_url,
+          tenant_signed: Boolean(dbA.tenant_signed ?? docsObj.tenant_signed),
+          tenant_signature_url: dbA.tenant_signature_url || docsObj.tenant_signature_url,
+          duration_months: dbA.duration_months ?? docsObj.duration_months,
+          start_date: dbA.start_date || docsObj.start_date,
+          declared_equipments: dbA.declared_equipments ?? docsObj.declared_equipments,
+          tenant_name: prof?.full_name || dbA.tenant_name || docsObj.tenant_name || 'Candidat Locataire',
+          tenant_phone: prof?.phone || dbA.tenant_phone || docsObj.tenant_phone || '+225 07 00 00 00 00',
           tenant_email: prof?.email || dbA.tenant_email || '',
           tenant_avatar: effectiveAvatar,
           tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
-          documents: dbA.documents && typeof dbA.documents === 'object' && !Array.isArray(dbA.documents)
-            ? dbA.documents
-            : { cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80' }
+          documents: docsObj
         };
       };
 
@@ -2059,7 +2080,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         return (
           <LegalContractGeneratorModal
             isOpen={true}
-            onClose={() => setSelectedApplicationForContract(null)}
+            onClose={() => {
+              setSelectedApplicationForContract(null);
+              setSelectedDossierApp(null);
+            }}
             startAtStep={contractModalStartStep}
             isAgency={(profile?.role as any) === 'agence' || (profile?.role as any) === 'agent'}
             onContractFinalized={async ({ contractNumber, tenantName, propertyTitle, durationMonths, startDate, declaredEquipments }) => {
@@ -2117,6 +2141,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 data: { appId: chosenApp.id, contractNumber }
               });
 
+              setSelectedApplicationForContract(null);
+              setSelectedDossierApp(null);
               setCandidateAlert(
                 `🎉 Bail N° ${contractNumber} finalisé avec ${tenantName} pour « ${propertyTitle} » ! Les candidats en liste d'attente (${competingNames || 'demandeurs'}) ont été automatiquement notifiés que le logement n'est plus disponible.`
               );
@@ -2138,6 +2164,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 return a;
               });
               saveApplications(updated);
+              setSelectedApplicationForContract(null);
+              setSelectedDossierApp(null);
               setCandidateAlert(
                 `📄 Le contrat N° ${contractNumber} a été transmis à ${tenantName} pour « ${propertyTitle} ». Statut : En attente de signature du locataire.`
               );
