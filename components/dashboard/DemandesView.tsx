@@ -469,12 +469,72 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         ...mergedDbApps
       ];
 
-      // Réconciliation avec les contrats réels (locatrust_contracts)
+      // Réconciliation avec les contrats réels (Supabase + locatrust_contracts + notifications de signature)
       let contractsList: any[] = [];
       try {
         const rawC = localStorage.getItem('locatrust_contracts');
         if (rawC) contractsList = JSON.parse(rawC);
       } catch {}
+
+      if (user?.id) {
+        try {
+          const { data: dbCnts } = await supabase
+            .from('contracts')
+            .select('*')
+            .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+          if (dbCnts && Array.isArray(dbCnts)) {
+            dbCnts.forEach((dc: any) => {
+              const existingIdx = contractsList.findIndex(
+                (lc: any) => (dc.contract_number && lc.contract_number === dc.contract_number) || lc.id === dc.id
+              );
+              if (existingIdx === -1) {
+                contractsList.push(dc);
+              } else {
+                contractsList[existingIdx] = {
+                  ...contractsList[existingIdx],
+                  ...dc,
+                  tenant_signed: Boolean(dc.tenant_signed || dc.tenant_signature || contractsList[existingIdx].tenant_signed),
+                  tenant_signature_url: dc.tenant_signature || dc.tenant_signature_url || contractsList[existingIdx].tenant_signature_url,
+                  owner_signature_url: dc.owner_signature || dc.owner_signature_url || contractsList[existingIdx].owner_signature_url
+                };
+              }
+            });
+          }
+        } catch {}
+      }
+
+      // Vérifier également les notifications "Contrat signé par le locataire" (ex: LT-2026-CI-39210687)
+      const signedByNotifContractNums = new Set<string>();
+      const signedByNotifTenantSignatures = new Map<string, string>();
+      if (user?.id) {
+        try {
+          const { data: ownerNotifs } = await supabase
+            .from('notifications')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (ownerNotifs && Array.isArray(ownerNotifs)) {
+            ownerNotifs.forEach((n: any) => {
+              const titleStr = String(n.title || '').toLowerCase();
+              const bodyStr = String(n.message || n.description || n.content || '');
+              const p = n.data || n.payload || {};
+              if (titleStr.includes('signé par le locataire') || titleStr.includes('signe par le locataire') || p.tenant_signed) {
+                const cNumFromData = p.contractNumber || p.contract_number;
+                if (cNumFromData) {
+                  signedByNotifContractNums.add(String(cNumFromData).trim());
+                  if (p.tenant_signature_url) signedByNotifTenantSignatures.set(String(cNumFromData).trim(), p.tenant_signature_url);
+                }
+                const match = bodyStr.match(/(LT-\d{4}-[A-Z0-9-]+)/i);
+                if (match && match[1]) {
+                  signedByNotifContractNums.add(match[1].trim());
+                  if (p.tenant_signature_url) signedByNotifTenantSignatures.set(match[1].trim(), p.tenant_signature_url);
+                }
+              }
+            });
+          }
+        } catch {}
+      }
 
       const reconciledAppsRaw = combined.map((app) => {
         const matchingC = contractsList.find((c: any) =>
@@ -483,21 +543,95 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
            (c.tenant_id === app.tenant_id || c.tenant?.id === app.tenant_id || c.tenant_name === app.tenant_name))
         );
 
-        if (matchingC) {
-          const isActif = matchingC.status === 'actif' || matchingC.status === 'contrat_actif';
-          const isTransmitted = matchingC.status === 'en_attente_signature_locataire' || matchingC.status === 'transmis';
-          const tenantSigned = Boolean(matchingC.tenant_signed || matchingC.tenant_signature || matchingC.tenant_signature_url);
-          const ownerSigned = Boolean(matchingC.owner_signed || matchingC.owner_signature || matchingC.owner_signature_url);
+        const cNum = matchingC?.contract_number || app.contract_number;
+        const notifSigned = Boolean(cNum && signedByNotifContractNums.has(cNum));
+        const notifSigUrl = cNum ? signedByNotifTenantSignatures.get(cNum) : undefined;
+
+        if (matchingC || notifSigned) {
+          const tenantSigned = Boolean(
+            notifSigned ||
+            app.tenant_signed ||
+            matchingC?.tenant_signed ||
+            matchingC?.tenant_signature ||
+            matchingC?.tenant_signature_url
+          );
+          const ownerSigned = Boolean(
+            matchingC?.owner_signed ||
+            matchingC?.owner_signature ||
+            matchingC?.owner_signature_url ||
+            (app as any).owner_signed ||
+            true
+          );
+          const isActif =
+            tenantSigned ||
+            matchingC?.status === 'actif' ||
+            matchingC?.status === 'contrat_actif' ||
+            app.status === 'contrat_actif';
+          const isTransmitted =
+            Boolean(cNum) ||
+            matchingC?.status === 'en_attente_signature_locataire' ||
+            matchingC?.status === 'en_attente' ||
+            matchingC?.status === 'transmis' ||
+            Boolean((app as any).contract_transmitted);
+
+          // Si signé par le locataire mais que la base contracts/properties n'était pas encore passée à actif/loue, synchroniser côté bailleur
+          if (tenantSigned && cNum) {
+            try {
+              if (matchingC && matchingC.status !== 'actif') {
+                supabase
+                  .from('contracts')
+                  .update({ status: 'actif', tenant_signed: true, updated_at: new Date().toISOString() })
+                  .eq('contract_number', cNum)
+                  .then();
+              }
+              if (app.property_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(app.property_id)) {
+                supabase
+                  .from('properties')
+                  .update({ status: 'loue' })
+                  .eq('id', app.property_id)
+                  .then();
+              }
+              if (app.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(app.id) && !(app as any).contract_finalized) {
+                const updatedDocs = {
+                  ...(app.documents && typeof app.documents === 'object' ? app.documents : {}),
+                  contract_number: cNum,
+                  contract_transmitted: true,
+                  tenant_signed: true,
+                  contract_finalized: true,
+                  contract_status: 'contrat_actif'
+                };
+                supabase
+                  .from('rental_applications')
+                  .update({ documents: updatedDocs })
+                  .eq('id', app.id)
+                  .then();
+              }
+            } catch {}
+          }
 
           return {
             ...app,
-            contract_number: matchingC.contract_number || app.contract_number,
-            contract_transmitted: isTransmitted || Boolean(matchingC.contract_number) || (app as any).contract_transmitted,
-            tenant_signed: tenantSigned || app.tenant_signed,
-            owner_signed: ownerSigned || (app as any).owner_signed,
-            tenant_signature_url: matchingC.tenant_signature || matchingC.tenant_signature_url || (app as any).tenant_signature_url,
-            owner_signature_url: matchingC.owner_signature || matchingC.owner_signature_url || (app as any).owner_signature_url,
-            status: isActif ? 'contrat_actif' : (tenantSigned ? 'contrat_signe_locataire' : (isTransmitted ? 'en_attente_signature_locataire' : app.status))
+            contract_number: cNum,
+            contract_transmitted: isTransmitted,
+            contract_finalized: isActif || Boolean((app as any).contract_finalized),
+            tenant_signed: tenantSigned,
+            owner_signed: ownerSigned,
+            tenant_signature_url:
+              notifSigUrl ||
+              matchingC?.tenant_signature ||
+              matchingC?.tenant_signature_url ||
+              (app as any).tenant_signature_url,
+            owner_signature_url:
+              matchingC?.owner_signature ||
+              matchingC?.owner_signature_url ||
+              (app as any).owner_signature_url,
+            status: isActif
+              ? 'contrat_actif'
+              : tenantSigned
+              ? 'contrat_signe_locataire'
+              : isTransmitted
+              ? 'en_attente_signature_locataire'
+              : app.status
           };
         }
         return app;
@@ -892,13 +1026,32 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
     saveApplications(updated);
 
-    // Synchronisation Supabase avec les colonnes exactes
+    // Synchronisation Supabase avec les colonnes exactes + JSONB documents
     try {
-      await supabase.from('rental_applications').update({
-        status: 'contrat_actif',
+      const existingDocs = app.documents && typeof app.documents === 'object' && !Array.isArray(app.documents)
+        ? app.documents
+        : {};
+      const updatedDocs = {
+        ...existingDocs,
+        contract_number: contractNumber,
+        contract_transmitted: true,
         contract_finalized: true,
-        contract_number: contractNumber
+        tenant_signed: true,
+        owner_signed: true,
+        owner_signature_url: ownerSigUrl,
+        tenant_signature_url: tenantSigUrl,
+        contract_status: 'contrat_actif'
+      };
+      const { error: statusUpdErr } = await supabase.from('rental_applications').update({
+        status: 'contrat_actif',
+        documents: updatedDocs
       }).eq('id', app.id);
+
+      if (statusUpdErr) {
+        await supabase.from('rental_applications').update({
+          documents: updatedDocs
+        }).eq('id', app.id);
+      }
 
       for (const comp of competing) {
         await supabase.from('rental_applications').update({
@@ -1015,11 +1168,10 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
       if (targetPropId && targetTenantId && targetOwnerId) {
         // Vérifier si le contrat a déjà été inséré lors de la transmission
-        const { data: existingContract } = await supabase
-          .from('contracts')
-          .select('id, contract_number')
-          .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
-          .maybeSingle();
+        const existingQuery = isValidUuid(contractNumber)
+          ? supabase.from('contracts').select('id, contract_number').or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
+          : supabase.from('contracts').select('id, contract_number').eq('contract_number', contractNumber);
+        const { data: existingContract } = await existingQuery.maybeSingle();
 
         let finalContractUuid = contractUuid;
         let finalizationError: any = null;
@@ -1518,8 +1670,15 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
 
           const isPropertyTaken = propertyHasActiveContract(app.property_id, app.property_title);
           const isThisActive = app.status === 'contrat_actif';
+          const isContractAlreadyCreatedOrTransmitted = Boolean(
+            app.contract_transmitted ||
+            app.contract_number ||
+            app.status === 'en_attente_signature_locataire' ||
+            app.status === 'contrat_signe_locataire' ||
+            app.tenant_signed
+          );
           const isAwaitingTenantSig =
-            app.status === 'en_attente_signature_locataire' || (Boolean(app.contract_transmitted) && !app.tenant_signed);
+            app.status === 'en_attente_signature_locataire' || (isContractAlreadyCreatedOrTransmitted && !app.tenant_signed && !isThisActive);
           const isRetained =
             app.status === 'validee' ||
             app.status === 'en_redaction_bail' ||
@@ -1565,19 +1724,19 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               </div>
 
               {/* 2. Bien Demandé (Titre + Loyer + Caution bien visibles sans être écrasés) */}
-              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="flex items-center gap-2.5 min-w-[200px] flex-1">
                 <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
                   <FileText className="w-4 h-4" />
                 </div>
                 <div className="flex flex-col min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span
-                      className="font-extrabold text-xs sm:text-sm text-slate-900 truncate"
+                      className="font-extrabold text-xs sm:text-sm text-slate-900 truncate max-w-[220px]"
                       title={app.property_title}
                     >
                       {compactTitle}
                     </span>
-                    <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2 py-0.5 rounded-md whitespace-nowrap">
+                    <span className="text-[10px] text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded-md whitespace-nowrap">
                       {(() => {
                         const raw = app.date_received;
                         if (!raw) return '';
@@ -1727,68 +1886,57 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 {/* CAS C : Candidat retenu / En attente de signature / En cours de finalisation */}
                 {!isRefused && !isThisActive && isRetained && (
                   <>
-                    {/* Bouton Créer le contrat */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleStartContract(app, 'form');
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                      title="Créer et paramétrer le contrat de bail certifié"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>Créer le contrat</span>
-                    </button>
-
-                    {/* Bouton Transmettre le contrat */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleStartContract(app, 'transmission');
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-                      title="Ouvrir le formulaire de transmission du contrat au locataire"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Transmettre le contrat</span>
-                    </button>
+                    {/* Si le contrat n'a pas encore été créé ni transmis, afficher le bouton Créer le contrat */}
+                    {!isContractAlreadyCreatedOrTransmitted && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleStartContract(app, 'form');
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                        title="Créer et paramétrer le contrat de bail certifié"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Créer le contrat</span>
+                      </button>
+                    )}
 
                     {/* Tant que le locataire n'a pas signé : statut d'attente (Finaliser le contrat reste VISIBLE mais DÉSACTIVÉ) */}
                     {!app.tenant_signed ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-400 font-bold text-xs border border-slate-300 cursor-not-allowed opacity-60 flex items-center gap-1.5 whitespace-nowrap"
+                        title="En attente de la signature effective du locataire. Ce bouton deviendra actif dès que le locataire aura apposé sa signature."
+                      >
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Finaliser le contrat</span>
+                      </button>
+                    ) : (
+                      /* Dès que le locataire a signé : Télécharger et Finaliser le contrat sont déverrouillés */
                       <>
                         <button
                           type="button"
-                          disabled
-                          className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-400 font-bold text-xs border border-slate-300 cursor-not-allowed opacity-60 flex items-center gap-1.5 whitespace-nowrap"
-                          title="En attente de la signature effective du locataire. Ce bouton deviendra actif dès que le locataire aura apposé sa signature."
+                          onClick={() => handleDownloadContract(app)}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer"
+                          title="Télécharger le contrat de bail officiel signé en PDF"
                         >
-                          <Clock className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Finaliser le contrat</span>
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Télécharger le contrat</span>
                         </button>
 
-                        <div
-                          className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200 flex items-center gap-1.5 whitespace-nowrap shadow-xs"
-                          title="Le bail officiel a été transmis au locataire. En attente de sa signature électronique sur son espace."
+                        <button
+                          type="button"
+                          onClick={() => handleFinalizeContract(app)}
+                          className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
+                          title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
                         >
-                          <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse shrink-0" />
-                          <span>Statut : En attente de signature du locataire</span>
-                        </div>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                          <span>Finaliser le contrat</span>
+                        </button>
                       </>
-                    ) : (
-                      /* Dès que le locataire a signé : bouton de finalisation actif et animé */
-                      <button
-                        type="button"
-                        onClick={() => handleFinalizeContract(app)}
-                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 transition-all active:scale-95 animate-pulse cursor-pointer whitespace-nowrap"
-                        title="Le locataire a signé et validé sa signature ! Cliquez pour finaliser définitivement le contrat et attribuer le bien."
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                        <span>Finaliser le contrat</span>
-                      </button>
                     )}
                   </>
                 )}

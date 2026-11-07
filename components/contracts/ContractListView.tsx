@@ -125,14 +125,176 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   const loadContracts = async () => {
     setLoading(true);
     try {
+      const signedByNotifNums = new Set<string>();
+      const signedByNotifSigs = new Map<string, string>();
+
+      if (typeof window !== 'undefined') {
+        try {
+          const rawMap = localStorage.getItem('locatrust_signed_contracts_map');
+          if (rawMap) {
+            const parsedMap = JSON.parse(rawMap);
+            Object.keys(parsedMap || {}).forEach((k) => {
+              if (parsedMap[k]?.tenant_signed) {
+                signedByNotifNums.add(k);
+                if (parsedMap[k]?.tenant_signature_url) signedByNotifSigs.set(k, parsedMap[k].tenant_signature_url);
+              }
+            });
+          }
+        } catch {}
+      }
+
+      if (user?.id) {
+        try {
+          const { data: ownerNotifs } = await supabase
+            .from('notifications')
+            .select('title, message, description, content, data, payload')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (ownerNotifs && Array.isArray(ownerNotifs)) {
+            ownerNotifs.forEach((n: any) => {
+              const titleStr = String(n.title || '').toLowerCase();
+              const bodyStr = String(n.message || n.description || n.content || '');
+              const p = n.data || n.payload || {};
+              if (titleStr.includes('signé par le locataire') || titleStr.includes('signe par le locataire') || p.tenant_signed) {
+                const cNumData = p.contractNumber || p.contract_number;
+                if (cNumData) {
+                  signedByNotifNums.add(String(cNumData).trim());
+                  if (p.tenant_signature_url) signedByNotifSigs.set(String(cNumData).trim(), p.tenant_signature_url);
+                }
+                const m = bodyStr.match(/(LT-\d{4}-[A-Z0-9-]+)/i);
+                if (m && m[1]) {
+                  signedByNotifNums.add(m[1].trim());
+                  if (p.tenant_signature_url) signedByNotifSigs.set(m[1].trim(), p.tenant_signature_url);
+                }
+              }
+            });
+          }
+        } catch {}
+      }
+
+      const rawCombined: any[] = [];
+      const seenContractIds = new Set<string>();
+
       let query = supabase.from('contracts').select('*, property:properties(*)').order('created_at', { ascending: false });
       if (user?.id) {
         query = query.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       }
-      const { data, error } = await query;
-      if (!error && data && data.length > 0) {
-        // Enriched with tenant profiles
-        const tenantIds = Array.from(new Set(data.map((c: any) => c.tenant_id).filter(Boolean)));
+      const { data } = await query;
+      if (data && Array.isArray(data)) {
+        data.forEach((c: any) => {
+          const key = c.contract_number || c.id;
+          if (key && !seenContractIds.has(key)) {
+            seenContractIds.add(key);
+            rawCombined.push(c);
+          }
+        });
+      }
+
+      // Réconcilier aussi avec les candidatures transmises/actives dans Supabase (rental_applications)
+      if (user?.id) {
+        try {
+          const { data: appRows } = await supabase
+            .from('rental_applications')
+            .select('*')
+            .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`)
+            .order('created_at', { ascending: false });
+          if (appRows && Array.isArray(appRows)) {
+            appRows.forEach((a: any) => {
+              const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+              const cNum = a.contract_number || docs.contract_number;
+              if (!cNum) return;
+              const isSigned = Boolean(a.tenant_signed || docs.tenant_signed || a.status === 'contrat_actif' || docs.contract_finalized || signedByNotifNums.has(cNum));
+              if (!seenContractIds.has(cNum)) {
+                seenContractIds.add(cNum);
+                rawCombined.push({
+                  id: docs.contract_id || cNum,
+                  contract_number: cNum,
+                  property_id: a.property_id,
+                  tenant_id: a.tenant_id,
+                  owner_id: a.owner_id || user.id,
+                  tenant_name: a.tenant_name || docs.tenant_name,
+                  tenant_phone: a.tenant_phone || docs.tenant_phone,
+                  tenant_email: a.tenant_email,
+                  property_title: a.property_title || docs.property_title,
+                  property_address: a.property_address || docs.property_address,
+                  monthly_rent: Number(a.rent_amount || docs.rent_amount || 0),
+                  caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
+                  charges_amount: Number(docs.charges_amount || 0),
+                  duration_months: Number(docs.duration_months || 12),
+                  start_date: docs.start_date || a.created_at,
+                  status: isSigned ? 'actif' : 'en_attente',
+                  owner_signed: true,
+                  tenant_signed: isSigned,
+                  owner_signature_url: docs.owner_signature_url,
+                  tenant_signature_url: docs.tenant_signature_url || signedByNotifSigs.get(cNum),
+                  created_at: a.created_at
+                });
+              } else {
+                const idx = rawCombined.findIndex((rc) => (rc.contract_number || rc.id) === cNum);
+                if (idx !== -1 && isSigned) {
+                  rawCombined[idx] = {
+                    ...rawCombined[idx],
+                    status: rawCombined[idx].status === 'termine' || rawCombined[idx].status === 'resilie' ? rawCombined[idx].status : 'actif',
+                    tenant_signed: true,
+                    tenant_signature_url: rawCombined[idx].tenant_signature_url || rawCombined[idx].tenant_signature || docs.tenant_signature_url || signedByNotifSigs.get(cNum)
+                  };
+                }
+              }
+            });
+          }
+        } catch {}
+      }
+
+      // Fusion avec locatrust_contracts en localStorage
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('locatrust_contracts');
+          if (raw) {
+            const list = JSON.parse(raw);
+            const myList = Array.isArray(list) ? list.filter((c: any) => !user?.id || c.owner_id === user.id || c.agency_id === user.id || c.owner?.id === user.id) : [];
+            myList.forEach((lc: any) => {
+              const cNum = lc.contract_number || lc.id;
+              if (!cNum) return;
+              if (!seenContractIds.has(cNum)) {
+                seenContractIds.add(cNum);
+                rawCombined.push(lc);
+              } else {
+                const idx = rawCombined.findIndex((rc) => (rc.contract_number || rc.id) === cNum);
+                if (idx !== -1) {
+                  const isSigned = Boolean(
+                    rawCombined[idx].tenant_signed ||
+                    rawCombined[idx].tenant_signature ||
+                    lc.tenant_signed ||
+                    lc.tenant_signature ||
+                    lc.tenant_signature_url ||
+                    signedByNotifNums.has(cNum)
+                  );
+                  rawCombined[idx] = {
+                    ...lc,
+                    ...rawCombined[idx],
+                    tenant_signed: isSigned,
+                    tenant_signature_url:
+                      rawCombined[idx].tenant_signature ||
+                      rawCombined[idx].tenant_signature_url ||
+                      lc.tenant_signature_url ||
+                      lc.tenant_signature ||
+                      signedByNotifSigs.get(cNum),
+                    owner_signature_url:
+                      rawCombined[idx].owner_signature ||
+                      rawCombined[idx].owner_signature_url ||
+                      lc.owner_signature_url ||
+                      lc.owner_signature
+                  };
+                }
+              }
+            });
+          }
+        } catch {}
+      }
+
+      if (rawCombined.length > 0) {
+        const tenantIds = Array.from(new Set(rawCombined.map((c: any) => c.tenant_id).filter(Boolean)));
         const profilesMap = new Map<string, any>();
         if (tenantIds.length > 0) {
           try {
@@ -140,74 +302,60 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
             if (profs) profs.forEach((p: any) => profilesMap.set(p.id, p));
           } catch {}
         }
-        const mapped = data.map((c: any) => {
+
+        const mapped = rawCombined.map((c: any) => {
+          const cNum = c.contract_number || c.id || 'CT-2026-0001';
           const tenantProf = profilesMap.get(c.tenant_id) || c.tenant;
+          const isSignedByTenant = Boolean(
+            c.tenant_signed ||
+            c.tenant_signature ||
+            c.tenant_signature_url ||
+            signedByNotifNums.has(cNum) ||
+            c.status === 'actif' ||
+            c.status === 'contrat_actif' ||
+            c.status === 'signe'
+          );
+          const isTermine = c.status === 'termine' || c.status === 'cloture' || c.status === 'resilie';
+
+          if (isSignedByTenant && !isTermine && c.status !== 'actif') {
+            try {
+              supabase.from('contracts').update({ status: 'actif', tenant_signed: true }).eq('contract_number', cNum).then();
+            } catch {}
+          }
+
           return {
-            id: c.contract_number || c.id || 'CT-2026-0001',
-            locataire: tenantProf?.full_name || c.tenant_name || 'Locataire',
+            id: cNum,
+            locataire: tenantProf?.full_name || c.tenant?.full_name || c.tenant_name || 'Locataire',
             role: 'Locataire',
-            avatar: tenantProf?.avatar_url || c.tenant_avatar || '',
+            avatar: tenantProf?.avatar_url || c.tenant?.avatar_url || c.tenant_avatar || '',
             bien: c.property?.title || c.property_title || 'Bien immobilier',
-            quartier: `${c.property?.commune || ''} ${c.property?.city || 'Abidjan'}`,
-            periode: c.periode || `${new Date(c.created_at || Date.now()).toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
-          statut:
-            c.status === 'actif' || c.status === 'signe'
-              ? 'Actif'
-              : c.status === 'en_attente'
-              ? 'En attente signature locataire'
-              : c.status === 'termine' || c.status === 'cloture' || c.status === 'resilie'
+            quartier: c.property?.commune ? `${c.property.commune} ${c.property?.city || ''}`.trim() : (c.property?.city || c.property_address || c.property_city || 'Côte d\'Ivoire'),
+            periode: c.periode || `${new Date(c.start_date || c.created_at || Date.now()).toLocaleDateString('fr-FR')} (${c.duration_months || 12} mois)`,
+            statut: isTermine
               ? 'Terminé'
               : c.status === 'fin_contrat'
               ? 'Fin bientôt'
-              : 'Actif',
-          dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
-          bailleurSigne: Boolean(c.owner_signed ?? c.owner_signature ?? true),
-          locataireSigne: Boolean(c.tenant_signed ?? c.tenant_signature),
-          telephone: c.tenant?.phone || c.tenant_phone || '+225 07 00 00 00 00',
-          raw: c
-        };
-      });
+              : isSignedByTenant
+              ? 'Actif'
+              : 'En attente signature locataire',
+            dateSignature: isSignedByTenant
+              ? `Signé le ${new Date(c.tenant_signed_at || c.signature_date || c.updated_at || Date.now()).toLocaleDateString('fr-FR')}`
+              : 'En attente signature',
+            bailleurSigne: Boolean(c.owner_signed ?? c.owner_signature ?? true),
+            locataireSigne: isSignedByTenant,
+            telephone: tenantProf?.phone || c.tenant?.phone || c.tenant_phone || '+225 07 00 00 00 00',
+            raw: {
+              ...c,
+              status: isTermine ? c.status : (isSignedByTenant ? 'actif' : c.status),
+              tenant_signed: isSignedByTenant,
+              tenant_signature_url: c.tenant_signature_url || c.tenant_signature || signedByNotifSigs.get(cNum)
+            }
+          };
+        });
+
         setContracts(mapped);
         setLoading(false);
         return;
-      }
-
-      // Si base vide, vérifier si un contrat a été créé localement dans cette session
-      if (typeof window !== 'undefined') {
-        const raw = localStorage.getItem('locatrust_contracts');
-        if (raw) {
-          const list = JSON.parse(raw);
-          const myList = Array.isArray(list) ? list.filter((c: any) => !user?.id || c.owner_id === user.id || c.agency_id === user.id) : [];
-          if (myList.length > 0) {
-            const mapped = myList.map((c: any) => ({
-              id: c.contract_number || c.id || 'CT-2026-0001',
-              locataire: c.tenant_name || 'Locataire',
-              role: 'Locataire',
-              avatar: c.tenant_avatar || '',
-              bien: c.property_title || 'Bien immobilier',
-              quartier: c.property_address || c.property_city || 'Abidjan',
-              periode: c.periode || `${new Date().toLocaleDateString('fr-FR')} - ${new Date(Date.now() + 365*24*3600*1000).toLocaleDateString('fr-FR')}`,
-              statut:
-                c.status === 'actif' || c.status === 'signe'
-                  ? 'Actif'
-                  : c.status === 'en_attente'
-                  ? 'En attente signature locataire'
-                  : c.status === 'termine' || c.status === 'cloture' || c.status === 'resilie'
-                  ? 'Terminé'
-                  : c.status === 'fin_contrat'
-                  ? 'Fin bientôt'
-                  : 'Actif',
-              dateSignature: c.signature_date ? `Signé le ${new Date(c.signature_date).toLocaleDateString('fr-FR')}` : 'En cours',
-              bailleurSigne: Boolean(c.owner_signature || true),
-              locataireSigne: Boolean(c.tenant_signature),
-              telephone: c.tenant_phone || '+225 07 00 00 00 00',
-              raw: c
-            }));
-            setContracts(mapped);
-            setLoading(false);
-            return;
-          }
-        }
       }
     } catch (e) {
       console.warn('Contracts read error:', e);
@@ -250,7 +398,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
     }
   };
 
-  // Téléchargement copie du contrat terminé
+  // Téléchargement copie du contrat
   const handleDownloadTerminatedContract = async (c: any, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
@@ -271,6 +419,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
         durationMonths: Number(rawContract.duration_months || 12),
         startDate: rawContract.start_date || '01/01/2026',
         dueDay: 5,
+        ownerSignatureUrl: rawContract.owner_signature_url || rawContract.owner_signature,
+        tenantSignatureUrl: rawContract.tenant_signature_url || rawContract.tenant_signature,
+        isSignedCopy: true,
         leaseType,
         usageDestination: leaseType
       });
@@ -852,7 +1003,16 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                               <Send className="w-3 h-3 text-blue-600" />
                               <span>Relancer le locataire</span>
                             </button>
-                          ) : null}
+                          ) : (
+                            <button
+                              onClick={(e) => handleDownloadTerminatedContract(c, e)}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5 shadow-sm transition-all active:scale-95 shrink-0 cursor-pointer"
+                              title="Télécharger le contrat de bail officiel signé en PDF"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Télécharger PDF</span>
+                            </button>
+                          )}
 
                           {!isTermine && (
                             <button className="p-1 rounded-full text-slate-400 group-hover:text-blue-600 transition-all">

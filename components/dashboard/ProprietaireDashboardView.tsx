@@ -106,15 +106,47 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       }
       setRealProps(finalProps);
 
-      // 2. Contrats actifs (Supabase + localStorage)
+      // 2. Contrats actifs (Supabase + localStorage + notifications de signature locataire)
       let finalContracts: any[] = [];
+      const signedByNotifNums = new Set<string>();
       if (currentUserId) {
+        try {
+          const { data: ownerNotifs } = await supabase
+            .from('notifications')
+            .select('title, message, description, content, data, payload')
+            .eq('user_id', currentUserId)
+            .order('created_at', { ascending: false })
+            .limit(40);
+          if (ownerNotifs && Array.isArray(ownerNotifs)) {
+            ownerNotifs.forEach((n: any) => {
+              const titleStr = String(n.title || '').toLowerCase();
+              const bodyStr = String(n.message || n.description || n.content || '');
+              const p = n.data || n.payload || {};
+              if (titleStr.includes('signé par le locataire') || titleStr.includes('signe par le locataire') || p.tenant_signed) {
+                const cNumData = p.contractNumber || p.contract_number;
+                if (cNumData) signedByNotifNums.add(String(cNumData).trim());
+                const m = bodyStr.match(/(LT-\d{4}-[A-Z0-9-]+)/i);
+                if (m && m[1]) signedByNotifNums.add(m[1].trim());
+              }
+            });
+          }
+        } catch {}
+
         try {
           const { data: contractsData } = await supabase
             .from('contracts')
             .select('*')
             .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`);
-          if (contractsData) finalContracts = contractsData;
+          if (contractsData) {
+            finalContracts = contractsData.map((c: any) => {
+              const cNum = c.contract_number || c.id;
+              const isSigned = Boolean(c.tenant_signed || c.tenant_signature || (cNum && signedByNotifNums.has(cNum)));
+              if (isSigned && c.status !== 'termine' && c.status !== 'resilie' && c.status !== 'cloture') {
+                return { ...c, status: 'actif', tenant_signed: true };
+              }
+              return c;
+            });
+          }
         } catch {}
 
         if (typeof window !== 'undefined') {
@@ -124,27 +156,36 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               const parsed = JSON.parse(rawContracts);
               if (Array.isArray(parsed)) {
                 parsed.filter(isMine).forEach((c: any) => {
-                  if (!finalContracts.some(fc => fc.id === c.id || fc.contract_number === c.contract_number)) {
-                    finalContracts.push(c);
+                  const cNum = c.contract_number || c.id;
+                  const isSigned = Boolean(c.tenant_signed || c.tenant_signature || c.tenant_signature_url || (cNum && signedByNotifNums.has(cNum)));
+                  const normalizedC = isSigned && c.status !== 'termine' && c.status !== 'resilie'
+                    ? { ...c, status: 'actif', tenant_signed: true }
+                    : c;
+                  const existingIdx = finalContracts.findIndex(fc => fc.id === c.id || fc.contract_number === c.contract_number);
+                  if (existingIdx === -1) {
+                    finalContracts.push(normalizedC);
+                  } else if (isSigned) {
+                    finalContracts[existingIdx] = { ...finalContracts[existingIdx], status: 'actif', tenant_signed: true };
                   }
                 });
               }
             }
-            // Vérification des candidatures avec statut contrat_actif
+            // Vérification des candidatures avec statut contrat_actif ou signées par le locataire
             const rawApps = localStorage.getItem('locatrust_rental_applications');
             if (rawApps) {
               const apps = JSON.parse(rawApps);
               if (Array.isArray(apps)) {
-                apps.filter((a: any) => a.status === 'contrat_actif' && isMine(a)).forEach((a: any) => {
+                apps.filter((a: any) => (a.status === 'contrat_actif' || a.tenant_signed || (a.contract_number && signedByNotifNums.has(a.contract_number))) && isMine(a)).forEach((a: any) => {
                   if (a.contract_number && !finalContracts.some(fc => fc.contract_number === a.contract_number || fc.id === a.id)) {
                     finalContracts.push({
                       id: a.id,
                       contract_number: a.contract_number,
                       property_id: a.property_id,
                       tenant_id: a.tenant_id,
-                      monthly_rent: Number(a.monthly_rent || a.rent || 0),
+                      monthly_rent: Number(a.monthly_rent || a.rent_amount || a.rent || 0),
                       caution_amount: Number(a.caution_amount || 0),
-                      status: 'contrat_actif'
+                      status: 'actif',
+                      tenant_signed: true
                     });
                   }
                 });

@@ -99,11 +99,10 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     async function loadFromDb() {
       if (!contractNumber) return;
       try {
-        const { data, error } = await supabase
-          .from('contracts')
-          .select('*, property:properties(*)')
-          .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
-          .maybeSingle();
+        const query = isValidUuid(contractNumber)
+          ? supabase.from('contracts').select('*, property:properties(*)').or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`)
+          : supabase.from('contracts').select('*, property:properties(*)').eq('contract_number', contractNumber);
+        const { data, error } = await query.maybeSingle();
 
         if (data && !error) {
           const ids = [data.owner_id, data.tenant_id, data.agency_id].filter(Boolean);
@@ -308,18 +307,42 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     return realContract?.owner_signature_url || realContract?.owner_signature || realContract?.ownerSignatureUrl || realContract?.landlord_signature || getStoredOwnerSignature() || null;
   });
   const [tenantSignatureUrl, setTenantSignatureUrl] = useState<string | null>(() => {
-    return realContract?.tenant_signature_url || realContract?.tenant_signature || realContract?.tenantSignatureUrl || realContract?.applicant_signature || getStoredTenantSignature() || null;
+    let mapSig: string | null = null;
+    if (typeof window !== 'undefined' && contractNumber) {
+      try {
+        const rawMap = localStorage.getItem('locatrust_signed_contracts_map');
+        if (rawMap) {
+          const parsedMap = JSON.parse(rawMap);
+          if (parsedMap?.[contractNumber]?.tenant_signature_url) {
+            mapSig = parsedMap[contractNumber].tenant_signature_url;
+          }
+        }
+      } catch {}
+    }
+    return mapSig || realContract?.tenant_signature_url || realContract?.tenant_signature || realContract?.tenantSignatureUrl || realContract?.applicant_signature || (realContract?.tenant_signed ? getStoredTenantSignature() : null) || null;
   });
 
   // Synchronisation dynamique dès chargement du contrat réel
   React.useEffect(() => {
     if (realContract) {
+      let mapSig: string | null = null;
+      if (typeof window !== 'undefined' && contractNumber) {
+        try {
+          const rawMap = localStorage.getItem('locatrust_signed_contracts_map');
+          if (rawMap) {
+            const parsedMap = JSON.parse(rawMap);
+            if (parsedMap?.[contractNumber]?.tenant_signature_url) {
+              mapSig = parsedMap[contractNumber].tenant_signature_url;
+            }
+          }
+        } catch {}
+      }
       const sigOwner = realContract.owner_signature_url || realContract.owner_signature || realContract.ownerSignatureUrl || realContract.landlord_signature || getStoredOwnerSignature();
-      const sigTenant = realContract.tenant_signature_url || realContract.tenant_signature || realContract.tenantSignatureUrl || realContract.applicant_signature || getStoredTenantSignature();
+      const sigTenant = mapSig || realContract.tenant_signature_url || realContract.tenant_signature || realContract.tenantSignatureUrl || realContract.applicant_signature || (realContract.tenant_signed ? getStoredTenantSignature() : null);
       if (sigOwner) setOwnerSignatureUrl(sigOwner);
       if (sigTenant) setTenantSignatureUrl(sigTenant);
     }
-  }, [realContract]);
+  }, [realContract, contractNumber]);
   const [activeSigningParty, setActiveSigningParty] = useState<'proprietaire' | 'locataire' | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [relanceSuccess, setRelanceSuccess] = useState<string | null>(null);
@@ -766,16 +789,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             </button>
           ) : (
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsDownloadBlockedModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-300 transition-all"
-                title="Téléchargement bloqué : les signatures obligatoires des deux parties sont requises"
-              >
-                <Lock className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>Téléchargement bloqué (Signatures incomplètes)</span>
-              </button>
-              {isAwaitingTenant && (
+              {isAwaitingTenant && !isTenantView && (
                 <button
                   type="button"
                   onClick={() => handleRelanceInternal('Messagerie')}
@@ -787,34 +801,6 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                 </button>
               )}
             </div>
-          )}
-
-          <button
-            onClick={() => setIsAnalyzerModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold border border-amber-300 transition-all"
-          >
-            <Scale className="w-4 h-4 text-amber-700" />
-            <span>🔍 Analyser le contrat</span>
-          </button>
-
-          {!isContractTerminated && (
-            <>
-              <button
-                onClick={() => setIsAvenantInitiatedOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 text-xs font-bold border border-slate-200 transition-all"
-              >
-                <FileText className="w-4 h-4 text-slate-600" />
-                <span>Avenant</span>
-              </button>
-
-              <button
-                onClick={() => setIsTerminationFormOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-all"
-              >
-                <Clock className="w-4 h-4 text-rose-600" />
-                <span>Fin du contrat</span>
-              </button>
-            </>
           )}
         </div>
       </div>
@@ -1089,33 +1075,27 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
               </button>
             )}
 
-            {/* Bouton de Demande de Renouvellement (Espace Locataire - Audio 2) */}
+            {/* Bouton de Demande de Renouvellement (Espace Locataire - Cliquable en 1 seul clic) */}
             {isTenantView && (
               <button
                 onClick={handleRequestRenewal}
-                disabled={!renewalInfo.isEligible || hasRequestedRenewal}
+                disabled={hasRequestedRenewal}
                 title={
                   hasRequestedRenewal
                     ? 'Votre demande est déjà en cours de traitement par le bailleur.'
-                    : renewalInfo.isEligible
-                    ? 'Cliquez pour formuler votre demande officielle de reconduction du bail.'
-                    : `Ce bouton s'activera automatiquement à 4 ou 5 mois de l'échéance (encore ${renewalInfo.monthsRemaining} mois).`
+                    : 'Cliquez pour formuler votre demande officielle de reconduction du bail.'
                 }
-                className={`w-full min-h-[40px] py-2.5 px-3 rounded-xl text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm ${
+                className={`w-full min-h-[40px] py-2.5 px-3 rounded-xl text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer ${
                   hasRequestedRenewal
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
-                    : renewalInfo.isEligible
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20 active:scale-95 animate-pulse'
-                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 cursor-default'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20 active:scale-95'
                 }`}
               >
-                <RotateCcw className={`w-3.5 h-3.5 shrink-0 ${renewalInfo.isEligible && !hasRequestedRenewal ? 'animate-spin' : ''}`} />
+                <RotateCcw className="w-3.5 h-3.5 shrink-0" />
                 <span className="leading-tight">
                   {hasRequestedRenewal
                     ? 'Demande de renouvellement transmise ✓'
-                    : renewalInfo.isEligible
-                    ? 'Demander le renouvellement du bail'
-                    : `Renouvellement (${renewalInfo.monthsRemaining} mois restants)`}
+                    : 'Demander le renouvellement du bail'}
                 </span>
               </button>
             )}
@@ -1479,68 +1459,108 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
           onClose={() => setActiveSigningParty(null)}
           onConfirmSignature={async (signatureUrl) => {
             const isOwner = activeSigningParty === 'proprietaire';
+            const nowIso = new Date().toISOString();
+            const signedDateFr = new Date().toLocaleDateString('fr-FR');
+            const propId = realContract?.property_id || realContract?.property?.id;
+            const targetOwnerId = realContract?.owner_id || realContract?.owner?.id;
+
             if (isOwner) {
               setOwnerSignatureUrl(signatureUrl);
-              persistOwnerSignature(signatureUrl);
+              persistOwnerSignature(signatureUrl, user?.id);
             } else {
               setTenantSignatureUrl(signatureUrl);
-              persistTenantSignature(signatureUrl);
+              persistTenantSignature(signatureUrl, user?.id);
+              if (typeof window !== 'undefined' && contractNumber) {
+                try {
+                  const rawSignedMap = localStorage.getItem('locatrust_signed_contracts_map');
+                  const signedMap = rawSignedMap ? JSON.parse(rawSignedMap) : {};
+                  signedMap[contractNumber] = {
+                    tenant_signed: true,
+                    tenant_signature_url: signatureUrl,
+                    signed_at: nowIso,
+                    status: 'actif'
+                  };
+                  localStorage.setItem('locatrust_signed_contracts_map', JSON.stringify(signedMap));
+                } catch {}
+              }
             }
 
             // Inscription directe et persistante dans Supabase PostgreSQL
             try {
               const updatePayload: any = {
-                updated_at: new Date().toISOString()
+                updated_at: nowIso
               };
               if (isOwner) {
                 updatePayload.owner_signature = signatureUrl;
                 updatePayload.owner_signed = true;
-                updatePayload.owner_signed_at = new Date().toISOString();
+                updatePayload.owner_signed_at = nowIso;
               } else {
                 updatePayload.tenant_signature = signatureUrl;
                 updatePayload.tenant_signed = true;
-                updatePayload.tenant_signed_at = new Date().toISOString();
+                updatePayload.tenant_signed_at = nowIso;
               }
 
-              await supabase
-                .from('contracts')
-                .update(updatePayload)
-                .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+              if (isValidUuid(contractNumber)) {
+                await supabase
+                  .from('contracts')
+                  .update(updatePayload)
+                  .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+              } else {
+                await supabase
+                  .from('contracts')
+                  .update(updatePayload)
+                  .eq('contract_number', contractNumber);
+              }
 
-              // Si le locataire signe, mettre à jour la candidature correspondante
               if (!isOwner) {
                 try {
-                  await supabase
-                    .from('rental_applications')
-                    .update({
-                      tenant_signed: true,
-                      status: 'contrat_signe_locataire'
-                    })
-                    .or(`contract_number.eq.${contractNumber},tenant_id.eq.${user?.id}`);
+                  if (isValidUuid(contractNumber)) {
+                    await supabase.from('contracts').update({ status: 'actif' }).or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+                  } else {
+                    await supabase.from('contracts').update({ status: 'actif' }).eq('contract_number', contractNumber);
+                  }
+                } catch {}
+              }
 
-                  // Notifier le bailleur que le locataire a signé
-                  const targetOwnerId = realContract?.owner_id || realContract?.owner?.id;
-                  if (targetOwnerId) {
-                    await supabase.from('notifications').insert({
-                      user_id: targetOwnerId,
-                      title: 'Contrat signé par le locataire',
-                      message: `${tenantData.name} a signé le contrat de bail pour « ${tenantData.propertyTitle} ». Vous pouvez désormais le finaliser.`,
-                      description: `${tenantData.name} a signé le contrat de bail pour « ${tenantData.propertyTitle} ». Vous pouvez désormais le finaliser.`,
-                      content: `${tenantData.name} a signé le contrat de bail pour « ${tenantData.propertyTitle} ». Vous pouvez désormais le finaliser.`,
-                      type: 'contrat',
-                      category: 'contrat',
-                      target_role: 'proprietaire',
-                      read: false,
-                      is_read: false,
-                      data: {
-                        contractNumber,
-                        targetTab: 'applications'
-                      },
-                      payload: {
-                        contractNumber,
-                        targetTab: 'applications'
+              // Si le locataire signe, mettre à jour la candidature correspondante via JSONB documents
+              if (!isOwner) {
+                try {
+                  if (user?.id) {
+                    const { data: myApps } = await supabase
+                      .from('rental_applications')
+                      .select('*')
+                      .eq('tenant_id', user.id);
+                    if (myApps && Array.isArray(myApps)) {
+                      for (const appRow of myApps) {
+                        const docs = appRow.documents && typeof appRow.documents === 'object' ? appRow.documents : {};
+                        if (docs.contract_number === contractNumber || (propId && appRow.property_id === propId)) {
+                          const updatedDocs = {
+                            ...docs,
+                            contract_number: contractNumber,
+                            contract_transmitted: true,
+                            contract_finalized: true,
+                            tenant_signed: true,
+                            tenant_signed_at: nowIso,
+                            tenant_signature_url: signatureUrl,
+                            contract_status: 'contrat_actif'
+                          };
+                          const { error: errWithStatus } = await supabase
+                            .from('rental_applications')
+                            .update({ status: 'contrat_actif', documents: updatedDocs })
+                            .eq('id', appRow.id);
+                          if (errWithStatus) {
+                            await supabase
+                              .from('rental_applications')
+                              .update({ documents: updatedDocs })
+                              .eq('id', appRow.id);
+                          }
+                        }
                       }
-                    });
+                    }
+                  }
+
+                  if (isValidUuid(propId)) {
+                    await supabase.from('properties').update({ status: 'loue' }).eq('id', propId);
                   }
                 } catch (appErr) {
                   console.warn('Erreur mise à jour application lors signature locataire:', appErr);
@@ -1552,30 +1572,44 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
             try {
               const stored = localStorage.getItem('locatrust_contracts');
-              if (stored) {
-                const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed)) {
-                  const updated = parsed.map((c: any) => {
-                    if (c.contract_number === contractNumber || c.id === contractNumber) {
-                      return {
-                        ...c,
-                        status: isOwner ? c.status : 'actif',
-                        owner_signature_url: isOwner ? signatureUrl : (c.owner_signature_url || c.ownerSignatureUrl),
-                        tenant_signature_url: !isOwner ? signatureUrl : (c.tenant_signature_url || c.tenantSignatureUrl),
-                        owner_signed: isOwner ? true : c.owner_signed,
-                        tenant_signed: !isOwner ? true : c.tenant_signed,
-                        signed_date: new Date().toLocaleDateString('fr-FR'),
-                        start_date: c.start_date || new Date().toLocaleDateString('fr-FR')
-                      };
-                    }
-                    return c;
-                  });
-                  localStorage.setItem('locatrust_contracts', JSON.stringify(updated));
-                  window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updated } }));
+              const parsed = stored ? JSON.parse(stored) : [];
+              const arr = Array.isArray(parsed) ? parsed : [];
+              let foundInLocal = false;
+              const updated = arr.map((c: any) => {
+                if (c.contract_number === contractNumber || c.id === contractNumber) {
+                  foundInLocal = true;
+                  return {
+                    ...c,
+                    status: isOwner ? c.status : 'actif',
+                    owner_signature_url: isOwner ? signatureUrl : (c.owner_signature_url || c.ownerSignatureUrl),
+                    tenant_signature_url: !isOwner ? signatureUrl : (c.tenant_signature_url || c.tenantSignatureUrl),
+                    tenant_signature: !isOwner ? signatureUrl : c.tenant_signature,
+                    owner_signed: isOwner ? true : c.owner_signed,
+                    tenant_signed: !isOwner ? true : c.tenant_signed,
+                    signed_date: signedDateFr,
+                    start_date: c.start_date || signedDateFr
+                  };
                 }
+                return c;
+              });
+              if (!foundInLocal && realContract) {
+                updated.unshift({
+                  ...realContract,
+                  id: realContract.id || `cnt_${contractNumber}`,
+                  contract_number: contractNumber,
+                  status: isOwner ? realContract.status : 'actif',
+                  owner_signature_url: isOwner ? signatureUrl : (realContract.owner_signature_url || ownerSignatureUrl),
+                  tenant_signature_url: !isOwner ? signatureUrl : (realContract.tenant_signature_url || tenantSignatureUrl),
+                  tenant_signature: !isOwner ? signatureUrl : realContract.tenant_signature,
+                  owner_signed: true,
+                  tenant_signed: !isOwner ? true : Boolean(realContract.tenant_signed),
+                  signed_date: signedDateFr
+                });
               }
+              localStorage.setItem('locatrust_contracts', JSON.stringify(updated));
+              window.dispatchEvent(new CustomEvent('locatrust:contracts-updated', { detail: { contracts: updated } }));
 
-              // Mettre à jour aussi locatrust_rental_applications en cache
+              // Mettre à jour aussi locatrust_rental_applications et notifications en cache
               if (!isOwner) {
                 const appsRaw = localStorage.getItem('locatrust_rental_applications');
                 if (appsRaw) {
@@ -1584,13 +1618,15 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                     const updatedApps = parsedApps.map((a: any) => {
                       if (
                         a.contract_number === contractNumber ||
-                        a.tenant_id === user?.id ||
-                        (a.tenant_name && tenantData.name && a.tenant_name.trim().toLowerCase() === tenantData.name.trim().toLowerCase())
+                        a.documents?.contract_number === contractNumber ||
+                        (propId && a.property_id === propId && (a.tenant_id === user?.id || !a.tenant_id))
                       ) {
                         return {
                           ...a,
+                          status: 'contrat_actif',
+                          contract_finalized: true,
                           tenant_signed: true,
-                          tenant_signed_at: new Date().toISOString(),
+                          tenant_signed_at: nowIso,
                           tenant_signature_url: signatureUrl
                         };
                       }
@@ -1601,17 +1637,53 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   }
                 }
 
-                // Notifier le propriétaire
-                const targetOwnerId = realContract?.owner_id || realContract?.owner?.id;
+                // Notifier le propriétaire une seule fois (ID unique partagé)
+                const sharedNotifId = crypto.randomUUID();
+                const notifMsg = `${tenantData.name} a apposé sa signature certifiée sur le contrat N° ${contractNumber}. Le contrat est désormais actif et téléchargeable.`;
+                const notifPayload = {
+                  contractNumber,
+                  contract_number: contractNumber,
+                  property_id: propId,
+                  property_title: tenantData.propertyTitle,
+                  tenant_id: user?.id,
+                  tenant_name: tenantData.name,
+                  tenant_signed: true,
+                  tenant_signature_url: signatureUrl,
+                  status: 'contrat_actif',
+                  targetTab: 'contracts'
+                };
+
+                if (targetOwnerId && isValidUuid(targetOwnerId)) {
+                  try {
+                    await supabase.from('notifications').insert({
+                      id: sharedNotifId,
+                      user_id: targetOwnerId,
+                      title: 'Contrat signé par le locataire',
+                      message: notifMsg,
+                      description: notifMsg,
+                      content: notifMsg,
+                      type: 'contrat',
+                      category: 'contrat',
+                      target_role: 'proprietaire',
+                      read: false,
+                      is_read: false,
+                      data: notifPayload,
+                      payload: notifPayload
+                    });
+                  } catch {}
+                }
+
                 if (targetOwnerId) {
                   pushGlobalNotification({
+                    id: sharedNotifId,
                     title: 'Contrat signé par le locataire',
-                    description: `${tenantData.name} a apposé sa signature certifiée sur le contrat N° ${contractNumber}. Vous pouvez maintenant le finaliser.`,
+                    description: notifMsg,
                     category: 'contrat',
                     targetUserId: targetOwnerId,
-                    targetTab: 'demandes',
+                    targetTab: 'contracts',
                     targetRole: 'proprietaire',
-                    link: '/dashboard'
+                    link: '/dashboard',
+                    data: notifPayload
                   });
                 }
 
@@ -1619,8 +1691,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                   contractId: contractNumber,
                   actorId: user?.id,
                   targetUserId: targetOwnerId,
-                  propertyId: realContract?.property_id,
-                  data: { contractNumber, tenantName: tenantData.name }
+                  propertyId: propId,
+                  data: notifPayload
                 });
               }
             } catch (err) {

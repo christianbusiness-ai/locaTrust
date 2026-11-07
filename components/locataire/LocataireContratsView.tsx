@@ -33,10 +33,13 @@ import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
-import { resolveContractParties } from '@/lib/contractPartyResolver';
+import { resolveContractParties, persistTenantSignature, getStoredTenantSignature } from '@/lib/contractPartyResolver';
 import { ContractCardSkeleton } from '@/components/common/SkeletonLoader';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 import { submitContractRenewalRequest } from '@/lib/contractRenewalManager';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { triggerCelebration } from '@/lib/celebration';
 
 interface TenantPropertyRental {
   id: string;
@@ -72,6 +75,417 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
   const [generatingProofId, setGeneratingProofId] = useState<string | null>(null);
   const [submittingRenewalId, setSubmittingRenewalId] = useState<string | null>(null);
 
+  // Petite carte dédiée à la signature & validation directe du contrat (Exigence Image 1 & 2)
+  const [signingRentalCard, setSigningRentalCard] = useState<TenantPropertyRental | null>(null);
+  const sigCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const [isDrawingSig, setIsDrawingSig] = useState(false);
+  const [hasDrawnSig, setHasDrawnSig] = useState(false);
+  const [sigValidationError, setSigValidationError] = useState<string | null>(null);
+  const [isSubmittingSig, setIsSubmittingSig] = useState(false);
+
+  const clearCompactSigCanvas = () => {
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasDrawnSig(false);
+    setSigValidationError(null);
+  };
+
+  useEffect(() => {
+    if (signingRentalCard && sigCanvasRef.current) {
+      const canvas = sigCanvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 2.6;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+      }
+      setHasDrawnSig(false);
+      setSigValidationError(null);
+    }
+  }, [signingRentalCard]);
+
+  const getSigCoords = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    if ('touches' in e) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      return {
+        x: (touch.clientX - rect.left) * scaleX,
+        y: (touch.clientY - rect.top) * scaleY
+      };
+    }
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  };
+
+  const handleSigStart = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const { x, y } = getSigCoords(e);
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawingSig(true);
+    setHasDrawnSig(true);
+    setSigValidationError(null);
+  };
+
+  const handleSigMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawingSig) return;
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const { x, y } = getSigCoords(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const handleSigEnd = () => {
+    setIsDrawingSig(false);
+  };
+
+  const handleConfirmCompactSignature = async () => {
+    if (!signingRentalCard) return;
+    if (!hasDrawnSig || !sigCanvasRef.current) {
+      setSigValidationError('Veuillez dessiner votre signature manuscrite dans le cadre ci-dessus avant de valider.');
+      return;
+    }
+
+    const signatureUrl = sigCanvasRef.current.toDataURL('image/png');
+    const cNum = signingRentalCard.contractNumber;
+    const rawCnt = signingRentalCard.rawContract || {};
+    const nowIso = new Date().toISOString();
+    const signedDateFr = new Date().toLocaleDateString('fr-FR');
+    const tenantName =
+      user?.user_metadata?.full_name ||
+      profile?.full_name ||
+      rawCnt.tenant?.full_name ||
+      rawCnt.tenant_name ||
+      'Locataire';
+    const propId = rawCnt.property_id || rawCnt.property?.id;
+    const targetOwnerId = rawCnt.owner_id || rawCnt.owner?.id;
+    const isUuid = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+
+    setIsSubmittingSig(true);
+    try {
+      persistTenantSignature(signatureUrl, user?.id);
+
+      // 1. Sauvegarder dans le registre persistant local des contrats signés
+      if (typeof window !== 'undefined') {
+        try {
+          const rawSignedMap = localStorage.getItem('locatrust_signed_contracts_map');
+          const signedMap = rawSignedMap ? JSON.parse(rawSignedMap) : {};
+          signedMap[cNum] = {
+            tenant_signed: true,
+            tenant_signature_url: signatureUrl,
+            signed_at: nowIso,
+            status: 'actif'
+          };
+          localStorage.setItem('locatrust_signed_contracts_map', JSON.stringify(signedMap));
+        } catch {}
+
+        // 2. Mettre à jour ou insérer dans locatrust_contracts
+        try {
+          const rawContracts = localStorage.getItem('locatrust_contracts');
+          const list = rawContracts ? JSON.parse(rawContracts) : [];
+          const arr = Array.isArray(list) ? list : [];
+          let foundInLocal = false;
+          const updatedList = arr.map((c: any) => {
+            if (c.contract_number === cNum || c.id === cNum || (propId && (c.property_id === propId || c.property?.id === propId))) {
+              foundInLocal = true;
+              return {
+                ...c,
+                status: 'actif',
+                tenant_signed: true,
+                tenant_signed_at: nowIso,
+                tenant_signature: signatureUrl,
+                tenant_signature_url: signatureUrl,
+                signed_date: signedDateFr
+              };
+            }
+            return c;
+          });
+          if (!foundInLocal) {
+            updatedList.unshift({
+              ...rawCnt,
+              id: rawCnt.id || `cnt_${cNum}`,
+              contract_number: cNum,
+              property_id: propId,
+              tenant_id: user?.id,
+              owner_id: targetOwnerId,
+              rent: signingRentalCard.rent,
+              monthly_rent: signingRentalCard.rent,
+              caution: signingRentalCard.cautionAmount,
+              caution_amount: signingRentalCard.cautionAmount,
+              charges: signingRentalCard.charges,
+              charges_amount: signingRentalCard.charges,
+              status: 'actif',
+              owner_signed: true,
+              tenant_signed: true,
+              tenant_signed_at: nowIso,
+              tenant_signature: signatureUrl,
+              tenant_signature_url: signatureUrl,
+              signed_date: signedDateFr
+            });
+          }
+          localStorage.setItem('locatrust_contracts', JSON.stringify(updatedList));
+        } catch {}
+
+        // 3. Mettre à jour les notifications locales pour qu'elles ne réinitialisent jamais tenant_signed à false
+        try {
+          const rawNotifs = localStorage.getItem('locatrust_notifications');
+          if (rawNotifs) {
+            const parsedNotifs = JSON.parse(rawNotifs);
+            if (Array.isArray(parsedNotifs)) {
+              const updatedNotifs = parsedNotifs.map((n: any) => {
+                const p = n?.data || n?.payload || {};
+                if ((p.contractNumber || p.contract_number) === cNum) {
+                  return {
+                    ...n,
+                    read: true,
+                    is_read: true,
+                    data: { ...p, tenant_signed: true, tenant_signature_url: signatureUrl, status: 'actif' },
+                    payload: { ...p, tenant_signed: true, tenant_signature_url: signatureUrl, status: 'actif' }
+                  };
+                }
+                return n;
+              });
+              localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
+            }
+          }
+        } catch {}
+
+        // 4. Mettre à jour locatrust_rental_applications et locatrust_properties
+        try {
+          const appsRaw = localStorage.getItem('locatrust_rental_applications');
+          if (appsRaw) {
+            const parsedApps = JSON.parse(appsRaw);
+            if (Array.isArray(parsedApps)) {
+              const updatedApps = parsedApps.map((a: any) => {
+                if (
+                  a.contract_number === cNum ||
+                  a.documents?.contract_number === cNum ||
+                  (propId && a.property_id === propId && (a.tenant_id === user?.id || !a.tenant_id))
+                ) {
+                  return {
+                    ...a,
+                    status: 'contrat_actif',
+                    contract_finalized: true,
+                    tenant_signed: true,
+                    tenant_signed_at: nowIso,
+                    tenant_signature_url: signatureUrl,
+                    documents: {
+                      ...(a.documents && typeof a.documents === 'object' ? a.documents : {}),
+                      contract_number: cNum,
+                      contract_transmitted: true,
+                      contract_finalized: true,
+                      tenant_signed: true,
+                      tenant_signed_at: nowIso,
+                      tenant_signature_url: signatureUrl,
+                      contract_status: 'contrat_actif'
+                    }
+                  };
+                }
+                return a;
+              });
+              localStorage.setItem('locatrust_rental_applications', JSON.stringify(updatedApps));
+            }
+          }
+
+          if (propId) {
+            const propsRaw = localStorage.getItem('locatrust_properties');
+            if (propsRaw) {
+              const parsedProps = JSON.parse(propsRaw);
+              if (Array.isArray(parsedProps)) {
+                const updatedProps = parsedProps.map((p: any) =>
+                  p.id === propId || p._id === propId ? { ...p, status: 'loue' } : p
+                );
+                localStorage.setItem('locatrust_properties', JSON.stringify(updatedProps));
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // 5. Mise à jour immédiate de l'état React dans LocataireContratsView (disparition du bouton Signer + déblocage PDF)
+      setContracts((prev) =>
+        prev.map((c: any) => {
+          if ((c.contract_number || c.id) === cNum) {
+            return {
+              ...c,
+              status: 'actif',
+              tenant_signed: true,
+              tenant_signed_at: nowIso,
+              tenant_signature: signatureUrl,
+              tenant_signature_url: signatureUrl,
+              signed_date: signedDateFr
+            };
+          }
+          return c;
+        })
+      );
+
+      // 6. Persistance Supabase sur public.contracts (Étape A sans modifier status pour respecter le trigger RLS locataire, puis Étape B avec status: 'actif')
+      try {
+        const sigPayload = {
+          tenant_signature: signatureUrl,
+          tenant_signed: true,
+          tenant_signed_at: nowIso,
+          updated_at: nowIso
+        };
+        if (isUuid(rawCnt.id)) {
+          await supabase.from('contracts').update(sigPayload).eq('id', rawCnt.id);
+        } else {
+          await supabase.from('contracts').update(sigPayload).eq('contract_number', cNum);
+        }
+
+        try {
+          if (isUuid(rawCnt.id)) {
+            await supabase.from('contracts').update({ status: 'actif' }).eq('id', rawCnt.id);
+          } else {
+            await supabase.from('contracts').update({ status: 'actif' }).eq('contract_number', cNum);
+          }
+        } catch {}
+      } catch (cntErr) {
+        console.warn('Update contracts signature notice:', cntErr);
+      }
+
+      // 7. Persistance Supabase sur public.rental_applications (via JSONB documents) et public.properties
+      try {
+        if (user?.id) {
+          const { data: myApps } = await supabase
+            .from('rental_applications')
+            .select('*')
+            .eq('tenant_id', user.id);
+          if (myApps && Array.isArray(myApps)) {
+            for (const appRow of myApps) {
+              const docs = appRow.documents && typeof appRow.documents === 'object' ? appRow.documents : {};
+              if (docs.contract_number === cNum || (propId && appRow.property_id === propId)) {
+                const updatedDocs = {
+                  ...docs,
+                  contract_number: cNum,
+                  contract_transmitted: true,
+                  contract_finalized: true,
+                  tenant_signed: true,
+                  tenant_signed_at: nowIso,
+                  tenant_signature_url: signatureUrl,
+                  contract_status: 'contrat_actif'
+                };
+                const { error: errWithStatus } = await supabase
+                  .from('rental_applications')
+                  .update({ status: 'contrat_actif', documents: updatedDocs })
+                  .eq('id', appRow.id);
+                if (errWithStatus) {
+                  await supabase
+                    .from('rental_applications')
+                    .update({ documents: updatedDocs })
+                    .eq('id', appRow.id);
+                }
+              }
+            }
+          }
+        }
+
+        if (isUuid(propId)) {
+          await supabase.from('properties').update({ status: 'loue' }).eq('id', propId);
+        }
+      } catch (appSyncErr) {
+        console.warn('Sync rental_applications signature notice:', appSyncErr);
+      }
+
+      // 8. Notification unique et dédupliquée au propriétaire / agence (avec payload complet pour synchronisation automatique)
+      const sharedNotifId = crypto.randomUUID();
+      const notifMsg = `${tenantName} a apposé sa signature certifiée sur le contrat N° ${cNum} (${signingRentalCard.title}). Le contrat est désormais actif et téléchargeable.`;
+      const notifPayload = {
+        contractNumber: cNum,
+        contract_number: cNum,
+        property_id: propId,
+        property_title: signingRentalCard.title,
+        tenant_id: user?.id,
+        tenant_name: tenantName,
+        tenant_signed: true,
+        tenant_signature_url: signatureUrl,
+        status: 'contrat_actif',
+        targetTab: 'contracts'
+      };
+
+      if (isUuid(targetOwnerId)) {
+        try {
+          await supabase.from('notifications').insert({
+            id: sharedNotifId,
+            user_id: targetOwnerId,
+            title: 'Contrat signé par le locataire',
+            message: notifMsg,
+            description: notifMsg,
+            content: notifMsg,
+            type: 'contrat',
+            category: 'contrat',
+            target_role: 'proprietaire',
+            read: false,
+            is_read: false,
+            data: notifPayload,
+            payload: notifPayload
+          });
+        } catch {}
+      }
+
+      pushGlobalNotification({
+        id: sharedNotifId,
+        title: 'Contrat signé par le locataire',
+        description: notifMsg,
+        category: 'contrat',
+        targetUserId: targetOwnerId,
+        targetRole: 'proprietaire',
+        targetTab: 'contracts',
+        data: notifPayload
+      });
+
+      broadcastLiveEvent('TENANT_SIGNED', {
+        actorId: user?.id,
+        targetUserId: targetOwnerId,
+        propertyId: propId,
+        contractId: cNum,
+        data: notifPayload
+      });
+
+      broadcastLiveEvent('CONTRACT_FINALIZED', {
+        actorId: user?.id,
+        targetUserId: targetOwnerId,
+        propertyId: propId,
+        contractId: cNum,
+        data: notifPayload
+      });
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+        window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+      }
+
+      setSigningRentalCard(null);
+      triggerCelebration('success');
+    } finally {
+      setIsSubmittingSig(false);
+    }
+  };
+
   const handleGetTenantProofDossier = async (rawContract: any) => {
     const cid = rawContract?.contract_number || rawContract?.id || 'CT-2026';
     setGeneratingProofId(cid);
@@ -88,9 +502,6 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
   const handleRequestRenewal = async (rawContract: any, rental: TenantPropertyRental) => {
     const cid = rawContract?.contract_number || rental.contractNumber;
-    if (!window.confirm(`Voulez-vous formellement demander le renouvellement de votre bail N° ${cid} pour une durée de 12 mois ?\nVotre bailleur recevra immédiatement une notification officielle.`)) {
-      return;
-    }
     setSubmittingRenewalId(cid);
     try {
       await submitContractRenewalRequest({
@@ -99,7 +510,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         propertyTitle: rental.title || 'Logement loué',
         durationMonths: 12
       });
-      alert('Votre demande de renouvellement de bail a été transmise à votre bailleur avec succès !');
+      triggerCelebration('success');
       fetchTenantData();
     } catch (e: any) {
       console.error(e);
@@ -123,15 +534,59 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     setIsLoading(true);
     setLoadError(null);
     try {
+      // Registre local et Supabase des signatures déjà apposées par le locataire
+      let signedContractsMap: Record<string, any> = {};
+      if (typeof window !== 'undefined') {
+        try {
+          const rawMap = localStorage.getItem('locatrust_signed_contracts_map');
+          if (rawMap) signedContractsMap = JSON.parse(rawMap) || {};
+        } catch {}
+      }
+
+      // Vérifier aussi dans Supabase notifications si une notification "Contrat signé par le locataire" a déjà été émise (ex: LT-2026-CI-39210687)
+      try {
+        const { data: signedNotifs } = await supabase
+          .from('notifications')
+          .select('title, message, description, content, data, payload')
+          .ilike('title', '%signé par le locataire%')
+          .limit(30);
+        if (signedNotifs && Array.isArray(signedNotifs)) {
+          signedNotifs.forEach((sn: any) => {
+            const p = sn.data || sn.payload || {};
+            const bodyStr = String(sn.message || sn.description || sn.content || '');
+            const cNumData = p.contractNumber || p.contract_number;
+            if (cNumData && !signedContractsMap[cNumData]) {
+              signedContractsMap[cNumData] = {
+                tenant_signed: true,
+                tenant_signature_url: p.tenant_signature_url || getStoredTenantSignature(user.id),
+                status: 'actif'
+              };
+            }
+            const m = bodyStr.match(/(LT-\d{4}-[A-Z0-9-]+)/i);
+            if (m && m[1] && !signedContractsMap[m[1].trim()]) {
+              signedContractsMap[m[1].trim()] = {
+                tenant_signed: true,
+                tenant_signature_url: p.tenant_signature_url || getStoredTenantSignature(user.id),
+                status: 'actif'
+              };
+            }
+          });
+        }
+      } catch {}
+
       const { data: cntData, error: cntError } = await getContracts(user.id, 'locataire');
       const loadedDbContracts: any[] = (cntData || []).map((c: any) => {
+        const cKey = c.contract_number || c.id;
+        const mapEntry = cKey ? signedContractsMap[cKey] : null;
         // Normaliser les statuts Supabase (qui peuvent être 'brouillon' ou 'en_attente')
-        const isSigned = Boolean(c.tenant_signed);
+        const isSigned = Boolean(c.tenant_signed || c.tenant_signature || c.tenant_signature_url || mapEntry?.tenant_signed);
         const normalizedStatus = isSigned
           ? (c.status === 'resilie' || c.status === 'termine' ? c.status : 'actif')
           : 'en_attente_signature_locataire';
         return {
           ...c,
+          tenant_signed: isSigned,
+          tenant_signature_url: c.tenant_signature_url || c.tenant_signature || mapEntry?.tenant_signature_url,
           status: normalizedStatus
         };
       });
@@ -231,6 +686,8 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
               const p = n?.data || n?.payload || {};
               const cNum = p.contractNumber || p.contract_number;
               if (cNum) {
+                const mapEntry = signedContractsMap[cNum];
+                const isAlreadySigned = Boolean(p.tenant_signed || mapEntry?.tenant_signed);
                 localContracts.push({
                   id: p.contract_id || `cnt_${cNum}`,
                   contract_number: cNum,
@@ -243,10 +700,11 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                   charges: Number(p.charges || 0),
                   duration_months: Number(p.duration_months || 12),
                   start_date: p.start_date || new Date().toISOString(),
-                  status: 'en_attente_signature_locataire',
+                  status: isAlreadySigned ? 'actif' : 'en_attente_signature_locataire',
                   owner_signed: true,
-                  tenant_signed: false,
+                  tenant_signed: isAlreadySigned,
                   owner_signature_url: p.owner_signature_url,
+                  tenant_signature_url: p.tenant_signature_url || mapEntry?.tenant_signature_url,
                   owner: { full_name: p.owner_name || 'Bailleur certifié', phone: p.owner_phone || '+225 00 00 00 00' },
                   tenant: { full_name: p.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: p.tenant_phone || user.phone || '' },
                   property: {
@@ -280,6 +738,8 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                 (a.status === 'contrat_actif' || a.contract_finalized || a.contract_transmitted);
 
               if (isMatch && a.contract_number) {
+                const mapEntry = signedContractsMap[a.contract_number];
+                const isSigned = Boolean(a.tenant_signed || a.status === 'contrat_actif' || a.contract_finalized || mapEntry?.tenant_signed);
                 localContracts.push({
                   id: `cnt_app_${a.id}`,
                   contract_number: a.contract_number,
@@ -290,12 +750,12 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                   caution: a.caution_amount,
                   caution_amount: a.caution_amount,
                   charges: Number(a.charges_amount || a.charges || 0),
-                  status: 'actif',
+                  status: isSigned ? 'actif' : 'en_attente_signature_locataire',
                   start_date: a.date_received || new Date().toISOString(),
                   owner_signed: a.owner_signed ?? true,
-                  tenant_signed: a.tenant_signed ?? true,
+                  tenant_signed: isSigned,
                   owner_signature_url: a.owner_signature_url,
-                  tenant_signature_url: a.tenant_signature_url,
+                  tenant_signature_url: a.tenant_signature_url || mapEntry?.tenant_signature_url,
                   owner: { full_name: a.owner_name || 'Bailleur', phone: a.owner_phone || '+225 00 00 00 00' },
                   tenant: { full_name: a.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || user.phone || '' },
                   property: {
@@ -310,7 +770,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         }
       } catch {}
 
-      // Déduplication par contract_number
+      // Déduplication par contract_number en préservant toujours l'état signé s'il existe dans l'une des sources
       const map = new Map<string, any>();
       loadedDbContracts.forEach((c) => {
         const key = c.contract_number || c.id;
@@ -318,10 +778,48 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       });
       localContracts.forEach((c) => {
         const key = c.contract_number || c.id;
+        const mapEntry = key ? signedContractsMap[key] : null;
         if (!map.has(key)) {
-          map.set(key, c);
+          const isSigned = Boolean(c.tenant_signed || c.tenant_signature || c.tenant_signature_url || mapEntry?.tenant_signed);
+          map.set(key, {
+            ...c,
+            tenant_signed: isSigned,
+            tenant_signature_url: c.tenant_signature_url || c.tenant_signature || mapEntry?.tenant_signature_url,
+            status: isSigned
+              ? (c.status === 'resilie' || c.status === 'termine' ? c.status : 'actif')
+              : c.status
+          });
         } else {
-          map.set(key, { ...c, ...map.get(key) });
+          const existing = map.get(key);
+          const isSigned = Boolean(
+            existing.tenant_signed ||
+            existing.tenant_signature ||
+            existing.tenant_signature_url ||
+            c.tenant_signed ||
+            c.tenant_signature ||
+            c.tenant_signature_url ||
+            mapEntry?.tenant_signed
+          );
+          const mergedStatus = isSigned
+            ? (existing.status === 'resilie' || existing.status === 'termine' ? existing.status : 'actif')
+            : (existing.status || c.status);
+          map.set(key, {
+            ...c,
+            ...existing,
+            tenant_signed: isSigned,
+            tenant_signature_url:
+              existing.tenant_signature_url ||
+              existing.tenant_signature ||
+              c.tenant_signature_url ||
+              c.tenant_signature ||
+              mapEntry?.tenant_signature_url,
+            owner_signature_url:
+              existing.owner_signature_url ||
+              existing.owner_signature ||
+              c.owner_signature_url ||
+              c.owner_signature,
+            status: mergedStatus
+          });
         }
       });
 
@@ -728,11 +1226,11 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                 const pendingCnt = tenantRentals.find(r => !r.rawContract?.tenant_signed || r.rawContract?.status === 'en_attente_signature_locataire');
                 return pendingCnt ? (
                   <button
-                    onClick={() => setSelectedContractNumber(pendingCnt.contractNumber)}
-                    className="w-full md:w-auto px-6 py-3 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-xl flex items-center justify-center gap-2 transition-all transform active:scale-95 shrink-0 animate-pulse"
+                    onClick={() => setSigningRentalCard(pendingCnt)}
+                    className="w-full md:w-auto px-6 py-3 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shadow-xl flex items-center justify-center gap-2 transition-all transform active:scale-95 shrink-0 animate-pulse cursor-pointer"
                   >
                     <PenTool className="w-4 h-4 text-slate-950" />
-                    <span>Examiner & Signer le bail</span>
+                    <span>Signer le bail</span>
                   </button>
                 ) : null;
               })()}
@@ -951,15 +1449,25 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                 <div className="flex flex-col md:items-end gap-2 shrink-0">
                   <span className="text-lg font-black text-blue-600">{formatFCFA(rental.rent)} / mois</span>
                   
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     {(!rental.rawContract?.tenant_signed || rental.rawContract?.status === 'en_attente_signature_locataire') ? (
                       <>
                         <button
-                          onClick={() => setSelectedContractNumber(rental.contractNumber)}
-                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-md flex items-center gap-1.5 transition-all animate-pulse"
+                          onClick={() => setSigningRentalCard(rental)}
+                          className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black shadow-md flex items-center gap-1.5 transition-all animate-pulse cursor-pointer"
+                          title="Ouvrir la carte de signature pour signer et valider ce contrat"
                         >
                           <PenTool className="w-3.5 h-3.5 text-slate-950" />
-                          <span>Examiner & Signer</span>
+                          <span>Signer</span>
+                        </button>
+
+                        <button
+                          onClick={() => setSelectedContractNumber(rental.contractNumber)}
+                          className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                          title="Consulter l'intégralité du contrat de bail"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Consulter</span>
                         </button>
 
                         <button
@@ -999,7 +1507,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                                 title="Votre demande de renouvellement pour 12 mois supplémentaires est entre les mains du bailleur"
                                 className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-300 text-xs font-black flex items-center gap-1.5 shadow-sm"
                               >
-                                <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                                <Clock className="w-3.5 h-3.5 text-amber-600" />
                                 <span>Renouvellement en attente</span>
                               </span>
                             ) : rental.rawContract?.renewal_status === 'accepte' ? (
@@ -1022,11 +1530,11 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                               <button
                                 onClick={() => handleRequestRenewal(rental.rawContract || rental, rental)}
                                 disabled={submittingRenewalId === (rental.rawContract?.contract_number || rental.contractNumber)}
-                                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-black shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-60"
+                                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-black shadow-sm flex items-center gap-1.5 transition-all disabled:opacity-60 cursor-pointer"
                                 title="Demander formellement le renouvellement de votre bail pour 12 mois"
                               >
                                 <RefreshCw className={`w-3.5 h-3.5 text-indigo-600 ${submittingRenewalId === (rental.rawContract?.contract_number || rental.contractNumber) ? 'animate-spin' : ''}`} />
-                                <span>🔄 Demander le renouvellement</span>
+                                <span>Demander le renouvellement</span>
                               </button>
                             )}
                           </>
@@ -1034,7 +1542,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
                         <button
                           onClick={() => setSelectedContractNumber(rental.contractNumber)}
-                          className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                          className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Consulter</span>
@@ -1042,7 +1550,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
                         <button
                           onClick={() => handleDownloadContract(rental.rawContract || rental)}
-                          className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition-all"
+                          className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />
                           <span>Télécharger PDF</span>
@@ -1232,6 +1740,139 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
                 className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
               >
                 Fermer le dossier
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Petite carte dédiée à la signature & validation directe du contrat (Exigence Image 1 & 2) */}
+      {signingRentalCard && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                  <PenTool className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                    Bail N° {signingRentalCard.contractNumber}
+                  </span>
+                  <h3 className="text-sm sm:text-base font-black text-slate-900 mt-1">
+                    Signer et valider le contrat
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSigningRentalCard(null)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Résumé compact du contrat à valider */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col gap-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Logement :</span>
+                <span className="font-black text-slate-900 truncate max-w-[200px]">{signingRentalCard.title} ({signingRentalCard.city})</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Bailleur :</span>
+                <span className="font-bold text-slate-800">{signingRentalCard.bailleurName}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Loyer mensuel :</span>
+                <span className="font-black text-blue-700">{formatFCFA(signingRentalCard.rent)} / mois</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Caution garantie :</span>
+                <span className="font-bold text-emerald-700">{formatFCFA(signingRentalCard.cautionAmount)}</span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-slate-200/80 mt-0.5">
+                <span className="text-[11px] text-emerald-700 font-extrabold flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Signature du bailleur déjà apposée
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cNum = signingRentalCard.contractNumber;
+                    setSigningRentalCard(null);
+                    setSelectedContractNumber(cNum);
+                  }}
+                  className="text-[11px] font-extrabold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Eye className="w-3 h-3" />
+                  <span>Consulter le contrat</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Zone de dessin de la signature manuscrite du locataire */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-extrabold text-slate-800">
+                  Votre signature manuscrite (Locataire) :
+                </label>
+                <button
+                  type="button"
+                  onClick={clearCompactSigCanvas}
+                  className="text-[11px] font-bold text-slate-500 hover:text-rose-600 flex items-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Effacer</span>
+                </button>
+              </div>
+
+              <div className="relative rounded-2xl border-2 border-dashed border-slate-300 bg-white overflow-hidden shadow-inner">
+                <canvas
+                  ref={sigCanvasRef}
+                  width={420}
+                  height={150}
+                  onMouseDown={handleSigStart}
+                  onMouseMove={handleSigMove}
+                  onMouseUp={handleSigEnd}
+                  onMouseLeave={handleSigEnd}
+                  onTouchStart={handleSigStart}
+                  onTouchMove={handleSigMove}
+                  onTouchEnd={handleSigEnd}
+                  className="w-full h-[140px] touch-none cursor-crosshair block"
+                />
+                {!hasDrawnSig && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold text-slate-400">
+                    Signez ici avec votre doigt ou votre souris
+                  </div>
+                )}
+              </div>
+
+              {sigValidationError && (
+                <p className="text-[11px] font-bold text-rose-600 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{sigValidationError}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setSigningRentalCard(null)}
+                disabled={isSubmittingSig}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCompactSignature}
+                disabled={isSubmittingSig}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{isSubmittingSig ? 'Validation...' : 'Signer & Valider le contrat'}</span>
               </button>
             </div>
           </div>
