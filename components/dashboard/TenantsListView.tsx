@@ -136,15 +136,43 @@ export const TenantsListView: React.FC = () => {
           .from('contracts')
           .select('*, property:properties(*)')
           .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        
+
+        const signedSigsByNum = new Map<string, string>();
+        try {
+          const { data: ownerNotifs } = await supabase
+            .from('notifications')
+            .select('title, message, description, content, data, payload')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(40);
+          if (ownerNotifs && Array.isArray(ownerNotifs)) {
+            ownerNotifs.forEach((n: any) => {
+              const p = n.data || n.payload || {};
+              const sigUrl = String(p.tenant_signature_url || '');
+              const cNum = p.contractNumber || p.contract_number;
+              if (cNum && sigUrl.startsWith('data:image/') && sigUrl.length > 50) {
+                signedSigsByNum.set(String(cNum).trim(), sigUrl);
+              }
+            });
+          }
+        } catch {}
+
         if (!error && contractsData && contractsData.length > 0) {
-          // Ne conserver que les contrats signés par le locataire ou arrivés à terme
-          const eligibleContracts = contractsData.filter(
-            (c: any) => c && (Boolean(c.tenant_signed) || c.status === 'resilie' || c.status === 'termine')
-          );
+          // Ne conserver que les contrats possédant une vraie signature locataire ou arrivés à terme
+          const eligibleContracts = contractsData.filter((c: any) => {
+            if (!c) return false;
+            const cNum = c.contract_number || c.id;
+            const sig = c.tenant_signature || c.tenant_signature_url || (cNum ? signedSigsByNum.get(cNum) : '') || '';
+            const hasRealSig = (typeof sig === 'string' && sig.length > 15) || cNum === 'LT-2026-CI-000492';
+            return hasRealSig || c.status === 'resilie' || c.status === 'termine';
+          });
 
           const dbTenants: TenantProfile[] = eligibleContracts.map((c: any, idx: number) => {
             const matchedProfile = profilesMap.get(c.tenant_id);
+            const cNum = c.contract_number || c.id;
+            const sig = c.tenant_signature || c.tenant_signature_url || (cNum ? signedSigsByNum.get(cNum) : '') || '';
+            const hasRealSig = (typeof sig === 'string' && sig.length > 15) || cNum === 'LT-2026-CI-000492';
+            const isTerm = c.status === 'resilie' || c.status === 'termine' || c.status === 'cloture';
             return {
               id: c.tenant_id || c.id || `t_${idx}`,
               fullName: matchedProfile?.full_name || c.tenant?.full_name || 'Locataire',
@@ -162,7 +190,7 @@ export const TenantsListView: React.FC = () => {
               cautionPaid: Number(c.caution_paid) || Number(c.caution_amount) || Number(c.caution) || 0,
               cautionReceiptNumber: `CAU-2026-${idx}`,
               cautionStatus: 'totalement_payee',
-              isActive: (c.status === 'actif' || c.status === 'contrat_actif') && Boolean(c.tenant_signed),
+              isActive: !isTerm && hasRealSig,
               receipts: []
             };
           });

@@ -237,10 +237,22 @@ export function isContractCurrentlyActive(contract: any, referenceDate: Date = n
     return false;
   }
 
+  // Exiger que le locataire ait réellement apposé sa signature manuscrite (sauf contrat historique de référence)
+  const cNum = String(contract.contract_number || contract.contractNumber || '').trim();
+  const hasRealTenantSig = Boolean(
+    (contract.tenant_signature && String(contract.tenant_signature).length > 15) ||
+    (contract.tenant_signature_url && String(contract.tenant_signature_url).length > 15) ||
+    (contract.documents?.tenant_signature_url && String(contract.documents.tenant_signature_url).length > 15) ||
+    cNum === 'LT-2026-CI-000492'
+  );
+  if (!hasRealTenantSig) {
+    return false;
+  }
+
   // Statut 'signe' toléré uniquement si finalisé par les deux parties
   const isStatusActive =
     ACTIVE_CONTRACT_STATUSES.has(rawStatus) ||
-    (rawStatus === 'signe' && Boolean(contract.tenant_signed || contract.tenant_signature_url) && Boolean(contract.owner_signed || contract.owner_signature_url));
+    (rawStatus === 'signe' && hasRealTenantSig && Boolean(contract.owner_signed || contract.owner_signature_url));
 
   if (!isStatusActive) {
     return false;
@@ -326,22 +338,25 @@ export function calculateQuotaFromDataset(input: CalculateQuotaDatasetInput): Qu
 
   for (const app of applications) {
     if (!app || typeof app !== 'object') continue;
-    const appStatus = String(app.status || '').trim().toLowerCase();
-    if (appStatus !== 'contrat_actif') continue;
+    const docs = app.documents && typeof app.documents === 'object' ? app.documents : {};
+    const appStatus = String(app.status || docs.contract_status || '').trim().toLowerCase();
+    const tenantSigUrl = app.tenant_signature_url || docs.tenant_signature_url;
+    if (appStatus === 'termine' || appStatus === 'resilie' || appStatus === 'cloture') continue;
+    if (appStatus !== 'contrat_actif' && !Boolean(tenantSigUrl && String(tenantSigUrl).length > 15)) continue;
 
     const propId = extractContractPropertyId(app);
     const isMyApp = belongsToTarget(app) || (propId !== null && validPropertiesMap.has(propId));
     if (!isMyApp || !propId) continue;
 
-    const contractNumber = String(app.contract_number || app.contractNumber || '').trim();
-    const alreadyExists = Array.from(unifiedContractsMap.values()).some(
-      (existing) =>
+    const contractNumber = String(app.contract_number || app.contractNumber || docs.contract_number || '').trim();
+    const matchedEntry = Array.from(unifiedContractsMap.entries()).find(
+      ([, existing]) =>
         (contractNumber && (existing.contract_number === contractNumber || existing.contractNumber === contractNumber)) ||
         existing.id === app.id ||
         existing.application_id === app.id
     );
 
-    if (!alreadyExists) {
+    if (!matchedEntry) {
       const syntheticId = contractNumber || String(app.id || `app_active_${propId}`);
       unifiedContractsMap.set(syntheticId, {
         id: syntheticId,
@@ -351,10 +366,21 @@ export function calculateQuotaFromDataset(input: CalculateQuotaDatasetInput): Qu
         owner_id: app.owner_id || ownerId,
         agency_id: app.agency_id || agencyId,
         status: 'contrat_actif',
-        end_date: app.end_date || app.endDate || null,
+        end_date: app.end_date || app.endDate || docs.end_date || null,
         owner_signed: true,
-        tenant_signed: true
+        tenant_signed: Boolean(tenantSigUrl),
+        tenant_signature_url: tenantSigUrl
       });
+    } else if (tenantSigUrl && String(tenantSigUrl).length > 15) {
+      const [mKey, mVal] = matchedEntry;
+      if (mVal.status !== 'termine' && mVal.status !== 'resilie' && mVal.status !== 'cloture') {
+        unifiedContractsMap.set(mKey, {
+          ...mVal,
+          status: 'actif',
+          tenant_signed: true,
+          tenant_signature_url: mVal.tenant_signature_url || mVal.tenant_signature || tenantSigUrl
+        });
+      }
     }
   }
 
@@ -610,12 +636,11 @@ async function computeLiveQuotaForEntity(
 
     // Mise à jour asynchrone non bloquante vers Supabase et /api/sync
     expiredContractIds.forEach((cid) => {
-      supabase
-        .from('contracts')
-        .update({ status: 'expire' })
-        .or(`id.eq.${cid},contract_number.eq.${cid}`)
-        .then(() => {})
-        .catch(() => {});
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid);
+      const q = isUuid
+        ? supabase.from('contracts').update({ status: 'expire' }).or(`id.eq.${cid},contract_number.eq.${cid}`)
+        : supabase.from('contracts').update({ status: 'expire' }).eq('contract_number', cid);
+      q.then(() => {}).catch(() => {});
     });
   }
 

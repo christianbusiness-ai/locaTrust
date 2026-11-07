@@ -2,7 +2,7 @@
 
 import { supabase } from '@/src/lib/supabase';
 import { formatFCFA } from '@/lib/utils';
-import { sendChatMessage } from '@/lib/messagingStore';
+import { sendChatMessage, isValidUuid } from '@/lib/messagingStore';
 
 export interface ContractRenewalState {
   renewalStatus?: 'aucun' | 'demande' | 'accepte' | 'refuse';
@@ -47,8 +47,8 @@ export function getContractExpiryDetails(contract: any) {
     const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
     const monthsRemaining = Math.max(0, Math.ceil(diffDays / 30.5));
 
-    // J-30 : arrive à terme dans 30 jours (1 mois ou moins)
-    const isAtOneMonthOrLess = diffDays <= 30 && diffDays >= 0;
+    // J-30 : arrive à terme dans 1 mois ou moins (<= 31 jours)
+    const isAtOneMonthOrLess = diffDays <= 31 && diffDays >= -7;
     const isExpired = diffDays < 0;
 
     return {
@@ -237,15 +237,83 @@ export async function submitContractRenewalRequest(params: {
     );
   } catch {}
 
-  // 4. Mise à jour Supabase si possible
+  // 4. Mise à jour Supabase (contracts, rental_applications.documents, notifications)
+  const nowIso = new Date().toISOString();
   try {
-    await supabase
-      .from('contracts')
-      .update({
+    if (isValidUuid(contractNumber)) {
+      await supabase
+        .from('contracts')
+        .update({
+          renewal_status: 'demande',
+          renewal_requested_at: nowIso
+        })
+        .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+    } else {
+      await supabase
+        .from('contracts')
+        .update({
+          renewal_status: 'demande',
+          renewal_requested_at: nowIso
+        })
+        .eq('contract_number', contractNumber);
+    }
+  } catch {}
+
+  try {
+    if (isValidUuid(tenantId)) {
+      const { data: apps } = await supabase
+        .from('rental_applications')
+        .select('id, property_id, documents')
+        .eq('tenant_id', tenantId);
+      if (apps && Array.isArray(apps)) {
+        for (const a of apps) {
+          const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+          if (docs.contract_number === contractNumber || (contract.property_id && a.property_id === contract.property_id)) {
+            await supabase
+              .from('rental_applications')
+              .update({
+                documents: {
+                  ...docs,
+                  contract_number: contractNumber,
+                  renewal_status: 'demande',
+                  renewal_requested_at: nowIso,
+                  renewal_duration_requested: durationMonths
+                }
+              })
+              .eq('id', a.id);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    if (isValidUuid(ownerId)) {
+      const notifMsg = `${tenantName} demande formellement le renouvellement du bail N° ${contractNumber} (${propertyTitle}) pour une durée de ${durationMonths} mois.`;
+      const notifPayload = {
+        contractNumber,
+        contract_number: contractNumber,
         renewal_status: 'demande',
-        renewal_requested_at: new Date().toISOString()
-      })
-      .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+        renewal_duration_requested: durationMonths,
+        tenant_name: tenantName,
+        property_title: propertyTitle,
+        targetTab: 'contracts'
+      };
+      await supabase.from('notifications').insert({
+        user_id: ownerId,
+        title: '🔄 Demande de renouvellement de bail reçue',
+        message: notifMsg,
+        description: notifMsg,
+        content: notifMsg,
+        type: 'contrat',
+        category: 'contrat',
+        target_role: 'proprietaire',
+        read: false,
+        is_read: false,
+        data: notifPayload,
+        payload: notifPayload
+      });
+    }
   } catch {}
 }
 
@@ -267,7 +335,9 @@ export async function acceptContractRenewal(params: {
   const newEndDate = new Date(expiry.endDateObj);
   newEndDate.setMonth(newEndDate.getMonth() + durationMonths);
   const newEndDateStr = newEndDate.toLocaleDateString('fr-FR');
+  const newEndDateIso = newEndDate.toISOString().split('T')[0];
   const newDurationTotal = Number(contract.duration_months || 12) + durationMonths;
+  const nowIso = new Date().toISOString();
 
   // 1. Mettre à jour dans le localStorage
   if (typeof window !== 'undefined') {
@@ -282,8 +352,8 @@ export async function acceptContractRenewal(params: {
               status: 'actif',
               renewal_status: 'accepte',
               duration_months: newDurationTotal,
-              end_date: newEndDate.toISOString().split('T')[0],
-              renewal_accepted_at: new Date().toISOString(),
+              end_date: newEndDateIso,
+              renewal_accepted_at: nowIso,
               periode: `${c.signed_date || '01/10/2026'} - ${newEndDateStr} (Renouvelé +${durationMonths} mois)`
             };
           }
@@ -322,17 +392,83 @@ export async function acceptContractRenewal(params: {
     );
   } catch {}
 
-  // 4. Mise à jour Supabase
+  // 4. Mise à jour Supabase (contracts, rental_applications.documents, notifications)
   try {
-    await supabase
-      .from('contracts')
-      .update({
-        status: 'actif',
+    const updatePayload = {
+      status: 'actif',
+      duration_months: newDurationTotal,
+      end_date: newEndDateIso,
+      updated_at: nowIso
+    };
+    if (isValidUuid(contractNumber)) {
+      await supabase.from('contracts').update(updatePayload).or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+    } else {
+      await supabase.from('contracts').update(updatePayload).eq('contract_number', contractNumber);
+    }
+    try {
+      if (isValidUuid(contractNumber)) {
+        await supabase.from('contracts').update({ renewal_status: 'accepte' }).or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+      } else {
+        await supabase.from('contracts').update({ renewal_status: 'accepte' }).eq('contract_number', contractNumber);
+      }
+    } catch {}
+  } catch {}
+
+  try {
+    if (isValidUuid(tenantId)) {
+      const { data: apps } = await supabase
+        .from('rental_applications')
+        .select('id, property_id, documents')
+        .eq('tenant_id', tenantId);
+      if (apps && Array.isArray(apps)) {
+        for (const a of apps) {
+          const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+          if (docs.contract_number === contractNumber || (contract.property_id && a.property_id === contract.property_id)) {
+            await supabase
+              .from('rental_applications')
+              .update({
+                documents: {
+                  ...docs,
+                  contract_number: contractNumber,
+                  renewal_status: 'accepte',
+                  renewal_accepted_at: nowIso,
+                  duration_months: newDurationTotal,
+                  end_date: newEndDateIso
+                }
+              })
+              .eq('id', a.id);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    if (isValidUuid(tenantId)) {
+      const notifMsg = `Votre demande de renouvellement pour le bail N° ${contractNumber} (${propertyTitle}) a été acceptée. Votre bail est prolongé jusqu'au ${newEndDateStr}.`;
+      const notifPayload = {
+        contractNumber,
+        contract_number: contractNumber,
         renewal_status: 'accepte',
         duration_months: newDurationTotal,
-        end_date: newEndDate.toISOString().split('T')[0]
-      })
-      .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+        end_date: newEndDateIso,
+        targetTab: 'contrats'
+      };
+      await supabase.from('notifications').insert({
+        user_id: tenantId,
+        title: '✅ Renouvellement de bail accepté !',
+        message: notifMsg,
+        description: notifMsg,
+        content: notifMsg,
+        type: 'contrat',
+        category: 'contrat',
+        target_role: 'locataire',
+        read: false,
+        is_read: false,
+        data: notifPayload,
+        payload: notifPayload
+      });
+    }
   } catch {}
 
   return { newEndDateStr, newDurationTotal };
@@ -352,6 +488,7 @@ export async function refuseContractRenewal(params: {
   const tenantName = contract.tenant_name || contract.tenant?.full_name || 'Locataire';
   const propertyTitle = contract.property_title || contract.property?.title || 'Logement';
   const expiry = getContractExpiryDetails(contract);
+  const nowIso = new Date().toISOString();
 
   // 1. Mettre à jour dans le localStorage
   if (typeof window !== 'undefined') {
@@ -365,7 +502,7 @@ export async function refuseContractRenewal(params: {
               ...c,
               renewal_status: 'refuse',
               renewal_refusal_reason: reason,
-              renewal_refused_at: new Date().toISOString()
+              renewal_refused_at: nowIso
             };
           }
           return c;
@@ -405,12 +542,77 @@ export async function refuseContractRenewal(params: {
 
   // 4. Mise à jour Supabase
   try {
-    await supabase
-      .from('contracts')
-      .update({
+    if (isValidUuid(contractNumber)) {
+      await supabase
+        .from('contracts')
+        .update({
+          renewal_status: 'refuse',
+          renewal_refused_at: nowIso
+        })
+        .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+    } else {
+      await supabase
+        .from('contracts')
+        .update({
+          renewal_status: 'refuse',
+          renewal_refused_at: nowIso
+        })
+        .eq('contract_number', contractNumber);
+    }
+  } catch {}
+
+  try {
+    if (isValidUuid(tenantId)) {
+      const { data: apps } = await supabase
+        .from('rental_applications')
+        .select('id, property_id, documents')
+        .eq('tenant_id', tenantId);
+      if (apps && Array.isArray(apps)) {
+        for (const a of apps) {
+          const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+          if (docs.contract_number === contractNumber || (contract.property_id && a.property_id === contract.property_id)) {
+            await supabase
+              .from('rental_applications')
+              .update({
+                documents: {
+                  ...docs,
+                  contract_number: contractNumber,
+                  renewal_status: 'refuse',
+                  renewal_refusal_reason: reason,
+                  renewal_refused_at: nowIso
+                }
+              })
+              .eq('id', a.id);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    if (isValidUuid(tenantId)) {
+      const notifMsg = `Le bailleur a notifié que le bail N° ${contractNumber} (${propertyTitle}) ne sera pas renouvelé. Il prendra fin le ${expiry.endDateFormatted}. Motif : ${reason}.`;
+      const notifPayload = {
+        contractNumber,
+        contract_number: contractNumber,
         renewal_status: 'refuse',
-        renewal_refused_at: new Date().toISOString()
-      })
-      .or(`contract_number.eq.${contractNumber},id.eq.${contractNumber}`);
+        renewal_refusal_reason: reason,
+        targetTab: 'contrats'
+      };
+      await supabase.from('notifications').insert({
+        user_id: tenantId,
+        title: '❌ Non-renouvellement du contrat de bail',
+        message: notifMsg,
+        description: notifMsg,
+        content: notifMsg,
+        type: 'contrat',
+        category: 'contrat',
+        target_role: 'locataire',
+        read: false,
+        is_read: false,
+        data: notifPayload,
+        payload: notifPayload
+      });
+    }
   } catch {}
 }
