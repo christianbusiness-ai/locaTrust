@@ -64,6 +64,54 @@ export interface ResolvedContractParties {
   mandantName?: string;
 }
 
+const PROVISIONAL_CNI_PATTERNS = new Set([
+  'ci00236543',
+  'ci00662233',
+  'ci 00662233',
+  'ci00236543 (provisoire)',
+  'ci00662233 (provisoire)',
+  'ci-002891048-a',
+  'ci-001948271-b',
+  'ci-abj-2024-b-89412',
+  'ci-00000000',
+  'ci002894129',
+  'ci987654321',
+  'ci123456789',
+  'non renseigné',
+  'non renseigne',
+  'vérifiée',
+  'verifiee',
+  'identité vérifiée',
+  'identite verifiee',
+  'identité certifiée',
+  'identite certifiee'
+]);
+
+export function isProvisionalOrPlaceholderCni(val?: string | null): boolean {
+  if (!val) return true;
+  const clean = String(val).trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!clean || clean.length < 4) return true;
+  if (clean.includes('provisoire')) return true;
+  return PROVISIONAL_CNI_PATTERNS.has(clean);
+}
+
+export function resolveBestPartyCni(
+  candidates: Array<string | null | undefined>,
+  party: 'owner' | 'tenant'
+): string {
+  // 1. Priorité absolue : utiliser le vrai numéro CNI/Passeport renseigné par l'utilisateur
+  for (const cand of candidates) {
+    if (cand && typeof cand === 'string') {
+      const trimmed = cand.trim();
+      if (trimmed && !isProvisionalOrPlaceholderCni(trimmed)) {
+        return trimmed;
+      }
+    }
+  }
+  // 2. Sinon : numéro provisoire explicite en attendant que l'utilisateur renseigne son vrai numéro CNI/Passeport
+  return party === 'owner' ? 'CI00236543 (Provisoire)' : 'CI00662233 (Provisoire)';
+}
+
 const ABIDJAN_COMMUNES = [
   'cocody',
   'plateau',
@@ -245,17 +293,22 @@ export async function resolveContractParties(
     (typeof window !== 'undefined' && isOwnerCurrent ? localStorage.getItem('locatrust_user_phone') : null) ||
     '+225 07 00 00 00 00';
 
-  const ownerCni =
-    ownerFallback?.cni ||
-    (isOwnerCurrent ? currentProfile?.cni_number : null) ||
-    dbOwnerProfile?.cni_number ||
-    contract?.owner?.cni_number ||
-    contract?.ownerCni ||
-    contract?.owner?.rccm_number ||
-    app?.owner_cni ||
-    (isOwnerCurrent ? currentUser?.user_metadata?.cni_number : null) ||
-    (typeof window !== 'undefined' && isOwnerCurrent ? localStorage.getItem('locatrust_user_cni') : null) ||
-    'CI-002891048-A';
+  const ownerCni = resolveBestPartyCni(
+    [
+      isOwnerCurrent ? currentProfile?.cni_number : null,
+      dbOwnerProfile?.cni_number,
+      contract?.owner_cni,
+      contract?.ownerCni,
+      contract?.owner?.cni_number,
+      contract?.owner?.rccm_number,
+      app?.documents?.owner_cni,
+      app?.owner_cni,
+      isOwnerCurrent ? currentUser?.user_metadata?.cni_number : null,
+      typeof window !== 'undefined' && isOwnerCurrent ? localStorage.getItem('locatrust_user_cni') : null,
+      ownerFallback?.cni
+    ],
+    'owner'
+  );
 
   const ownerAddress =
     formatPartyLocalityAddress(
@@ -311,16 +364,21 @@ export async function resolveContractParties(
     (typeof window !== 'undefined' && isTenantCurrent ? localStorage.getItem('locatrust_user_phone') : null) ||
     '+225 05 00 00 00 00';
 
-  const tenantCni =
-    tenantFallback?.cni ||
-    (isTenantCurrent ? currentProfile?.cni_number : null) ||
-    dbTenantProfile?.cni_number ||
-    app?.tenant_cni ||
-    contract?.tenant?.cni_number ||
-    contract?.tenantCni ||
-    (isTenantCurrent ? currentUser?.user_metadata?.cni_number : null) ||
-    (typeof window !== 'undefined' && isTenantCurrent ? localStorage.getItem('locatrust_user_cni') : null) ||
-    'CI-001948271-B';
+  const tenantCni = resolveBestPartyCni(
+    [
+      isTenantCurrent ? currentProfile?.cni_number : null,
+      dbTenantProfile?.cni_number,
+      contract?.tenant_cni,
+      contract?.tenantCni,
+      contract?.tenant?.cni_number,
+      app?.documents?.tenant_cni,
+      app?.tenant_cni,
+      isTenantCurrent ? currentUser?.user_metadata?.cni_number : null,
+      typeof window !== 'undefined' && isTenantCurrent ? localStorage.getItem('locatrust_user_cni') : null,
+      tenantFallback?.cni
+    ],
+    'tenant'
+  );
 
   const tenantAddress =
     formatPartyLocalityAddress(

@@ -396,7 +396,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           tenant_phone: prof?.phone || dbA.tenant_phone || docsObj.tenant_phone || '+225 07 00 00 00 00',
           tenant_email: prof?.email || dbA.tenant_email || '',
           tenant_avatar: effectiveAvatar,
-          tenant_cni: dbA.tenant_cni || 'CI-ABJ-2024-B-89412',
+          tenant_cni: prof?.cni_number || docsObj.tenant_cni || dbA.tenant_cni || 'CI00662233 (Provisoire)',
           documents: docsObj
         };
       };
@@ -2344,7 +2344,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               ownerId: (selectedApplicationForContract as any).owner_id || user?.id,
               ownerName: profile?.full_name || user?.user_metadata?.full_name || ((profile?.role as any) === 'agence' ? 'Agence Immobilière Agréée' : 'Propriétaire Bailleur'),
               ownerPhone: profile?.phone || user?.user_metadata?.phone || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_phone') : null) || '+225 07 00 00 00 00',
-              ownerCni: profile?.cni_number || user?.user_metadata?.cni_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A',
+              ownerCni: profile?.cni_number || user?.user_metadata?.cni_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI00236543 (Provisoire)',
               ownerAddress: (profile as any)?.address || profile?.commune || profile?.city || 'Côte d\'Ivoire',
               tenantName: selectedApplicationForContract.tenant_name,
               tenantPhone: selectedApplicationForContract.tenant_phone,

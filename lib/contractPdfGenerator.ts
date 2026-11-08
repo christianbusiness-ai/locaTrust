@@ -2,6 +2,7 @@ import { formatFCFA } from '@/lib/utils';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { triggerCelebration } from '@/lib/celebration';
+import { resolveBestPartyCni } from '@/lib/contractPartyResolver';
 
 async function ensureImageDataUrl(url?: string | null): Promise<string | null> {
   if (!url || typeof url !== 'string') return null;
@@ -211,80 +212,83 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       console.warn('QR Code embedding error in PDF:', err);
     }
 
+    const ownerCniDisplay = resolveBestPartyCni([data.ownerCni], 'owner');
+    const tenantCniDisplay = resolveBestPartyCni([tenantCni, data.tenantCni], 'tenant');
+
     // Entre les soussignés (Commence proprement sous le bandeau d'en-tête et le QR code)
     doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7.5);
+    doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
     doc.text('Entre les soussignés :', 15, 35.5);
 
     // Boîtes Parties (Bailleur & Locataire) - Zéro chevauchement avec le QR Code qui se termine à Y=33
     doc.setDrawColor(226, 232, 240);
     doc.setFillColor(248, 250, 252);
-    doc.roundedRect(15, 37.5, 85, 24.5, 2, 2, 'FD');
-    doc.roundedRect(105, 37.5, 85, 24.5, 2, 2, 'FD');
+    doc.roundedRect(15, 37.5, 85, 27.5, 2, 2, 'FD');
+    doc.roundedRect(105, 37.5, 85, 27.5, 2, 2, 'FD');
 
     // Bailleur / Agence
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
+    doc.setFontSize(8);
     doc.setTextColor(15, 23, 42);
     if (isAgency && mandantName) {
-      doc.text('L\'AGENCE IMMOBILIÈRE (MANDATAIRE)', 18, 42);
+      doc.text('L\'AGENCE IMMOBILIÈRE (MANDATAIRE)', 18, 42.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
+      doc.setFontSize(7.8);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Agence : ${ownerName}`, 18, 46);
+      doc.text(`Agence : ${ownerName}`, 18, 47.2);
       doc.setFont('helvetica', 'bold');
-      doc.text(`Propriétaire Mandant : ${mandantName}`, 18, 50);
+      doc.text(`Propriétaire Mandant : ${mandantName}`, 18, 51.8);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Téléphone : ${ownerPhone || data.ownerPhone || 'Non renseigné'}`, 18, 54);
-      doc.text(`Identifiant : ${data.ownerCni ? `RCCM/CNI N° ${data.ownerCni}` : 'Agence & Mandat vérifié'}`, 18, 58);
+      doc.text(`Téléphone : ${ownerPhone || data.ownerPhone || 'Non renseigné'}`, 18, 56.4);
+      doc.text(`Identifiant : RCCM/CNI N° ${ownerCniDisplay}`, 18, 61);
     } else {
-      doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 42);
+      doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE (BAILLEUR)' : 'LE BAILLEUR (PROPRIÉTAIRE)', 18, 42.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7);
+      doc.setFontSize(8);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Nom / Raison : ${ownerName}`, 18, 46.5);
-      doc.text(`Téléphone : ${ownerPhone || data.ownerPhone || 'Non renseigné'}`, 18, 50.5);
-      doc.text(`Adresse : ${data.ownerAddress || 'Abidjan - Côte d\'Ivoire'}`, 18, 54.5);
-      doc.text(`Identifiant : ${data.ownerCni ? `CNI/Passeport N° ${data.ownerCni}` : 'Identité certifiée'}`, 18, 58.5);
+      doc.text(`Nom / Raison : ${ownerName}`, 18, 47.5);
+      doc.text(`Téléphone : ${ownerPhone || data.ownerPhone || 'Non renseigné'}`, 18, 52.3);
+      doc.text(`Adresse : ${data.ownerAddress || 'Abidjan - Côte d\'Ivoire'}`, 18, 57.1);
+      doc.text(`Identifiant : CNI/Passeport N° ${ownerCniDisplay}`, 18, 61.9);
     }
 
     // Preneur (Personne physique ou morale)
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
+    doc.setFontSize(8);
     doc.setTextColor(15, 23, 42);
     doc.text(
       isProfessional
         ? (tenantRccm ? 'LE PRENEUR PROFESSIONNEL (SOCIÉTÉ)' : 'LE PRENEUR (ENTREPRISE / PROFESSIONNEL)')
         : 'LE LOCATAIRE (PRENEUR)',
       108,
-      42
+      42.5
     );
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
+    doc.setFontSize(8);
     doc.setTextColor(51, 65, 85);
-    doc.text(`Nom / Raison sociale : ${tenantName}`, 108, 46.5);
-    doc.text(`Téléphone : ${tenantPhone || data.tenantPhone || 'Non renseigné'}`, 108, 50.5);
+    doc.text(`Nom / Raison sociale : ${tenantName}`, 108, 47.5);
+    doc.text(`Téléphone : ${tenantPhone || data.tenantPhone || 'Non renseigné'}`, 108, 52.3);
     if (isProfessional && tenantRccm) {
-      doc.text(`Immatriculation RCCM : ${tenantRccm}`, 108, 54.5);
-      doc.text(`Représenté par titulaire CNI N° ${tenantCni || data.tenantCni || 'Vérifiée'}`, 108, 58.5);
+      doc.text(`Immatriculation RCCM : ${tenantRccm}`, 108, 57.1);
+      doc.text(`Représenté par CNI N° ${tenantCniDisplay}`, 108, 61.9);
     } else {
-      doc.text(`Adresse : ${data.tenantAddress || 'Abidjan - Côte d\'Ivoire'}`, 108, 54.5);
-      doc.text(`Pièce d'identité : ${tenantCni || data.tenantCni ? `CNI/Passeport N° ${tenantCni || data.tenantCni}` : 'Identité vérifiée'}`, 108, 58.5);
+      doc.text(`Adresse : ${data.tenantAddress || 'Abidjan - Côte d\'Ivoire'}`, 108, 57.1);
+      doc.text(`Pièce d'identité : CNI/Passeport N° ${tenantCniDisplay}`, 108, 61.9);
     }
 
     doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7.5);
+    doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text('Il a été arrêté et convenu ce qui suit :', 15, 65.5);
+    doc.text('Il a été arrêté et convenu ce qui suit :', 15, 69.5);
 
-    // Helper d'impression avec retour à la ligne automatique strict et respect des marges (Point 8)
+    // Helper d'impression avec retour à la ligne automatique strict et respect des marges
     const printWrapped = (
       text: string,
       x: number,
       y: number,
-      maxWidth: number = 168,
-      lineHeight: number = 2.9
+      maxWidth: number = 175,
+      lineHeight: number = 4.0
     ): number => {
       const lines: string[] = doc.splitTextToSize(text, maxWidth);
       lines.forEach((l, i) => {
@@ -293,15 +297,49 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       return y + lines.length * lineHeight;
     };
 
+    let curY = 74.5;
+
+    const addContinuationPage = (customSubtitle?: string) => {
+      doc.addPage('a4', 'portrait');
+      doc.setFont('helvetica', 'bold');
+      if (isAgency) {
+        doc.setFontSize(13);
+        doc.setTextColor(29, 78, 216);
+        doc.text(ownerName.toUpperCase(), 15, 17);
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text('AGENCE IMMOBILIÈRE MANDATAIRE AGRÉÉE', 15, 21.5);
+      } else {
+        doc.setFontSize(15);
+        doc.setTextColor(29, 78, 216);
+        doc.text('LocaTrust', 15, 17);
+        doc.setFontSize(7.5);
+        doc.setTextColor(217, 119, 6);
+        doc.text(isProfessional ? '— CONTRAT PROFESSIONNEL OHADA —' : '— GESTION LOCATIVE CONFORME —', 15, 21.5);
+      }
+
+      doc.setFillColor(245, 158, 11);
+      doc.roundedRect(115, 12.5, 80, 6.5, 1.5, 1.5, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(customSubtitle || `SUITE CONTRAT N° ${contractNumber}`, 155, 16.8, { align: 'center' });
+
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.4);
+      doc.line(15, 25, 195, 25);
+      curY = 31;
+    };
+
+    const ensureSpace = (neededHeight: number, customSubtitle?: string) => {
+      if (curY + neededHeight > 268) {
+        addContinuationPage(customSubtitle);
+      }
+    };
+
     // Parties réelles et désignations dynamiques (Point 4)
     const cleanOwnerName = (ownerName || '').trim() || (isAgency ? 'L\'agence mandataire' : 'Le bailleur');
     const cleanTenantName = (tenantName || '').trim() || 'Le preneur';
-    const bailleurDesignation = isAgency && mandantName
-      ? `${cleanOwnerName} (agissant en qualité d'agence mandataire pour le compte de ${mandantName}), ci-après désigné comme le bailleur`
-      : `${cleanOwnerName}, ci-après désigné comme le bailleur`;
-    const preneurDesignation = isProfessional && tenantRccm
-      ? `${cleanTenantName} (immatriculée au RCCM sous le N° ${tenantRccm}), ci-après désigné comme le preneur`
-      : `${cleanTenantName}, ci-après désigné comme le preneur`;
 
     // Caractéristiques réelles du bien sans invention de données (Point 5)
     const surfaceText = surface && Number(surface) > 0
@@ -312,7 +350,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
     if (rooms && Number(rooms) > 0) roomParts.push(`${rooms} pièce(s)`);
     if (bedrooms && Number(bedrooms) > 0) roomParts.push(`${bedrooms} chambre(s)`);
     if (bathrooms && Number(bathrooms) > 0) roomParts.push(`${bathrooms} salle(s) d'eau`);
-    const roomsCompositionText = roomParts.length > 0 ? roomParts.join(' • ') : 'Non renseigné';
+    const roomsCompositionText = roomParts.length > 0 ? roomParts.join(' • ') : 'Information non renseignée';
 
     let equipmentsRealText = '';
     if (Array.isArray(rawEquipments)) {
@@ -338,151 +376,183 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 1 : DÉSIGNATION DU LOCAL & CONSISTANCE RÉELLE (OHADA AUDCG)', 15, 69.5);
+      doc.text('ARTICLE 1 : DÉSIGNATION DU LOCAL & CONSISTANCE RÉELLE (OHADA AUDCG)', 15, curY);
+
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.4);
+      doc.setFontSize(8.2);
       doc.setTextColor(51, 65, 85);
-
       const article1ProIntro = `M./Mme ${cleanOwnerName}, ci-après dénommé(e) « le Bailleur », donne en location à M./Mme ${cleanTenantName}, ci-après dénommé(e) « le Preneur », qui accepte, le bien immobilier désigné ci-après :`;
-      printWrapped(article1ProIntro, 15, 73, 168, 2.7);
+      curY = printWrapped(article1ProIntro, 15, curY + 4.5, 178, 4.0) + 1.5;
 
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 76.5, 175, 17, 2, 2, 'FD');
+      const proBullets: string[] = [
+        `• Type & Localisation : ${propertyTitle} | ${propertyAddress}`,
+        `• Consistance réelle : Superficie exploitable : ${surfaceText} | Agencement : ${roomsCompositionText}`
+      ];
+      if (equipmentsRealText) {
+        proBullets.push(`• Équipements déclarés : ${equipmentsRealText}`);
+      }
+      proBullets.push(`• Activité contractuelle autorisée (Art. 101/103 AUDCG) : ${authorizedActivity || 'Bureaux administratifs, commerciaux et exploitation'}.`);
 
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.3);
+      doc.setFontSize(8.2);
+      const wrappedProBullets = proBullets.map((b) => doc.splitTextToSize(b, 172));
+      const totalProBulletLines = wrappedProBullets.reduce((acc, lines) => acc + lines.length, 0);
+      const proCardHeight = totalProBulletLines * 4.2 + 5;
+
+      ensureSpace(proCardHeight + 4);
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(15, curY, 180, proCardHeight, 2, 2, 'FD');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.2);
       doc.setTextColor(30, 41, 59);
-      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 80);
-      doc.text(`• Consistance réelle : Superficie exploitable : ${surfaceText} | Agencement : ${roomsCompositionText}`, 18, 83.7);
-      doc.text(`• Équipements & Installations : ${equipmentsRealText}`, 18, 87.4);
-      doc.text(`• Activité contractuelle autorisée (Art. 101/103 AUDCG) : ${authorizedActivity || 'Bureaux administratifs, commerciaux et exploitation'}.`, 18, 91);
+      let bY = curY + 4.8;
+      wrappedProBullets.forEach((lines) => {
+        lines.forEach((l: string, idx: number) => {
+          doc.text(l, idx === 0 ? 18 : 21, bY);
+          bY += 4.2;
+        });
+      });
+      curY += proCardHeight + 6;
 
       // ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (Art. 104 AUDCG)
+      ensureSpace(16);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (ART. 104 AUDCG)', 15, 96.5);
+      doc.text('ARTICLE 2 : DURÉE DU BAIL COMMERCIAL (ART. 104 AUDCG)', 15, curY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.6);
+      doc.setFontSize(8.2);
       doc.setTextColor(51, 65, 85);
       const article2ProText = `Le bail est conclu pour une durée ferme de ${effectiveDurationMonths} mois, prenant effet le ${startDate}. Il est régi par les stipulations de l'Article 104 de l'AUDCG.`;
-      printWrapped(article2ProText, 15, 100, 168, 2.8);
+      curY = printWrapped(article2ProText, 15, curY + 4.5, 178, 4.0) + 3;
 
       // ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES COMMERCIALES (OHADA Art. 116)
-      doc.roundedRect(15, 104, 175, 11, 2, 2, 'D');
+      ensureSpace(46);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(15, curY, 180, 13.5, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 3 : LOYER COMMERCIAL (ART. 116 AUDCG)', 18, 109);
+      doc.text('ARTICLE 3 : LOYER COMMERCIAL (ART. 116 AUDCG)', 18, curY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.4);
-      doc.text(`Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois par Virement bancaire ou Mobile Money certifié.`, 18, 113);
+      doc.setFontSize(8.0);
+      doc.setTextColor(51, 65, 85);
+      doc.text(`Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois par Virement ou Mobile Money certifié.`, 18, curY + 10);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
-      doc.roundedRect(145, 105.5, 42, 7.5, 1.5, 1.5, 'FD');
+      doc.roundedRect(148, curY + 2.5, 44, 8.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(8.2);
       doc.setTextColor(180, 83, 9);
-      doc.text(formatFCFA(rent), 149, 110.5);
+      doc.text(formatFCFA(rent), 170, curY + 8, { align: 'center' });
+      curY += 15.5;
 
       // Article 4 : Dépôt de garantie commercial
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(15, 117, 175, 11, 2, 2, 'D');
+      doc.roundedRect(15, curY, 180, 13.5, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE COMMERCIAL', 18, 122);
+      doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE COMMERCIAL', 18, curY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.4);
+      doc.setFontSize(8.0);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Garantie commerciale convenue entre les parties (${cautionMonths} mois) en couverture des obligations locatives.`, 18, 126);
+      doc.text(`Garantie commerciale convenue (${cautionMonths} mois) en couverture des obligations locatives.`, 18, curY + 10);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
-      doc.roundedRect(145, 118.5, 42, 7.5, 1.5, 1.5, 'FD');
+      doc.roundedRect(148, curY + 2.5, 44, 8.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(8.2);
       doc.setTextColor(180, 83, 9);
-      doc.text(formatFCFA(effectiveCautionAmount), 149, 123.5);
+      doc.text(formatFCFA(effectiveCautionAmount), 170, curY + 8, { align: 'center' });
+      curY += 15.5;
 
-      // Article 5 : Charges d'exploitation (Point 7)
+      // Article 5 : Charges d'exploitation
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(15, 130, 175, 11, 2, 2, 'D');
+      doc.roundedRect(15, curY, 180, 13.5, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES D\'EXPLOITATION' : 'ARTICLE 5 : CHARGES D\'EXPLOITATION', 18, 135);
+      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES D\'EXPLOITATION' : 'ARTICLE 5 : CHARGES D\'EXPLOITATION', 18, curY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.4);
+      doc.setFontSize(8.0);
       doc.setTextColor(51, 65, 85);
       doc.text(
         chargesAmount > 0
-          ? `Provision mensuelle sur charges : ${formatFCFA(chargesAmount)} (charges communes, gardiennage et entretien).`
-          : 'Aucune provision exigée.',
+          ? `Provision mensuelle sur charges : ${formatFCFA(chargesAmount)} (communs, gardiennage, entretien).`
+          : 'Aucune provision sur charges exigée.',
         18,
-        139
+        curY + 10
       );
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
-      doc.roundedRect(145, 131.5, 42, 7.5, 1.5, 1.5, 'FD');
+      doc.roundedRect(148, curY + 2.5, 44, 8.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(chargesAmount > 0 ? 8 : 6.8);
+      doc.setFontSize(chargesAmount > 0 ? 8.2 : 7.0);
       doc.setTextColor(180, 83, 9);
-      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : 'Aucune provision exigée', 147, 136.5);
+      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : 'Aucune provision', 170, curY + 8, { align: 'center' });
+      curY += 16.5;
 
       // ARTICLES 6 & 7 : OBLIGATIONS ET RÉPARATIONS COMMERCIALES (2 COLONNES)
+      ensureSpace(46);
       doc.setDrawColor(226, 232, 240);
       doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 144, 85, 34, 2, 2, 'FD');
-      doc.roundedRect(105, 144, 85, 34, 2, 2, 'FD');
+      doc.roundedRect(15, curY, 87, 42, 2, 2, 'FD');
+      doc.roundedRect(108, curY, 87, 42, 2, 2, 'FD');
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 6 : OBLIGATIONS DU PRENEUR (ART. 112)', 18, 149);
+      doc.text('ARTICLE 6 : OBLIGATIONS DU PRENEUR (ART. 112)', 18, curY + 5.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
-      doc.setTextColor(71, 85, 105);
-      doc.text('• Exploiter les locaux conformément à l\'activité convenue.', 18, 153.5);
-      doc.text('• Assumer l\'entretien locatif et les réparations d\'usage.', 18, 157.5);
-      doc.text('• Détenir l\'ensemble des autorisations administratives/RCCM.', 18, 161.5);
-      doc.text('• Sous-location soumise à l\'accord exprès écrit (Art. 118).', 18, 165.5);
-      doc.text('• Souscrire une assurance responsabilité civile et d\'exploitation.', 18, 169.5);
-      doc.text('• Restituer les locaux en état conforme aux stipulations du bail.', 18, 173.5);
+      doc.setFontSize(7.4);
+      doc.setTextColor(51, 65, 85);
+      doc.text('• Exploiter conformément à l\'activité convenue.', 18, curY + 11);
+      doc.text('• Assumer l\'entretien et réparations d\'usage.', 18, curY + 16.5);
+      doc.text('• Détenir les autorisations administratives/RCCM.', 18, curY + 22);
+      doc.text('• Sous-location soumise à accord écrit (Art. 118).', 18, curY + 27.5);
+      doc.text('• Souscrire une assurance responsabilité civile.', 18, curY + 33);
+      doc.text('• Restituer les locaux en état conforme au bail.', 18, curY + 38.5);
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 7 : GROSSES RÉPARATIONS DU BAILLEUR (ART. 106)', 108, 149);
+      doc.text('ARTICLE 7 : OBLIGATIONS DU BAILLEUR (ART. 106)', 111, curY + 5.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
-      doc.setTextColor(71, 85, 105);
-      doc.text('• Délivrer les locaux en bon état d\'usage commercial.', 108, 153.5);
-      doc.text('• Assurer la jouissance paisible contre tout trouble de droit.', 108, 157.5);
-      doc.text('• Grosses réparations impératives : toiture, gros murs, structure.', 108, 161.5);
-      doc.text('• Ne pas entraver l\'exploitation normale de l\'activité autorisée.', 108, 165.5);
-      doc.text('• Délivrer les quittances de paiement régulières certifiées.', 108, 169.5);
-      doc.text('• Respecter le droit d\'ordre public au renouvellement commercial.', 108, 173.5);
+      doc.setFontSize(7.4);
+      doc.setTextColor(51, 65, 85);
+      doc.text('• Délivrer les locaux en bon état commercial.', 111, curY + 11);
+      doc.text('• Assurer la jouissance paisible des locaux.', 111, curY + 16.5);
+      doc.text('• Grosses réparations (toiture, murs, structure).', 111, curY + 22);
+      doc.text('• Ne pas entraver l\'exploitation normale.', 111, curY + 27.5);
+      doc.text('• Délivrer les quittances régulières certifiées.', 111, curY + 33);
+      doc.text('• Respecter le droit au renouvellement (Art. 123).', 111, curY + 38.5);
+      curY += 47;
 
-      // ARTICLES 8 & 9 : RENOUVELLEMENT, RÉSILIATION ET EXPULSION PROFESSIONNELLE (Auto-wrapped, sans débordement)
+      // ARTICLES 8 & 9 : RENOUVELLEMENT, RÉSILIATION ET EXPULSION PROFESSIONNELLE
+      ensureSpace(18);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 8 : DROIT AU RENOUVELLEMENT D\'ORDRE PUBLIC (ART. 123 & 134 AUDCG)', 15, 182.5);
+      doc.text('ARTICLE 8 : DROIT AU RENOUVELLEMENT D\'ORDRE PUBLIC (ART. 123 & 134 AUDCG)', 15, curY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.1);
-      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(8.0);
+      doc.setTextColor(51, 65, 85);
       const art8ProText = 'Le droit au renouvellement est acquis au preneur justifiant d\'au moins 2 ans d\'exploitation conforme. Aucune clause contractuelle ne peut déroger à cette disposition d\'ordre public (Art. 134).';
-      printWrapped(art8ProText, 15, 186, 168, 2.7);
+      curY = printWrapped(art8ProText, 15, curY + 4.5, 178, 3.8) + 3;
 
+      ensureSpace(20);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 9 : RÉSILIATION JUDICIAIRE & EXPULSION (ART. 133 AUDCG & LOI 2025-221 ART. 14)', 15, 193.5);
+      doc.text('ARTICLE 9 : RÉSILIATION JUDICIAIRE & EXPULSION (ART. 133 AUDCG & LOI 2025-221 ART. 14)', 15, curY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.1);
-      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(8.0);
+      doc.setTextColor(51, 65, 85);
       const art9ProText = 'Toute résiliation requiert une mise en demeure d\'au moins 1 mois (Art. 133). Expulsion soumise à l\'Article 14 de la Loi ivoirienne N° 2025-221 (ministère exclusif d\'un Commissaire de Justice sur titre exécutoire, voies de fait et expulsions de fait prohibées).';
-      printWrapped(art9ProText, 15, 196.5, 168, 2.8);
+      curY = printWrapped(art9ProText, 15, curY + 4.5, 178, 3.8) + 4;
     } else {
       // ----------------------------------------------------------------------
       // MODEL 1 : BAIL À USAGE D'HABITATION (LOI 2019-576 & LOI 2025-221)
@@ -491,15 +561,13 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 1 : DÉSIGNATION DU BIEN & CONSISTANCE RÉELLE (LOI N° 2019-576)', 15, 70);
+      doc.text('ARTICLE 1 : DÉSIGNATION DU BIEN & CONSISTANCE RÉELLE (LOI N° 2019-576)', 15, curY);
+
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.3);
+      doc.setFontSize(8.2);
       doc.setTextColor(51, 65, 85);
       const article1HabIntro = `M./Mme ${cleanOwnerName}, ci-après dénommé(e) « le Bailleur », donne en location à M./Mme ${cleanTenantName}, ci-après dénommé(e) « le Preneur », qui accepte, le bien immobilier désigné ci-après :`;
-      printWrapped(article1HabIntro, 15, 73.2, 168, 2.7);
-
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 75, 175, 17, 2, 2, 'FD');
+      curY = printWrapped(article1HabIntro, 15, curY + 4.5, 178, 4.0) + 1.5;
 
       const surfaceHabText = surface ? `${surface} m²` : 'Information non renseignée';
       const roomsHabList = [
@@ -508,154 +576,182 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
         bathrooms ? `${bathrooms} salle(s) d'eau` : null
       ].filter(Boolean).join(' • ');
 
+      const habBullets: string[] = [
+        `• Type & Localisation : ${propertyTitle} | ${propertyAddress}`,
+        `• Consistance réelle : Surface habitable : ${surfaceHabText} | Composition : ${roomsHabList || 'Information non renseignée'}`
+      ];
+      if (equipmentsRealText) {
+        habBullets.push(`• Équipements déclarés : ${equipmentsRealText}`);
+      }
+      habBullets.push('• Destination exclusive : Logement d\'habitation principale (Art. 409 & 410 Loi 2019-576). Exploitation commerciale prohibée.');
+
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.4);
+      doc.setFontSize(8.2);
+      const wrappedHabBullets = habBullets.map((b) => doc.splitTextToSize(b, 172));
+      const totalHabBulletLines = wrappedHabBullets.reduce((acc, lines) => acc + lines.length, 0);
+      const habCardHeight = totalHabBulletLines * 4.2 + 5;
+
+      ensureSpace(habCardHeight + 4);
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(15, curY, 180, habCardHeight, 2, 2, 'FD');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.2);
       doc.setTextColor(30, 41, 59);
-      doc.text(`• Type & Localisation : ${propertyTitle} | ${propertyAddress}`, 18, 78.8);
-      doc.text(`• Consistance réelle : Surface habitable : ${surfaceHabText} | Composition : ${roomsHabList || 'Information non renseignée'}`, 18, 82.5);
-      doc.text(`• Équipements déclarés : ${equipmentsList || ''}`, 18, 86.2);
-      doc.text('• Destination exclusive : Logement d\'habitation principale (Art. 409 & 410 Loi 2019-576). Exploitation commerciale prohibée.', 18, 89.8);
+      let bY = curY + 4.8;
+      wrappedHabBullets.forEach((lines) => {
+        lines.forEach((l: string, idx: number) => {
+          doc.text(l, idx === 0 ? 18 : 21, bY);
+          bY += 4.2;
+        });
+      });
+      curY += habCardHeight + 6;
 
       // ARTICLE 2 : DURÉE
+      ensureSpace(16);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 2 : DURÉE DU BAIL D\'HABITATION (ART. 414)', 15, 96);
+      doc.text('ARTICLE 2 : DURÉE DU BAIL D\'HABITATION (ART. 414)', 15, curY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
+      doc.setFontSize(8.2);
       doc.setTextColor(51, 65, 85);
       const article2HabText = `Le présent contrat est conclu pour une durée de ${effectiveDurationMonths} mois, commençant le ${startDate}, renouvelable tacitement par période de même durée.`;
-      printWrapped(article2HabText, 15, 100, 168, 3.0);
+      curY = printWrapped(article2HabText, 15, curY + 4.5, 178, 4.0) + 3;
 
       // ARTICLES 3, 4, 5 : CONDITIONS FINANCIÈRES (LOI 2019-576 ART. 415 & 416)
-      doc.roundedRect(15, 104, 175, 11, 2, 2, 'D');
+      ensureSpace(46);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(15, curY, 180, 13.5, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 3 : LOYER & AVANCE LÉGALEMENT PLAFONNÉE (ART. 415)', 18, 109);
+      doc.text('ARTICLE 3 : LOYER & AVANCE LÉGALEMENT PLAFONNÉE (ART. 415)', 18, curY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(8.0);
+      doc.setTextColor(51, 65, 85);
       doc.text(
-        `Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} du mois. Avance strictement plafonnée à 2 mois maximum par la loi.`,
+        `Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} du mois. Avance plafonnée à 2 mois maximum par la loi.`,
         18,
-        113
+        curY + 10
       );
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
-      doc.roundedRect(145, 105.5, 42, 7.5, 1.5, 1.5, 'FD');
+      doc.roundedRect(148, curY + 2.5, 44, 8.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(8.2);
       doc.setTextColor(180, 83, 9);
-      doc.text(formatFCFA(rent), 149, 110.5);
+      doc.text(formatFCFA(rent), 170, curY + 8, { align: 'center' });
+      curY += 15.5;
 
       // Article 4 : Caution
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(15, 117, 175, 11, 2, 2, 'D');
+      doc.roundedRect(15, curY, 180, 13.5, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE PLAFONNÉ À 2 MOIS (ART. 416)', 18, 122);
+      doc.text('ARTICLE 4 : DÉPÔT DE GARANTIE PLAFONNÉ À 2 MOIS (ART. 416)', 18, curY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(8.0);
       doc.setTextColor(51, 65, 85);
       doc.text(
-        'Dépôt de garantie légalement plafonné à 2 mois hors charges. Restitution sous 30 jours après remise des clés.',
+        'Dépôt de garantie plafonné à 2 mois hors charges. Restitution sous 30 jours après remise des clés.',
         18,
-        126
+        curY + 10
       );
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
-      doc.roundedRect(145, 118.5, 42, 7.5, 1.5, 1.5, 'FD');
+      doc.roundedRect(148, curY + 2.5, 44, 8.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(8.2);
       doc.setTextColor(180, 83, 9);
-      doc.text(formatFCFA(effectiveCautionAmount), 149, 123.5);
+      doc.text(formatFCFA(effectiveCautionAmount), 170, curY + 8, { align: 'center' });
+      curY += 15.5;
 
       // Article 5 : Charges
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(15, 130, 175, 11, 2, 2, 'D');
+      doc.roundedRect(15, curY, 180, 13.5, 2, 2, 'D');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES LOCATIVES D\'USAGE (ART. 417)' : 'ARTICLE 5 : CHARGES (AUCUNE PROVISION EXIGÉE)', 18, 135);
+      doc.text(chargesAmount > 0 ? 'ARTICLE 5 : PROVISION SUR CHARGES LOCATIVES D\'USAGE (ART. 417)' : 'ARTICLE 5 : CHARGES (AUCUNE PROVISION EXIGÉE)', 18, curY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(8.0);
       doc.setTextColor(51, 65, 85);
-      doc.text(chargesAmount > 0 ? 'Eau, électricité des communs et ordures ménagères. Les impôts fonciers incombent au bailleur.' : 'Aucune provision sur charges (charges incluses ou compteurs individuels directs CIE/SODECI).', 18, 139);
+      doc.text(chargesAmount > 0 ? 'Eau, électricité des communs et ordures ménagères. Impôts fonciers au bailleur.' : 'Aucune provision sur charges (compteurs individuels directs CIE/SODECI).', 18, curY + 10);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
-      doc.roundedRect(145, 131.5, 42, 7.5, 1.5, 1.5, 'FD');
+      doc.roundedRect(148, curY + 2.5, 44, 8.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(chargesAmount > 0 ? 8.2 : 7.0);
       doc.setTextColor(180, 83, 9);
-      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : 'Aucune provision exigée', 147, 136.5);
+      doc.text(chargesAmount > 0 ? `${formatFCFA(chargesAmount)} / mois` : 'Aucune provision', 170, curY + 8, { align: 'center' });
+      curY += 16.5;
 
       // ARTICLE 6 & 7 : OBLIGATIONS (2 COLONNES)
+      ensureSpace(46);
       doc.setDrawColor(226, 232, 240);
       doc.setFillColor(248, 250, 252);
-      doc.roundedRect(15, 144, 85, 34, 2, 2, 'FD');
-      doc.roundedRect(105, 144, 85, 34, 2, 2, 'FD');
+      doc.roundedRect(15, curY, 87, 42, 2, 2, 'FD');
+      doc.roundedRect(108, curY, 87, 42, 2, 2, 'FD');
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 6 : OBLIGATIONS DU LOCATAIRE (ART. 435)', 18, 149);
+      doc.text('ARTICLE 6 : OBLIGATIONS DU LOCATAIRE (ART. 435)', 18, curY + 5.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
-      doc.setTextColor(71, 85, 105);
-      doc.text('• Payer le loyer et charges aux dates convenues.', 18, 153.5);
-      doc.text('• User paisiblement des lieux en bon père de famille.', 18, 157.5);
-      doc.text('• Assumer l\'entretien courant et menues réparations locatives.', 18, 161.5);
-      doc.text('• Ne pas transformer les lieux sans accord écrit (Art. 436).', 18, 165.5);
-      doc.text('• Sous-location prohibée sans accord écrit préalable (Art. 437).', 18, 169.5);
-      doc.text('• Restituer le logement en état conforme à l\'état des lieux.', 18, 173.5);
+      doc.setFontSize(7.4);
+      doc.setTextColor(51, 65, 85);
+      doc.text('• Payer le loyer et charges aux dates convenues.', 18, curY + 11);
+      doc.text('• User paisiblement des lieux en bon père de famille.', 18, curY + 16.5);
+      doc.text('• Assumer l\'entretien courant et menues réparations.', 18, curY + 22);
+      doc.text('• Ne pas transformer sans accord écrit (Art. 436).', 18, curY + 27.5);
+      doc.text('• Sous-location prohibée sans accord écrit (Art. 437).', 18, curY + 33);
+      doc.text('• Restituer le bien conforme à l\'état des lieux.', 18, curY + 38.5);
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 7 : OBLIGATIONS DU BAILLEUR (ART. 424)', 108, 149);
+      doc.text('ARTICLE 7 : OBLIGATIONS DU BAILLEUR (ART. 424)', 111, curY + 5.5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.2);
-      doc.setTextColor(71, 85, 105);
-      doc.text('• Délivrer un logement décent et salubre en bon état (Art. 424).', 108, 153.5);
-      doc.text('• Assurer la jouissance paisible des lieux loués (Art. 425).', 108, 157.5);
-      doc.text('• Grosses réparations structurelles et toiture à charge (Art. 428).', 108, 161.5);
-      doc.text('• Droit de visite annuel avec préavis écrit de 48h (Art. 430).', 108, 165.5);
-      doc.text('• Délivrer gratuitement les quittances certifiées (Art. 418).', 108, 169.5);
-      doc.text('• Restituer la caution sous 30 jours après remise des clés.', 108, 173.5);
+      doc.setFontSize(7.4);
+      doc.setTextColor(51, 65, 85);
+      doc.text('• Délivrer un logement décent en bon état (Art. 424).', 111, curY + 11);
+      doc.text('• Assurer la jouissance paisible des lieux (Art. 425).', 111, curY + 16.5);
+      doc.text('• Grosses réparations et toiture à charge (Art. 428).', 111, curY + 22);
+      doc.text('• Visite annuelle avec préavis écrit de 48h (Art. 430).', 111, curY + 27.5);
+      doc.text('• Délivrer gratuitement les quittances (Art. 418).', 111, curY + 33);
+      doc.text('• Restituer la caution sous 30 jours après clés.', 111, curY + 38.5);
+      curY += 47;
 
       // ARTICLE 8 : ÉTAT DES LIEUX & FORMALITÉ FISCALE DGI OBLIGATOIRE
+      ensureSpace(18);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 8 : ÉTAT DES LIEUX CONTRADICTOIRE & ENREGISTREMENT FISCAL DGI OBLIGATOIRE (ART. 414 & 416)', 15, 183);
+      doc.text('ARTICLE 8 : ÉTAT DES LIEUX CONTRADICTOIRE & ENREGISTREMENT FISCAL DGI OBLIGATOIRE (ART. 414 & 416)', 15, curY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.1);
-      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(8.0);
+      doc.setTextColor(51, 65, 85);
       const art8HabText = 'État des lieux contradictoire écrit obligatoire à l\'entrée et à la sortie (Art. 416). Enregistrement fiscal obligatoire à la Direction Générale des Impôts (DGI) conformément à l\'Article 414 de la Loi 2019-576.';
-      printWrapped(art8HabText, 15, 186.5, 168, 2.7);
+      curY = printWrapped(art8HabText, 15, curY + 4.5, 178, 3.8) + 3;
 
       // ARTICLE 9 : RÉSILIATION ET EXPULSION LÉGALE (LOI 2019-576 & LOI 2025-221)
+      ensureSpace(20);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(29, 78, 216);
-      doc.text('ARTICLE 9 : RÉSILIATION & PROCÉDURE LÉGALE D\'EXPULSION (LOI N° 2025-221 & ART. 450)', 15, 193);
+      doc.text('ARTICLE 9 : RÉSILIATION & PROCÉDURE LÉGALE D\'EXPULSION (LOI N° 2025-221 & ART. 450)', 15, curY);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.1);
-      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(8.0);
+      doc.setTextColor(51, 65, 85);
       const art9HabText = 'Résiliation après mise en demeure (Art. 450). Expulsion strictement encadrée par la Loi n° 2025-221 du 28 mars 2025 (commandement de libérer les lieux et intervention exclusive du Commissaire de Justice sur titre exécutoire, voies de fait et expulsions de fait prohibées).';
-      printWrapped(art9HabText, 15, 196.5, 168, 2.8);
+      curY = printWrapped(art9HabText, 15, curY + 4.5, 178, 3.8) + 4;
     }
-
-    // SIGNATURES DES PARTIES
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(15, 212, 85, 30, 2, 2, 'FD');
-    doc.roundedRect(105, 212, 85, 30, 2, 2, 'FD');
 
     // Résolution des signatures certifiées apposées sur ce contrat spécifique
     const resolvedOwnerSig = await ensureImageDataUrl(data.ownerSignatureUrl);
-
     const resolvedTenantSig = await ensureImageDataUrl(data.tenantSignatureUrl);
 
     const getImgFormat = (dataUrl?: string | null) => {
@@ -665,119 +761,120 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       return 'PNG';
     };
 
-    // 1. Bailleur
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE' : 'LE PROPRIÉTAIRE (BAILLEUR)', 18, 217);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.text(ownerName, 18, 221.5);
+    // Fonction d'impression du bloc des signatures + Sceau officiel rond
+    const renderSignaturesAndSealBlock = (startY: number) => {
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(15, startY, 85, 31, 2, 2, 'FD');
+      doc.roundedRect(105, startY, 85, 31, 2, 2, 'FD');
 
-    if (resolvedOwnerSig) {
-      try {
-        doc.addImage(resolvedOwnerSig, getImgFormat(resolvedOwnerSig), 18, 222.5, 48, 12);
-      } catch (err) {
-        console.warn('Could not render owner signature image on PDF:', err);
+      // 1. Bailleur
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.8);
+      doc.setTextColor(15, 23, 42);
+      doc.text(isAgency ? 'LA SOCIÉTÉ IMMOBILIÈRE' : 'LE PROPRIÉTAIRE (BAILLEUR)', 18, startY + 5);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.8);
+      doc.text(ownerName, 18, startY + 9.5);
+
+      if (resolvedOwnerSig) {
+        try {
+          doc.addImage(resolvedOwnerSig, getImgFormat(resolvedOwnerSig), 18, startY + 10.5, 48, 12);
+        } catch (err) {
+          console.warn('Could not render owner signature image on PDF:', err);
+          doc.setFont('times', 'italic');
+          doc.setFontSize(11);
+          doc.setTextColor(15, 39, 90);
+          doc.text(ownerName, 20, startY + 18);
+        }
+      } else {
         doc.setFont('times', 'italic');
         doc.setFontSize(11);
         doc.setTextColor(15, 39, 90);
-        doc.text(ownerName, 20, 230);
+        doc.text(ownerName, 20, startY + 18);
       }
-    } else {
-      doc.setFont('times', 'italic');
-      doc.setFontSize(11);
-      doc.setTextColor(15, 39, 90);
-      doc.text(ownerName, 20, 230);
-    }
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.2);
-    doc.setTextColor(5, 150, 105);
-    doc.text('Signature electronique certifiee LocaTrust', 21, 238.5);
-    // Draw green badge dot
-    doc.setFillColor(5, 150, 105);
-    doc.circle(18.5, 237.5, 1.2, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(5, 150, 105);
+      doc.text('Signature electronique certifiee LocaTrust', 21, startY + 27.5);
+      doc.setFillColor(5, 150, 105);
+      doc.circle(18.5, startY + 26.5, 1.2, 'F');
 
-    // 2. Locataire
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text('LE LOCATAIRE (PRENEUR)', 108, 217);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.text(tenantName, 108, 221.5);
+      // 2. Locataire
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.8);
+      doc.setTextColor(15, 23, 42);
+      doc.text('LE LOCATAIRE (PRENEUR)', 108, startY + 5);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.8);
+      doc.text(tenantName, 108, startY + 9.5);
 
-    if (resolvedTenantSig) {
-      try {
-        doc.addImage(resolvedTenantSig, getImgFormat(resolvedTenantSig), 108, 222.5, 48, 12);
-      } catch (err) {
-        console.warn('Could not render tenant signature image on PDF:', err);
+      if (resolvedTenantSig) {
+        try {
+          doc.addImage(resolvedTenantSig, getImgFormat(resolvedTenantSig), 108, startY + 10.5, 48, 12);
+        } catch (err) {
+          console.warn('Could not render tenant signature image on PDF:', err);
+          doc.setFont('times', 'italic');
+          doc.setFontSize(11);
+          doc.setTextColor(30, 58, 138);
+          doc.text(tenantName, 110, startY + 18);
+        }
+      } else {
         doc.setFont('times', 'italic');
         doc.setFontSize(11);
         doc.setTextColor(30, 58, 138);
-        doc.text(tenantName, 110, 230);
+        doc.text(tenantName, 110, startY + 18);
       }
-    } else {
-      doc.setFont('times', 'italic');
-      doc.setFontSize(11);
-      doc.setTextColor(30, 58, 138);
-      doc.text(tenantName, 110, 230);
-    }
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.2);
-    doc.setTextColor(5, 150, 105);
-    doc.text('Signature electronique certifiee LocaTrust', 111, 238.5);
-    // Draw green badge dot
-    doc.setFillColor(5, 150, 105);
-    doc.circle(108.5, 237.5, 1.2, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(5, 150, 105);
+      doc.text('Signature electronique certifiee LocaTrust', 111, startY + 27.5);
+      doc.setFillColor(5, 150, 105);
+      doc.circle(108.5, startY + 26.5, 1.2, 'F');
 
-    // Sceau circulaire officiel type tampon de certification LocaTrust (forme ronde demandée - Point 2.1)
-    const sealCenterX = 105;
-    const sealCenterY = 258;
-    
-    // Cercle extérieur doré renforcé
-    doc.setDrawColor(217, 119, 6); // amber-600
-    doc.setLineWidth(0.85);
-    doc.circle(sealCenterX, sealCenterY, 17.5, 'S');
+      // Sceau circulaire officiel type tampon de certification LocaTrust
+      const sealCenterX = 105;
+      const sealCenterY = startY + 52;
 
-    // Cercle intérieur double bordure
-    doc.setLineWidth(0.35);
-    doc.circle(sealCenterX, sealCenterY, 15.5, 'S');
+      doc.setDrawColor(217, 119, 6);
+      doc.setLineWidth(0.85);
+      doc.circle(sealCenterX, sealCenterY, 17.5, 'S');
 
-    // Texte supérieur : « RÉPUBLIQUE DE CÔTE D'IVOIRE » parfaitement contenu et centré
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(5.2);
-    doc.setTextColor(180, 83, 9);
-    doc.text('RÉPUBLIQUE DE CÔTE D\'IVOIRE', sealCenterX, sealCenterY - 9.5, { align: 'center' });
+      doc.setLineWidth(0.35);
+      doc.circle(sealCenterX, sealCenterY, 15.5, 'S');
 
-    // Étoiles décoratives de certification
-    doc.setFontSize(5);
-    doc.setTextColor(217, 119, 6);
-    doc.text('★   ★   ★', sealCenterX, sealCenterY - 6.2, { align: 'center' });
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.2);
+      doc.setTextColor(180, 83, 9);
+      doc.text('RÉPUBLIQUE DE CÔTE D\'IVOIRE', sealCenterX, sealCenterY - 9.5, { align: 'center' });
 
-    // En-tête principal central
-    doc.setFontSize(8.5);
-    doc.setTextColor(15, 23, 42); // slate-900
-    doc.text('LOCATRUST', sealCenterX, sealCenterY - 1, { align: 'center' });
+      doc.setFontSize(5);
+      doc.setTextColor(217, 119, 6);
+      doc.text('★   ★   ★', sealCenterX, sealCenterY - 6.2, { align: 'center' });
 
-    // Mention de conformité
-    doc.setFontSize(5.5);
-    doc.setTextColor(180, 83, 9); // amber-700
-    doc.text(isProfessional ? 'BAIL PROFESSIONNEL AUDCG' : 'BAIL D\'HABITATION CONFORME', sealCenterX, sealCenterY + 3.5, { align: 'center' });
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text('LOCATRUST', sealCenterX, sealCenterY - 1, { align: 'center' });
 
-    // Référence légale
-    doc.setFontSize(4.3);
-    doc.setTextColor(100, 116, 139); // slate-500
-    doc.text(isProfessional ? 'OHADA AUDCG & LOI N° 2025-221' : 'LOI N° 2019-576 & LOI 2025-221', sealCenterX, sealCenterY + 7.2, { align: 'center' });
+      doc.setFontSize(5.5);
+      doc.setTextColor(180, 83, 9);
+      doc.text(isProfessional ? 'BAIL PROFESSIONNEL AUDCG' : 'BAIL D\'HABITATION CONFORME', sealCenterX, sealCenterY + 3.5, { align: 'center' });
 
-    // Pied du sceau
-    doc.setFontSize(4.8);
-    doc.setTextColor(180, 83, 9);
-    doc.text(isProfessional ? 'COMMERCE • SÉCURITÉ JURIDIQUE' : 'ABIDJAN • SÉCURITÉ JURIDIQUE', sealCenterX, sealCenterY + 11.2, { align: 'center' });
+      doc.setFontSize(4.3);
+      doc.setTextColor(100, 116, 139);
+      doc.text(isProfessional ? 'OHADA AUDCG & LOI N° 2025-221' : 'LOI N° 2019-576 & LOI 2025-221', sealCenterX, sealCenterY + 7.2, { align: 'center' });
 
-    // Extraction, nettoyage et dédoublonnage des conditions particulières pour pagination
+      doc.setFontSize(4.8);
+      doc.setTextColor(180, 83, 9);
+      doc.text(isProfessional ? 'COMMERCE • SÉCURITÉ JURIDIQUE' : 'ABIDJAN • SÉCURITÉ JURIDIQUE', sealCenterX, sealCenterY + 11.2, { align: 'center' });
+    };
+
+    ensureSpace(73);
+    renderSignaturesAndSealBlock(curY + 2);
+
+    // Extraction, nettoyage et dédoublonnage des conditions particulières pour pagination (2 à 3 pages dynamiques)
     const parseRuleLines = (raw?: string | string[]): string[] => {
       if (!raw) return [];
       const lines = Array.isArray(raw) ? raw : raw.split('\n');
@@ -806,74 +903,28 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       propertyRules.length > 0 ||
       generalCustomRules.length > 0;
 
-    const totalPages = hasCustomClauses ? 2 : 1;
-
-    // Bas de Page 1 : Pagination officielle
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(148, 163, 184); // slate-400
-    doc.text(
-      `Page 1 / ${totalPages} • LocaTrust Certifié — Contrat de bail officiel N° ${contractNumber}`,
-      105,
-      287,
-      { align: 'center' }
-    );
-
     // ========================================================================
-    // PAGE 2 : ANNEXE OFFICIELLE — CONDITIONS PARTICULIÈRES & RÈGLEMENTS
+    // PAGES SUPPLÉMENTAIRES (2 À 3 PAGES) : ANNEXE OFFICIELLE — CONDITIONS PARTICULIÈRES
     // ========================================================================
-    if (totalPages === 2) {
-      doc.addPage('a4', 'portrait');
-
-      // En-tête gauche Page 2 : Logo
-      doc.setFont('helvetica', 'bold');
-      if (isAgency) {
-        doc.setFontSize(13);
-        doc.setTextColor(29, 78, 216);
-        doc.text(ownerName.toUpperCase(), 15, 18);
-        doc.setFontSize(7.5);
-        doc.setTextColor(100, 116, 139);
-        doc.text('AGENCE IMMOBILIÈRE MANDATAIRE AGRÉÉE', 15, 22.5);
-      } else {
-        doc.setFontSize(15);
-        doc.setTextColor(29, 78, 216);
-        doc.text('LocaTrust', 15, 18);
-        doc.setFontSize(7.5);
-        doc.setTextColor(217, 119, 6);
-        doc.text(isProfessional ? '— CONTRAT PROFESSIONNEL OHADA —' : '— GESTION LOCATIVE CONFORME —', 15, 22.5);
-      }
-
-      // Badge N° Annexe en haut à droite
-      doc.setFillColor(245, 158, 11); // amber-500
-      doc.roundedRect(115, 13, 80, 7, 1.5, 1.5, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text(`ANNEXE OFFICIELLE N° ${contractNumber}`, 155, 17.5, { align: 'center' });
+    if (hasCustomClauses) {
+      addContinuationPage(`ANNEXE OFFICIELLE N° ${contractNumber}`);
 
       // Titre de l'Annexe
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10.5);
+      doc.setFontSize(10);
       doc.setTextColor(15, 23, 42);
-      doc.text('ANNEXE CONTRACTUELLE : CONDITIONS PARTICULIÈRES & RÈGLEMENTS CONVENUS', 15, 30);
+      doc.text('ANNEXE CONTRACTUELLE : CONDITIONS PARTICULIÈRES & RÈGLEMENTS CONVENUS', 15, curY);
 
       // Sous-titre explicatif & cadre juridique
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.8);
+      doc.setFontSize(8.0);
       doc.setTextColor(71, 85, 105);
       const subNotice = isProfessional
         ? 'Faisant partie intégrante et indissociable du Bail Professionnel souscrit en application de l\'Acte Uniforme OHADA (AUDCG). Les stipulations ci-dessous sont arrêtées de bonne foi et lient les parties contractantes.'
         : 'Faisant partie intégrante et indissociable du Bail d\'Habitation conclu sous l\'empire de la Loi n° 2019-576 et de la Loi n° 2025-221. Les clauses particulières ci-dessous ont été convenues d\'un commun accord entre les parties.';
-      doc.text(doc.splitTextToSize(subNotice, 180), 15, 34.5);
+      curY = printWrapped(subNotice, 15, curY + 5, 180, 4.0) + 4;
 
-      // Ligne décorative séparatrice
-      doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.4);
-      doc.line(15, 41, 195, 41);
-
-      let yPos = 46;
-
-      // Helper pour dessiner une section de règles avec style carte aérée
+      // Helper pour dessiner une section de règles avec saut de page automatique (supporte 2 à 3 pages sans écraser les écritures)
       const renderRulesSection = (
         title: string,
         rules: string[],
@@ -882,9 +933,8 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       ) => {
         if (rules.length === 0) return;
 
-        // Préparation des lignes avec puces
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6.8);
+        doc.setFontSize(8.2);
         let totalLinesCount = 0;
         const parsedLines: string[][] = [];
 
@@ -895,36 +945,40 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
           totalLinesCount += wrapped.length;
         });
 
-        const sectionPadding = 7;
-        const headerHeight = 7;
-        const lineHeight = 4.2;
+        const sectionPadding = 8;
+        const headerHeight = 8;
+        const lineHeight = 4.6;
         const contentHeight = totalLinesCount * lineHeight;
         const boxHeight = headerHeight + contentHeight + sectionPadding;
+
+        if (curY + boxHeight > 265) {
+          addContinuationPage(`ANNEXE OFFICIELLE N° ${contractNumber}`);
+        }
 
         // Dessin du container carte
         doc.setDrawColor(226, 232, 240);
         doc.setFillColor(248, 250, 252);
-        doc.roundedRect(15, yPos, 180, boxHeight, 2, 2, 'FD');
+        doc.roundedRect(15, curY, 180, boxHeight, 2, 2, 'FD');
 
-        // Bandeau d'en-tête de la section
+        // Bandeau d'en-tête de la section (écriture en bleu conservée à 7.5pt)
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(7.5);
         doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
-        doc.text(title, 20, yPos + 5.5);
+        doc.text(title, 20, curY + 6);
 
         // Badge à droite
-        doc.setFontSize(6);
+        doc.setFontSize(6.5);
         doc.setTextColor(100, 116, 139);
-        doc.text(badgeLabel, 190, yPos + 5.5, { align: 'right' });
+        doc.text(badgeLabel, 190, curY + 6, { align: 'right' });
 
         // Ligne fine sous l'en-tête
         doc.setDrawColor(241, 245, 249);
-        doc.line(20, yPos + 7.5, 190, yPos + 7.5);
+        doc.line(20, curY + 8.2, 190, curY + 8.2);
 
-        // Contenu des règles
-        let textY = yPos + 12;
+        // Contenu des règles (taille augmentée à 8.2pt)
+        let textY = curY + 13.5;
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6.8);
+        doc.setFontSize(8.2);
         doc.setTextColor(30, 41, 59);
 
         parsedLines.forEach((lines) => {
@@ -934,7 +988,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
           });
         });
 
-        yPos += boxHeight + 4;
+        curY += boxHeight + 5;
       };
 
       // Rendu des 3 sections si disponibles
@@ -974,8 +1028,11 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
         );
       }
 
-      // Zone des Signatures et Paraphes en bas de Page 2
-      const sigY = Math.max(yPos + 4, 215);
+      // Zone des Signatures et Paraphes en bas de l'Annexe (avec saut vers Page 3 si nécessaire)
+      if (curY + 42 > 268) {
+        addContinuationPage(`ANNEXE OFFICIELLE N° ${contractNumber}`);
+      }
+      const sigY = Math.max(curY + 4, 215);
 
       // Boîte gauche : Bailleur
       doc.setDrawColor(226, 232, 240);
@@ -987,9 +1044,9 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(15, 23, 42);
       doc.text(isAgency ? 'POUR LA SOCIÉTÉ IMMOBILIÈRE' : 'POUR LE BAILLEUR (PROPRIÉTAIRE)', 18, sigY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(7.2);
       doc.setTextColor(71, 85, 105);
-      doc.text('Mention : « Lu et approuvé sans réserve »', 18, sigY + 9);
+      doc.text('Mention : « Lu et approuvé sans réserve »', 18, sigY + 9.2);
 
       if (resolvedOwnerSig) {
         try {
@@ -1006,7 +1063,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       }
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6);
+      doc.setFontSize(6.2);
       doc.setTextColor(5, 150, 105);
       doc.text('Paraphe & Signature électronique certifiée', 21, sigY + 26);
       doc.setFillColor(5, 150, 105);
@@ -1020,9 +1077,9 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(15, 23, 42);
       doc.text('POUR LE PRENEUR (LOCATAIRE)', 108, sigY + 5);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(7.2);
       doc.setTextColor(71, 85, 105);
-      doc.text('Mention : « Lu et approuvé sans réserve »', 108, sigY + 9);
+      doc.text('Mention : « Lu et approuvé sans réserve »', 108, sigY + 9.2);
 
       if (resolvedTenantSig) {
         try {
@@ -1039,7 +1096,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       }
 
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6);
+      doc.setFontSize(6.2);
       doc.setTextColor(5, 150, 105);
       doc.text('Paraphe & Signature électronique certifiée', 111, sigY + 26);
       doc.setFillColor(5, 150, 105);
@@ -1047,16 +1104,20 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
       // Tampon de conformité Annexe
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(6.2);
+      doc.setFontSize(6.5);
       doc.setTextColor(180, 83, 9);
       doc.text('DOCUMENT OFFICIEL ET SCELLÉ NUMÉRIQUEMENT PAR LOCATRUST', 105, sigY + 34.5, { align: 'center' });
+    }
 
-      // Pagination Page 2
+    // Pagination dynamique sur l'ensemble des pages générées (1, 2 ou 3 pages)
+    const finalTotalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= finalTotalPages; p++) {
+      doc.setPage(p);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
+      doc.setFontSize(7.0);
       doc.setTextColor(148, 163, 184);
       doc.text(
-        `Page 2 / 2 • Document indissociable du contrat principal N° ${contractNumber}`,
+        `Page ${p} / ${finalTotalPages} • LocaTrust Certifié — Contrat de bail officiel N° ${contractNumber}`,
         105,
         287,
         { align: 'center' }

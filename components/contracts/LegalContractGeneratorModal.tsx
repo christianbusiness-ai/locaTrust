@@ -34,7 +34,7 @@ import { LOCATRUST_QR_CODE_DATA_URL, LOCATRUST_QR_CODE_URL } from '@/lib/qrCodeD
 import { Logo } from '@/components/common/Logo';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
-import { persistOwnerSignature, persistTenantSignature, getStoredOwnerSignature } from '@/lib/contractPartyResolver';
+import { persistOwnerSignature, persistTenantSignature, getStoredOwnerSignature, resolveBestPartyCni, isProvisionalOrPlaceholderCni } from '@/lib/contractPartyResolver';
 import {
   runLegalAnalysisEngine,
   IVORIAN_CITIES,
@@ -218,8 +218,17 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       profile?.city
     )
   );
-  const [ownerCni, setOwnerCni] = useState<string>(
-    initialData?.ownerCni || profile?.cni_number || (profile as any)?.rccm_number || (typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null) || 'CI-002891048-A'
+  const [ownerCni, setOwnerCni] = useState<string>(() =>
+    resolveBestPartyCni(
+      [
+        profile?.cni_number,
+        (profile as any)?.rccm_number,
+        user?.user_metadata?.cni_number,
+        typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null,
+        initialData?.ownerCni
+      ],
+      'owner'
+    )
   );
   const [mandantName, setMandantName] = useState<string>(initialData?.mandantName || '');
 
@@ -345,7 +354,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       if (initialData) {
         if (initialData.tenantName) setTenantName(initialData.tenantName);
         if (initialData.tenantPhone) setTenantPhone(initialData.tenantPhone);
-        if (initialData.tenantCni) setTenantCni(initialData.tenantCni);
+        setTenantCni(resolveBestPartyCni([initialData.tenantCni], 'tenant'));
         if (initialData.tenantEmail) setTenantEmail(initialData.tenantEmail);
         if (initialData.tenantAddress) setTenantAddress(initialData.tenantAddress);
         if (initialData.ownerName) setOwnerName(initialData.ownerName);
@@ -365,8 +374,18 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
           )
         );
 
-        if (initialData.ownerCni) setOwnerCni(initialData.ownerCni);
-        else if (profile?.cni_number) setOwnerCni(profile.cni_number);
+        setOwnerCni(
+          resolveBestPartyCni(
+            [
+              profile?.cni_number,
+              (profile as any)?.rccm_number,
+              user?.user_metadata?.cni_number,
+              typeof window !== 'undefined' ? localStorage.getItem('locatrust_user_cni') : null,
+              initialData.ownerCni
+            ],
+            'owner'
+          )
+        );
 
         // Récupérer les informations complètes du locataire depuis la table profiles si disponible
         if (initialData.tenantId) {
@@ -380,7 +399,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 if (tProf.full_name) setTenantName(tProf.full_name);
                 if (tProf.phone) setTenantPhone(tProf.phone);
                 if (tProf.email) setTenantEmail(tProf.email);
-                if (tProf.cni_number) setTenantCni(tProf.cni_number);
+                setTenantCni((prev) => resolveBestPartyCni([tProf.cni_number, prev, initialData.tenantCni], 'tenant'));
                 if (tProf.address) setTenantAddress(tProf.address);
               }
             });
@@ -1104,9 +1123,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       owner_id: finalOwnerId || targetOwnerId,
       owner_name: ownerName,
       owner_phone: ownerPhone,
+      owner_cni: ownerCni,
       tenant_id: finalTenantId || targetTenantId,
       tenant_name: tenantName,
       tenant_phone: tenantPhone,
+      tenant_cni: tenantCni,
       property_id: finalPropId || rawPropId,
       property_title: propertyTitle,
       property_address: propertyAddress,
@@ -1120,6 +1141,25 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       bedrooms: propertyBedrooms,
       bathrooms: propertyBathrooms
     };
+
+    try {
+      const { registerContractInVerificationRegistry } = await import('@/lib/verificationRegistry');
+      const reg = registerContractInVerificationRegistry({
+        contractNumber,
+        ownerId: finalOwnerId || targetOwnerId,
+        tenantId: finalTenantId || targetTenantId,
+        ownerName,
+        tenantName,
+        propertyTitle,
+        propertyAddress,
+        rentAmount: rent,
+        cautionAmount: effectiveCautionAmount,
+        startDate: computedStartDate,
+        durationMonths,
+        isTenantSigned: Boolean(tenantSignatureUrl)
+      });
+      setActiveVerificationToken(reg.token);
+    } catch {}
 
     try {
       const appsRaw = localStorage.getItem('locatrust_rental_applications');
@@ -1404,13 +1444,17 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         owner: {
           id: finalOwnerId || targetOwnerId,
           full_name: ownerName,
-          phone: ownerPhone
+          phone: ownerPhone,
+          cni_number: ownerCni
         },
         tenant: {
           id: finalTenantId || targetTenantId,
           full_name: tenantName,
-          phone: tenantPhone
+          phone: tenantPhone,
+          cni_number: tenantCni
         },
+        owner_cni: ownerCni,
+        tenant_cni: tenantCni,
         rent,
         monthly_rent: rent,
         caution: effectiveCautionAmount,
@@ -1776,6 +1820,30 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     onChange={(e) => setTenantName(e.target.value)}
                     className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
                     placeholder="Ex: Locataire"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px] sm:text-xs">
+                    {isAgency ? 'N° RCCM / CNI de l\'Agence ou du Bailleur' : 'N° CNI / Passeport du Bailleur'}
+                  </label>
+                  <input
+                    type="text"
+                    value={isProvisionalOrPlaceholderCni(ownerCni) ? '' : ownerCni}
+                    onChange={(e) => setOwnerCni(e.target.value.trim() || 'CI00236543 (Provisoire)')}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none font-mono"
+                    placeholder="Saisir N° CNI/Passeport réel (sinon N° provisoire CI00236543)"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-[11px] sm:text-xs">
+                    N° CNI / Passeport du Locataire
+                  </label>
+                  <input
+                    type="text"
+                    value={isProvisionalOrPlaceholderCni(tenantCni) ? '' : tenantCni}
+                    onChange={(e) => setTenantCni(e.target.value.trim() || 'CI00662233 (Provisoire)')}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white text-xs font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none font-mono"
+                    placeholder="Saisir N° CNI/Passeport réel (sinon N° provisoire CI00662233)"
                   />
                 </div>
               </div>

@@ -48,6 +48,7 @@ import { supabase } from '@/src/lib/supabase';
 import { LegalContractAnalyzerModal } from './LegalContractAnalyzerModal';
 import {
   resolveContractParties,
+  resolveBestPartyCni,
   getStoredOwnerSignature,
   getStoredTenantSignature,
   persistOwnerSignature,
@@ -246,7 +247,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         name: realContract.tenant?.full_name || realContract.tenant_name || user?.user_metadata?.full_name || 'Locataire',
         phone: realContract.tenant?.phone || realContract.tenant_phone || '+225 07 00 00 00 00',
         email: realContract.tenant?.email || realContract.tenant_email || 'locataire@locatrust.ci',
-        cni: realContract.tenant?.cni_number || realContract.tenant_cni || 'CI-00000000',
+        cni: resolveBestPartyCni([realContract.tenant?.cni_number, realContract.tenant_cni], 'tenant'),
         address: realContract.property?.address || realContract.property_address || 'Abidjan, Côte d\'Ivoire',
         propertyTitle: realContract.property?.title || realContract.property_title || 'Logement loué',
         propertyAddress: realContract.property?.address || realContract.property_address || 'Côte d\'Ivoire',
