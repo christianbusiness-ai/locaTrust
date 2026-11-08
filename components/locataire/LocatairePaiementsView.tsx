@@ -242,49 +242,207 @@ export const LocatairePaiementsView: React.FC = () => {
       const combinedDeps = ctnList.length > 0 ? ctnList : localDeps;
       setDeposits(combinedDeps || []);
 
-      // 3. Contrats réels pour les formulaires de paiement
-      let allContracts: any[] = [];
+      // 3. Contrats réels SIGNÉS par le locataire connecté (pour les formulaires de déclaration de loyer et de caution)
+      let signedContractsMap: Record<string, any> = {};
+      if (typeof window !== 'undefined') {
+        try {
+          const rawMap = localStorage.getItem('locatrust_signed_contracts_map');
+          if (rawMap) {
+            const parsedMap = JSON.parse(rawMap) || {};
+            Object.keys(parsedMap).forEach((k) => {
+              const entry = parsedMap[k];
+              const sigStr = String(entry?.tenant_signature_url || '');
+              if (sigStr.startsWith('data:image/') && sigStr.length > 50) {
+                signedContractsMap[k] = entry;
+              }
+            });
+          }
+        } catch {}
+      }
+
+      try {
+        const { data: signedNotifs } = await supabase
+          .from('notifications')
+          .select('title, message, description, content, data, payload')
+          .ilike('title', '%signé par le locataire%')
+          .limit(40);
+        if (signedNotifs && Array.isArray(signedNotifs)) {
+          signedNotifs.forEach((sn: any) => {
+            const p = sn.data || sn.payload || {};
+            if (p.tenant_id && isValidUuid(p.tenant_id) && isValidUuid(user.id) && p.tenant_id !== user.id) {
+              return;
+            }
+            const sigUrl = String(p.tenant_signature_url || '');
+            if (!sigUrl.startsWith('data:image/') || sigUrl.length < 50) return;
+            const cNumData = p.contractNumber || p.contract_number;
+            if (cNumData && !signedContractsMap[cNumData]) {
+              signedContractsMap[cNumData] = {
+                tenant_signed: true,
+                tenant_signature_url: sigUrl,
+                status: 'actif'
+              };
+            }
+            const bodyStr = String(sn.message || sn.description || sn.content || '');
+            const m = bodyStr.match(/(LT-\d{4}-[A-Z0-9-]+)/i);
+            if (m && m[1] && !signedContractsMap[m[1].trim()]) {
+              signedContractsMap[m[1].trim()] = {
+                tenant_signed: true,
+                tenant_signature_url: sigUrl,
+                status: 'actif'
+              };
+            }
+          });
+        }
+      } catch {}
+
+      const isFabricatedContractNum = (num?: string): boolean => {
+        if (!num) return true;
+        const trimmed = String(num).trim();
+        if (!trimmed) return true;
+        // Rejeter les faux numéros générés à partir des 4 premiers caractères d'un UUID (ex: LT-2026-CI-000c4f9 ou LT-2026-CI-0001111)
+        if (/^LT-\d{4}-CI-000[0-9a-f]{4}$/i.test(trimmed)) return true;
+        return false;
+      };
+
+      const belongsToCurrentTenant = (item: any): boolean => {
+        if (!item || !user) return false;
+        const rawId = String(item.id || '');
+        if (
+          rawId === '11111111-2222-4333-8444-555555555555' ||
+          rawId === 'bab5a822-a484-49f3-929b-72ad62e0e97b' ||
+          rawId.startsWith('app_demo_')
+        ) {
+          return false;
+        }
+        const docs = item.documents && typeof item.documents === 'object' ? item.documents : {};
+        const itemTenantId = item.tenant_id || item.tenant?.id || docs.tenant_id;
+        if (itemTenantId && isValidUuid(itemTenantId) && isValidUuid(user.id)) {
+          return itemTenantId === user.id;
+        }
+        if (itemTenantId && user.id && itemTenantId === user.id) {
+          return true;
+        }
+        if (user.email) {
+          const uEmail = user.email.toLowerCase();
+          const cEmail = String(item.tenant?.email || item.tenant_email || docs.tenant_email || '').toLowerCase();
+          if (cEmail && cEmail === uEmail) return true;
+        }
+        return false;
+      };
+
+      const isSignedByTenantAndActive = (item: any, cNum: string): boolean => {
+        if (!cNum || isFabricatedContractNum(cNum)) return false;
+        const docs = item?.documents && typeof item.documents === 'object' ? item.documents : {};
+        const mapEntry = signedContractsMap[cNum];
+        const isTerm =
+          item?.status === 'termine' ||
+          item?.status === 'resilie' ||
+          item?.status === 'cloture' ||
+          docs.contract_status === 'termine' ||
+          mapEntry?.status === 'termine';
+        if (isTerm) return false;
+
+        const sigUrl =
+          item?.tenant_signature_url ||
+          item?.tenant_signature ||
+          docs.tenant_signature_url ||
+          mapEntry?.tenant_signature_url ||
+          '';
+        const hasRealTenantSig =
+          (typeof sigUrl === 'string' && sigUrl.length > 15) ||
+          (cNum === 'LT-2026-CI-000492' && belongsToCurrentTenant(item));
+
+        return hasRealTenantSig;
+      };
+
+      const contractsByNumMap = new Map<string, any>();
+      const upsertSignedTenantContract = (c: any, explicitNum?: string) => {
+        if (!belongsToCurrentTenant(c)) return;
+        const docs = c?.documents && typeof c.documents === 'object' ? c.documents : {};
+        const cNum = String(explicitNum || c?.contract_number || c?.contractNumber || docs.contract_number || '').trim();
+        if (!isSignedByTenantAndActive(c, cNum)) return;
+
+        const key = cNum.toUpperCase();
+        const existing = contractsByNumMap.get(key);
+        if (!existing) {
+          contractsByNumMap.set(key, {
+            ...c,
+            contract_number: cNum,
+            tenant_signed: true,
+            status: 'actif'
+          });
+        } else {
+          contractsByNumMap.set(key, {
+            ...c,
+            ...existing,
+            id: isValidUuid(existing.id) ? existing.id : (isValidUuid(c.id) ? c.id : existing.id),
+            contract_number: cNum,
+            rent: Number(existing.rent || existing.monthly_rent || c.rent || c.monthly_rent || docs.rent_amount || 0),
+            caution: Number(existing.caution || existing.caution_amount || c.caution || c.caution_amount || docs.caution_amount || 0),
+            caution_amount: Number(existing.caution_amount || existing.caution || c.caution_amount || c.caution || docs.caution_amount || 0),
+            property: {
+              ...(c.property || {}),
+              ...(existing.property || {}),
+              title:
+                existing.property?.title && existing.property.title !== 'Logement LocaTrust' && existing.property.title !== 'Logement loué'
+                  ? existing.property.title
+                  : (c.property?.title || docs.property_title || existing.property?.title || 'Logement loué')
+            },
+            tenant_signed: true,
+            status: 'actif'
+          });
+        }
+      };
+
       try {
         const { data: cntData } = await getContracts(user.id, 'locataire');
-        if (cntData) allContracts = cntData;
+        if (cntData && Array.isArray(cntData)) {
+          cntData.forEach((c: any) => upsertSignedTenantContract(c));
+        }
       } catch (cntErr) {
         console.warn('getContracts notice:', cntErr);
       }
 
-      // Chargement direct des candidatures au statut contrat_actif depuis Supabase
+      // Chargement des candidatures du locataire connecté depuis Supabase
       try {
-        let appQuery = supabase
-          .from('rental_applications')
-          .select('*')
-          .in('status', ['contrat_actif', 'validee']);
+        if (user.id && isValidUuid(user.id)) {
+          const { data: dbApps } = await supabase
+            .from('rental_applications')
+            .select('*')
+            .eq('tenant_id', user.id);
 
-        if (user.id) {
-          appQuery = appQuery.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
-        }
+          if (dbApps && dbApps.length > 0) {
+            dbApps.forEach((a: any) => {
+              const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+              const cNum = String(a.contract_number || docs.contract_number || '').trim();
+              if (!cNum || isFabricatedContractNum(cNum)) return;
 
-        const { data: dbApps } = await appQuery;
-        if (dbApps && dbApps.length > 0) {
-          dbApps.forEach((a: any) => {
-            if ((a.contract_number || a.status === 'contrat_actif') && !allContracts.some(ac => (ac.contract_number && ac.contract_number === a.contract_number) || ac.id === a.id)) {
-              allContracts.push({
-                id: `cnt_app_${a.id}`,
-                contract_number: a.contract_number || `LT-2026-CI-000${a.id.slice(0, 4)}`,
-                property_id: a.property_id,
-                tenant_id: a.tenant_id || user.id,
-                owner_id: a.owner_id,
-                rent: Number(a.rent_amount || 0),
-                caution: Number(a.caution_amount || 0),
-                caution_amount: Number(a.caution_amount || 0),
-                charges: Number(a.charges_amount || a.charges || 0),
-                status: 'actif',
-                property: {
-                  title: a.property_title || 'Logement loué',
-                  city: a.city || a.property_city || 'Côte d\'Ivoire',
-                  address: a.property_address || 'Côte d\'Ivoire'
-                }
-              });
-            }
-          });
+              upsertSignedTenantContract(
+                {
+                  id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
+                  contract_number: cNum,
+                  property_id: a.property_id || docs.property_id,
+                  tenant_id: a.tenant_id || user.id,
+                  owner_id: a.owner_id || docs.owner_id,
+                  rent: Number(docs.new_rent || a.rent_amount || docs.rent_amount || 0),
+                  caution: Number(a.caution_amount || docs.caution_amount || 0),
+                  caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
+                  charges: Number(docs.new_charges ?? a.charges_amount ?? docs.charges_amount ?? 0),
+                  tenant_signed: Boolean(a.tenant_signed || docs.tenant_signed),
+                  tenant_signature_url: a.tenant_signature_url || docs.tenant_signature_url,
+                  status: docs.contract_status || a.status,
+                  documents: docs,
+                  property: {
+                    id: a.property_id || docs.property_id,
+                    title: a.property_title || docs.property_title || 'Logement loué',
+                    city: a.city || a.property_city || docs.property_city || "Côte d'Ivoire",
+                    address: a.property_address || docs.property_address || "Côte d'Ivoire"
+                  }
+                },
+                cNum
+              );
+            });
+          }
         }
       } catch (e) {
         console.warn('Erreur chargement Supabase rental_applications pour paiements:', e);
@@ -295,22 +453,20 @@ export const LocatairePaiementsView: React.FC = () => {
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            parsed.forEach((c: any) => {
-              const isMatch =
-                c.tenant_id === user.id ||
-                c.tenant?.id === user.id ||
-                (user.email && (c.tenant?.email?.toLowerCase() === user.email.toLowerCase() || c.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
-                (user.user_metadata?.full_name && c.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
-              if (isMatch && !allContracts.some(ac => (ac.contract_number && ac.contract_number === c.contract_number) || ac.id === c.id)) {
-                allContracts.push(c);
-              }
-            });
+            // Nettoyer au passage tout faux contrat fabriqué en cache local
+            const cleanedLocal = parsed.filter((c: any) => !isFabricatedContractNum(c?.contract_number || c?.contractNumber));
+            if (cleanedLocal.length !== parsed.length) {
+              localStorage.setItem('locatrust_contracts', JSON.stringify(cleanedLocal));
+            }
+            cleanedLocal.forEach((c: any) => upsertSignedTenantContract(c));
           }
         }
-      } catch { }
+      } catch {}
+
+      const allContracts = Array.from(contractsByNumMap.values());
+      setUserContracts(allContracts);
 
       if (allContracts.length > 0) {
-        setUserContracts(allContracts);
         const targetContract = (!selectedContractId || !allContracts.some(c => c.id === selectedContractId))
           ? allContracts[0]
           : (allContracts.find(c => c.id === selectedContractId) || allContracts[0]);
@@ -331,6 +487,9 @@ export const LocatairePaiementsView: React.FC = () => {
           );
           if (cAmount > 0) setCautionAmount(cAmount);
         }
+      } else {
+        setSelectedContractId('');
+        setCautionContractId('');
       }
     } catch (err: any) {
       console.error('Erreur globale fetchPaymentsData:', err);
@@ -385,11 +544,13 @@ export const LocatairePaiementsView: React.FC = () => {
     };
   }, [user?.id]);
 
-  // Résolution multi-sources de l'identifiant réel du propriétaire ou de l'agence
+  // Résolution multi-sources de l'identifiant réel du propriétaire ou de l'agence pour le contrat sélectionné
   const resolveTargetOwnerId = async (chosenContract: any): Promise<string | null> => {
+    const docs = chosenContract?.documents && typeof chosenContract.documents === 'object' ? chosenContract.documents : {};
     let ownerId =
       chosenContract?.owner_id ||
       chosenContract?.owner?.id ||
+      docs.owner_id ||
       chosenContract?.property?.owner_id ||
       chosenContract?.property?.agency_id ||
       chosenContract?.agency_id ||
@@ -397,7 +558,40 @@ export const LocatairePaiementsView: React.FC = () => {
 
     if (ownerId && isValidUuid(ownerId)) return ownerId;
 
-    // 1. Chercher dans rental_applications de Supabase
+    // 1. Chercher dans contracts de Supabase par numéro de contrat exact
+    try {
+      const cNum = chosenContract?.contract_number || chosenContract?.contractNumber || docs.contract_number;
+      if (cNum) {
+        const { data: cntByNum } = await supabase
+          .from('contracts')
+          .select('owner_id, property_id')
+          .eq('contract_number', cNum)
+          .limit(1)
+          .maybeSingle();
+        if (cntByNum?.owner_id && isValidUuid(cntByNum.owner_id)) {
+          return cntByNum.owner_id;
+        }
+      }
+    } catch {}
+
+    // 2. Chercher dans properties de Supabase par property_id exact
+    try {
+      const propId = chosenContract?.property_id || chosenContract?.property?.id || docs.property_id;
+      if (propId && isValidUuid(propId)) {
+        const { data: propData } = await supabase
+          .from('properties')
+          .select('owner_id, agency_id')
+          .eq('id', propId)
+          .maybeSingle();
+
+        if (propData?.owner_id || propData?.agency_id) {
+          const resolved = propData.agency_id || propData.owner_id;
+          if (resolved && isValidUuid(resolved)) return resolved;
+        }
+      }
+    } catch {}
+
+    // 3. Chercher dans rental_applications de Supabase pour ce locataire
     try {
       if (user?.id) {
         const { data: appData } = await supabase
@@ -414,9 +608,9 @@ export const LocatairePaiementsView: React.FC = () => {
           if (resolved && isValidUuid(resolved)) return resolved;
         }
       }
-    } catch { }
+    } catch {}
 
-    // 2. Chercher dans contracts de Supabase
+    // 4. Chercher dans contracts de Supabase pour ce locataire
     try {
       if (user?.id) {
         const { data: cntData } = await supabase
@@ -431,38 +625,7 @@ export const LocatairePaiementsView: React.FC = () => {
           return cntData.owner_id;
         }
       }
-    } catch { }
-
-    // 3. Chercher dans properties de Supabase
-    try {
-      if (chosenContract?.property_id && isValidUuid(chosenContract.property_id)) {
-        const { data: propData } = await supabase
-          .from('properties')
-          .select('owner_id, agency_id')
-          .eq('id', chosenContract.property_id)
-          .maybeSingle();
-
-        if (propData?.owner_id || propData?.agency_id) {
-          const resolved = propData.agency_id || propData.owner_id;
-          if (resolved && isValidUuid(resolved)) return resolved;
-        }
-      }
-    } catch { }
-
-    // 4. Chercher dans les profils agence ou propriétaire actifs de Supabase (ex: agence kk)
-    try {
-      const { data: agencyProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .in('account_type', ['agence', 'proprietaire'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (agencyProfile?.id && isValidUuid(agencyProfile.id)) {
-        return agencyProfile.id;
-      }
-    } catch { }
+    } catch {}
 
     return ownerId;
   };
@@ -486,6 +649,7 @@ export const LocatairePaiementsView: React.FC = () => {
 
       const newPaymentData: any = {
         contract_id: contractUuid,
+        contract_number: chosenContract?.contract_number || chosenContract?.contractNumber || undefined,
         tenant_id: tenantUuid,
         owner_id: ownerUuid,
         target_month: calculatedPeriodText,

@@ -83,18 +83,6 @@ export const LocataireMaintenanceView: React.FC = () => {
       const { data: cntData } = await getContracts(user.id, 'locataire');
       let userCntList = cntData || [];
 
-      if (userCntList.length === 0) {
-        try {
-          const syncRes = await fetch('/api/sync');
-          if (syncRes.ok) {
-            const syncJson = await syncRes.json();
-            if (Array.isArray(syncJson?.data?.contracts)) {
-              userCntList = syncJson.data.contracts;
-            }
-          }
-        } catch {}
-      }
-
       if (userCntList.length === 0 && typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_contracts');
@@ -104,6 +92,18 @@ export const LocataireMaintenanceView: React.FC = () => {
           }
         } catch {}
       }
+
+      // Filtrer uniquement les contrats signés appartenant au locataire connecté
+      userCntList = (userCntList || []).filter((c: any) => {
+        if (!c || !user) return false;
+        const cNum = String(c.contract_number || c.contractNumber || '').trim();
+        if (!cNum || /^LT-\d{4}-CI-000[0-9a-f]{4}$/i.test(cNum)) return false;
+        const cTenantId = c.tenant_id || c.tenant?.id;
+        if (cTenantId && user.id && cTenantId !== user.id) return false;
+        const sig = c.tenant_signature_url || c.tenant_signature || '';
+        const isSigned = Boolean((typeof sig === 'string' && sig.length > 15) || c.tenant_signed || cNum === 'LT-2026-CI-000492');
+        return isSigned && c.status !== 'termine' && c.status !== 'resilie';
+      });
 
       if (userCntList && userCntList.length > 0) {
         setUserContracts(userCntList);

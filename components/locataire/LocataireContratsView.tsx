@@ -633,6 +633,33 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
       // Fusion avec les contrats du stockage local pour le locataire connecté
       const localContracts: any[] = [];
+      const isUuidStr = (str?: string) =>
+        Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
+      const isFabricatedNum = (num?: string) =>
+        Boolean(!num || /^LT-\d{4}-CI-000[0-9a-f]{4}$/i.test(String(num).trim()));
+      const belongsToCurrentTenant = (item: any) => {
+        if (!item || !user) return false;
+        const rawId = String(item.id || '');
+        if (
+          rawId === '11111111-2222-4333-8444-555555555555' ||
+          rawId === 'bab5a822-a484-49f3-929b-72ad62e0e97b' ||
+          rawId.startsWith('app_demo_')
+        ) {
+          return false;
+        }
+        const docs = item.documents && typeof item.documents === 'object' ? item.documents : {};
+        const itemTenantId = item.tenant_id || item.tenant?.id || docs.tenant_id;
+        if (itemTenantId && isUuidStr(itemTenantId) && isUuidStr(user.id)) {
+          return itemTenantId === user.id;
+        }
+        if (itemTenantId && user.id && itemTenantId === user.id) return true;
+        if (user.email) {
+          const uEmail = user.email.toLowerCase();
+          const cEmail = String(item.tenant?.email || item.tenant_email || docs.tenant_email || '').toLowerCase();
+          if (cEmail && cEmail === uEmail) return true;
+        }
+        return false;
+      };
 
       try {
         const raw = localStorage.getItem('locatrust_contracts');
@@ -640,12 +667,10 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             parsed.forEach((c: any) => {
-              const isMatch =
-                c.tenant_id === user.id ||
-                c.tenant?.id === user.id ||
-                (user.email && (c.tenant?.email?.toLowerCase() === user.email.toLowerCase() || c.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
-                (user.user_metadata?.full_name && c.tenant?.full_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase());
-              if (isMatch) localContracts.push(c);
+              const cNum = c?.contract_number || c?.contractNumber;
+              if (belongsToCurrentTenant(c) && !isFabricatedNum(cNum)) {
+                localContracts.push(c);
+              }
             });
           }
         }
@@ -653,86 +678,91 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
       // Récupération des candidatures en préparation, transmises ou finalisées directement depuis Supabase
       try {
-        let appQuery = supabase
-          .from('rental_applications')
-          .select('*');
+        if (user.id && isUuidStr(user.id)) {
+          const { data: dbApps } = await supabase
+            .from('rental_applications')
+            .select('*')
+            .eq('tenant_id', user.id);
 
-        if (user.id) {
-          appQuery = appQuery.or(`tenant_id.eq.${user.id}${user.email ? `,tenant_email.eq.${user.email}` : ''}`);
-        }
+          if (dbApps && dbApps.length > 0) {
+            dbApps.forEach((a: any) => {
+              if (!belongsToCurrentTenant(a)) return;
+              const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+              const cNum = a.contract_number || docs.contract_number;
+              const hasContractNum = Boolean(cNum && !isFabricatedNum(cNum));
+              const isTransmitted = (a.status === 'en_attente_signature_locataire' || Boolean(docs.contract_transmitted)) && hasContractNum;
+              const appSig = a.tenant_signature_url || docs.tenant_signature_url || (cNum ? signedContractsMap[cNum]?.tenant_signature_url : '');
+              const isSignedByTenant = Boolean(hasContractNum && ((appSig && String(appSig).length > 15) || cNum === 'LT-2026-CI-000492'));
+              const isTerminated = docs.contract_status === 'termine' || a.status === 'termine';
+              const isPrep = a.status === 'en_redaction_bail' && !hasContractNum;
 
-        const { data: dbApps } = await appQuery;
-        if (dbApps && dbApps.length > 0) {
-          dbApps.forEach((a: any) => {
-            const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
-            const cNum = a.contract_number || docs.contract_number;
-            const hasContractNum = Boolean(cNum);
-            const isTransmitted = a.status === 'en_attente_signature_locataire' || Boolean(docs.contract_transmitted) || hasContractNum;
-            const appSig = a.tenant_signature_url || docs.tenant_signature_url || (cNum ? signedContractsMap[cNum]?.tenant_signature_url : '');
-            const isSignedByTenant = Boolean((appSig && String(appSig).length > 15) || cNum === 'LT-2026-CI-000492');
-            const isTerminated = docs.contract_status === 'termine' || a.status === 'termine';
-            const isPrep = a.status === 'en_redaction_bail' && !hasContractNum;
+              if (!hasContractNum && !isPrep) {
+                return;
+              }
+              if (!isTransmitted && !isSignedByTenant && !isPrep) {
+                return;
+              }
 
-            if (!isTransmitted && !isSignedByTenant && !isPrep && a.status !== 'validee') {
-              return;
-            }
-
-            localContracts.push({
-              id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
-              contract_number: cNum || `LT-2026-CI-000${a.id.slice(0, 4)}`,
-              property_id: a.property_id,
-              tenant_id: a.tenant_id || user.id,
-              owner_id: a.owner_id,
-              rent: Number(docs.new_rent || a.rent_amount || docs.rent_amount || 0),
-              caution: Number(a.caution_amount || docs.caution_amount || 0),
-              caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
-              charges: Number(docs.new_charges ?? a.charges_amount ?? docs.charges_amount ?? 0),
-              status: isTerminated ? 'termine' : (isPrep ? 'en_redaction_bail' : (isSignedByTenant ? 'actif' : 'en_attente_signature_locataire')),
-              renewal_status: docs.renewal_status,
-              renewal_duration_requested: docs.renewal_duration_requested,
-              end_date: docs.end_date,
-              amendments: docs.amendments,
-              caution_restituted_amount: docs.caution_restituted_amount,
-              start_date: docs.start_date || a.date_received || new Date().toISOString(),
-              duration_months: Number(docs.duration_months || a.duration_months || 12),
-              owner_signed: a.owner_signed ?? docs.owner_signed ?? true,
-              tenant_signed: isSignedByTenant,
-              owner_signature_url: a.owner_signature_url || docs.owner_signature_url,
-              tenant_signature_url: isSignedByTenant ? appSig : undefined,
-              owner: { full_name: a.owner_name || docs.owner_name || 'Bailleur certifié', phone: a.owner_phone || docs.owner_phone || '+225 00 00 00 00' },
-              tenant: { full_name: a.tenant_name || docs.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || docs.tenant_phone || user.phone || '' },
-              property: {
-                id: a.property_id,
-                title: a.property_title || docs.property_title || 'Logement loué',
-                city: docs.property_city || 'Abidjan',
-                commune: docs.property_commune,
-                address: a.property_address || docs.property_address || 'Abidjan - Côte d\'Ivoire',
+              localContracts.push({
+                id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
+                contract_number: cNum,
+                property_id: a.property_id,
+                tenant_id: a.tenant_id || user.id,
+                owner_id: a.owner_id,
                 rent: Number(docs.new_rent || a.rent_amount || docs.rent_amount || 0),
                 caution: Number(a.caution_amount || docs.caution_amount || 0),
-                surface: docs.surface,
-                rooms: docs.rooms,
-                bedrooms: docs.bedrooms,
-                bathrooms: docs.bathrooms,
-                equipments: docs.declared_equipments ? [docs.declared_equipments] : [],
-                declared_equipments: docs.declared_equipments
-              }
+                caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
+                charges: Number(docs.new_charges ?? a.charges_amount ?? docs.charges_amount ?? 0),
+                status: isTerminated ? 'termine' : (isPrep ? 'en_redaction_bail' : (isSignedByTenant ? 'actif' : 'en_attente_signature_locataire')),
+                renewal_status: docs.renewal_status,
+                renewal_duration_requested: docs.renewal_duration_requested,
+                end_date: docs.end_date,
+                amendments: docs.amendments,
+                caution_restituted_amount: docs.caution_restituted_amount,
+                start_date: docs.start_date || a.date_received || new Date().toISOString(),
+                duration_months: Number(docs.duration_months || a.duration_months || 12),
+                owner_signed: a.owner_signed ?? docs.owner_signed ?? true,
+                tenant_signed: isSignedByTenant,
+                owner_signature_url: a.owner_signature_url || docs.owner_signature_url,
+                tenant_signature_url: isSignedByTenant ? appSig : undefined,
+                owner: { full_name: a.owner_name || docs.owner_name || 'Bailleur certifié', phone: a.owner_phone || docs.owner_phone || '+225 00 00 00 00' },
+                tenant: { full_name: a.tenant_name || docs.tenant_name || user.user_metadata?.full_name || 'Locataire', phone: a.tenant_phone || docs.tenant_phone || user.phone || '' },
+                property: {
+                  id: a.property_id,
+                  title: a.property_title || docs.property_title || 'Logement loué',
+                  city: docs.property_city || 'Abidjan',
+                  commune: docs.property_commune,
+                  address: a.property_address || docs.property_address || 'Abidjan - Côte d\'Ivoire',
+                  rent: Number(docs.new_rent || a.rent_amount || docs.rent_amount || 0),
+                  caution: Number(a.caution_amount || docs.caution_amount || 0),
+                  surface: docs.surface,
+                  rooms: docs.rooms,
+                  bedrooms: docs.bedrooms,
+                  bathrooms: docs.bathrooms,
+                  equipments: docs.declared_equipments ? [docs.declared_equipments] : [],
+                  declared_equipments: docs.declared_equipments
+                }
+              });
             });
-          });
+          }
         }
       } catch (e) {
         console.warn('Erreur lecture Supabase rental_applications pour locataire:', e);
       }
 
-      // Récupération depuis les notifications (pour récupérer immédiatement un contrat transmis)
+      // Récupération depuis les notifications (pour récupérer immédiatement un contrat transmis à CE locataire)
       try {
         const rawNotifs = localStorage.getItem('locatrust_notifications');
         if (rawNotifs) {
           const parsedNotifs = JSON.parse(rawNotifs);
           if (Array.isArray(parsedNotifs)) {
             parsedNotifs.forEach((n: any) => {
+              if (n.targetRole && n.targetRole !== 'locataire') return;
+              if (n.targetUserId && isUuidStr(n.targetUserId) && isUuidStr(user.id) && n.targetUserId !== user.id) return;
               const p = n?.data || n?.payload || {};
+              if (p.tenant_id && isUuidStr(p.tenant_id) && isUuidStr(user.id) && p.tenant_id !== user.id) return;
               const cNum = p.contractNumber || p.contract_number;
-              if (cNum) {
+              if (cNum && !isFabricatedNum(cNum)) {
                 const mapEntry = signedContractsMap[cNum];
                 const sigUrl = (p.tenant_signature_url && String(p.tenant_signature_url).startsWith('data:image/'))
                   ? p.tenant_signature_url
@@ -781,19 +811,18 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
           const appsList = JSON.parse(appsRaw);
           if (Array.isArray(appsList)) {
             appsList.forEach((a: any) => {
-              const isMatch =
-                (a.tenant_id === user.id ||
-                  (user.email && a.tenant_email?.toLowerCase() === user.email.toLowerCase()) ||
-                  (user.user_metadata?.full_name && a.tenant_name?.toLowerCase() === user.user_metadata.full_name.toLowerCase())) &&
-                (a.status === 'contrat_actif' || a.contract_finalized || a.contract_transmitted);
+              if (!belongsToCurrentTenant(a)) return;
+              const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+              const cNum = a.contract_number || docs.contract_number;
+              const isActiveOrTransmitted = a.status === 'contrat_actif' || a.contract_finalized || a.contract_transmitted || Boolean(docs.contract_transmitted);
 
-              if (isMatch && a.contract_number) {
-                const mapEntry = signedContractsMap[a.contract_number];
-                const sigUrl = a.tenant_signature_url || mapEntry?.tenant_signature_url;
-                const isSigned = Boolean((sigUrl && String(sigUrl).length > 15) || a.contract_number === 'LT-2026-CI-000492');
+              if (isActiveOrTransmitted && cNum && !isFabricatedNum(cNum)) {
+                const mapEntry = signedContractsMap[cNum];
+                const sigUrl = a.tenant_signature_url || docs.tenant_signature_url || mapEntry?.tenant_signature_url;
+                const isSigned = Boolean((sigUrl && String(sigUrl).length > 15) || cNum === 'LT-2026-CI-000492');
                 localContracts.push({
                   id: `cnt_app_${a.id}`,
-                  contract_number: a.contract_number,
+                  contract_number: cNum,
                   property_id: a.property_id,
                   tenant_id: a.tenant_id || user.id,
                   owner_id: a.owner_id,
@@ -824,7 +853,9 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       // Déduplication par contract_number en vérifiant strictement la présence d'une vraie signature locataire
       const map = new Map<string, any>();
       loadedDbContracts.forEach((c) => {
+        if (!belongsToCurrentTenant(c)) return;
         const key = c.contract_number || c.id;
+        if (isFabricatedNum(key)) return;
         map.set(key, c);
       });
       localContracts.forEach((c) => {
