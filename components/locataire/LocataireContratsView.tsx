@@ -33,6 +33,7 @@ import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
+import { resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 import { resolveContractParties, persistTenantSignature, getStoredTenantSignature } from '@/lib/contractPartyResolver';
 import { ContractCardSkeleton } from '@/components/common/SkeletonLoader';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
@@ -1139,7 +1140,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       rent: Number(cnt.rent || 0),
       cautionMonths: 2,
       chargesAmount: Number(cnt.charges_amount ?? cnt.charges ?? 0),
-      dueDay: cnt.payment_due_day || 5,
+      dueDay: resolveContractDueDay(cnt),
       ownerSignatureUrl: resolved.ownerSignatureUrl,
       tenantSignatureUrl: resolved.tenantSignatureUrl,
       leaseType,

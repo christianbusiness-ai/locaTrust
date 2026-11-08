@@ -55,6 +55,7 @@ import {
   persistTenantSignature
 } from '@/lib/contractPartyResolver';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
+import { parseDateSafe, resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 import {
   getContractExpiryDetails,
   submitContractRenewalRequest,
@@ -255,6 +256,15 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         caution: cautionVal,
         charges: chargesVal,
         startDate: realContract.signed_date || realContract.start_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
+        dueDay: resolveContractDueDay(realContract),
+        firstDueDate: (() => {
+          const dDay = resolveContractDueDay(realContract);
+          const sObj = parseDateSafe(realContract.start_date || realContract.signed_date || realContract.created_at || new Date());
+          const firstDue = new Date(sObj.getFullYear(), sObj.getMonth() + 1, 1);
+          const maxDay = new Date(firstDue.getFullYear(), firstDue.getMonth() + 1, 0).getDate();
+          firstDue.setDate(Math.min(dDay, maxDay));
+          return firstDue.toLocaleDateString('fr-FR');
+        })(),
         duration: Number(dbContract?.duration_months || realContract.duration_months || 12),
         dateSignature: realContract.signed_date || (realContract.created_at ? new Date(realContract.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')),
         periode: (() => {
@@ -289,7 +299,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       rent: 30000,
       caution: 60000,
       charges: 0,
-      startDate: '01/10/2026',
+      startDate: '07/11/2026',
+      dueDay: 7,
+      firstDueDate: '07/12/2026',
       duration: 12,
       dateSignature: '15 octobre 2026',
       periode: '01/10/2026 (12 mois)',
@@ -679,7 +691,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       cautionAmount: tenantData.caution,
       cautionMonths: tenantData.rent > 0 ? Number((tenantData.caution / tenantData.rent).toFixed(2)) : (realContract?.caution_months || 2),
       chargesAmount: tenantData.charges,
-      dueDay: 5,
+      dueDay: tenantData.dueDay,
       ownerSignatureUrl: resolvedParties.owner.signatureUrl || ownerSignatureUrl,
       tenantSignatureUrl: resolvedParties.tenant.signatureUrl || tenantSignatureUrl,
       leaseType,
@@ -1441,7 +1453,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
               </div>
               <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-100 flex flex-col gap-1">
                 <span className="text-[11px] font-semibold text-slate-500">Date de paiement</span>
-                <span className="text-base font-black text-blue-900">05 de chaque mois</span>
+                <span className="text-base font-black text-blue-900">Le {String(tenantData.dueDay).padStart(2, '0')} du mois</span>
+                <span className="text-[10px] font-bold text-slate-500">1ère échéance : {tenantData.firstDueDate}</span>
               </div>
               <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-100 flex flex-col gap-1">
                 <span className="text-[11px] font-semibold text-slate-500">Charges mensuelles</span>
@@ -1694,7 +1707,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
               <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex items-center justify-between">
                 <div>
                   <h5 className="font-extrabold text-slate-900">ARTICLE 3 : LOYER MENSUEL</h5>
-                  <p className="text-[11px] text-slate-600">Payable d'avance au plus tard le 05 de chaque mois.</p>
+                  <p className="text-[11px] text-slate-600">
+                    Payable le <strong>{String(tenantData.dueDay).padStart(2, '0')} de chaque mois</strong> (1ère échéance le <strong>{tenantData.firstDueDate}</strong>). Tout paiement avant cette date est comptabilisé en avance ; passé ce jour, le loyer est considéré en retard.
+                  </p>
                 </div>
                 <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm">
                   {formatFCFA(tenantData.rent)}
@@ -2592,7 +2607,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
         isOpen={isAnalyzerModalOpen}
         onClose={() => setIsAnalyzerModalOpen(false)}
         contractNumber={contractNumber}
-        clausesText={`1. Le preneur s'engage à payer le loyer mensuel de ${formatFCFA(tenantData.rent)} au plus tard le 05 du mois.\n2. Le dépôt de garantie versé s'élève à la somme de ${formatFCFA(tenantData.caution)} correspondant à deux mois de loyer.\n3. Entretien courant et menues réparations locatives à la charge du locataire.\n4. Respect strict de la quiétude du voisinage et des règles de copropriété.`}
+        clausesText={`1. Le preneur s'engage à payer le loyer mensuel de ${formatFCFA(tenantData.rent)} au plus tard le ${String(tenantData.dueDay).padStart(2, '0')} du mois (1ère échéance le ${tenantData.firstDueDate}).\n2. Le dépôt de garantie versé s'élève à la somme de ${formatFCFA(tenantData.caution)} correspondant à deux mois de loyer.\n3. Entretien courant et menues réparations locatives à la charge du locataire.\n4. Respect strict de la quiétude du voisinage et des règles de copropriété.`}
       />
 
       {/* Modal Zoom QR Code Agrandissement & Scan Mobile Direct */}

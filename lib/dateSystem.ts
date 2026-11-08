@@ -171,21 +171,22 @@ export function calculateContractDueDetails(
 
   // Extraction de la date de signature ou de prise d'effet réelle (priorité aux signatures effectives)
   const rawSignedDate =
+    contract.start_date ||
+    contract.lease_start_date ||
     contract.tenant_signed_at ||
     contract.owner_signed_at ||
     contract.signed_at ||
     contract.signed_date ||
-    contract.lease_start_date ||
-    contract.start_date ||
     contract.created_at ||
     getDeviceDateFormatted('iso');
   
   const signedDateObj = parseAnyDate(rawSignedDate);
   
   // Jour contractuel d'exigibilité :
-  // Si le contrat a été signé un 16, l'échéance mensuelle tombe le 16
-  const signedDay = signedDateObj.getDate();
-  const dueDay = contract.due_day ? Number(contract.due_day) : (signedDay || 16);
+  // Si le contrat a été signé / débute le 07 novembre, l'échéance mensuelle tombe le 07 (1ère échéance le 07 décembre)
+  const signedDay = signedDateObj.getDate() || 7;
+  const rawDueDay = Number(contract.due_day || contract.payment_due_day || 0);
+  const dueDay = (rawDueDay >= 1 && rawDueDay <= 31 && rawDueDay !== 5) ? rawDueDay : signedDay;
   
   const rentAmount = Number(
     contract.monthly_rent ||

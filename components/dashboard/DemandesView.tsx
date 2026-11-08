@@ -33,6 +33,7 @@ import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { resolveContractParties, persistOwnerSignature, getStoredOwnerSignature } from '@/lib/contractPartyResolver';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
+import { resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 import { notifyWaitingListCandidatesOnLeaseFinalized, pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { sendChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 import { triggerCelebration } from '@/lib/celebration';
@@ -1487,7 +1488,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         rent: app.rent_amount || matchedContract?.monthly_rent || matchedProperty?.rent || 0,
         cautionMonths: matchedProperty?.caution_months || (leaseType === 'professionnel' ? 3 : 2),
         chargesAmount: resolvedCharges,
-        dueDay: 5,
+        dueDay: resolveContractDueDay(matchedContract || app),
         ownerSignatureUrl: resolved.ownerSignatureUrl || matchedContract?.owner_signature_url,
         tenantSignatureUrl: resolved.tenantSignatureUrl || matchedContract?.tenant_signature_url,
         isSignedCopy: true,

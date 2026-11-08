@@ -3,7 +3,8 @@ import { MonthAccountingRecord, PeriodSummary } from '@/lib/reports/accountingHi
 import {
   computePortfolioRentMetrics,
   extractContractMonthlyRent,
-  parseDateSafe
+  parseDateSafe,
+  resolveContractDueDay
 } from '@/lib/payments/rentScheduleEngine';
 
 export interface RealAccountingSynthesis {
@@ -520,10 +521,21 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       });
       const monthCollected = monthConfirmedPayments.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
-      // Retard pour ce mois : si le mois est échu et que l'attendu excède l'encaissé
-      const monthDueDate = new Date(currentYearNum, idx, 5, 23, 59, 59);
-      const isMonthOverdue = monthDueDate <= now && monthExpected > monthCollected;
-      const monthLate = isMonthOverdue ? Math.max(0, monthExpected - monthCollected) : 0;
+      // Retard pour ce mois : un loyer n'est en retard QUE lorsque la date limite de paiement réelle (mois M + 1 au jour d'échéance du contrat) est strictement dépassée
+      const overdueExpectedForMonth = contractsActiveThisMonth.reduce((sum: number, c: any) => {
+        const cStart = parseDateSafe(c.start_date || c.lease_start_date || c.created_at);
+        const cDueDay = resolveContractDueDay(c, cStart);
+        const dueMonthDate = new Date(currentYearNum, idx + 1, 1);
+        const daysInDueMonth = new Date(dueMonthDate.getFullYear(), dueMonthDate.getMonth() + 1, 0).getDate();
+        const actualDueDay = Math.min(cDueDay, daysInDueMonth);
+        // Fin de la journée d'échéance (ex: 07 décembre à 23:59:59 -> en retard seulement à partir du 08 décembre)
+        const contractDueDateEnd = new Date(dueMonthDate.getFullYear(), dueMonthDate.getMonth(), actualDueDay, 23, 59, 59, 999);
+        if (now > contractDueDateEnd) {
+          return sum + extractContractMonthlyRent(c);
+        }
+        return sum;
+      }, 0);
+      const monthLate = overdueExpectedForMonth > monthCollected ? Math.max(0, overdueExpectedForMonth - monthCollected) : 0;
 
       // Cautions reçues ce mois (uniquement contrats actifs et signés, dédoublonnées)
       const monthCautionReceived = activeCautionsList.reduce((s: number, c: any) => {

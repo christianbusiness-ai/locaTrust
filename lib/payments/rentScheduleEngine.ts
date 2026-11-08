@@ -113,12 +113,20 @@ export function formatMonthYear(date: Date): string {
 }
 
 /**
- * Parse n'importe quel format de date de manière sécurisée
+ * Parse n'importe quel format de date de manière sécurisée (sans décalage UTC)
  */
 export function parseDateSafe(input?: any): Date {
   if (!input) return new Date();
   if (input instanceof Date) return isNaN(input.getTime()) ? new Date() : input;
   const str = String(input).trim();
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10) - 1;
+    const d = parseInt(isoMatch[3], 10);
+    const dt = new Date(y, m, d);
+    if (!isNaN(dt.getTime())) return dt;
+  }
   if (str.includes('/')) {
     const parts = str.split('/');
     if (parts.length === 3) {
@@ -131,6 +139,36 @@ export function parseDateSafe(input?: any): Date {
   }
   const dt = new Date(str);
   return isNaN(dt.getTime()) ? new Date() : dt;
+}
+
+/**
+ * Ramène une date à minuit (00:00:00.000) en heure locale pour comparaison stricte au jour près.
+ * Un loyer payable le 07 décembre n'est en retard qu'à partir du 08 décembre (toDayMidnight(now) > toDayMidnight(dueDate)).
+ */
+export function toDayMidnight(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/**
+ * Résout le jour mensuel d'échéance réel du contrat :
+ * Par défaut, si le contrat est signé / prend effet le 07 novembre, l'échéance mensuelle est le 07 de chaque mois
+ * (1ère échéance le 07 décembre).
+ */
+export function resolveContractDueDay(contract: any, fallbackStartDate?: Date): number {
+  const rawStart =
+    contract?.start_date ||
+    contract?.lease_start_date ||
+    contract?.signed_at ||
+    contract?.tenant_signed_at ||
+    contract?.signed_date ||
+    contract?.created_at;
+  const startDt = fallbackStartDate || (rawStart ? parseDateSafe(rawStart) : new Date());
+  const startDay = startDt.getDate() || 7;
+  const rawDue = Number(contract?.due_day || contract?.payment_due_day || 0);
+  if (rawDue >= 1 && rawDue <= 31 && rawDue !== 5) {
+    return rawDue;
+  }
+  return startDay;
 }
 
 /**
@@ -177,42 +215,52 @@ export function generateContractSchedule(
   const contractId = contract?.id || contract?.contract_number || 'LT-2026-CI-000492';
   const tenantId = contract?.tenant_id || contract?.tenant?.id || 'usr_tenant';
 
-  // Jour contractuel d'exigibilité (ex: 5 du mois ou jour du début de bail)
-  const dueDay = contract?.due_day ? Number(contract.due_day) : (startDate.getDate() || 5);
+  // Jour contractuel d'exigibilité (ex: si signé le 07 novembre, échéance le 07 du mois suivant : 07 décembre)
+  const dueDay = resolveContractDueDay(contract, startDate);
 
   const schedule: MonthlyScheduleItem[] = [];
 
-  // Débuter au 1er du mois de début de contrat
+  // Débuter au mois de prise d'effet du contrat
   const curDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
 
   // Horizon : au moins jusqu'à referenceDate + horizonMonths mois
   const targetEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + horizonMonths, 1);
 
   const currentMonthKey = `${referenceDate.getFullYear()}-${referenceDate.getMonth()}`;
+  const refMidnight = toDayMidnight(referenceDate);
 
   while (curDate <= targetEnd) {
     const year = curDate.getFullYear();
     const month = curDate.getMonth();
     const monthLabel = `${FRENCH_MONTHS[month]} ${year}`;
 
-    // Date d'échéance exacte
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const actualDueDay = Math.min(dueDay, daysInMonth);
-    const dueDate = new Date(year, month, actualDueDay);
-    const dueDateIso = dueDate.toISOString().split('T')[0];
+    // Règle métier officielle :
+    // Pour un contrat signé / débutant le 07 novembre, l'échéance de paiement du mois est le 07 décembre (mois M + 1).
+    // Passé ce jour (à partir du 08 décembre), le loyer est considéré comme en retard.
+    // Si le locataire paie avant la date de paiement réel (avant le 07 décembre), ce paiement est considéré comme avance.
+    const dueMonthDate = new Date(year, month + 1, 1);
+    const dueYear = dueMonthDate.getFullYear();
+    const dueMonth = dueMonthDate.getMonth();
+    const daysInDueMonth = new Date(dueYear, dueMonth + 1, 0).getDate();
+    const actualDueDay = Math.min(dueDay, daysInDueMonth);
+    const dueDate = new Date(dueYear, dueMonth, actualDueDay);
+    const dueDateIso = `${dueYear}-${String(dueMonth + 1).padStart(2, '0')}-${String(actualDueDay).padStart(2, '0')}`;
+    const dueMidnight = toDayMidnight(dueDate);
 
-    // Arrêter si la date d'échéance dépasse la fin de contrat contractuelle
+    // Arrêter si la date de début de période dépasse la fin de contrat contractuelle
     if (contract?.end_date) {
       const endDate = parseDateSafe(contract.end_date);
-      if (dueDate > endDate) {
+      if (toDayMidnight(curDate) >= toDayMidnight(endDate) && schedule.length > 0) {
         break;
       }
     }
 
     const monthKey = `${year}-${month}`;
-    const isPast = dueDate < referenceDate && monthKey !== currentMonthKey;
+    // En retard UNIQUEMENT lorsque la date limite de paiement est strictement dépassée (passé ce jour)
+    const isPast = refMidnight > dueMidnight;
     const isCurrent = monthKey === currentMonthKey;
-    const isAdvance = dueDate > referenceDate && !isCurrent;
+    // Tout paiement effectué avant la date de paiement réelle est considéré comme une avance
+    const isAdvance = refMidnight < dueMidnight;
 
     schedule.push({
       id: `sch_${contractId}_${year}_${month + 1}`,
@@ -222,7 +270,7 @@ export function generateContractSchedule(
       due_date: dueDateIso,
       amount_due: monthlyRent,
       amount_paid: 0,
-      status: isPast ? 'impaye' : (isCurrent ? 'a_payer' : 'a_payer'),
+      status: isPast ? 'impaye' : 'a_payer',
       is_past_unpaid: isPast,
       is_current_month: isCurrent,
       is_advance: isAdvance
@@ -832,10 +880,10 @@ export function computePortfolioRentMetrics(
     // Générer l'échéancier mensuel prévisionnel pour ce contrat
     let schedule = generateContractSchedule(contract, refDate, 24);
 
-    // Si le contrat a une end_date, couper l'échéancier à la date de fin
-    if (contract.end_date) {
+    // Si le contrat a une end_date, limiter au nombre de mois du bail
+    if (contract.duration_months && Number(contract.duration_months) > 0 && contract.end_date) {
       const endDate = parseDateSafe(contract.end_date);
-      schedule = schedule.filter(item => parseDateSafe(item.due_date) <= endDate);
+      schedule = schedule.filter((item) => toDayMidnight(parseDateSafe(item.due_date)) <= toDayMidnight(endDate) + 5 * 86400000);
     }
 
     // Réconcilier les paiements enregistrés dans Supabase sur l'échéancier
@@ -852,13 +900,20 @@ export function computePortfolioRentMetrics(
     let currentMonthBalance = 0;
     let currentMonthStatus: 'paye' | 'partiel' | 'en_retard' | 'en_attente' = 'en_attente';
 
+    const refMidnight = toDayMidnight(refDate);
+    const currentMonthLabel = `${FRENCH_MONTHS[refMonth]} ${refYear}`.toLowerCase();
+
     for (const item of schedule) {
       const dueDate = parseDateSafe(item.due_date);
-      const isDueDatePassed = dueDate <= refDate;
-      const isSameMonth = dueDate.getFullYear() === refYear && dueDate.getMonth() === refMonth;
+      const dueMidnight = toDayMidnight(dueDate);
+      // Règle stricte : le loyer n'est en retard QUE lorsque la date limite de paiement est strictement dépassée (passé ce jour)
+      const isDueDatePassed = refMidnight > dueMidnight;
+      // Si le locataire paie avant la date de paiement réelle, ce paiement est considéré comme une avance
+      const isBeforeRealDueDate = refMidnight < dueMidnight;
+      const isSameMonth = item.target_month.toLowerCase() === currentMonthLabel;
       const balance = Math.max(0, item.amount_due - item.amount_paid);
 
-      // Mois courant
+      // Période du mois en cours
       if (isSameMonth) {
         currentMonthDue = item.amount_due;
         currentMonthPaid = item.amount_paid;
@@ -875,7 +930,7 @@ export function computePortfolioRentMetrics(
         totalCollectedRentCurrentMonth += Math.min(item.amount_paid, item.amount_due);
       }
 
-      // Échéance échue (date d'échéance dépassée)
+      // 1. Échéance échue non soldée (date limite de paiement strictement dépassée : ex. à partir du 08 décembre pour une échéance au 07 décembre)
       if (isDueDatePassed) {
         contractExpectedToDate += item.amount_due;
         contractCollected += item.amount_paid;
@@ -885,11 +940,14 @@ export function computePortfolioRentMetrics(
           totalLateRent += balance;
           totalLateMonthsCount += 1;
         }
-      } else if (!isSameMonth) {
-        // Mois futur : si de l'argent a été versé, c'est une avance !
-        if (item.amount_paid > 0) {
+      } else {
+        // 2. Échéance non encore dépassée : si le locataire a payé avant la date de paiement réelle, c'est comptabilisé en avance
+        if (item.amount_paid > 0 && isBeforeRealDueDate) {
           contractAdvance += item.amount_paid;
           totalAdvanceRent += item.amount_paid;
+        }
+        if (item.amount_paid > 0) {
+          contractCollected += item.amount_paid;
         }
       }
     }

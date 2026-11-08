@@ -3,6 +3,7 @@ import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { triggerCelebration } from '@/lib/celebration';
 import { resolveBestPartyCni } from '@/lib/contractPartyResolver';
+import { parseDateSafe, resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 
 async function ensureImageDataUrl(url?: string | null): Promise<string | null> {
   if (!url || typeof url !== 'string') return null;
@@ -120,9 +121,15 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       cautionAmount: rawCautionAmount,
       cautionMonths = data.cautionMonths ?? (rent > 0 && rawCautionAmount ? Number((rawCautionAmount / rent).toFixed(1)) : (isProfessional ? 3 : 2)),
       chargesAmount = Number(data.chargesAmount ?? (data as any)?.charges ?? 0),
-      dueDay = data.dueDay || 5,
       authorizedActivity = isProfessional ? (data.authorizedActivity || 'Activités commerciales et professionnelles') : undefined
     } = data;
+
+    const parsedStartDt = parseDateSafe(startDate);
+    const dueDay = resolveContractDueDay({ start_date: startDate, due_day: data.dueDay }, parsedStartDt);
+    const firstDueMonthDt = new Date(parsedStartDt.getFullYear(), parsedStartDt.getMonth() + 1, 1);
+    const daysInFirstDueMonth = new Date(firstDueMonthDt.getFullYear(), firstDueMonthDt.getMonth() + 1, 0).getDate();
+    const firstDueDt = new Date(firstDueMonthDt.getFullYear(), firstDueMonthDt.getMonth(), Math.min(dueDay, daysInFirstDueMonth));
+    const firstDueDateFormatted = firstDueDt.toLocaleDateString('fr-FR');
 
     const effectiveCautionAmount = rawCautionAmount !== undefined && rawCautionAmount !== null
       ? Number(rawCautionAmount)
@@ -434,9 +441,9 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(15, 23, 42);
       doc.text('ARTICLE 3 : LOYER COMMERCIAL (ART. 116 AUDCG)', 18, curY + 4.3);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.2);
+      doc.setFontSize(7.1);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois par Virement ou Mobile Money certifié.`, 18, curY + 8.6);
+      doc.text(`Payable le ${dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois (1ère échéance le ${firstDueDateFormatted}). Avant échéance = avance ; passé ce jour = retard.`, 18, curY + 8.6);
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(245, 158, 11);
       doc.roundedRect(148, curY + 1.8, 44, 7.5, 1.5, 1.5, 'FD');
@@ -620,10 +627,10 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.setTextColor(15, 23, 42);
       doc.text('ARTICLE 3 : LOYER & AVANCE LÉGALEMENT PLAFONNÉE (ART. 415)', 18, curY + 4.3);
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.2);
+      doc.setFontSize(7.1);
       doc.setTextColor(51, 65, 85);
       doc.text(
-        `Payable d'avance le ${dueDay < 10 ? '0' + dueDay : dueDay} du mois. Avance plafonnée à 2 mois maximum par la loi.`,
+        `Payable le ${dueDay < 10 ? '0' + dueDay : dueDay} du mois (1ère échéance le ${firstDueDateFormatted}). Avant échéance = avance ; passé ce jour = retard.`,
         18,
         curY + 8.6
       );

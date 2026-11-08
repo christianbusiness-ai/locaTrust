@@ -29,6 +29,7 @@ import {
   CheckCircle
 } from 'lucide-react';
 import { formatFCFA, generateUniqueContractNumber } from '@/lib/utils';
+import { parseDateSafe, resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 import { getLocaTrustVerificationQR } from '@/lib/qrCode';
 import { LOCATRUST_QR_CODE_DATA_URL, LOCATRUST_QR_CODE_URL } from '@/lib/qrCodeData';
 import { Logo } from '@/components/common/Logo';
@@ -286,7 +287,13 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
   const [chargesAmount, setChargesAmount] = useState<number>(
     initialData?.chargesAmount ?? (initialData as any)?.charges ?? 0
   );
-  const [dueDay, setDueDay] = useState<number>(5);
+  const [dueDay, setDueDay] = useState<number>(() => {
+    if (typeof initialData?.dueDay === 'number' && initialData.dueDay >= 1 && initialData.dueDay <= 31) {
+      return initialData.dueDay;
+    }
+    const d = parseDateSafe(initialData?.startDate || new Date());
+    return d.getDate() || 7;
+  });
   const [cautionPaidAmount, setCautionPaidAmount] = useState<number>(initialData?.cautionAmount || 300000);
   const [cautionReceiptNumber, setCautionReceiptNumber] = useState<string>('DEP-2026-CI-00984');
   const [contractNumber] = useState<string>(() => initialData?.contractNumber || generateUniqueContractNumber());
@@ -411,7 +418,12 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         if (initialData.propertyAddress) setPropertyAddress(initialData.propertyAddress);
         if (typeof initialData.rentAmount === 'number') setRent(initialData.rentAmount);
         if (typeof initialData.cautionAmount === 'number') setCautionPaidAmount(initialData.cautionAmount);
-        if (typeof initialData.dueDay === 'number') setDueDay(initialData.dueDay);
+        if (typeof initialData.dueDay === 'number' && initialData.dueDay >= 1 && initialData.dueDay <= 31) {
+          setDueDay(initialData.dueDay);
+        } else {
+          const parsedS = parseDateSafe(initialData.startDate || new Date());
+          setDueDay(parsedS.getDate() || 7);
+        }
         if (typeof initialData.chargesAmount === 'number') setChargesAmount(initialData.chargesAmount);
         if (typeof initialData.durationMonths === 'number' && initialData.durationMonths > 0) {
           setDurationInput(String(initialData.durationMonths));
@@ -1119,6 +1131,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       duration_months: Number(durationMonths),
       start_date: computedStartDate,
       end_date: computedEndDate,
+      payment_due_day: Number(dueDay),
+      due_day: Number(dueDay),
       declared_equipments: declaredEquipments.trim(),
       owner_id: finalOwnerId || targetOwnerId,
       owner_name: ownerName,
@@ -1464,6 +1478,8 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
         duration_months: durationMonths,
         start_date: computedStartDate,
         end_date: computedEndDate,
+        payment_due_day: Number(dueDay),
+        due_day: Number(dueDay),
         status: tenantSignatureUrl ? 'actif' : 'en_attente_signature_locataire',
         owner_signed: true,
         tenant_signed: Boolean(tenantSignatureUrl),
@@ -2038,7 +2054,16 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                       type="date"
                       required
                       value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setStartDate(val);
+                        if (val) {
+                          const d = parseDateSafe(val);
+                          if (!isNaN(d.getTime())) {
+                            setDueDay(d.getDate());
+                          }
+                        }
+                      }}
                       className="w-full h-10 px-3 rounded-xl border border-amber-300 font-bold text-xs bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                     />
                   </div>
@@ -2100,9 +2125,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                     onChange={(e) => setDueDay(Number(e.target.value))}
                     className="w-full h-10 px-2.5 rounded-xl border border-amber-300 text-xs font-bold bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                   >
-                    <option value={5}>Le 05 du mois</option>
-                    <option value={10}>Le 10 du mois</option>
-                    <option value={1}>Le 01 du mois</option>
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        Le {d < 10 ? `0${d}` : d} du mois
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -3187,7 +3214,15 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
                 <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/50 flex items-center justify-between gap-4">
                   <div className="flex flex-col gap-0.5">
                     <span className="font-black text-slate-900 text-xs">ARTICLE 3 : LOYER</span>
-                    <span className="text-xs text-slate-600">Le locataire s'engage à payer au bailleur, un loyer mensuel payable d'avance le <strong>{dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois</strong>.</span>
+                    <span className="text-xs text-slate-600">
+                      Le locataire s'engage à payer au bailleur un loyer mensuel payable le <strong>{dueDay < 10 ? '0' + dueDay : dueDay} de chaque mois</strong> (1ère échéance le <strong>{(() => {
+                        const sObj = parseDateSafe(startDate);
+                        const firstDue = new Date(sObj.getFullYear(), sObj.getMonth() + 1, 1);
+                        const maxDay = new Date(firstDue.getFullYear(), firstDue.getMonth() + 1, 0).getDate();
+                        firstDue.setDate(Math.min(dueDay, maxDay));
+                        return firstDue.toLocaleDateString('fr-FR');
+                      })()}</strong>). Tout paiement avant cette date est comptabilisé en avance ; passé ce jour, le loyer est en retard.
+                    </span>
                     <span className="text-[11px] text-slate-500">Mode de paiement accepté : Mobile Money (Orange Money, MTN Money, Wave) ou virement bancaire.</span>
                   </div>
                   <span className="text-base font-black text-amber-700 bg-white px-4 py-2 rounded-xl border border-amber-300 shadow-sm shrink-0">

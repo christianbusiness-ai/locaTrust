@@ -32,6 +32,7 @@ import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
+import { resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 import { resolveContractParties } from '@/lib/contractPartyResolver';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { formatFCFA } from '@/lib/utils';
@@ -512,7 +513,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
         chargesAmount: Number(rawContract.charges_amount || rawContract.charges || 0),
         durationMonths: Number(rawContract.duration_months || 12),
         startDate: rawContract.start_date ? new Date(rawContract.start_date).toLocaleDateString('fr-FR') : '01/01/2026',
-        dueDay: 5,
+        dueDay: resolveContractDueDay(rawContract),
         ownerSignatureUrl: finalOwnerSig,
         tenantSignatureUrl: finalTenantSig,
         isSignedCopy: true,
