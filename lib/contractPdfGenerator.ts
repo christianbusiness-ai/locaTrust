@@ -859,8 +859,14 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
       doc.text(isProfessional ? 'COMMERCE • SÉCURITÉ JURIDIQUE' : 'ABIDJAN • SÉCURITÉ JURIDIQUE', sealCenterX, sealCenterY + 10.5, { align: 'center' });
     };
 
-    const sigBlockStartY = Math.min(Math.max(curY + 1.5, 211), 220);
-    renderSignaturesAndSealBlock(sigBlockStartY);
+    if (curY > 221) {
+      addContinuationPage(`SUITE CONTRAT N° ${contractNumber}`);
+      renderSignaturesAndSealBlock(curY + 4);
+      curY += 68;
+    } else {
+      const sigBlockStartY = Math.max(curY + 1.5, 211);
+      renderSignaturesAndSealBlock(sigBlockStartY);
+    }
 
     // Extraction, nettoyage et dédoublonnage des conditions particulières pour pagination (2 à 3 pages dynamiques)
     const parseRuleLines = (raw?: string | string[]): string[] => {
@@ -912,7 +918,7 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
         : 'Faisant partie intégrante et indissociable du Bail d\'Habitation conclu sous l\'empire de la Loi n° 2019-576 et de la Loi n° 2025-221. Les clauses particulières ci-dessous ont été convenues d\'un commun accord entre les parties.';
       curY = printWrapped(subNotice, 15, curY + 5, 180, 4.0) + 4;
 
-      // Helper pour dessiner une section de règles avec saut de page automatique (supporte 2 à 3 pages sans écraser les écritures)
+      // Helper pour dessiner une section de règles avec découpage multi-pages automatique (2, 3, 4+ pages)
       const renderRulesSection = (
         title: string,
         rules: string[],
@@ -923,60 +929,82 @@ export const generateOfficialContractPdf = async (data: ContractPdfData) => {
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8.2);
-        let totalLinesCount = 0;
-        const parsedLines: string[][] = [];
+        const parsedRules: string[][] = [];
 
         rules.forEach((rule) => {
           const cleanRule = rule.replace(/^\d+[\.\)\-]\s*/, '').trim();
           const wrapped = doc.splitTextToSize(`•  ${cleanRule}`, 170);
-          parsedLines.push(wrapped);
-          totalLinesCount += wrapped.length;
+          parsedRules.push(wrapped);
         });
 
         const sectionPadding = 8;
         const headerHeight = 8;
         const lineHeight = 4.6;
-        const contentHeight = totalLinesCount * lineHeight;
-        const boxHeight = headerHeight + contentHeight + sectionPadding;
 
-        if (curY + boxHeight > 265) {
-          addContinuationPage(`ANNEXE OFFICIELLE N° ${contractNumber}`);
-        }
+        let ruleIndex = 0;
+        let isContinuationChunk = false;
 
-        // Dessin du container carte
-        doc.setDrawColor(226, 232, 240);
-        doc.setFillColor(248, 250, 252);
-        doc.roundedRect(15, curY, 180, boxHeight, 2, 2, 'FD');
+        while (ruleIndex < parsedRules.length) {
+          // S'il reste trop peu d'espace en bas de page pour au moins l'en-tête + 2 lignes, on passe à la page suivante
+          if (curY + headerHeight + sectionPadding + lineHeight * 2 > 265) {
+            addContinuationPage(`ANNEXE OFFICIELLE N° ${contractNumber}`);
+          }
 
-        // Bandeau d'en-tête de la section (écriture en bleu conservée à 7.5pt)
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7.5);
-        doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
-        doc.text(title, 20, curY + 6);
+          const availableHeight = 265 - curY - headerHeight - sectionPadding;
+          const maxLinesInChunk = Math.max(2, Math.floor(availableHeight / lineHeight));
 
-        // Badge à droite
-        doc.setFontSize(6.5);
-        doc.setTextColor(100, 116, 139);
-        doc.text(badgeLabel, 190, curY + 6, { align: 'right' });
+          const chunkLines: string[][] = [];
+          let chunkLineCount = 0;
 
-        // Ligne fine sous l'en-tête
-        doc.setDrawColor(241, 245, 249);
-        doc.line(20, curY + 8.2, 190, curY + 8.2);
+          while (ruleIndex < parsedRules.length) {
+            const candidate = parsedRules[ruleIndex];
+            if (chunkLines.length > 0 && chunkLineCount + candidate.length > maxLinesInChunk) {
+              break;
+            }
+            chunkLines.push(candidate);
+            chunkLineCount += candidate.length;
+            ruleIndex++;
+          }
 
-        // Contenu des règles (taille augmentée à 8.2pt)
-        let textY = curY + 13.5;
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8.2);
-        doc.setTextColor(30, 41, 59);
+          const contentHeight = chunkLineCount * lineHeight;
+          const boxHeight = headerHeight + contentHeight + sectionPadding;
 
-        parsedLines.forEach((lines) => {
-          lines.forEach((lineText, idx) => {
-            doc.text(lineText, idx === 0 ? 20 : 23, textY);
-            textY += lineHeight;
+          // Dessin du container carte
+          doc.setDrawColor(226, 232, 240);
+          doc.setFillColor(248, 250, 252);
+          doc.roundedRect(15, curY, 180, boxHeight, 2, 2, 'FD');
+
+          // Bandeau d'en-tête de la section (écriture en bleu conservée à 7.5pt)
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(7.5);
+          doc.setTextColor(headerColor[0], headerColor[1], headerColor[2]);
+          doc.text(isContinuationChunk ? `${title} (SUITE)` : title, 20, curY + 6);
+
+          // Badge à droite
+          doc.setFontSize(6.5);
+          doc.setTextColor(100, 116, 139);
+          doc.text(badgeLabel, 190, curY + 6, { align: 'right' });
+
+          // Ligne fine sous l'en-tête
+          doc.setDrawColor(241, 245, 249);
+          doc.line(20, curY + 8.2, 190, curY + 8.2);
+
+          // Contenu des règles (taille augmentée à 8.2pt)
+          let textY = curY + 13.5;
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8.2);
+          doc.setTextColor(30, 41, 59);
+
+          chunkLines.forEach((lines) => {
+            lines.forEach((lineText, idx) => {
+              doc.text(lineText, idx === 0 ? 20 : 23, textY);
+              textY += lineHeight;
+            });
           });
-        });
 
-        curY += boxHeight + 5;
+          curY += boxHeight + 5;
+          isContinuationChunk = true;
+        }
       };
 
       // Rendu des 3 sections si disponibles
