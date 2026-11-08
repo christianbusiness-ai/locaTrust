@@ -741,28 +741,6 @@ export const LocatairePaiementsView: React.FC = () => {
         });
       } catch { }
 
-      // Send declaration document directly to owner / agency messaging inbox
-      try {
-        sendDeclarationMessageToOwner({
-          type: 'loyer',
-          declarationId: savedPayment.id,
-          contractNumber: chosenContract?.contract_number || chosenContract?.id || '',
-          propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
-          amount: amount,
-          paymentMethod: method,
-          reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
-          date: new Date().toLocaleDateString('fr-FR'),
-          month: calculatedPeriodText,
-          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-          tenantId: user?.id || '',
-          ownerId: targetOwnerId || '',
-          proofUrl: proofUrl || undefined,
-          status: 'en_attente'
-        });
-      } catch (msgErr) {
-        console.warn('Erreur envoi chat message loyer:', msgErr);
-      }
-
       setPayments((prev) => [savedPayment, ...prev]);
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: savedPayment }));
 
@@ -801,115 +779,47 @@ export const LocatairePaiementsView: React.FC = () => {
 
       // Numéro de contrat réel certifié (ex: LT-2026-CI-000492)
       const realContractNumber = chosenContract?.contract_number || chosenContract?.contractNumber || undefined;
+      const finalRef = cautionReference.trim() || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION');
 
-      const cautionData: any = {
-        contract_id: contractUuid,
-        contract_number: realContractNumber,
-        tenant_id: tenantUuid,
-        owner_id: ownerUuid,
-        amount_requested: cautionAmount,
-        amount_paid: cautionAmount,
-        status: 'caution_a_confirmer',
-        payment_method: cautionMethod,
-        declared_reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-        declared_at: new Date().toISOString(),
-        proof_url: cautionProofUrl || null
-      };
+      // Enregistrement unique et résilient (mise à jour du dossier existant ou création sans doublon)
+      const savedCaution = declareCautionPayment({
+        contractId: contractUuid || realContractNumber || 'LT-CONTRAT',
+        contractNumber: realContractNumber,
+        tenantId: tenantUuid || user?.id || 'usr_locataire',
+        tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
+        amount: cautionAmount,
+        reference: finalRef,
+        method: cautionMethod,
+        proofUrl: cautionProofUrl || undefined,
+        comment: undefined,
+        ownerId: ownerUuid || targetOwnerId || undefined
+      });
 
-      const dbCautionPayload: any = {
-        amount_requested: cautionAmount,
-        amount_paid: cautionAmount,
-        status: 'caution_a_confirmer'
-      };
-      if (contractUuid) dbCautionPayload.contract_id = contractUuid;
-      if (tenantUuid) dbCautionPayload.tenant_id = tenantUuid;
-      if (ownerUuid) dbCautionPayload.owner_id = ownerUuid;
-
-      let savedCaution: any = null;
-      try {
-        const { data: dbCaution, error: ctnErr } = await supabase
-          .from('cautions')
-          .insert(dbCautionPayload)
-          .select()
-          .maybeSingle();
-
-        const fallbackCauUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8010-${Date.now().toString(16).padStart(12, '0')}`;
-        if (dbCaution) {
-          savedCaution = { ...cautionData, ...dbCaution };
-        } else {
-          if (ctnErr) console.warn('Supabase caution insert notice:', ctnErr.message);
-          savedCaution = { ...cautionData, id: fallbackCauUuid };
-        }
-      } catch {
-        const fallbackCauUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8010-${Date.now().toString(16).padStart(12, '0')}`;
-        savedCaution = { ...cautionData, id: fallbackCauUuid };
-      }
-
-      // Notification Supabase persistante pour le bailleur/agence
+      // Notification ciblée uniquement pour le bailleur et l'agence dans Supabase
       if (ownerUuid) {
         try {
           await supabase.from('notifications').insert({
             user_id: ownerUuid,
             title: '💰 Nouveau versement de caution déclaré',
-            content: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} - ${cautionMethod}). Veuillez vérifier et valider la caution.`,
+            content: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} - ${cautionMethod} • Réf: ${finalRef}). Veuillez vérifier et valider la caution.`,
             type: 'caution',
             read: false,
             payload: {
               deposit_id: savedCaution.id,
               contract_id: contractUuid,
               amount: cautionAmount,
-              reference: cautionData.declared_reference,
+              reference: finalRef,
               method: cautionMethod
             }
           });
         } catch { }
       }
 
-      // Persist in local store for seamless demo & multi-tab responsiveness
-      try {
-        declareCautionPayment({
-          contractId: chosenContract?.id || 'LT-CONTRAT',
-          contractNumber: realContractNumber,
-          tenantId: user?.id || 'usr_locataire',
-          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-          amount: cautionAmount,
-          reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-          method: cautionMethod,
-          proofUrl: cautionProofUrl || undefined,
-          comment: undefined,
-          ownerId: targetOwnerId || undefined
-        });
-      } catch (e) {
-        console.warn('declareCautionPayment error:', e);
-      }
-
-      // Send real notification to owner/agency in Supabase
-      if (ownerUuid) {
-        try {
-          await supabase.from('notifications').insert({
-            user_id: ownerUuid,
-            title: '💰 Paiement de caution déclaré',
-            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré le règlement de la caution de ${formatFCFA(cautionAmount)} (${cautionMethod}).`,
-            type: 'caution',
-            read: false,
-            payload: {
-              deposit_id: savedCaution?.id,
-              amount: cautionAmount,
-              reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-              payment_method: cautionMethod,
-              tenant_name: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire'
-            }
-          });
-        } catch (err) {
-          console.warn('Notification caution insert error:', err);
-        }
-      }
-
-      // Notification globale dans locatrust_notifications pour bailleur et agence
+      // Notification ciblée au propriétaire/agence pour consultation dans l'onglet Cautions
       try {
         pushGlobalNotification({
           title: '💰 Nouvelle déclaration de caution reçue',
-          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} • ${cautionMethod}). En attente de validation.`,
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} • Réf: ${finalRef}). En attente de validation.`,
           category: 'caution',
           targetRole: 'proprietaire',
           targetUserId: targetOwnerId || undefined,
@@ -917,7 +827,7 @@ export const LocatairePaiementsView: React.FC = () => {
         });
         pushGlobalNotification({
           title: '💰 Nouvelle déclaration de caution reçue',
-          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} • ${cautionMethod}). En attente de validation.`,
+          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré le versement de sa caution (${formatFCFA(cautionAmount)} • Réf: ${finalRef}). En attente de validation.`,
           category: 'caution',
           targetRole: 'agence',
           targetUserId: targetOwnerId || undefined,
@@ -942,28 +852,13 @@ export const LocatairePaiementsView: React.FC = () => {
         });
       } catch { }
 
-      // Send caution declaration document directly to owner / agency messaging inbox
-      try {
-        sendDeclarationMessageToOwner({
-          type: 'caution',
-          declarationId: savedCaution.id,
-          contractNumber: chosenContract?.contract_number || chosenContract?.id || '',
-          propertyTitle: chosenContract?.property?.title || 'Logement LocaTrust',
-          amount: cautionAmount,
-          paymentMethod: cautionMethod,
-          reference: cautionReference || (cautionMethod === 'Espèces' ? 'ESP-CAUTION' : 'REF-CAUTION'),
-          date: new Date().toLocaleDateString('fr-FR'),
-          tenantName: user?.user_metadata?.full_name || (user as any)?.name || 'Locataire',
-          tenantId: user?.id || '',
-          ownerId: targetOwnerId || '',
-          proofUrl: cautionProofUrl || undefined,
-          status: 'en_attente'
-        });
-      } catch (msgErr) {
-        console.warn('Erreur envoi chat message caution:', msgErr);
-      }
-
-      setDeposits((prev) => [savedCaution, ...prev]);
+      setDeposits((prev) => {
+        const filtered = prev.filter(d => 
+          d.id !== savedCaution.id && 
+          !(realContractNumber && d.contract_number === realContractNumber)
+        );
+        return [savedCaution, ...filtered];
+      });
       window.dispatchEvent(new CustomEvent('locatrust:cautions_updated', { detail: savedCaution }));
 
       setShowCautionModal(false);
@@ -972,16 +867,16 @@ export const LocatairePaiementsView: React.FC = () => {
       setCautionProofFileName(null);
       setCautionProofFileSize(null);
       setSuccessModalMessage({
-        title: 'Paiement de caution signalé !',
-        desc: `Votre règlement de garantie de ${formatFCFA(cautionAmount)} a été notifié à votre bailleur sous le statut "Caution à confirmer".`
+        title: 'Versement de caution déclaré !',
+        desc: 'Votre déclaration a été transmise à votre bailleur. Dès validation, votre reçu officiel avec QR code sera émis.'
       });
-      confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
     } catch (err: any) {
       console.error('Erreur déclaration caution:', err);
       setShowCautionModal(false);
       setSuccessModalMessage({
-        title: 'Paiement de caution signalé !',
-        desc: `Votre règlement de garantie de ${formatFCFA(cautionAmount)} a été enregistré et notifié à votre bailleur.`
+        title: 'Déclaration transmise !',
+        desc: 'Votre déclaration de caution a été enregistrée avec succès.'
       });
     } finally {
       setIsSubmittingCaution(false);

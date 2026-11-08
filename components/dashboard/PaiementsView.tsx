@@ -830,7 +830,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       const ownerName = user?.user_metadata?.full_name || (user as any)?.name || 'Bailleur';
       const tenantName = pmt.tenant?.full_name || 'Locataire';
 
-      // 1. Send receipt attachment to tenant via messagingStore
+      // 1. Send receipt attachment to tenant via messagingStore (enregistre dans les quittances officielles)
       sendQuittanceToTenant(
         {
           receiptNumber: receiptNum,
@@ -841,7 +841,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           periodCovered: targetMonth,
           paymentDate: new Date(pmt.confirmed_at || pmt.payment_date || Date.now()).toLocaleDateString('fr-FR'),
           paymentMethod: pmt.reference?.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
-          transactionReference: receiptNum,
+          transactionReference: pmt.reference || receiptNum,
           ownerName: ownerName,
           tenantName: tenantName,
           ownerSignatureUrl: ownerSignatureUrl || 'SIG_CERTIFIED_BAILLEUR',
@@ -872,7 +872,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           await supabase.from('notifications').insert({
             user_id: tenantId,
             title: '📄 Quittance de loyer transmise',
-            content: `Votre bailleur ${ownerName} vous a transmis votre quittance de loyer (${formatFCFA(pmt.amount)}). Veuillez la signer dans votre messagerie.`,
+            content: `Votre bailleur ${ownerName} vous a transmis votre quittance de loyer (${formatFCFA(pmt.amount)}). Veuillez la signer dans l'espace Paiements & Loyers.`,
             type: 'quittance',
             read: false,
             payload: {
@@ -916,7 +916,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         isOpen: true,
         type: 'sent',
         title: 'Quittance transmise avec succès !',
-        message: `La quittance officielle N° ${receiptNum} a été transmise directement dans la boîte de messagerie du locataire ${tenantName}.`,
+        message: `La quittance officielle N° ${receiptNum} a été transmise au locataire ${tenantName} pour sa signature.`,
         confirmText: 'OK, parfait',
         withCelebration: true
       });
@@ -1886,7 +1886,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>{effectiveTenantSig ? "Renvoyer dans la Messagerie" : "Transmettre pour signature locataire"}</span>
+                    <span>{effectiveTenantSig ? "Renvoyer le reçu officiel" : "Transmettre pour signature locataire"}</span>
                   </button>
 
                   <button

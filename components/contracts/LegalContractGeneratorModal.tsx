@@ -1394,18 +1394,6 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
 
         if (insertedOk) {
           try {
-            await supabase.from('cautions').upsert({
-              id: crypto.randomUUID(),
-              contract_id: generatedContractUuid,
-              tenant_id: finalTenantId,
-              owner_id: finalOwnerId,
-              amount_requested: Number(effectiveCautionAmount || 0),
-              amount_paid: Number(effectiveCautionAmount || 0),
-              status: 'caution_a_confirmer'
-            });
-          } catch {}
-
-          try {
             broadcastLiveEvent('CONTRACT_FINALIZED', {
               contractId: generatedContractUuid,
               actorId: finalOwnerId,

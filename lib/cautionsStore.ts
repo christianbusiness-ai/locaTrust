@@ -54,7 +54,11 @@ export function declareCautionPayment(params: {
   ownerId?: string;
 }): Deposit {
   const all = getStoredDeposits();
-  const existing = all.find((d) => d.contract_id === params.contractId || d.tenant_id === params.tenantId);
+  // Recherche stricte par contrat (ne pas matcher uniquement par tenantId si le locataire a plusieurs baux)
+  const existing = all.find((d) =>
+    (params.contractNumber && (d.contract_number === params.contractNumber || d.contract_id === params.contractNumber)) ||
+    (params.contractId && (d.contract_id === params.contractId || d.contract_number === params.contractId))
+  );
 
   const now = new Date().toISOString();
   let updatedDeposit: Deposit;
@@ -1237,19 +1241,64 @@ export function restituteCaution(params: {
       ? 'restitue_partiel'
       : 'restitue_total';
 
+  // Si imputation sur les loyers de préavis, la caution est comptabilisée comme remboursée/retournée sous forme de compensation de loyer
+  const effectiveRestitutedAmount = isImputation ? target.amount_paid : params.amountRestituted;
+
   const updatedDeposit: Deposit = {
     ...target,
     restitution_status: status,
-    amount_restituted: isImputation ? 0 : params.amountRestituted,
-    deduction_amount: isImputation ? target.amount_paid : params.deductionAmount,
+    amount_restituted: effectiveRestitutedAmount,
+    deduction_amount: isImputation ? 0 : params.deductionAmount,
     deduction_reason: isImputation
-      ? `Conservation de la caution pour compensation des loyers de préavis (${params.monthsCovered || 'Période de préavis'}). Aucun loyer à payer pour le locataire.`
+      ? `Compensation sur loyers de préavis (${params.monthsCovered || 'Période de préavis'}). Loyer acquitté sans décaissement.`
       : params.deductionReason,
     restituted_at: params.restitutionDate || now
   };
 
   const updatedList = all.map((d) => (d.id === params.depositId ? updatedDeposit : d));
   saveStoredDeposits(updatedList);
+
+  // Si imputation sur les loyers, marquer officiellement les mois de loyer comme PAYÉS et CONFIRMÉS
+  if (isImputation) {
+    try {
+      const rentPaymentsRaw = typeof window !== 'undefined' ? localStorage.getItem('locatrust_rent_payments') : null;
+      const currentRentPayments = rentPaymentsRaw ? JSON.parse(rentPaymentsRaw) : [];
+      const newRentPayment = {
+        id: `pmt_caut_imp_${Date.now()}`,
+        contract_id: target.contract_id,
+        contract_number: target.contract_number || target.contract_id,
+        tenant_id: target.tenant_id,
+        owner_id: target.owner_id,
+        target_month: params.monthsCovered || 'Préavis de fin de bail',
+        amount: target.amount_paid,
+        payment_date: params.restitutionDate || new Date().toISOString().split('T')[0],
+        payment_method: 'Compensation Caution',
+        reference: receiptNumber,
+        status: 'confirme',
+        confirmed_at: now
+      };
+      const updatedRentPayments = [newRentPayment, ...(Array.isArray(currentRentPayments) ? currentRentPayments : [])];
+      localStorage.setItem('locatrust_rent_payments', JSON.stringify(updatedRentPayments));
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: newRentPayment }));
+
+      // Persistance Supabase rent_payments
+      if (isValidUuid(target.contract_id) && isValidUuid(target.tenant_id)) {
+        supabase.from('rent_payments').insert({
+          contract_id: target.contract_id,
+          tenant_id: target.tenant_id,
+          owner_id: isValidUuid(target.owner_id) ? target.owner_id : undefined,
+          target_month: params.monthsCovered || 'Préavis de fin de bail',
+          amount: target.amount_paid,
+          payment_date: params.restitutionDate || new Date().toISOString().split('T')[0],
+          payment_method: 'Compensation Caution',
+          reference: receiptNumber,
+          status: 'confirme'
+        }).then();
+      }
+    } catch (e) {
+      console.warn('Notice enregistrement loyer imputé:', e);
+    }
+  }
 
   // 1. Audit trail record
   const auditDetails = isImputation
@@ -1267,44 +1316,28 @@ export function restituteCaution(params: {
     details: auditDetails
   });
 
-  // 2. Automatic System Message into Tenant's internal LocaTrust chat
-  try {
-    const existingMessages = getStoredMessages();
-    const chatText = isImputation
-      ? `Accord sur la caution — Préavis de fin de bail\nVotre bailleur a affecté votre caution de ${formatFCFA(target.amount_paid)} au règlement de vos derniers mois de loyer (${params.monthsCovered || 'période de préavis'}).\nVous n'avez aucun loyer à décaisser pour ces mois.`
-      : `Restitution de caution\nVotre caution concernant le contrat ${target.contract_id} a été restituée.\nMontant restitué : ${formatFCFA(params.amountRestituted)}.${params.deductionAmount > 0 ? `\nRetenue : ${formatFCFA(params.deductionAmount)} (Motif : ${params.deductionReason})` : ''
-      }`;
-
-    const restitutionMessage: ChatMessage = {
-      id: `msg_restitution_${Date.now()}`,
-      sender_id: target.owner_id || 'usr_owner_1',
-      receiver_id: target.tenant_id,
-      text: chatText,
-      created_at: now,
-      restitution: {
-        receiptNumber,
-        contractNumber: target.contract_id,
-        propertyTitle: target.property?.title || 'Logement LocaTrust',
-        propertyAddress: target.property?.description || 'Cocody, Abidjan',
-        initialCautionAmount: target.amount_paid,
-        amountRestituted: isImputation ? 0 : params.amountRestituted,
-        deductionAmount: isImputation ? target.amount_paid : params.deductionAmount,
-        deductionReason: isImputation
-          ? `Imputation sur loyers de préavis (${params.monthsCovered || 'Période préavis'})`
-          : params.deductionReason,
-        restitutionDate: params.restitutionDate || new Date().toLocaleDateString('fr-FR'),
-        restitutionMethod: isImputation ? 'Compensation de loyers' : (params.paymentMethod || 'Wave CI'),
-        ownerName: params.confirmedBy || 'Bailleur',
-        tenantName: target.tenant?.full_name || 'Locataire',
-        operationType: isImputation ? 'IMPUTATION_LOYERS' : 'RESTITUTION_CAUTION'
-      },
-      status: 'delivered'
-    };
-
-    saveStoredMessages([...existingMessages, restitutionMessage]);
-    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
-  } catch (err) {
-    console.error('Error dispatching restitution message to tenant chat:', err);
+  // 2. Notification officielle au locataire (dans le menu Caution, jamais dans la messagerie)
+  if (typeof window !== 'undefined' && target.tenant_id) {
+    try {
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const tenantNotif = {
+        id: `notif_rest_${Date.now()}`,
+        title: isImputation ? '🛡️ Caution imputée sur loyers de préavis' : '💰 Caution remboursée',
+        description: isImputation
+          ? `Votre caution (${formatFCFA(target.amount_paid)}) a été imputée sur vos loyers (${params.monthsCovered || 'préavis'}). Vous êtes dispensé(e) de tout versement.`
+          : `Votre caution pour le contrat ${target.contract_number || target.contract_id} a été restituée (${formatFCFA(params.amountRestituted)}). Reçu N° ${receiptNumber}.`,
+        time: "À l'instant",
+        unread: true,
+        type: 'caution',
+        targetTab: 'guarantees',
+        targetRole: 'locataire',
+        targetUserId: target.tenant_id,
+        senderUserId: target.owner_id
+      };
+      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch {}
   }
 
   return { updatedDeposit, receiptNumber };

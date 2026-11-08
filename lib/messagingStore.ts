@@ -711,6 +711,8 @@ export function getStoredMessages(explicitUserId?: string): ChatMessage[] {
         if (m.text && (m.text.includes('Kouassi Jean-Philippe') || m.text.includes('Awa Touré'))) return false;
         // L'utilisateur connecté DOIT être expéditeur ou destinataire réel
         if (m.sender_id !== uid && m.receiver_id !== uid) return false;
+        // Règle formelle : les déclarations et quittances ne doivent jamais apparaître dans la messagerie
+        if (m.declaration || m.quittance || m.restitution) return false;
         return true;
       })
       .map((m: any) => {
@@ -1739,16 +1741,14 @@ export function getUnreadMessagesCountForUser(user?: { id?: string; email?: stri
 }
 
 export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, senderId?: string, receiverId?: string): ChatMessage {
-  const current = getStoredMessages();
-
   // Résolution stricte : une quittance est émise par le Bailleur/Agence et reçue par le Locataire
   let finalSender = senderId || '';
   let finalReceiver = receiverId || '';
 
   const isCaution = quittance.receiptType === 'caution' || quittance.receiptNumber.includes('CAUT');
   const messageText = isCaution
-    ? `🛡️ Reçu Officiel de Caution Émis (N° ${quittance.receiptNumber})\nVotre dépôt de garantie de ${formatFCFA(quittance.amount)} a été certifié par votre bailleur. Veuillez consulter le document ci-dessous pour apposer votre signature locataire et débloquer le téléchargement.`
-    : `📄 Quittance de Loyer Officielle Émise (N° ${quittance.receiptNumber})\nVotre bailleur a validé votre règlement (${formatFCFA(quittance.amount)} pour ${quittance.periodCovered || 'la période'}) et a apposé sa signature manuscrite certifiée. Consultez le document ci-dessous pour apposer votre signature et télécharger votre quittance.`;
+    ? `🛡️ Reçu Officiel de Caution Émis (N° ${quittance.receiptNumber})\nVotre dépôt de garantie de ${formatFCFA(quittance.amount)} a été certifié par votre bailleur.`
+    : `📄 Quittance de Loyer Officielle Émise (N° ${quittance.receiptNumber})\nVotre bailleur a validé votre règlement (${formatFCFA(quittance.amount)} pour ${quittance.periodCovered || 'la période'}).`;
 
   const newMsg: ChatMessage = {
     id: `msg_quittance_${Date.now()}`,
@@ -1760,11 +1760,8 @@ export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, sender
     status: 'delivered'
   };
 
-  const updated = [...current, newMsg];
-  saveStoredMessages(updated);
-
-  // Synchronisation Supabase & Realtime pour la quittance
-  syncMessageToSupabase(newMsg, finalSender, finalReceiver, newMsg.text);
+  // Conformité stricte : aucun reçu/quittance dans la messagerie de chat
+  // Le reçu est accessible et signé dans Paiements & Loyers ou Cautions
 
   // Persistance dans tenant receipts store pour affichage immédiat dans dossier locataire
   try {
@@ -1779,7 +1776,7 @@ export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, sender
     console.error('Error saving tenant receipt:', e);
   }
 
-  // Notifier immédiatement le locataire dans locatrust_notifications
+  // Notifier immédiatement le locataire dans locatrust_notifications (redirige vers Cautions ou Paiements)
   try {
     if (typeof window !== 'undefined') {
       const notifsRaw = localStorage.getItem('locatrust_notifications');
@@ -1791,35 +1788,13 @@ export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, sender
         time: "À l'instant",
         unread: true,
         type: isCaution ? 'caution' : 'quittance',
-        targetTab: 'messages',
+        targetTab: isCaution ? 'guarantees' : 'payments',
         targetRole: 'locataire',
         targetUserId: finalReceiver,
         senderUserId: finalSender
       };
       localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
-    }
-  } catch {}
-
-  // Enregistrer les fiches de contact scopées par utilisateur pour que la conversation apparaisse immédiatement chez les deux participants
-  try {
-    if (typeof window !== 'undefined') {
-      saveUserScopedContact(finalReceiver, {
-        id: finalSender,
-        name: quittance.ownerName || 'Bailleur Propriétaire',
-        role: 'Propriétaire Bailleur',
-        propertyTitle: quittance.propertyTitle,
-        phone: quittance.ownerPhone
-      });
-      saveUserScopedContact(finalSender, {
-        id: finalReceiver,
-        name: quittance.tenantName || 'Locataire Preneur',
-        role: 'Locataire',
-        propertyTitle: quittance.propertyTitle,
-        phone: quittance.tenantPhone
-      });
-      window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
-      window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
     }
   } catch {}
 
@@ -1839,8 +1814,6 @@ export function getStoredTenantReceipts(): ChatQuittanceAttachment[] {
 }
 
 export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttachment): ChatMessage {
-  const current = getStoredMessages();
-
   let targetOwnerId = declaration.ownerId;
   let targetAgencyId: string | undefined = undefined;
   if (!targetOwnerId || targetOwnerId === 'usr_owner' || targetOwnerId === 'usr_agency') {
@@ -1881,8 +1854,8 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
 
   const isCaution = declaration.type === 'caution';
   const text = isCaution
-    ? `💰 Déclaration de versement de Caution (${formatFCFA(declaration.amount)})\nLe locataire ${declaration.tenantName} a déclaré le règlement de sa caution (${declaration.paymentMethod} • Réf: ${declaration.reference}) pour le logement ${declaration.propertyTitle}.\nConsultez le document ci-dessous pour vérifier et valider l'encaissement.`
-    : `💳 Déclaration de paiement de Loyer (${formatFCFA(declaration.amount)})\nLe locataire ${declaration.tenantName} a déclaré le règlement de son loyer de ${declaration.month || 'la période'} (${declaration.paymentMethod} • Réf: ${declaration.reference}) pour le logement ${declaration.propertyTitle}.\nConsultez le document ci-dessous pour vérifier et valider le règlement.`;
+    ? `💰 Déclaration de versement de Caution (${formatFCFA(declaration.amount)})\nLe locataire ${declaration.tenantName} a déclaré le règlement de sa caution (${declaration.paymentMethod} • Réf: ${declaration.reference}) pour le logement ${declaration.propertyTitle}.`
+    : `💳 Déclaration de paiement de Loyer (${formatFCFA(declaration.amount)})\nLe locataire ${declaration.tenantName} a déclaré le règlement de son loyer de ${declaration.month || 'la période'} (${declaration.paymentMethod} • Réf: ${declaration.reference}) pour le logement ${declaration.propertyTitle}.`;
 
   const newMsg: ChatMessage = {
     id: `msg_decl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1897,33 +1870,8 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
     status: 'delivered'
   };
 
-  const updated = [...current, newMsg];
-  saveStoredMessages(updated);
-  syncMessageToSupabase(newMsg, declaration.tenantId, targetOwnerId, newMsg.text);
-
-  // Enregistrer immédiatement les fiches contact scopées par utilisateur
-  if (typeof window !== 'undefined') {
-    try {
-      saveUserScopedContact(targetOwnerId, {
-        id: declaration.tenantId,
-        name: declaration.tenantName,
-        phone: '+225 05 00 00 00 00',
-        role: 'Locataire Preneur',
-        propertyTitle: declaration.propertyTitle,
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(declaration.tenantName)}&background=059669&color=fff`,
-        online: true
-      });
-      saveUserScopedContact(declaration.tenantId, {
-        id: targetOwnerId,
-        name: 'Bailleur / Agence',
-        phone: '+225 07 00 00 00 00',
-        role: 'Bailleur Propriétaire',
-        propertyTitle: declaration.propertyTitle,
-        avatar: getDefaultRealisticAvatar('Bailleur Propriétaire', 'Propriétaire Bailleur'),
-        online: true
-      });
-    } catch {}
-  }
+  // Conformité stricte : aucun message de déclaration dans la messagerie de chat
+  // La déclaration se traite dans le menu Caution ou Paiements & Loyers du bailleur/agence
 
   // Send real notification strictly to owner/agency in locatrust_notifications
   try {
@@ -1936,6 +1884,7 @@ export function sendDeclarationMessageToOwner(declaration: ChatDeclarationAttach
       time: 'À l\'instant',
       unread: true,
       type: isCaution ? 'caution' : 'payment',
+      targetTab: isCaution ? 'guarantees' : 'payments',
       targetRole: 'proprietaire',
       targetUserId: targetOwnerId,
       senderUserId: declaration.tenantId

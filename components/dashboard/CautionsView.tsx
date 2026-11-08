@@ -651,24 +651,95 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         const local = rawLocal.filter((loc: any) =>
           Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
         );
-        const combined = [...enrichedDeposits];
-        for (const loc of local) {
-          const isDup = combined.some(d => 
-            d.id === loc.id || 
-            (d.contract_number && loc.contract_number && d.contract_number === loc.contract_number) ||
-            (d.contract_id && loc.contract_id && d.contract_id === loc.contract_id)
-          );
-          if (!isDup) {
-            combined.push(loc);
+        const allCandidates = [...enrichedDeposits, ...local];
+
+        // Regrouper par identifiant unique de contrat pour dédupliquer strictement
+        const groupedByContract = new Map<string, any[]>();
+        const unassigned: any[] = [];
+
+        for (const dep of allCandidates) {
+          const cKey = dep.contract_number || dep.contract_id;
+          if (cKey) {
+            const arr = groupedByContract.get(cKey) || [];
+            arr.push(dep);
+            groupedByContract.set(cKey, arr);
+          } else {
+            unassigned.push(dep);
           }
         }
-        setDeposits(combined as any);
+
+        const deduplicated: any[] = [];
+        const ghostIdsToDelete: string[] = [];
+
+        groupedByContract.forEach((group) => {
+          if (group.length === 1) {
+            deduplicated.push(group[0]);
+          } else {
+            // Préférer la déclaration ayant une référence réelle (non vide et non par défaut)
+            group.sort((a, b) => {
+              const aHasRealRef = Boolean(a.declared_reference && a.declared_reference !== 'REF-CAUTION' && a.declared_reference !== 'Mobile Money');
+              const bHasRealRef = Boolean(b.declared_reference && b.declared_reference !== 'REF-CAUTION' && b.declared_reference !== 'Mobile Money');
+              if (aHasRealRef && !bHasRealRef) return -1;
+              if (!aHasRealRef && bHasRealRef) return 1;
+
+              const aHasProof = Boolean(a.proof_url);
+              const bHasProof = Boolean(b.proof_url);
+              if (aHasProof && !bHasProof) return -1;
+              if (!aHasProof && bHasProof) return 1;
+
+              const aConfirmed = a.status === 'paye_complet' || a.status === 'caution_confirmee';
+              const bConfirmed = b.status === 'paye_complet' || b.status === 'caution_confirmee';
+              if (aConfirmed && !bConfirmed) return -1;
+              if (!aConfirmed && bConfirmed) return 1;
+
+              const aTime = a.declared_at || a.created_at ? new Date(a.declared_at || a.created_at).getTime() : 0;
+              const bTime = b.declared_at || b.created_at ? new Date(b.declared_at || b.created_at).getTime() : 0;
+              return bTime - aTime;
+            });
+
+            const best = group[0];
+            deduplicated.push(best);
+
+            for (let i = 1; i < group.length; i++) {
+              if (group[i].id && group[i].id !== best.id) {
+                ghostIdsToDelete.push(group[i].id);
+              }
+            }
+          }
+        });
+
+        deduplicated.push(...unassigned);
+        setDeposits(deduplicated);
+
+        if (ghostIdsToDelete.length > 0) {
+          try {
+            const currentStored = getStoredDeposits();
+            const cleanStored = currentStored.filter(d => !ghostIdsToDelete.includes(d.id));
+            saveStoredDeposits(cleanStored);
+            supabase.from('cautions').delete().in('id', ghostIdsToDelete.filter(isValidUuid)).then();
+          } catch {}
+        }
       } else {
         const rawLocal = getStoredDeposits() || [];
         const local = rawLocal.filter((loc: any) =>
           Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
         );
         setDeposits(local);
+      }
+
+      // Charger les contrats actifs de l'utilisateur pour calculer exactement la caution exigée
+      if (user?.id) {
+        try {
+          const rawCnts = typeof window !== 'undefined' ? localStorage.getItem('locatrust_contracts') : null;
+          let cntList = rawCnts ? JSON.parse(rawCnts) : [];
+          if (Array.isArray(cntList)) {
+            const myActive = cntList.filter((c: any) =>
+              (isTenant ? (c.tenant_id === user.id || (c.tenant as any)?.id === user.id || c.tenant_signed) : (c.owner_id === user.id || c.agency_id === user.id)) &&
+              (c.status === 'actif' || c.status === 'contrat_actif' || c.status === 'signe')
+            );
+            setActiveUserContracts(myActive);
+          }
+        } catch {}
       }
     } catch (e) {
       console.warn('Sync cautions error:', e);
@@ -682,6 +753,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     }
   };
 
+  const [activeUserContracts, setActiveUserContracts] = useState<any[]>([]);
+
   useEffect(() => {
     reloadDeposits();
     const handleCautionsUpdated = () => reloadDeposits();
@@ -693,14 +766,54 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     };
   }, [user]);
 
-  // Metrics (Caution exigée, Caution versée, Caution en attente de remboursement)
-  const totalRequested = deposits.reduce((sum, d) => sum + (d.amount_requested || d.amount_paid || 0), 0);
+  // Metrics (Caution exigée, Caution versée, Caution remboursée / retournée)
+  const totalRequested = isTenant && activeUserContracts.length > 0
+    ? activeUserContracts.reduce((sum, c) => sum + Number(c.deposit_amount || c.caution_amount || c.caution || 0), 0)
+    : deposits.reduce((sum, d) => sum + (d.amount_requested || d.amount_paid || 0), 0);
+
+  // Caution reçue / versée : UNIQUEMENT les cautions confirmées (status === 'paye_complet' || status === 'caution_confirmee')
   const totalCollected = deposits
-    .filter((d) => d.status === 'paye_complet' || d.status === 'caution_confirmee' || d.amount_paid > 0)
+    .filter((d) => d.status === 'paye_complet' || d.status === 'caution_confirmee')
     .reduce((sum, d) => sum + (d.amount_paid || 0), 0);
-  const cautionEnAttenteRemboursement = deposits
-    .filter((d) => d.restitution_status === 'en_attente' || d.status === 'caution_a_confirmer' || (!d.restituted_at && (d.status === 'paye_complet' || d.status === 'caution_confirmee' || d.restitution_status === 'conserve')))
-    .reduce((sum, d) => sum + (d.amount_paid || d.amount_requested || 0), 0);
+
+  // Caution remboursée ou retournée : cautions restituées ou imputées sur loyers de préavis (0 FCFA si aucune)
+  const totalRestituted = deposits
+    .filter((d) => d.restitution_status === 'restitue_total' || d.restitution_status === 'restitue_partiel' || d.restitution_status === 'impute_loyers')
+    .reduce((sum, d) => sum + (d.restitution_status === 'impute_loyers' ? d.amount_paid : (d.amount_restituted || d.amount_paid || 0)), 0);
+
+  // Vérification de fin de contrat ou résiliation : notifier le propriétaire / agence pour rembourser la caution si non restituée
+  useEffect(() => {
+    if (!deposits || deposits.length === 0) return;
+    try {
+      const rawContracts = typeof window !== 'undefined' ? localStorage.getItem('locatrust_contracts') : null;
+      const contracts = rawContracts ? JSON.parse(rawContracts) : [];
+      if (!Array.isArray(contracts)) return;
+
+      deposits.forEach((dep) => {
+        const cNum = dep.contract_number || dep.contract_id;
+        const matchedCnt = contracts.find((c: any) => c.contract_number === cNum || c.id === cNum);
+        const isEnded = matchedCnt && (matchedCnt.status === 'termine' || matchedCnt.status === 'resilie' || (matchedCnt.end_date && new Date(matchedCnt.end_date) < new Date() && matchedCnt.renewal_status !== 'accepte'));
+        const isPaid = dep.status === 'paye_complet' || dep.status === 'caution_confirmee';
+        const notYetRestituted = !dep.restituted_at && dep.restitution_status !== 'restitue_total' && dep.restitution_status !== 'restitue_partiel' && dep.restitution_status !== 'impute_loyers';
+
+        if (isEnded && isPaid && notYetRestituted && cNum) {
+          const lockKey = `locatrust_notif_caut_refund_${cNum}`;
+          if (typeof window !== 'undefined' && !localStorage.getItem(lockKey)) {
+            localStorage.setItem(lockKey, 'true');
+            const targetOwner = dep.owner_id || matchedCnt.owner_id || 'usr_owner';
+            pushGlobalNotification({
+              title: '🛡️ Remboursement de caution requis',
+              description: `Le contrat N° ${cNum} a pris fin ou a été résilié. Veuillez procéder au remboursement de la caution de ${dep.tenant?.full_name || 'votre locataire'}.`,
+              category: 'caution',
+              targetRole: 'proprietaire',
+              targetUserId: targetOwner,
+              targetTab: 'cautions'
+            });
+          }
+        }
+      });
+    } catch {}
+  }, [deposits]);
 
   // Pending verification notices
   const pendingConfirmationDeposits = deposits.filter(
@@ -709,27 +822,14 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
   // Handle Confirmation / Validation of Caution Reception (Étape 2)
   const handleConfirmCaution = (deposit: Deposit) => {
-    // Automatically set owner signature if not already present
     const updated = confirmCautionReceipt(deposit.id, actorName);
     if (updated) {
       if (!updated.owner_signature) {
         signCautionReceipt(deposit.id, 'owner', 'SIG_OFFICIAL_OWNER_CERTIFIED');
       }
 
-      // Mettre à jour le statut du document de déclaration dans la messagerie
+      // Mettre à jour le statut du document de déclaration
       updateDeclarationMessageStatus(deposit.id, 'valide');
-
-      // Envoyer un message de confirmation automatique dans la boîte de messagerie du locataire
-      const tenantId = deposit.tenant_id || deposit.tenant?.id || 'usr_tenant';
-      const ownerId = user?.id || 'usr_owner';
-      sendChatMessage(
-        ownerId,
-        tenantId,
-        `✅ Règlement de caution validé\nVotre bailleur / agence (${actorName}) a validé la réception de votre caution de ${formatFCFA(deposit.amount_paid)} pour le contrat ${deposit.contract_id}.\nLe Reçu Officiel N° REC-CAUT-${deposit.id.toUpperCase()} avec QR Code officiel certifié a été émis.`
-      );
-
-      // Transmettre le reçu officiel dans la messagerie
-      sendCautionReceiptToTenant(deposit.id);
 
       const resolved = resolveDepositContractDetails(updated);
       const cleanReceiptNum = (updated as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`;
@@ -1180,8 +1280,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         </div>
       </div>
 
-      {/* Point 1 Étape 1 & 2 : Bannière d'alerte pour signalement locataire avec bouton Ouvrir la preuve */}
-      {pendingConfirmationDeposits.length > 0 && (
+      {/* Point 1 Étape 1 & 2 : Bannière d'alerte pour signalement locataire réservée exclusivement au bailleur et à l'agence */}
+      {!isTenant && pendingConfirmationDeposits.length > 0 && (
         <div className="flex flex-col gap-3">
           {pendingConfirmationDeposits.map((dep) => (
             <div
@@ -1195,24 +1295,13 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 <div className="flex flex-col">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wide">
-                      {!isTenant
-                        ? 'Le locataire a signalé le paiement de sa caution'
-                        : 'Déclaration de caution transmise au bailleur'}
+                      Le locataire a signalé le paiement de sa caution
                     </span>
                     <PaymentStatusBadge status="caution_a_confirmer" />
                   </div>
                   <p className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
-                    {!isTenant ? (
-                      <>
-                        <strong>{dep.tenant?.full_name}</strong> a soumis une preuve pour le versement de{' '}
-                        <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(dep.amount_paid)}</strong>.
-                      </>
-                    ) : (
-                      <>
-                        Vous avez déclaré le versement de{' '}
-                        <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(dep.amount_paid)}</strong>. En attente de validation par votre bailleur.
-                      </>
-                    )}
+                    <strong>{dep.tenant?.full_name}</strong> a soumis une preuve pour le versement de{' '}
+                    <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(dep.amount_paid)}</strong>.
                   </p>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">
                     Contrat N° {getDisplayContractNumber(dep)} • Réf : {dep.declared_reference || getDisplayPaymentMethod(dep)}
@@ -1220,32 +1309,21 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                 </div>
               </div>
 
-              {/* Bouton Étape 2 : Pour Bailleur -> Ouvrir la preuve et vérifier ; Pour Locataire -> Consulter sa preuve */}
-              {!isTenant ? (
-                <button
-                  type="button"
-                  onClick={() => setProofToVerifyDeposit(dep)}
-                  className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95"
-                >
-                  <Eye className="w-4 h-4" />
-                  <span>Vérifier la preuve & Valider</span>
-                </button>
-              ) : dep.proof_url ? (
-                <button
-                  type="button"
-                  onClick={() => setPreviewProofModalUrl(dep.proof_url!)}
-                  className="px-4 py-2 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95"
-                >
-                  <Eye className="w-4 h-4" />
-                  <span>Consulter mon justificatif</span>
-                </button>
-              ) : null}
+              {/* Bouton Étape 2 : Pour Bailleur -> Ouvrir la preuve et vérifier */}
+              <button
+                type="button"
+                onClick={() => setProofToVerifyDeposit(dep)}
+                className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95 cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>Vérifier la preuve & Valider</span>
+              </button>
             </div>
           ))}
         </div>
       )}
 
-      {/* KPI Cards */}
+      {/* KPI Cards (Caution exigée, Caution versée / reçue, Caution remboursée / retournée) */}
       {isLoading ? (
         <KpiGridSkeleton count={3} />
       ) : (
@@ -1262,28 +1340,28 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
             <span className="text-[11px] text-slate-400 mt-1">Totalité des contrats actifs</span>
           </div>
 
-          {/* Cautions Encaissées */}
+          {/* Cautions Versées / Reçues */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Caution reçue</span>
+              <span className="text-xs font-bold text-slate-500">{isTenant ? 'Caution versée' : 'Caution reçue'}</span>
               <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                 <CheckCircle2 className="w-4 h-4" />
               </div>
             </div>
             <span className="text-2xl font-black text-emerald-600 mt-2">{formatFCFA(totalCollected)}</span>
-            <span className="text-[11px] text-slate-400 mt-1">Fonds conservés en garantie</span>
+            <span className="text-[11px] text-slate-400 mt-1">{isTenant ? 'Total des cautions confirmées' : 'Fonds conservés en garantie'}</span>
           </div>
 
-          {/* Solde en attente */}
+          {/* Cautions Remboursées ou Retournées */}
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">Caution à rembourser</span>
-              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                <AlertTriangle className="w-4 h-4" />
+              <span className="text-xs font-bold text-slate-500">Caution remboursée / retournée</span>
+              <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                <RotateCcw className="w-4 h-4" />
               </div>
             </div>
-            <span className="text-2xl font-black text-amber-600 mt-2">{formatFCFA(cautionEnAttenteRemboursement)}</span>
-            <span className="text-[11px] text-slate-400 mt-1">Garanties en cours & à restituer</span>
+            <span className="text-2xl font-black text-purple-600 mt-2">{formatFCFA(totalRestituted)}</span>
+            <span className="text-[11px] text-slate-400 mt-1">Garanties restituées ou compensées</span>
           </div>
         </div>
       )}
