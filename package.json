@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite --host --port 3000",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:no-flicker": "node scripts/check-no-skeleton-flicker.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.1",

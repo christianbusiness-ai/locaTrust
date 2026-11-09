@@ -36,6 +36,7 @@ import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
 import { resolveContractParties, persistTenantSignature, getStoredTenantSignature } from '@/lib/contractPartyResolver';
 import { ContractCardSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 import { submitContractRenewalRequest, getContractExpiryDetails } from '@/lib/contractRenewalManager';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
@@ -71,6 +72,8 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
   const [contracts, setContracts] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const hasLoadedOnceRef = React.useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedContractNumber, setSelectedContractNumber] = useState<string | null>(null);
   const [generatingProofId, setGeneratingProofId] = useState<string | null>(null);
@@ -529,12 +532,16 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     }
   }, [initialTab]);
 
-  const fetchTenantData = async () => {
+  const fetchTenantData = async (isBackground = false) => {
     if (!user) {
       setIsLoading(false);
       return;
     }
-    setIsLoading(true);
+    if (hasLoadedOnceRef.current || isBackground || contracts.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       // Registre local et Supabase des signatures RÉELLEMENT apposées par le locataire (doit contenir une vraie image data:image/)
@@ -1021,7 +1028,9 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     } catch (err: any) {
       setLoadError("Erreur réseau lors du chargement de vos baux.");
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -1038,7 +1047,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
     } catch {}
 
     const handleUpdate = () => {
-      fetchTenantData();
+      fetchTenantData(true);
     };
 
     const handleOpenContract = (e: any) => {
@@ -1218,7 +1227,9 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -1243,7 +1254,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
           <ContractCardSkeleton />
           <ContractCardSkeleton />
         </div>
-      ) : loadError ? (
+      ) : (loadError && contracts.length === 0) ? (
         <div className="p-6 bg-rose-50 border border-rose-200 rounded-3xl text-center shadow-sm">
           <AlertCircle className="w-8 h-8 text-rose-600 mx-auto mb-2" />
           <h4 className="text-sm font-black text-rose-900">Échec du chargement de vos baux</h4>

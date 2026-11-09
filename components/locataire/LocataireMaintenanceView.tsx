@@ -16,6 +16,7 @@ import { MaintenanceTicket } from '@/types/database.types';
 import { getMaintenanceTickets, createMaintenanceTicket, getContracts } from '@/src/lib/db';
 import { useAuth } from '@/src/context/AuthContext';
 import { TicketsListSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { supabase } from '@/src/lib/supabase';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 
@@ -24,6 +25,8 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [tickets, setTickets] = useState<any[]>([]);
   const [userContracts, setUserContracts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
   const [isSubmittingTicket, setIsSubmittingTicket] = useState<boolean>(false);
@@ -35,12 +38,16 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [description, setDescription] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
 
-  const fetchTickets = async () => {
+  const fetchTickets = async (isBackground = false) => {
     if (!user) {
       setIsLoading(false);
       return;
     }
-    setIsLoading(true);
+    if (hasLoadedOnceRef.current || isBackground || tickets.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       const { data, error } = await getMaintenanceTickets(user.id);
@@ -112,7 +119,9 @@ export const LocataireMaintenanceView: React.FC = () => {
     } catch (err: any) {
       setLoadError("Erreur réseau lors de la récupération des tickets.");
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -227,7 +236,9 @@ export const LocataireMaintenanceView: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -255,11 +266,11 @@ export const LocataireMaintenanceView: React.FC = () => {
       </div>
 
       {/* ÉTATS : LOADER, ERREUR, OU VIDE */}
-      {isLoading ? (
+      {(isLoading && !hasLoadedOnceRef.current) ? (
         <div className="w-full py-2">
           <TicketsListSkeleton count={3} />
         </div>
-      ) : loadError ? (
+      ) : (loadError && tickets.length === 0) ? (
         <div className="p-6 bg-rose-50 border border-rose-200 rounded-3xl text-center shadow-sm">
           <AlertCircle className="w-8 h-8 text-rose-600 mx-auto mb-2" />
           <h4 className="text-sm font-black text-rose-900">Échec du chargement</h4>

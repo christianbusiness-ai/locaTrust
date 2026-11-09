@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton, PriorityNotificationSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import {
   Building2,
   Users,
@@ -62,6 +63,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const [selectedYear, setSelectedYear] = useState(() => getActiveReferenceYear());
 
   const [isLoading, setIsLoading] = useState<boolean>(!isDemo);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = useRef<boolean>(false);
   const [realProps, setRealProps] = useState<any[]>([]);
   const [realContracts, setRealContracts] = useState<any[]>([]);
   const [realPayments, setRealPayments] = useState<any[]>([]);
@@ -69,10 +72,16 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const [realAccountingDataset, setRealAccountingDataset] = useState<RealAccountingDataset | null>(null);
   const isFetchingRef = React.useRef(false);
 
-  const fetchDashboardData = async () => {
+  const showSkeleton = isLoading && !hasLoadedOnceRef.current;
+
+  const fetchDashboardData = async (isBackground = false) => {
     if (isDemo || isFetchingRef.current) return;
     isFetchingRef.current = true;
-    setIsLoading(true);
+    if (hasLoadedOnceRef.current || isBackground) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       let loadedPayments: any[] = [];
       let loadedApps: any[] = [];
@@ -308,7 +317,9 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       console.warn('Dashboard live fetch notice:', err);
     } finally {
       isFetchingRef.current = false;
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -320,7 +331,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     const handleLiveUpdate = () => {
       if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
       updateDebounceTimer = setTimeout(() => {
-        fetchDashboardData();
+        fetchDashboardData(true);
       }, 300);
     };
 
@@ -336,16 +347,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     window.addEventListener('locatrust:cautions_updated', handleLiveUpdate);
     window.addEventListener('locatrust:year_changed', handleYearChanged);
 
-    // Polling discret de rafraîchissement temps réel (60s) uniquement si l'onglet est actif
-    const syncInterval = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        fetchDashboardData();
-      }
-    }, 60000);
-
     return () => {
       if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
-      clearInterval(syncInterval);
       window.removeEventListener('locatrust:properties-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:applications-updated', handleLiveUpdate);
       window.removeEventListener('locatrust:contracts-updated', handleLiveUpdate);
@@ -479,7 +482,9 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     (userRole === 'agence' ? "Mon Agence" : "Bailleur");
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre fine de progression en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* 1. TOP BANNER GREETING AVEC ACTIONS RAPIDES ÉPURÉES */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -514,7 +519,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
 
       {/* 1.B. NOTIFICATIONS PRIORITAIRES DASHBOARD DYNAMIQUES */}
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <PriorityNotificationSkeleton />
           <PriorityNotificationSkeleton />
@@ -588,7 +593,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       })()}
 
       {/* 2. GRILLE DE CARTES KPI SIMPLIFIÉES, COMPACTES, DENSES ET CLIQUABLES (Points 1 à 7, 22) */}
-      {isLoading ? (
+      {showSkeleton ? (
         <KpiGridSkeleton count={6} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">

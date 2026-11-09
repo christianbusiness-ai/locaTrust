@@ -1,5 +1,120 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { TopProgressBar } from './TopProgressBar';
+
+/**
+ * DEV ONLY SKELETON TRACKER (Phase 0 Diagnostic)
+ * Enregistre le nombre de rendus de skeletons par composant et par minute.
+ */
+interface SkeletonMetricRecord {
+  component: string;
+  totalRenders: number;
+  rendersLastMinute: number;
+  history: number[];
+  lastRenderAt: string;
+}
+
+const skeletonMetricsStore: Record<string, SkeletonMetricRecord> = {};
+
+export function recordSkeletonRender(name: string) {
+  if (typeof window === 'undefined') return;
+  const now = Date.now();
+  if (!skeletonMetricsStore[name]) {
+    skeletonMetricsStore[name] = {
+      component: name,
+      totalRenders: 0,
+      rendersLastMinute: 0,
+      history: [],
+      lastRenderAt: new Date().toLocaleTimeString()
+    };
+  }
+  const m = skeletonMetricsStore[name];
+  m.totalRenders++;
+  m.lastRenderAt = new Date().toLocaleTimeString();
+  m.history.push(now);
+  m.history = m.history.filter(t => now - t <= 60000);
+  m.rendersLastMinute = m.history.length;
+
+  (window as any).__LOCATRUST_SKELETON_METRICS__ = skeletonMetricsStore;
+  window.dispatchEvent(new CustomEvent('locatrust:skeleton-metric-updated', { detail: { ...skeletonMetricsStore } }));
+}
+
+function useTrackSkeleton(name: string) {
+  useEffect(() => {
+    recordSkeletonRender(name);
+  }, [name]);
+}
+
+/**
+ * Badge flottant de diagnostic Dev (Phase 0)
+ * Affiche en direct le nombre d'apparitions de skeletons par minute.
+ */
+export const SkeletonDevDiagnosticBadge: React.FC = () => {
+  const [metrics, setMetrics] = useState<Record<string, SkeletonMetricRecord>>({});
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setMetrics({ ...skeletonMetricsStore });
+    };
+    window.addEventListener('locatrust:skeleton-metric-updated', handleUpdate);
+    const interval = setInterval(() => {
+      const now = Date.now();
+      let changed = false;
+      Object.values(skeletonMetricsStore).forEach(m => {
+        const prev = m.rendersLastMinute;
+        m.history = m.history.filter(t => now - t <= 60000);
+        m.rendersLastMinute = m.history.length;
+        if (m.rendersLastMinute !== prev) changed = true;
+      });
+      if (changed) setMetrics({ ...skeletonMetricsStore });
+    }, 2000);
+
+    return () => {
+      window.removeEventListener('locatrust:skeleton-metric-updated', handleUpdate);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const totalPerMin = Object.values(metrics).reduce((sum, m) => sum + m.rendersLastMinute, 0);
+  if (Object.keys(metrics).length === 0) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 z-[9999] text-xs font-mono select-none">
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className={`px-3 py-1.5 rounded-full shadow-lg border cursor-pointer flex items-center gap-2 transition-all ${
+          totalPerMin > 0
+            ? 'bg-rose-600 text-white border-rose-700 animate-pulse'
+            : 'bg-emerald-600 text-white border-emerald-700'
+        }`}
+        title="Diagnostic Skeletons LocaTrust (Phase 0)"
+      >
+        <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+        <span className="font-bold">Skeletons: {totalPerMin}/min</span>
+        <span className="text-[10px] opacity-80">{isOpen ? '▲' : '▼'}</span>
+      </div>
+
+      {isOpen && (
+        <div className="mt-2 p-3 bg-slate-900/95 text-slate-100 rounded-2xl shadow-2xl border border-slate-700 max-w-sm max-h-80 overflow-y-auto">
+          <div className="font-bold text-[11px] text-amber-400 border-b border-slate-800 pb-1 mb-2 flex justify-between">
+            <span>COMPOSANT</span>
+            <span>PAR MIN (TOTAL)</span>
+          </div>
+          <div className="space-y-1.5">
+            {Object.values(metrics).map(m => (
+              <div key={m.component} className="flex justify-between items-center text-[11px]">
+                <span className="text-slate-300 truncate max-w-[180px]">{m.component}</span>
+                <span className={m.rendersLastMinute > 0 ? 'text-rose-400 font-bold' : 'text-slate-400'}>
+                  {m.rendersLastMinute}/min ({m.totalRenders})
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 /**
  * Composants Skeleton Loaders modulaires avec effet "Shimmer Wave" (vague de lumière)
@@ -17,6 +132,7 @@ export const Skeleton: React.FC<{ className?: string }> = ({ className = '' }) =
 
 // 1. Skeleton pour les cartes KPI statistiques du dashboard
 export const KpiCardSkeleton: React.FC = () => {
+  useTrackSkeleton('KpiCardSkeleton');
   return (
     <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-3">
       <div className="flex items-center justify-between">
@@ -54,6 +170,7 @@ export const KpiGridSkeleton: React.FC<{ count?: number }> = ({ count = 3 }) => 
 
 // 2. Skeleton pour les cartes de biens immobiliers (BiensView, Recherche, Feed)
 export const PropertyCardSkeleton: React.FC = () => {
+  useTrackSkeleton('PropertyCardSkeleton');
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 overflow-hidden shadow-sm flex flex-col">
       {/* Image header avec vague de lumière */}
@@ -99,6 +216,7 @@ export const PropertyGridSkeleton: React.FC<{ count?: number }> = ({ count = 6 }
 
 // 3. Skeleton pour les lignes de tableau (Paiements, Quittances, Locataires, Cautions, Documents, Historique)
 export const TableRowsSkeleton: React.FC<{ rows?: number; cols?: number }> = ({ rows = 5, cols = 6 }) => {
+  useTrackSkeleton('TableRowsSkeleton');
   return (
     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
       {Array.from({ length: rows }).map((_, rIdx) => (
@@ -119,6 +237,7 @@ export const TableRowsSkeleton: React.FC<{ rows?: number; cols?: number }> = ({ 
 
 // 4. Skeleton pour les cartes de candidatures (DemandesView)
 export const ApplicationCardSkeleton: React.FC = () => {
+  useTrackSkeleton('ApplicationCardSkeleton');
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-[200px]">
@@ -147,6 +266,7 @@ export const ApplicationCardSkeleton: React.FC = () => {
 
 // 5. Skeleton pour une notification prioritaire de dashboard
 export const PriorityNotificationSkeleton: React.FC = () => {
+  useTrackSkeleton('PriorityNotificationSkeleton');
   return (
     <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3">
@@ -163,6 +283,7 @@ export const PriorityNotificationSkeleton: React.FC = () => {
 
 // 6. Skeleton pour les cartes de locataires (TenantsListView)
 export const TenantCardSkeleton: React.FC = () => {
+  useTrackSkeleton('TenantCardSkeleton');
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-4 shadow-sm flex flex-col xl:flex-row xl:items-center justify-between gap-4">
       <div className="flex items-center gap-3.5 min-w-[260px] max-w-xs shrink-0">
@@ -189,6 +310,7 @@ export const TenantCardSkeleton: React.FC = () => {
 
 // 7. Skeleton pour les cartes de contrats (LocataireContratsView)
 export const ContractCardSkeleton: React.FC = () => {
+  useTrackSkeleton('ContractCardSkeleton');
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-5 shadow-sm space-y-4">
       <div className="flex items-center justify-between">
@@ -217,6 +339,7 @@ export const ContractCardSkeleton: React.FC = () => {
 
 // 8. Skeleton pour les tickets de maintenance et incidents (LocataireMaintenanceView)
 export const TicketsListSkeleton: React.FC<{ count?: number }> = ({ count = 3 }) => {
+  useTrackSkeleton('TicketsListSkeleton');
   return (
     <div className="space-y-3 w-full">
       {Array.from({ length: count }).map((_, i) => (
@@ -247,6 +370,7 @@ export const TicketsListSkeleton: React.FC<{ count?: number }> = ({ count = 3 })
 
 // 8b. Skeleton pour les quittances officielles (QuittancesPage)
 export const QuittanceCardSkeleton: React.FC = () => {
+  useTrackSkeleton('QuittanceCardSkeleton');
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-5 space-y-4 shadow-sm">
       <div className="flex items-center justify-between">
@@ -277,6 +401,7 @@ export const QuittanceGridSkeleton: React.FC<{ count?: number }> = ({ count = 6 
 
 // 9. Skeleton pour la fiche détaillée d'un bien (Page /biens/[id])
 export const PropertyDetailSkeleton: React.FC = () => {
+  useTrackSkeleton('PropertyDetailSkeleton');
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="h-6 w-32 animate-shimmer rounded-lg" />
@@ -299,6 +424,7 @@ export const PropertyDetailSkeleton: React.FC = () => {
 
 // 10. Skeleton complet de page de tableau de bord (Remplace avantageusement tout spinner plein écran)
 export const DashboardPageSkeleton: React.FC = () => {
+  useTrackSkeleton('DashboardPageSkeleton');
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
       {/* Barre de progression supérieure lumineuse */}

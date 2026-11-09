@@ -136,13 +136,17 @@ export const AccountingExportView: React.FC = () => {
       }
     };
 
+    const handleLiveReportUpdate = () => {
+      loadMandantsReport();
+    };
+
     loadMandantsReport();
-    window.addEventListener('locatrust:properties_updated', loadMandantsReport);
-    window.addEventListener('locatrust:agency_mandates-updated', loadMandantsReport);
+    window.addEventListener('locatrust:properties_updated', handleLiveReportUpdate);
+    window.addEventListener('locatrust:agency_mandates-updated', handleLiveReportUpdate);
     return () => {
       isMounted = false;
-      window.removeEventListener('locatrust:properties_updated', loadMandantsReport);
-      window.removeEventListener('locatrust:agency_mandates-updated', loadMandantsReport);
+      window.removeEventListener('locatrust:properties_updated', handleLiveReportUpdate);
+      window.removeEventListener('locatrust:agency_mandates-updated', handleLiveReportUpdate);
     };
   }, [isAgency, agencyId, activeYear, currentPeriodObj.label, profile?.full_name]);
   

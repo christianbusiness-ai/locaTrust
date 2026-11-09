@@ -41,6 +41,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { updateRentalApplication } from '@/lib/supabase/services';
 import { ApplicationCardSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { getDefaultRealisticAvatar } from '@/lib/avatarHelper';
 import { UserAvatar } from '@/components/common/UserAvatar';
@@ -91,6 +92,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   const currentUserId = user?.id || profile?.id || 'usr_owner';
   const [applications, setApplications] = useState<RentalApplication[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedApplicationForContract, setSelectedApplicationForContract] = useState<RentalApplication | null>(null);
@@ -145,8 +148,12 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     };
   }, [applications]);
 
-  const loadFromDatabase = async () => {
-    setIsLoading(true);
+  const loadFromDatabase = async (isBackground = false) => {
+    if (hasLoadedOnceRef.current || isBackground || applications.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       // Charger les propriétés enregistrées pour récupérer les vrais montants (loyer et caution)
@@ -680,9 +687,13 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       }
     } catch (err: any) {
       console.warn('Erreur chargement candidatures:', err);
-      setApplications([]);
+      if (!hasLoadedOnceRef.current) {
+        setApplications([]);
+      }
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -690,11 +701,11 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
     loadFromDatabase();
 
     const handleAppsUpdated = () => {
-      loadFromDatabase();
+      loadFromDatabase(true);
     };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'locatrust_rental_applications' && e.newValue) {
-        loadFromDatabase();
+        loadFromDatabase(true);
       }
     };
     const channel = supabase
@@ -703,18 +714,22 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'rental_applications' },
         () => {
-          loadFromDatabase();
+          loadFromDatabase(true);
         }
       )
       .subscribe();
 
+    const handleContractsUpdated = () => {
+      loadFromDatabase(true);
+    };
+
     window.addEventListener('locatrust:applications-updated', handleAppsUpdated);
-    window.addEventListener('locatrust:contracts-updated', loadFromDatabase);
+    window.addEventListener('locatrust:contracts-updated', handleContractsUpdated);
     window.addEventListener('storage', handleStorage);
     return () => {
       supabase.removeChannel(channel);
       window.removeEventListener('locatrust:applications-updated', handleAppsUpdated);
-      window.removeEventListener('locatrust:contracts-updated', loadFromDatabase);
+      window.removeEventListener('locatrust:contracts-updated', handleContractsUpdated);
       window.removeEventListener('storage', handleStorage);
     };
   }, [user?.id, profile?.role, profile?.account_type]);
@@ -1546,7 +1561,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
   });
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre fine de progression en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">

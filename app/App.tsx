@@ -15,6 +15,7 @@ import { UserRole } from '@/types/database.types';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { LoginPage } from '@/src/pages/LoginPage';
 import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
+import { SkeletonDevDiagnosticBadge } from '@/components/common/SkeletonLoader';
 
 // Helper de chargement dynamique avec purge de cache automatique lors des déploiements
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -336,6 +337,9 @@ export default function App() {
 
           {/* Bannière et Modal d'installation PWA (Accessible sur tout le site) */}
           <PwaInstallPrompt />
+
+          {/* Dev Only Skeleton Diagnostic Counter (Phase 0) */}
+          {process.env.NODE_ENV !== 'production' && <SkeletonDevDiagnosticBadge />}
         </AuthProvider>
       </ErrorBoundary>
     </BrowserRouter>

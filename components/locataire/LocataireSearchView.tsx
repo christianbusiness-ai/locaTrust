@@ -34,6 +34,7 @@ import { createRentalApplication } from '@/lib/supabase/services';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { ActionConfirmationModal } from '@/components/common/ActionConfirmationModal';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
@@ -52,6 +53,8 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
   const { user, profile } = useAuth();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
 
@@ -92,9 +95,13 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
   const [kycBlockReason, setKycBlockReason] = useState<'visite' | 'candidature'>('visite');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchProperties = async () => {
+  const fetchProperties = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (hasLoadedOnceRef.current || isBackground || properties.length > 0) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       const { data, error: qErr } = await supabase
         .from('properties')
@@ -118,9 +125,13 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
       setProperties(formatted);
     } catch (err: any) {
       console.error('Erreur chargement des biens:', err);
-      setError('Impossible de charger les offres immobilières. Veuillez vérifier votre connexion.');
+      if (!hasLoadedOnceRef.current) {
+        setError('Impossible de charger les offres immobilières. Veuillez vérifier votre connexion.');
+      }
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -412,7 +423,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
     fetchProperties();
 
     const handleUpdate = () => {
-      fetchProperties();
+      fetchProperties(true);
     };
 
     window.addEventListener('locatrust:properties-updated', handleUpdate);
@@ -788,7 +799,9 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre fine de progression en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* VUE 1 : MES DEMANDES DE LOCATION */}
       {activeTab === 'applications' && (
@@ -1161,19 +1174,19 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           </div>
 
           {/* STATE 1: LOADER SKELETON */}
-          {loading && (
+          {(loading && !hasLoadedOnceRef.current) && (
             <PropertyGridSkeleton count={6} />
           )}
 
           {/* STATE 2: ERROR */}
-          {error && !loading && (
+          {error && !hasLoadedOnceRef.current && (
             <div className="p-6 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 flex items-center justify-between shadow-sm">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0" />
                 <span className="text-xs font-bold">{error}</span>
               </div>
               <button
-                onClick={fetchProperties}
+                onClick={() => fetchProperties()}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all flex items-center gap-1.5"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -1183,7 +1196,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           )}
 
           {/* STATE 3: EMPTY STATE */}
-          {!loading && !error && filteredProperties.length === 0 && (
+          {!(loading && !hasLoadedOnceRef.current) && (!error || hasLoadedOnceRef.current) && filteredProperties.length === 0 && (
             <div className="p-16 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-3">
               <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
                 activeTab === 'favorites' ? 'bg-rose-50 text-rose-500' : 'bg-blue-50 text-blue-600'
@@ -1224,7 +1237,7 @@ export const LocataireSearchView: React.FC<LocataireSearchViewProps> = ({
           )}
 
       {/* Grid of Listings */}
-      {!loading && !error && filteredProperties.length > 0 && (
+      {!(loading && !hasLoadedOnceRef.current) && (!error || hasLoadedOnceRef.current) && filteredProperties.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredProperties.map((property) => {
           const isFav = favorites.includes(property.id);

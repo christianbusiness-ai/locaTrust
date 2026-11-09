@@ -30,6 +30,7 @@ import { sendContractReminderToTenant } from '@/lib/messagingStore';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { collectProofDossierData, generateOfficialProofDossierPdf } from '@/lib/proofDossierPdfGenerator';
 import { generateOfficialContractPdf } from '@/lib/contractPdfGenerator';
 import { resolveContractDueDay } from '@/lib/payments/rentScheduleEngine';
@@ -124,9 +125,15 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
 
   const [contracts, setContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const hasLoadedOnceRef = React.useRef(false);
 
-  const loadContracts = async () => {
-    setLoading(true);
+  const loadContracts = async (isBackground = false) => {
+    if (hasLoadedOnceRef.current || isBackground || contracts.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const signedByNotifNums = new Set<string>();
       const signedByNotifSigs = new Map<string, string>();
@@ -396,14 +403,20 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
         });
 
         setContracts(mapped);
+        hasLoadedOnceRef.current = true;
         setLoading(false);
+        setIsRefreshing(false);
         return;
       }
     } catch (e) {
       console.warn('Contracts read error:', e);
     }
-    setContracts([]);
+    if (!hasLoadedOnceRef.current) {
+      setContracts([]);
+    }
+    hasLoadedOnceRef.current = true;
     setLoading(false);
+    setIsRefreshing(false);
   };
 
   // Génération officielle du Dossier de preuve pour les contrats terminés (Section 4 & 5)
@@ -627,7 +640,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
 
   React.useEffect(() => {
     loadContracts();
-    const handleUpdate = () => loadContracts();
+    const handleUpdate = () => loadContracts(true);
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
     return () => {
@@ -661,7 +674,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
   const paginatedContracts = filteredContracts.slice(startIndex, startIndex + itemsPerPage);
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Title Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -720,7 +735,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
       })()}
 
       {/* Summary KPI Cards (Compact, pixel-perfect, and clickable status filters) */}
-      {loading ? (
+      {(loading && !hasLoadedOnceRef.current) ? (
         <KpiGridSkeleton />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

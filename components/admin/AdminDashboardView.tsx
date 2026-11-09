@@ -207,11 +207,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     fluxSecurisesFCFA: 0
   });
 
+  const hasLoadedOnceRef = React.useRef(false);
   // =========================================================================
   // CHARGEMENT EN TEMPS RÉEL DES DONNÉES RÉELLES DEPUIS SUPABASE
   // =========================================================================
-  const fetchRealData = async () => {
-    setIsLoadingData(true);
+  const fetchRealData = async (isBackground = false) => {
+    if (!isBackground && !hasLoadedOnceRef.current) {
+      setIsLoadingData(true);
+    }
     try {
       // 1. Profils réels enregistrés avec plafond sécurisé
       const { data: dbProfiles, error: profErr } = await supabase
@@ -386,6 +389,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     } catch (err) {
       console.error('Erreur chargement données SaaS:', err);
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoadingData(false);
     }
   };
@@ -398,7 +402,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     const handleSync = () => {
       if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
       syncDebounceTimer = setTimeout(() => {
-        fetchRealData();
+        fetchRealData(true);
       }, 500);
     };
 

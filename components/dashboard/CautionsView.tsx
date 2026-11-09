@@ -56,6 +56,7 @@ import { SignatureModal } from '@/components/common/SignatureModal';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 
 interface CautionsViewProps {
   isAgency?: boolean;
@@ -179,6 +180,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const [deposits, setDeposits] = useState<Deposit[]>(() => []);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
 
   // Determine active actor (Propriétaire ou Agence)
   const isActuallyAgency = isAgency || userRole === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_current_role') === 'agence');
@@ -583,8 +586,12 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   // Success Feedback
   const [successFeedback, setSuccessFeedback] = useState<string | null>(null);
 
-  const reloadDeposits = async () => {
-    setIsLoading(true);
+  const reloadDeposits = async (isBackground = false) => {
+    if (hasLoadedOnceRef.current || isBackground || deposits.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       // 1. Requête principale avec jointure contracts et properties
       let query = supabase
@@ -808,7 +815,9 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       })();
       setDeposits(deduplicatedLocal);
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -816,7 +825,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
   useEffect(() => {
     reloadDeposits();
-    const handleCautionsUpdated = () => reloadDeposits();
+    const handleCautionsUpdated = () => reloadDeposits(true);
     window.addEventListener('locatrust:cautions_updated', handleCautionsUpdated);
     window.addEventListener('locatrust:payments-updated', handleCautionsUpdated);
     return () => {
@@ -1299,7 +1308,9 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     : [];
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       {/* Bannière d'Action Immédiate pour le Locataire (Solution 2A & Audio utilisateur) */}
       {isTenant && depositsAwaitingTenantSignature.length > 0 && (
         <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 text-white shadow-xl shadow-blue-500/20 border border-blue-400/30 flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fadeIn">
@@ -1416,7 +1427,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       )}
 
       {/* KPI Cards (Caution exigée, Caution versée / reçue, Caution remboursée / retournée) */}
-      {isLoading ? (
+      {(isLoading && !hasLoadedOnceRef.current) ? (
         <KpiGridSkeleton count={3} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1471,7 +1482,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           </div>
         </div>
 
-        {isLoading ? (
+        {(isLoading && !hasLoadedOnceRef.current) ? (
           <div className="flex flex-col gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <TenantCardSkeleton key={i} />

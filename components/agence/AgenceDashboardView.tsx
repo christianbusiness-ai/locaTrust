@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   Users,
@@ -22,6 +22,7 @@ import { getAgencyBillablePropertyCount, type QuotaComputationResult } from '@/l
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { getAgencyMandates, syncAgencyMandatesFromDb } from '@/lib/agencyMandatesStore';
 
 interface AgenceDashboardViewProps {
@@ -64,11 +65,20 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
     return user?.id ? getAgencyMandates(user.id) : [];
   });
   const [totalCollectedRent, setTotalCollectedRent] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = useRef<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAgencyData = async () => {
+  const showSkeleton = loading && !hasLoadedOnceRef.current;
+
+  const fetchAgencyData = async (isBackground = false) => {
     try {
+      if (hasLoadedOnceRef.current || isBackground) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
 
       // Parallel execution for maximum speed
@@ -98,8 +108,13 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       }
     } catch (err: any) {
       console.warn('Notice chargement données agence (utilisation du cache local):', err);
+      if (!hasLoadedOnceRef.current) {
+        setError('Impossible de charger les données agence.');
+      }
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -107,7 +122,7 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
     fetchAgencyData();
 
     const handleLiveUpdate = () => {
-      fetchAgencyData();
+      fetchAgencyData(true);
     };
     window.addEventListener('locatrust:properties-updated', handleLiveUpdate);
     window.addEventListener('locatrust:contracts-updated', handleLiveUpdate);
@@ -123,7 +138,9 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
   const agencyName = profile?.full_name || 'Agence Immobilière Agréée';
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Top Banner Greeting */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -161,7 +178,7 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       </div>
 
       {/* STATE 1: LOADER */}
-      {loading && (
+      {showSkeleton && (
         <div className="space-y-6 w-full">
           <KpiGridSkeleton count={4} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -180,14 +197,14 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       )}
 
       {/* STATE 2: ERROR */}
-      {error && !loading && (
+      {error && !hasLoadedOnceRef.current && (
         <div className="p-6 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-3">
             <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0" />
             <span className="text-xs font-bold">{error}</span>
           </div>
           <button
-            onClick={fetchAgencyData}
+            onClick={() => fetchAgencyData()}
             className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl transition-all flex items-center gap-1.5"
           >
             <RefreshCw className="w-4 h-4" />
@@ -197,7 +214,7 @@ export const AgenceDashboardView: React.FC<AgenceDashboardViewProps> = ({
       )}
 
       {/* Top 4 KPI Cards for Agency */}
-      {!loading && !error && (
+      {!showSkeleton && (!error || hasLoadedOnceRef.current) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           
           {/* Card 1: Parc Immobilier Géré */}

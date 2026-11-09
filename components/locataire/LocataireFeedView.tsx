@@ -41,6 +41,7 @@ import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { useAuth } from '@/src/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { createRentalApplication } from '@/lib/supabase/services';
 import { supabase } from '@/src/lib/supabase';
 import { sendChatMessage, sendRealChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
@@ -670,10 +671,16 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   // State pour données réelles Supabase
   const [properties, setProperties] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const hasLoadedOnceRef = React.useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const fetchProperties = async () => {
-    setIsLoading(true);
+  const fetchProperties = async (isBackground = false) => {
+    if (hasLoadedOnceRef.current || isBackground || properties.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       // 1. Biens créés localement (localStorage immédiat)
@@ -783,7 +790,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     } catch (err: any) {
       setLoadError("Erreur réseau lors de la récupération des annonces.");
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -1077,7 +1086,7 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
     fetchProperties();
     loadSignDocumentBanners();
     const handleUpdate = () => {
-      fetchProperties();
+      fetchProperties(true);
       loadSignDocumentBanners();
     };
     window.addEventListener('locatrust:properties-updated', handleUpdate);
@@ -1583,7 +1592,9 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
   );
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 w-full animate-fadeIn font-sans pb-12">
+    <div className="flex flex-col lg:flex-row gap-6 w-full animate-fadeIn font-sans pb-12 relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* ======================================================== */}
       {/* CENTER COLUMN: MAIN FEED (Fidèle à l'image du locataire) */}

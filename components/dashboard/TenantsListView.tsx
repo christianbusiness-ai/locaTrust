@@ -29,6 +29,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { TenantCardSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 
 import { UserAvatar } from '@/components/common/UserAvatar';
@@ -76,6 +77,8 @@ export const TenantsListView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedTenantForReceipts, setSelectedTenantForReceipts] = useState<TenantProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
 
   // Modale Ajouter un locataire existant (Sections 1 à 25)
   const [isAddExistingTenantOpen, setIsAddExistingTenantOpen] = useState<boolean>(false);
@@ -117,14 +120,18 @@ export const TenantsListView: React.FC = () => {
     setIsContractGeneratorOpen(true);
   };
 
-  const loadTenantsFromDb = async () => {
+  const loadTenantsFromDb = async (isBackground = false) => {
     if (!user?.id) {
       setTenants([]);
       setIsLoading(false);
       return;
     }
 
+    if (hasLoadedOnceRef.current || isBackground || tenants.length > 0) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
+    }
       try {
         // Récupération des profils pour disposer des vrais avatars à jour
         const { data: profilesData } = await supabase
@@ -197,12 +204,16 @@ export const TenantsListView: React.FC = () => {
           setTenants(dbTenants);
           localStorage.setItem('locatrust_tenants', JSON.stringify(dbTenants));
         } else {
-          setTenants([]);
+          if (!hasLoadedOnceRef.current) {
+            setTenants([]);
+          }
         }
       } catch (err) {
         console.warn('Erreur chargement locataires depuis Supabase:', err);
       } finally {
+        hasLoadedOnceRef.current = true;
         setIsLoading(false);
+        setIsRefreshing(false);
       }
   };
 
@@ -210,7 +221,7 @@ export const TenantsListView: React.FC = () => {
     loadTenantsFromDb();
 
     const handleUpdate = () => {
-      loadTenantsFromDb();
+      loadTenantsFromDb(true);
     };
 
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
@@ -306,7 +317,9 @@ export const TenantsListView: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre fine de progression en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       {/* Top Banner */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm transition-colors">
         <div>
@@ -384,7 +397,7 @@ export const TenantsListView: React.FC = () => {
 
       {/* FULL VERTICAL LIST: SLEEK, ULTRA-COMPACT SINGLE-LINE CARDS */}
       <div className="flex flex-col gap-2.5">
-        {isLoading ? (
+        {(isLoading && !hasLoadedOnceRef.current) ? (
           Array.from({ length: 4 }).map((_, i) => (
             <TenantCardSkeleton key={i} />
           ))

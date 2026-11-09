@@ -34,6 +34,7 @@ import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails, getStoredDeposits, formatCautionReceiptNumber } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
@@ -52,6 +53,8 @@ export const LocatairePaiementsView: React.FC = () => {
   const [deposits, setDeposits] = useState<any[]>([]);
   const [userContracts, setUserContracts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -144,12 +147,16 @@ export const LocatairePaiementsView: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  const fetchPaymentsData = async () => {
+  const fetchPaymentsData = async (isBackground = false) => {
     if (!user) {
       setIsLoading(false);
       return;
     }
-    setIsLoading(true);
+    if (hasLoadedOnceRef.current || isBackground || payments.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       // 1. Paiements de loyers
@@ -647,7 +654,9 @@ export const LocatairePaiementsView: React.FC = () => {
     } catch (err: any) {
       console.error('Erreur globale fetchPaymentsData:', err);
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -655,7 +664,7 @@ export const LocatairePaiementsView: React.FC = () => {
     fetchPaymentsData();
 
     const handleUpdate = () => {
-      fetchPaymentsData();
+      fetchPaymentsData(true);
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
@@ -1586,7 +1595,9 @@ export const LocatairePaiementsView: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
@@ -1879,9 +1890,9 @@ export const LocatairePaiementsView: React.FC = () => {
                 <th className="p-4 text-right">Quittance</th>
               </tr>
             </thead>
-            {isLoading ? (
+            {(isLoading && !hasLoadedOnceRef.current) ? (
               <TableRowsSkeleton rows={4} cols={8} />
-            ) : loadError ? (
+            ) : loadError && !hasLoadedOnceRef.current ? (
               <tbody>
                 <tr>
                   <td colSpan={8} className="p-6 bg-rose-50 dark:bg-rose-950/20 text-center">

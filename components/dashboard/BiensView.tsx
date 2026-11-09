@@ -30,6 +30,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import { getProperties as fetchDbProperties } from '@/src/lib/db';
 import { softDeleteProperty } from '@/lib/supabase/services';
 import { PropertyGridSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 
 interface BiensViewProps {
   onOpenAddProperty: () => void;
@@ -75,6 +76,8 @@ export const BiensView: React.FC<BiensViewProps> = ({
     return [];
   });
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeTypeFilter, setActiveTypeFilter] = useState<string>('tous');
@@ -86,14 +89,16 @@ export const BiensView: React.FC<BiensViewProps> = ({
   const itemsPerPage = 6;
 
   // Synchronisation avec la base de données Supabase isolée strictement par utilisateur
-  const loadPropertiesFromDb = async () => {
+  const loadPropertiesFromDb = async (isBackground = false) => {
     if (!user?.id) {
       setProperties([]);
       setIsLoading(false);
       return;
     }
 
-    if (properties.length === 0) {
+    if (hasLoadedOnceRef.current || isBackground || properties.length > 0) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
     }
     setLoadError(null);
@@ -127,7 +132,9 @@ export const BiensView: React.FC<BiensViewProps> = ({
     } catch (err: any) {
       console.warn("Maintien des données du cache local pour une réactivité maximale.");
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -135,7 +142,7 @@ export const BiensView: React.FC<BiensViewProps> = ({
     loadPropertiesFromDb();
 
     const handleUpdate = () => {
-      loadPropertiesFromDb();
+      loadPropertiesFromDb(true);
     };
 
     window.addEventListener('locatrust:properties-updated', handleUpdate);
@@ -242,7 +249,9 @@ export const BiensView: React.FC<BiensViewProps> = ({
   const paginatedProperties = filteredProperties.slice(startIndex, startIndex + itemsPerPage);
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -335,9 +344,9 @@ export const BiensView: React.FC<BiensViewProps> = ({
       </div>
 
       {/* ÉTATS : SKELETON LOADER, ERREUR, OU VIDE */}
-      {isLoading ? (
+      {(isLoading && !hasLoadedOnceRef.current) ? (
         <PropertyGridSkeleton count={6} />
-      ) : loadError ? (
+      ) : (loadError && properties.length === 0) ? (
         <div className="bg-rose-50 p-8 rounded-3xl border border-rose-200 text-center flex flex-col items-center gap-3">
           <AlertCircle className="w-8 h-8 text-rose-600" />
           <h4 className="text-sm font-black text-rose-900">Échec du chargement</h4>

@@ -830,49 +830,39 @@ export function startLiveBackgroundSync(userId: string, role?: string): void {
     }
   };
 
-  // 4. Détection du retour au premier plan (onglet ou fenêtre active)
+  // 4. Détection du retour au premier plan (onglet ou fenêtre active) throttlé à 60s
   let lastFocusSync = 0;
   const handleFocusOrVisible = () => {
     if (bgSyncActiveUserId && !isLoggingOutInProgress()) {
       const now = Date.now();
-      if (now - lastFocusSync < 2000) return;
+      if (now - lastFocusSync < 60000) return; // Throttlé à 60s max pour éviter tout cycle intempestif
       lastFocusSync = now;
       syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
+    }
+  };
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      handleFocusOrVisible();
     }
   };
 
   window.addEventListener('storage', handleStorageEvent);
   window.addEventListener('online', handleOnline);
   window.addEventListener('focus', handleFocusOrVisible);
-  window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      handleFocusOrVisible();
-    }
-  });
+  window.addEventListener('visibilitychange', handleVisibilityChange);
 
   bgSyncListenersCleanup = () => {
     window.removeEventListener('storage', handleStorageEvent);
     window.removeEventListener('online', handleOnline);
     window.removeEventListener('focus', handleFocusOrVisible);
+    window.removeEventListener('visibilitychange', handleVisibilityChange);
   };
 
-  // 5. Polling autonome périodique en arrière-plan :
-  // - 6 secondes si l'onglet est visible à l'écran
-  // - 18 secondes si l'onglet est en tâche de fond (économise la batterie et la bande passante)
-  let cycle = 0;
-  bgSyncInterval = setInterval(() => {
-    if (!bgSyncActiveUserId || isLoggingOutInProgress()) {
-      stopLiveBackgroundSync();
-      return;
-    }
-
-    const isVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
-    cycle++;
-
-    if (isVisible || cycle % 3 === 0) {
-      syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
-    }
-  }, 6000);
+  // 5. SUPPRESSION DU POLLING RÉPÉTÉ TOUTES LES 6s :
+  // Les mises à jour fraîches proviennent exclusivement des canaux Supabase Realtime,
+  // de la reconnexion réseau (online), et du retour au premier plan (throttlé à 60s).
+  bgSyncInterval = null;
 }
 
 /**

@@ -50,6 +50,7 @@ import { SignatureModal } from '@/components/common/SignatureModal';
 import { sendQuittanceToTenant } from '@/lib/messagingStore';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 import { getStoredOwnerSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
 
@@ -73,6 +74,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const isActuallyAgency = isAgency || userRole === 'agence' || user?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_current_role') === 'agence');
   const [payments, setPayments] = useState<RentPayment[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -100,8 +103,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const [customSimAmount, setCustomSimAmount] = useState<number>(150000);
   const [customSimMethod, setCustomSimMethod] = useState<string>('Orange Money');
 
-  const loadPayments = async () => {
-    setIsLoading(true);
+  const loadPayments = async (isBackground = false) => {
+    if (hasLoadedOnceRef.current || isBackground || payments.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       let loaded: RentPayment[] = [];
@@ -382,7 +389,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
       }
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -390,7 +399,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     loadPayments();
 
     const handleUpdate = () => {
-      loadPayments();
+      loadPayments(true);
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
@@ -398,17 +407,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     window.addEventListener('locatrust:notifications-updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
 
-    // Auto-refresh silencieux en arrière-plan toutes les 5 secondes (sans freeze UI)
-    const interval = setInterval(() => {
-      loadPayments();
-    }, 5000);
-
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
       window.removeEventListener('locatrust:rent-payment-created', handleUpdate);
       window.removeEventListener('locatrust:notifications-updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
-      clearInterval(interval);
     };
   }, [user]);
 
@@ -1146,7 +1149,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   });
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre fine de progression en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Top Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">

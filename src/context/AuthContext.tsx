@@ -131,10 +131,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const profileRef = useRef<UserProfile | null>(null);
+  const userRef = useRef<User | null>(null);
 
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   const fetchProfile = async (userId: string): Promise<UserProfile | null> => {
     if (!userId || isLoggingOutInProgress()) return null;
@@ -281,6 +286,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      // Règle Phase 1 : ignorer les événements répétés pour le même user id (aucun reset, aucun re-fetch, aucun remount)
+      const currentId = userRef.current?.id;
+      const newId = newSession.user.id;
+      if (currentId && currentId === newId && (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
+        setSession(newSession);
+        setUser(newSession.user);
+        return;
+      }
+
       ensureSessionScopedToUser(newSession.user.id);
       setSession(newSession);
       setUser(newSession.user);
@@ -319,7 +333,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleProfileSync = () => {
       if (mounted && !isLoggingOutInProgress()) {
         const now = Date.now();
-        if (now - lastFocusSyncTime < 3000) return; // Limiter la fréquence de synchronisation du profil au focus (max 1x / 3s)
+        if (now - lastFocusSyncTime < 60000) return; // Throttlé à 60s max (Phase 1)
         lastFocusSyncTime = now;
 
         refreshProfile();
@@ -335,7 +349,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && mounted && !isLoggingOutInProgress()) {
         const now = Date.now();
-        if (now - lastFocusSyncTime < 3000) return;
+        if (now - lastFocusSyncTime < 60000) return; // Throttlé à 60s max (Phase 1)
         lastFocusSyncTime = now;
 
         refreshProfile();

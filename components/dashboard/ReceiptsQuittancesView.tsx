@@ -23,6 +23,7 @@ import { ActionConfirmationModal } from '@/components/common/ActionConfirmationM
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
+import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 import { getStoredOwnerSignature, getStoredTenantSignature } from '@/lib/signatureHelper';
 
@@ -48,6 +49,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
   const { user } = useAuth();
   const [receipts, setReceipts] = useState<OfficialReceiptRow[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<'tous' | 'loyer' | 'caution'>('tous');
@@ -59,8 +62,12 @@ export const ReceiptsQuittancesView: React.FC = () => {
     details?: string;
   } | null>(null);
 
-  const loadReceipts = async () => {
-    setIsLoading(true);
+  const loadReceipts = async (isBackground = false) => {
+    if (hasLoadedOnceRef.current || isBackground || receipts.length > 0) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setLoadError(null);
     try {
       const allRows: OfficialReceiptRow[] = [];
@@ -248,7 +255,9 @@ export const ReceiptsQuittancesView: React.FC = () => {
     } catch (err: any) {
       setLoadError(err?.message || 'Erreur lors du chargement des quittances.');
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -256,7 +265,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
     loadReceipts();
 
     const handleUpdate = () => {
-      loadReceipts();
+      loadReceipts(true);
     };
 
     window.addEventListener('locatrust:receipts-updated', handleUpdate);
@@ -329,7 +338,9 @@ export const ReceiptsQuittancesView: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans">
+    <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
+      {/* Barre de progression ultra-fine en arrière-plan (Phase 1) */}
+      <TopProgressBar active={isRefreshing} />
       
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
