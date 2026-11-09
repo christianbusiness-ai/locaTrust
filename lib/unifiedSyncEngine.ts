@@ -735,3 +735,151 @@ async function pushPendingLocalDataToServer(userId: string) {
     console.warn('pushPendingLocalDataToServer notice:', err);
   }
 }
+
+// ============================================================================
+// DÉMON AUTONOME DE SYNCHRONISATION TEMPS RÉEL EN ARRIÈRE-PLAN (BACKGROUND SYNC)
+// ============================================================================
+
+let bgSyncInterval: any = null;
+let bgSyncActiveUserId: string | null = null;
+let bgSyncActiveRole: string | undefined = undefined;
+let bgSyncListenersCleanup: (() => void) | null = null;
+let bgSyncDebounceTimer: any = null;
+
+function debouncedBgSync(userId: string, role?: string) {
+  if (bgSyncDebounceTimer) clearTimeout(bgSyncDebounceTimer);
+  bgSyncDebounceTimer = setTimeout(() => {
+    if (!isLoggingOutInProgress()) {
+      syncUserData(userId, role).catch(() => {});
+    }
+  }, 800);
+}
+
+/**
+ * Démarre le démon autonome de synchronisation silencieuse en arrière-plan.
+ * Récupère en continu les données fraîches depuis le serveur toutes les 6 secondes
+ * et propage automatiquement les mises à jour en temps réel à tous les onglets et composants
+ * sans obliger l'utilisateur à actualiser manuellement sa page.
+ */
+export function startLiveBackgroundSync(userId: string, role?: string): void {
+  if (typeof window === 'undefined' || !userId || !isValidUuid(userId) || isLoggingOutInProgress()) return;
+
+  const cleanId = userId.trim();
+  if (bgSyncActiveUserId === cleanId && bgSyncInterval !== null) {
+    // Déjà actif, déclencher une vérification immédiate
+    syncUserData(cleanId, role).catch(() => {});
+    return;
+  }
+
+  stopLiveBackgroundSync();
+  bgSyncActiveUserId = cleanId;
+  bgSyncActiveRole = role;
+
+  // 1. Synchronisation initiale immédiate
+  syncUserData(cleanId, role).catch(() => {});
+
+  // 2. Écoute inter-onglets via l'événement natif 'storage' du navigateur
+  // Synchronise en 0ms les actions faites dans d'autres onglets du même navigateur
+  const handleStorageEvent = (e: StorageEvent) => {
+    if (!e.key || isLoggingOutInProgress()) return;
+
+    if (e.key.startsWith('locatrust_')) {
+      if (e.key.includes('caution') || e.key.includes('deposit')) {
+        window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+      }
+      if (e.key.includes('payment') || e.key.includes('receipt') || e.key.includes('quittance')) {
+        window.dispatchEvent(new CustomEvent('locatrust:payments-updated'));
+        window.dispatchEvent(new CustomEvent('locatrust:receipts-updated'));
+      }
+      if (e.key.includes('contract')) {
+        window.dispatchEvent(new CustomEvent('locatrust:contracts-updated'));
+        window.dispatchEvent(new CustomEvent('locatrust:properties-updated'));
+      }
+      if (e.key.includes('application')) {
+        window.dispatchEvent(new CustomEvent('locatrust:applications-updated'));
+      }
+      if (e.key.includes('message')) {
+        window.dispatchEvent(new CustomEvent('locatrust:messages-updated'));
+      }
+      if (e.key.includes('notification')) {
+        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+      }
+
+      if (bgSyncActiveUserId) {
+        debouncedBgSync(bgSyncActiveUserId, bgSyncActiveRole);
+      }
+    }
+  };
+
+  // 3. Détection de reconnexion réseau Internet
+  const handleOnline = () => {
+    if (bgSyncActiveUserId && !isLoggingOutInProgress()) {
+      console.log('🌐 Connexion rétablie, rafraîchissement complet en arrière-plan...');
+      syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
+    }
+  };
+
+  // 4. Détection du retour au premier plan (onglet ou fenêtre active)
+  let lastFocusSync = 0;
+  const handleFocusOrVisible = () => {
+    if (bgSyncActiveUserId && !isLoggingOutInProgress()) {
+      const now = Date.now();
+      if (now - lastFocusSync < 2000) return;
+      lastFocusSync = now;
+      syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
+    }
+  };
+
+  window.addEventListener('storage', handleStorageEvent);
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('focus', handleFocusOrVisible);
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      handleFocusOrVisible();
+    }
+  });
+
+  bgSyncListenersCleanup = () => {
+    window.removeEventListener('storage', handleStorageEvent);
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('focus', handleFocusOrVisible);
+  };
+
+  // 5. Polling autonome périodique en arrière-plan :
+  // - 6 secondes si l'onglet est visible à l'écran
+  // - 18 secondes si l'onglet est en tâche de fond (économise la batterie et la bande passante)
+  let cycle = 0;
+  bgSyncInterval = setInterval(() => {
+    if (!bgSyncActiveUserId || isLoggingOutInProgress()) {
+      stopLiveBackgroundSync();
+      return;
+    }
+
+    const isVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+    cycle++;
+
+    if (isVisible || cycle % 3 === 0) {
+      syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
+    }
+  }, 6000);
+}
+
+/**
+ * Arrête proprement le démon de synchronisation en arrière-plan lors de la déconnexion.
+ */
+export function stopLiveBackgroundSync(): void {
+  if (bgSyncInterval !== null) {
+    clearInterval(bgSyncInterval);
+    bgSyncInterval = null;
+  }
+  if (bgSyncDebounceTimer) {
+    clearTimeout(bgSyncDebounceTimer);
+    bgSyncDebounceTimer = null;
+  }
+  if (bgSyncListenersCleanup) {
+    bgSyncListenersCleanup();
+    bgSyncListenersCleanup = null;
+  }
+  bgSyncActiveUserId = null;
+  bgSyncActiveRole = undefined;
+}

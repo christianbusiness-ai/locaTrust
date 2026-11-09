@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/src/lib/supabase';
-import { syncUserData } from '@/lib/unifiedSyncEngine';
+import { syncUserData, startLiveBackgroundSync, stopLiveBackgroundSync } from '@/lib/unifiedSyncEngine';
 import { subscribeToLiveSync, unsubscribeFromLiveSync } from '@/lib/supabaseRealtime';
 import { startBackgroundQuotaWorker, stopBackgroundQuotaWorker } from '@/lib/quotaEngine';
 import { setActiveMessagingUser } from '@/lib/messagingStore';
@@ -256,6 +256,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setProfile(p);
         setLoading(false);
         subscribeToLiveSync(verifiedUser.id);
+        startLiveBackgroundSync(verifiedUser.id, p?.account_type);
         startBackgroundQuotaWorker(verifiedUser.id, p?.account_type);
         syncUserData(verifiedUser.id, p?.account_type).catch(console.warn);
       }
@@ -270,6 +271,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (event === 'SIGNED_OUT' || !newSession?.user || isLoggingOutInProgress()) {
         unsubscribeFromLiveSync();
+        stopLiveBackgroundSync();
         stopBackgroundQuotaWorker();
         setActiveMessagingUser(null);
         setSession(null);
@@ -305,6 +307,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mounted && !isLoggingOutInProgress()) {
         setProfile(p);
         subscribeToLiveSync(newSession.user.id);
+        startLiveBackgroundSync(newSession.user.id, p?.account_type);
         startBackgroundQuotaWorker(newSession.user.id, p?.account_type);
         syncUserData(newSession.user.id, p?.account_type).catch(console.warn);
       }

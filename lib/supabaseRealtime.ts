@@ -1155,6 +1155,18 @@ function initSharedChannel() {
 
     channel.subscribe((status) => {
       console.log('🔌 Statut canal temps réel LocaTrust:', status);
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setTimeout(() => {
+          if (currentActiveUserId && !(window as any)?.__LOCATRUST_LOGGING_OUT__) {
+            console.log('🔄 Reconnexion canal temps réel LocaTrust...');
+            try {
+              supabase.removeChannel(channel);
+            } catch {}
+            sharedLiveChannel = null;
+            initSharedChannel();
+          }
+        }, 3000);
+      }
     });
 
     sharedLiveChannel = channel;
