@@ -35,7 +35,7 @@ import { useAuth } from '@/src/context/AuthContext';
 import confetti from 'canvas-confetti';
 import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
-import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails, getStoredDeposits } from '@/lib/cautionsStore';
+import { declareCautionPayment, signCautionReceipt, resolveDepositContractDetails, getStoredDeposits, formatCautionReceiptNumber } from '@/lib/cautionsStore';
 import { sendDeclarationMessageToOwner, isValidUuid } from '@/lib/messagingStore';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
@@ -1209,7 +1209,7 @@ export const LocatairePaiementsView: React.FC = () => {
   const handleDownloadCautionReceipt = async (dep: any) => {
     try {
       const resolved = resolveDepositContractDetails(dep);
-      const cleanNum = `CAUT-${(dep.id || 'OFFICIEL').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
+      const cleanNum = (dep as any).receipt_number || formatCautionReceiptNumber(dep.id, resolved.contractNumber);
 
       await generateOfficialReceiptPDF({
         receiptNumber: cleanNum,

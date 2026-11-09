@@ -1149,7 +1149,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     }
 
     const resolved = resolveDepositContractDetails(dep);
-    const cleanNum = `CAUT-${dep.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
+    const cleanNum = (dep as any).receipt_number || formatCautionReceiptNumber(dep.id, resolved.contractNumber);
 
     await generateOfficialReceiptPDF({
       receiptNumber: cleanNum,

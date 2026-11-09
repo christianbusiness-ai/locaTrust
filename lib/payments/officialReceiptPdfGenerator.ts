@@ -662,7 +662,8 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(125, sigY, 70, 28, 2, 2, 'FD');
     const { getAbsoluteVerificationUrl } = await import('@/lib/qrCode');
-    const qrUrl = getAbsoluteVerificationUrl(`/verify/${verification.token || data.receiptNumber}`);
+    const targetToken = verification.token || data.receiptNumber;
+    const qrUrl = getAbsoluteVerificationUrl(`/verify/recu/${encodeURIComponent(targetToken)}`, 'recu');
     try {
       const qrDataUrl = generateScannableQrCodeDataUrl(qrUrl, { size: 300, margin: 2 });
       doc.addImage(qrDataUrl, 'PNG', 127, sigY + 3.5, 21, 21);
@@ -694,7 +695,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(4.8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`locatrust.site/verify/${verification.token.slice(0, 18)}...`, 150, sigY + 26);
+    doc.text(`locatrust.site/verify/recu/${targetToken.slice(0, 16)}...`, 150, sigY + 26);
 
     // 8. FOOTER NOTE
     const footerY = 205;

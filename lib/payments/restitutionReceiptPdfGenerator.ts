@@ -451,7 +451,8 @@ export const generateRestitutionReceiptPDF = async (data: RestitutionReceiptData
       status: 'valide'
     });
 
-    const verificationUrl = getAbsoluteVerificationUrl(`/verify/${verification.token || data.receiptNumber}`);
+    const targetToken = verification.token || data.receiptNumber;
+    const verificationUrl = getAbsoluteVerificationUrl(`/verify/recu/${encodeURIComponent(targetToken)}`, 'recu');
     try {
       const qrDataUrl = generateScannableQrCodeDataUrl(verificationUrl, { size: 300, margin: 2 });
       doc.addImage(qrDataUrl, 'PNG', 127, sigY + 3, 20, 20);
@@ -482,7 +483,7 @@ export const generateRestitutionReceiptPDF = async (data: RestitutionReceiptData
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(4.8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`locatrust.site/verify/${verification.token.slice(0, 16)}...`, 149, sigY + 24.5);
+    doc.text(`locatrust.site/verify/recu/${targetToken.slice(0, 16)}...`, 149, sigY + 24.5);
 
     // 7. FOOTER NOTE
     const footerY = 275;

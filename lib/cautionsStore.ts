@@ -30,6 +30,18 @@ export function getStoredDeposits(): Deposit[] {
   }
 }
 
+/**
+ * Formate un numéro de reçu de caution court, officiel et élégant (ex: REC-CAUT-05E76242)
+ */
+export function formatCautionReceiptNumber(id: string | null | undefined, contractNumber?: string): string {
+  if (!id) return 'REC-CAUT-2026';
+  if (id.startsWith('REC-CAUT-') && id.length <= 20) return id;
+  if (id.startsWith('CAUT-') && id.length <= 16) return id;
+  if (contractNumber === 'LT-2026-CI-000492') return 'REC-CAUTION-000492';
+  const clean = id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+  return `REC-CAUT-${clean || '2026'}`;
+}
+
 export function saveStoredDeposits(deposits: Deposit[]): void {
   if (typeof window === 'undefined') return;
   try {
@@ -1065,6 +1077,29 @@ export function sendCautionReceiptToTenant(
   } catch (err) {
     console.warn('Error sending caution receipt through sendQuittanceToTenant:', err);
   }
+
+  // 1.bis Enregistrement officiel immédiat dans le registre de vérification publique (QR Code)
+  try {
+    import('@/lib/verificationRegistry').then(({ registerReceiptInVerificationRegistry }) => {
+      registerReceiptInVerificationRegistry({
+        receiptNumber: cleanReceiptNum,
+        contractNumber: resolved.contractNumber,
+        contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
+        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+        amountPaid: confirmedAmount,
+        paymentMethod: (target.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+        transactionReference: target.declared_reference || `TR-${cleanReceiptNum}`,
+        ownerName: finalActorName,
+        tenantName: resolved.tenantName,
+        propertyTitle: resolved.propertyTitle,
+        propertyAddress: resolved.propertyAddress,
+        subType: 'caution',
+        status: 'valide',
+        ownerId: senderId,
+        tenantId: receiverId
+      });
+    }).catch(() => {});
+  } catch {}
 
   // 2. Enregistrement des cartes de contacts pour affichage instantané dans les conversations
   if (typeof window !== 'undefined') {

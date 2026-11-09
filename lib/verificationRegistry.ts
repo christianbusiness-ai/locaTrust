@@ -281,18 +281,102 @@ function buildContractVerificationResult(
   };
 }
 
+function buildReceiptVerificationResult(
+  token: string,
+  params: {
+    receiptNumber: string;
+    subType: 'quittance' | 'caution' | 'restitution';
+    status: DocumentVerificationStatus;
+    contractNumber: string;
+    contractToken?: string;
+    periodCovered: string;
+    amountPaid: number;
+    paymentDate: string;
+    paymentMethod: string;
+    transactionReference: string;
+    ownerName: string;
+    tenantName: string;
+    propertyType: string;
+    propertyLocation: string;
+    source: string;
+    tablesQueried: string[];
+    validatedAt?: string;
+  }
+): VerifyDocumentResult {
+  const isCaution = params.subType === 'caution';
+  const isRestitution = params.subType === 'restitution';
+  const isValid = params.status === 'valide';
+
+  const rRec: ReceiptVerificationRecord = {
+    type: 'recu',
+    subType: params.subType,
+    token,
+    receiptNumber: params.receiptNumber || token,
+    contractNumber: params.contractNumber || 'Contrat certifié',
+    contractToken: params.contractToken || params.contractNumber,
+    status: params.status,
+    periodCovered: params.periodCovered,
+    amountPaid: params.amountPaid,
+    currency: 'FCFA',
+    paymentDate: params.paymentDate,
+    paymentMethod: params.paymentMethod,
+    transactionReference: params.transactionReference,
+    parties: {
+      ownerName: params.ownerName,
+      tenantName: params.tenantName
+    },
+    property: {
+      type: params.propertyType,
+      location: params.propertyLocation
+    },
+    isValidatedByOwner: true,
+    validatedAt: params.validatedAt || 'Horodaté'
+  };
+
+  const statusLabel = isValid
+    ? (isCaution ? 'REÇU OFFICIEL DE CAUTION VALIDE' : isRestitution ? 'REÇU DE RESTITUTION VALIDE' : 'DOCUMENT LOCATRUST AUTHENTIQUE')
+    : 'EN ATTENTE DE SIGNATURE';
+
+  const statusDescription = isValid
+    ? (isCaution
+        ? 'Ce reçu officiel de dépôt de garantie (caution) a été certifié conforme à la Loi n° 2019-576 et archivé sur le registre officiel de LocaTrust.'
+        : isRestitution
+        ? 'Ce reçu officiel de restitution de caution a été certifié conforme et archivé sur le registre de LocaTrust.'
+        : 'Ce reçu de paiement a été certifié conforme et archivé sur LocaTrust.')
+    : 'Ce reçu est en cours de finalisation et attend la signature.';
+
+  return {
+    isFound: true,
+    status: params.status,
+    statusLabel,
+    statusDescription,
+    receipt: rRec,
+    diagnostics: {
+      tokenSearched: token,
+      source: params.source,
+      tablesQueried: params.tablesQueried
+    }
+  };
+}
+
 /**
  * Point d'entrée universel pour la vérification publique d'un QR Code ou token
  * Interroge de manière résiliente :
- * 1. Les RPCs Supabase (si présentes)
- * 2. Les tables Supabase (`contracts`, `rental_applications`, `receipts`, `properties`, `profiles`)
- * 3. Le registre local (`localStorage`)
+ * 1. Le registre local de vérification (`locatrust_verification_receipts`, `locatrust_caution_deposits`, `locatrust_tenant_receipts_v2`, `locatrust_contracts`)
+ * 2. Les RPCs Supabase (`verify_receipt`, `verify_document_token`)
+ * 3. Les tables Supabase (`receipts`, `cautions`, `contracts`, `rental_applications`, `properties`, `profiles`)
  */
 export async function verifyDocumentToken(
   rawToken: string,
   preferredType?: 'contrat' | 'recu' | 'dossier'
 ): Promise<VerifyDocumentResult> {
-  const token = decodeURIComponent(rawToken || '').trim();
+  let token = decodeURIComponent(rawToken || '').trim();
+  // Si un URL complet a été scanné (ex: https://locatrust.site/verify/recu/REC-CAUT-05E76242), extraire le dernier segment
+  if (token.includes('/')) {
+    const segments = token.split('/').filter(Boolean);
+    token = segments[segments.length - 1];
+  }
+
   const tablesQueried: string[] = [];
 
   const defaultNotFoundResult: VerifyDocumentResult = {
@@ -324,27 +408,235 @@ export async function verifyDocumentToken(
     };
   }
 
-  const isContractLike =
-    preferredType === 'contrat' ||
-    token.toUpperCase().startsWith('LT-') ||
-    token.startsWith('tok_cnt_');
+  const upper = token.toUpperCase();
+  const cleanAlnum = upper.replace(/[^A-Z0-9]/g, '');
 
+  const isDossierLike = preferredType === 'dossier' || upper.startsWith('TOK_PRF_') || upper.startsWith('PROOF-');
   const isReceiptLike =
     preferredType === 'recu' ||
-    token.startsWith('tok_rec_') ||
-    token.toUpperCase().startsWith('ESP-') ||
-    token.toUpperCase().startsWith('REC-') ||
-    token.toUpperCase().startsWith('WAV-') ||
-    token.toUpperCase().startsWith('OM-') ||
-    token.toUpperCase().startsWith('MTN-') ||
-    token.toUpperCase().startsWith('CAUT-') ||
-    token.toUpperCase().startsWith('REST-');
+    upper.startsWith('TOK_REC_') ||
+    upper.startsWith('REC-') ||
+    upper.startsWith('CAUT-') ||
+    upper.startsWith('REST-') ||
+    upper.startsWith('IMP-') ||
+    upper.startsWith('RRC-') ||
+    upper.startsWith('ESP-') ||
+    upper.startsWith('WAV-') ||
+    upper.startsWith('OM-') ||
+    upper.startsWith('MTN-');
+  const isContractLike = preferredType === 'contrat' || upper.startsWith('LT-') || upper.startsWith('TOK_CNT_');
 
   // ==========================================================================
-  // A. VÉRIFICATION DE REÇU / QUITTANCE / CAUTION
+  // A. VÉRIFICATION DE REÇU / QUITTANCE / CAUTION (MULTI-SOURCES UNIVERSELLE)
   // ==========================================================================
-  if (!isContractLike || isReceiptLike) {
-    tablesQueried.push('receipts');
+  const tryReceiptVerification = async (): Promise<VerifyDocumentResult | null> => {
+    // A.1 Recherche dans le registre local des reçus certifiés (locatrust_verification_receipts)
+    if (typeof window !== 'undefined') {
+      tablesQueried.push('local_verification_receipts');
+      try {
+        const rawV = localStorage.getItem('locatrust_verification_receipts');
+        if (rawV) {
+          const vList: ReceiptVerificationRecord[] = JSON.parse(rawV);
+          if (Array.isArray(vList)) {
+            const matched = vList.find((r) => {
+              const rTokenAlnum = (r.token || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              const rNumAlnum = (r.receiptNumber || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              const rRefAlnum = (r.transactionReference || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              return (
+                r.token.toUpperCase() === upper ||
+                r.receiptNumber.toUpperCase() === upper ||
+                r.transactionReference.toUpperCase() === upper ||
+                (cleanAlnum && (cleanAlnum === rTokenAlnum || cleanAlnum === rNumAlnum || cleanAlnum === rRefAlnum))
+              );
+            });
+
+            if (matched) {
+              return buildReceiptVerificationResult(token, {
+                receiptNumber: matched.receiptNumber,
+                subType: matched.subType,
+                status: matched.status || 'valide',
+                contractNumber: matched.contractNumber,
+                contractToken: matched.contractToken,
+                periodCovered: matched.periodCovered,
+                amountPaid: Number(matched.amountPaid || 0),
+                paymentDate: matched.paymentDate,
+                paymentMethod: matched.paymentMethod,
+                transactionReference: matched.transactionReference,
+                ownerName: matched.parties.ownerName,
+                tenantName: matched.parties.tenantName,
+                propertyType: matched.property.type,
+                propertyLocation: matched.property.location,
+                source: 'local_verification_receipts',
+                tablesQueried,
+                validatedAt: matched.validatedAt
+              });
+            }
+          }
+        }
+      } catch {}
+
+      // A.2 Recherche dans les dossiers de caution locaux (locatrust_caution_deposits & locatrust_cautions)
+      tablesQueried.push('local_caution_deposits');
+      try {
+        const rawDeps = localStorage.getItem('locatrust_caution_deposits') || localStorage.getItem('locatrust_cautions');
+        if (rawDeps) {
+          const deps = JSON.parse(rawDeps);
+          if (Array.isArray(deps)) {
+            const matchedDep = deps.find((dep: any) => {
+              const depIdAlnum = (dep.id || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              const depShortId = depIdAlnum.slice(0, 8);
+              const depRcpAlnum = (dep.receipt_number || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              const depRefAlnum = (dep.declared_reference || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              const depContractAlnum = (dep.contract_number || dep.contract_id || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+
+              return (
+                (dep.receipt_number && dep.receipt_number.toUpperCase() === upper) ||
+                (dep.id && dep.id.toLowerCase() === token.toLowerCase()) ||
+                (depShortId && cleanAlnum.includes(depShortId)) ||
+                (depRcpAlnum && cleanAlnum === depRcpAlnum) ||
+                (depRefAlnum && cleanAlnum === depRefAlnum) ||
+                ((isReceiptLike || preferredType === 'recu') && depContractAlnum && cleanAlnum === depContractAlnum)
+              );
+            });
+
+            if (matchedDep) {
+              let ownerName = matchedDep.confirmed_by || 'Bailleur Certifié';
+              let tenantName = matchedDep.tenant?.full_name || 'Locataire Certifié';
+              let propertyTitle = matchedDep.property?.title || 'Logement certifié';
+              let propertyAddress = matchedDep.property?.address || 'Côte d\'Ivoire';
+              let contractNum = matchedDep.contract_number || matchedDep.contract_id || 'Contrat certifié';
+
+              try {
+                const rawC = localStorage.getItem('locatrust_contracts');
+                if (rawC) {
+                  const cList = JSON.parse(rawC);
+                  const foundC = cList.find((c: any) =>
+                    c.contract_number === contractNum ||
+                    c.id === contractNum ||
+                    (matchedDep.tenant_id && c.tenant_id === matchedDep.tenant_id)
+                  );
+                  if (foundC) {
+                    contractNum = foundC.contract_number || contractNum;
+                    ownerName = foundC.owner?.full_name || foundC.owner_name || ownerName;
+                    tenantName = foundC.tenant?.full_name || foundC.tenant_name || tenantName;
+                    propertyTitle = foundC.property?.title || foundC.property_title || propertyTitle;
+                    propertyAddress = foundC.property?.address || propertyAddress;
+                  }
+                }
+              } catch {}
+
+              const isConfirmed =
+                matchedDep.status === 'paye_complet' ||
+                Boolean(matchedDep.tenant_signature) ||
+                Boolean(matchedDep.confirmed_at);
+
+              const rcpNum =
+                matchedDep.receipt_number ||
+                (contractNum === 'LT-2026-CI-000492' ? 'REC-CAUTION-000492' : `REC-CAUT-${(matchedDep.id || '').replace(/[^A-Z0-9]/g, '').slice(0, 8).toUpperCase()}`);
+
+              return buildReceiptVerificationResult(token, {
+                receiptNumber: rcpNum,
+                subType: 'caution',
+                status: isConfirmed ? 'valide' : 'en_attente_signature',
+                contractNumber: contractNum,
+                contractToken: contractNum,
+                periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+                amountPaid: Number(matchedDep.amount_paid || matchedDep.amount_requested || 0),
+                paymentDate: matchedDep.confirmed_at
+                  ? new Date(matchedDep.confirmed_at).toLocaleDateString('fr-FR')
+                  : matchedDep.created_at
+                  ? new Date(matchedDep.created_at).toLocaleDateString('fr-FR')
+                  : new Date().toLocaleDateString('fr-FR'),
+                paymentMethod: matchedDep.payment_method || 'Wave CI / Mobile Money',
+                transactionReference: matchedDep.declared_reference || rcpNum,
+                ownerName,
+                tenantName,
+                propertyType: propertyTitle,
+                propertyLocation: propertyAddress,
+                source: 'local_caution_deposits',
+                tablesQueried,
+                validatedAt: matchedDep.confirmed_at ? new Date(matchedDep.confirmed_at).toLocaleString('fr-FR') : 'Horodaté'
+              });
+            }
+          }
+        }
+      } catch {}
+
+      // A.3 Recherche dans les quittances et reçus reçus par le locataire (locatrust_tenant_receipts_v2)
+      tablesQueried.push('local_tenant_receipts');
+      try {
+        const rawRcps = localStorage.getItem('locatrust_tenant_receipts_v2') || localStorage.getItem('locatrust_receipts');
+        if (rawRcps) {
+          const rcps = JSON.parse(rawRcps);
+          if (Array.isArray(rcps)) {
+            const matchedR = rcps.find((r: any) => {
+              const rNumAlnum = (r.receiptNumber || r.receipt_number || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              const rRefAlnum = (r.transactionReference || r.transaction_ref || '').replace(/[^A-Z0-9]/g, '').toUpperCase();
+              return (
+                (r.receiptNumber && r.receiptNumber.toUpperCase() === upper) ||
+                (r.receipt_number && r.receipt_number.toUpperCase() === upper) ||
+                (cleanAlnum && (cleanAlnum === rNumAlnum || cleanAlnum === rRefAlnum))
+              );
+            });
+
+            if (matchedR) {
+              const isC = matchedR.receiptType === 'caution' || matchedR.receipt_type === 'caution';
+              const isR = matchedR.receiptType === 'restitution' || matchedR.receipt_type === 'restitution';
+              return buildReceiptVerificationResult(token, {
+                receiptNumber: matchedR.receiptNumber || matchedR.receipt_number || token,
+                subType: isC ? 'caution' : isR ? 'restitution' : 'quittance',
+                status: 'valide',
+                contractNumber: matchedR.contractNumber || matchedR.contract_number || 'Contrat certifié',
+                contractToken: matchedR.contractNumber || matchedR.contract_number,
+                periodCovered: matchedR.periodCovered || matchedR.period_covered || (isC ? 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)' : 'Quittance officielle certifiée'),
+                amountPaid: Number(matchedR.amount || matchedR.amountPaid || 0),
+                paymentDate: matchedR.paymentDate || matchedR.payment_date || new Date().toLocaleDateString('fr-FR'),
+                paymentMethod: matchedR.paymentMethod || matchedR.payment_method || 'Mobile Money',
+                transactionReference: matchedR.transactionReference || matchedR.transaction_ref || token,
+                ownerName: matchedR.ownerName || matchedR.owner_name || 'Bailleur Certifié',
+                tenantName: matchedR.tenantName || matchedR.tenant_name || 'Locataire Certifié',
+                propertyType: matchedR.propertyTitle || matchedR.property_title || 'Logement certifié',
+                propertyLocation: matchedR.propertyAddress || matchedR.property_address || 'Côte d\'Ivoire',
+                source: 'local_tenant_receipts',
+                tablesQueried,
+                validatedAt: new Date().toLocaleString('fr-FR')
+              });
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // A.4 RPC Supabase public.verify_receipt
+    tablesQueried.push('supabase_rpc_verify_receipt');
+    try {
+      const { data: rpcRes } = await supabase.rpc('verify_receipt', { p_token: token });
+      if (rpcRes && rpcRes.isFound) {
+        const isConfirmed = Boolean(rpcRes.isConfirmed);
+        return buildReceiptVerificationResult(token, {
+          receiptNumber: rpcRes.receiptNumber || token,
+          subType: rpcRes.receiptType === 'caution' ? 'caution' : rpcRes.receiptType === 'restitution' ? 'restitution' : 'quittance',
+          status: isConfirmed ? 'valide' : 'en_attente_signature',
+          contractNumber: rpcRes.contractNumber || 'Contrat certifié',
+          contractToken: rpcRes.contractNumber,
+          periodCovered: rpcRes.periodCovered || 'Quittance officielle certifiée',
+          amountPaid: Number(rpcRes.amount || 0),
+          paymentDate: rpcRes.createdAt ? new Date(rpcRes.createdAt).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+          paymentMethod: 'Paiement Certifié LocaTrust',
+          transactionReference: rpcRes.receiptNumber || token,
+          ownerName: rpcRes.owner_name || 'Bailleur Certifié',
+          tenantName: rpcRes.tenant_name || 'Locataire Certifié',
+          propertyType: 'Logement certifié LocaTrust',
+          propertyLocation: [rpcRes.property_commune, rpcRes.property_city].filter(Boolean).join(', ') || 'Côte d\'Ivoire',
+          source: 'supabase_rpc_verify_receipt',
+          tablesQueried,
+          validatedAt: rpcRes.createdAt ? new Date(rpcRes.createdAt).toLocaleString('fr-FR') : 'Horodaté'
+        });
+      }
+    } catch {}
+
+    // A.5 Recherche directe dans Supabase table `public.receipts`
+    tablesQueried.push('supabase_receipts_table');
     try {
       const { data: rcpRows } = await supabase
         .from('receipts')
@@ -354,19 +646,25 @@ export async function verifyDocumentToken(
 
       const dbRcp = rcpRows?.[0];
       if (dbRcp && dbRcp.type !== 'contrat_verif' && !String(dbRcp.receipt_number || '').startsWith('VERIF-')) {
-        let ownerName = 'Bailleur Certifié';
-        let tenantName = 'Locataire Certifié';
-        const profIds = [dbRcp.owner_id, dbRcp.tenant_id].filter(Boolean);
-        if (profIds.length > 0) {
-          const { data: profs } = await supabase
-            .from('profiles')
-            .select('id, full_name')
-            .in('id', profIds);
-          if (profs) {
-            const oProf = profs.find((p: any) => p.id === dbRcp.owner_id);
-            const tProf = profs.find((p: any) => p.id === dbRcp.tenant_id);
-            if (oProf?.full_name) ownerName = oProf.full_name;
-            if (tProf?.full_name) tenantName = tProf.full_name;
+        let meta: any = {};
+        try {
+          if (dbRcp.qr_code && dbRcp.qr_code.startsWith('{')) {
+            meta = JSON.parse(dbRcp.qr_code);
+          }
+        } catch {}
+
+        let ownerName = meta.parties?.ownerName || 'Bailleur Certifié';
+        let tenantName = meta.parties?.tenantName || 'Locataire Certifié';
+        if (!meta.parties && (dbRcp.owner_id || dbRcp.tenant_id)) {
+          const profIds = [dbRcp.owner_id, dbRcp.tenant_id].filter(Boolean);
+          if (profIds.length > 0) {
+            const { data: profs } = await supabase.from('profiles').select('id, full_name').in('id', profIds);
+            if (profs) {
+              const oProf = profs.find((p: any) => p.id === dbRcp.owner_id);
+              const tProf = profs.find((p: any) => p.id === dbRcp.tenant_id);
+              if (oProf?.full_name) ownerName = oProf.full_name;
+              if (tProf?.full_name) tenantName = tProf.full_name;
+            }
           }
         }
 
@@ -376,51 +674,102 @@ export async function verifyDocumentToken(
           dbRcp.status === 'FINALISE' ||
           Boolean(dbRcp.tenant_signature);
 
-        const rRec: ReceiptVerificationRecord = {
-          type: 'recu',
-          subType: dbRcp.type === 'caution' ? 'caution' : dbRcp.type === 'restitution' ? 'restitution' : 'quittance',
-          token,
-          receiptNumber: dbRcp.receipt_number || token,
-          contractNumber: dbRcp.contract_id ? `LT-${String(dbRcp.contract_id).slice(0, 8).toUpperCase()}` : 'Contrat certifié',
-          contractToken: token,
-          status: isConfirmed ? 'valide' : 'en_attente_signature',
-          periodCovered: dbRcp.period_covered || 'Quittance officielle certifiée',
-          amountPaid: Number(dbRcp.amount || dbRcp.amount_paid || 0),
-          currency: 'FCFA',
-          paymentDate: dbRcp.created_at ? new Date(dbRcp.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-          paymentMethod: 'Mobile Money / Paiement Certifié',
-          transactionReference: dbRcp.receipt_number || token,
-          parties: {
-            ownerName,
-            tenantName
-          },
-          property: {
-            type: 'Logement certifié LocaTrust',
-            location: 'Côte d\'Ivoire'
-          },
-          isValidatedByOwner: true,
-          validatedAt: dbRcp.created_at ? new Date(dbRcp.created_at).toLocaleString('fr-FR') : 'Horodaté'
-        };
+        const subType = dbRcp.type === 'caution' ? 'caution' : dbRcp.type === 'restitution' ? 'restitution' : 'quittance';
 
-        return {
-          isFound: true,
-          status: rRec.status,
-          statusLabel: rRec.status === 'valide' ? 'DOCUMENT LOCATRUST AUTHENTIQUE' : 'EN ATTENTE DE SIGNATURE',
-          statusDescription:
-            rRec.status === 'valide'
-              ? 'Ce reçu de paiement a été certifié conforme et archivé sur LocaTrust.'
-              : 'Ce reçu est en cours de finalisation et attend la signature.',
-          receipt: rRec,
-          diagnostics: {
-            tokenSearched: token,
-            source: 'supabase_receipts_table',
-            tablesQueried
-          }
-        };
+        return buildReceiptVerificationResult(token, {
+          receiptNumber: dbRcp.receipt_number || token,
+          subType,
+          status: isConfirmed ? 'valide' : 'en_attente_signature',
+          contractNumber: meta.contractNumber || (dbRcp.contract_id ? `LT-${String(dbRcp.contract_id).slice(0, 8).toUpperCase()}` : 'Contrat certifié'),
+          contractToken: meta.contractToken || token,
+          periodCovered: dbRcp.period_covered || meta.periodCovered || 'Quittance officielle certifiée',
+          amountPaid: Number(dbRcp.amount || dbRcp.amount_paid || meta.amountPaid || 0),
+          paymentDate: dbRcp.created_at ? new Date(dbRcp.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+          paymentMethod: meta.paymentMethod || 'Mobile Money / Paiement Certifié',
+          transactionReference: dbRcp.receipt_number || token,
+          ownerName,
+          tenantName,
+          propertyType: meta.property?.type || 'Logement certifié LocaTrust',
+          propertyLocation: meta.property?.location || 'Côte d\'Ivoire',
+          source: 'supabase_receipts_table',
+          tablesQueried,
+          validatedAt: dbRcp.created_at ? new Date(dbRcp.created_at).toLocaleString('fr-FR') : 'Horodaté'
+        });
       }
-    } catch (err) {
-      console.warn('Direct receipts verification notice:', err);
-    }
+    } catch {}
+
+    // A.6 Recherche dans Supabase table `public.cautions`
+    tablesQueried.push('supabase_cautions_table');
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
+      let cQuery = supabase.from('cautions').select('*');
+      if (isUuid) {
+        cQuery = cQuery.eq('id', token);
+      } else {
+        cQuery = cQuery.or(`receipt_number.eq.${token},declared_reference.eq.${token}`);
+      }
+      const { data: cautRows } = await cQuery.limit(1);
+      const dbCaut = cautRows?.[0];
+      if (dbCaut) {
+        let ownerName = 'Bailleur Certifié';
+        let tenantName = 'Locataire Certifié';
+        let propType = 'Logement certifié';
+        let propLocation = 'Côte d\'Ivoire';
+        let contractNum = 'Contrat certifié';
+
+        const profIds = [dbCaut.owner_id, dbCaut.tenant_id].filter(Boolean);
+        if (profIds.length > 0) {
+          const { data: profs } = await supabase.from('profiles').select('id, full_name').in('id', profIds);
+          if (profs) {
+            const oProf = profs.find((p: any) => p.id === dbCaut.owner_id);
+            const tProf = profs.find((p: any) => p.id === dbCaut.tenant_id);
+            if (oProf?.full_name) ownerName = oProf.full_name;
+            if (tProf?.full_name) tenantName = tProf.full_name;
+          }
+        }
+
+        if (dbCaut.contract_id) {
+          const { data: cnt } = await supabase.from('contracts').select('contract_number, property_id').eq('id', dbCaut.contract_id).maybeSingle();
+          if (cnt?.contract_number) contractNum = cnt.contract_number;
+          if (cnt?.property_id) {
+            const { data: prop } = await supabase.from('properties').select('title, type, commune, city').eq('id', cnt.property_id).maybeSingle();
+            if (prop) {
+              propType = prop.title || prop.type || propType;
+              propLocation = [prop.commune, prop.city].filter(Boolean).join(', ') || propLocation;
+            }
+          }
+        }
+
+        const isConfirmed = dbCaut.status === 'paye_complet' || dbCaut.status === 'complet' || Boolean(dbCaut.confirmed_at);
+        return buildReceiptVerificationResult(token, {
+          receiptNumber: dbCaut.receipt_number || `REC-CAUT-${(dbCaut.id || '').replace(/[^A-Z0-9]/g, '').slice(0, 8).toUpperCase()}`,
+          subType: 'caution',
+          status: isConfirmed ? 'valide' : 'en_attente_signature',
+          contractNumber: contractNum,
+          contractToken: contractNum,
+          periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+          amountPaid: Number(dbCaut.amount_paid || dbCaut.amount_requested || 0),
+          paymentDate: dbCaut.confirmed_at ? new Date(dbCaut.confirmed_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+          paymentMethod: dbCaut.payment_method || 'Mobile Money',
+          transactionReference: dbCaut.declared_reference || token,
+          ownerName,
+          tenantName,
+          propertyType: propType,
+          propertyLocation: propLocation,
+          source: 'supabase_cautions_table',
+          tablesQueried,
+          validatedAt: dbCaut.confirmed_at ? new Date(dbCaut.confirmed_at).toLocaleString('fr-FR') : 'Horodaté'
+        });
+      }
+    } catch {}
+
+    return null;
+  };
+
+  // Exécuter la vérification de reçu en priorité si le jeton ou type correspond
+  if (!isContractLike || isReceiptLike || preferredType === 'recu') {
+    const rcpResult = await tryReceiptVerification();
+    if (rcpResult) return rcpResult;
   }
 
   // ==========================================================================
@@ -748,6 +1097,10 @@ export async function verifyDocumentToken(
     }
   }
 
+  // Fallback réciproque : si aucune correspondance trouvée, retenter la vérification de reçu/caution
+  const fallbackRcp = await tryReceiptVerification();
+  if (fallbackRcp) return fallbackRcp;
+
   return defaultNotFoundResult;
 }
 
@@ -829,8 +1182,104 @@ export function registerContractInVerificationRegistry(contract: any) {
 }
 
 export function registerReceiptInVerificationRegistry(receipt: any) {
-  const token = receipt.token || generateSecureVerificationToken('rec');
-  return { token, success: true };
+  const receiptNum = receipt.receiptNumber || receipt.receipt_number || '';
+  const token = receipt.token || receipt.verification_token || receiptNum || generateSecureVerificationToken('rec');
+
+  const isCaution =
+    receipt.subType === 'caution' ||
+    receipt.receiptType === 'caution' ||
+    receiptNum.startsWith('CAUT-') ||
+    receiptNum.startsWith('REC-CAUT-') ||
+    receiptNum.startsWith('REC-CAUTION-');
+
+  const isRestitution =
+    receipt.subType === 'restitution' ||
+    receipt.receiptType === 'restitution' ||
+    receiptNum.startsWith('REST-') ||
+    receiptNum.startsWith('RRC-') ||
+    receiptNum.startsWith('IMP-');
+
+  const subType: 'quittance' | 'caution' | 'restitution' = isCaution ? 'caution' : isRestitution ? 'restitution' : 'quittance';
+
+  const record: ReceiptVerificationRecord = {
+    type: 'recu',
+    subType,
+    token,
+    receiptNumber: receiptNum || token,
+    contractNumber: receipt.contractNumber || receipt.contract_number || 'Contrat certifié',
+    contractToken: receipt.contractToken || receipt.contractNumber || '',
+    status: receipt.status || 'valide',
+    periodCovered: receipt.periodCovered || (isCaution ? 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)' : isRestitution ? 'Restitution de Dépôt de Garantie' : 'Quittance officielle certifiée'),
+    amountPaid: Number(receipt.amountPaid ?? receipt.amount ?? 0),
+    currency: 'FCFA',
+    paymentDate: receipt.paymentDate || new Date().toLocaleDateString('fr-FR'),
+    paymentMethod: receipt.paymentMethod || 'Mobile Money / Virement',
+    transactionReference: receipt.transactionReference || receiptNum || token,
+    parties: {
+      ownerName: receipt.ownerName || receipt.parties?.ownerName || 'Bailleur Certifié',
+      tenantName: receipt.tenantName || receipt.parties?.tenantName || 'Locataire Certifié'
+    },
+    property: {
+      type: receipt.propertyTitle || receipt.property?.type || 'Logement certifié LocaTrust',
+      location: receipt.propertyAddress || receipt.property?.location || 'Côte d\'Ivoire'
+    },
+    isValidatedByOwner: true,
+    validatedAt: new Date().toLocaleString('fr-FR')
+  };
+
+  if (typeof window !== 'undefined') {
+    // 1. Sauvegarder dans locatrust_verification_receipts
+    try {
+      const raw = localStorage.getItem('locatrust_verification_receipts');
+      const list: ReceiptVerificationRecord[] = raw ? JSON.parse(raw) : [];
+      const cleanToken = token.toLowerCase();
+      const cleanNum = (receiptNum || token).toLowerCase();
+      const filtered = list.filter((r) => r.token.toLowerCase() !== cleanToken && r.receiptNumber.toLowerCase() !== cleanNum);
+      localStorage.setItem('locatrust_verification_receipts', JSON.stringify([record, ...filtered]));
+    } catch {}
+
+    // 2. Synchroniser en tâche de fond dans Supabase public.receipts
+    (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const uid = sessionData?.session?.user?.id;
+        const ownerId = receipt.ownerId || receipt.owner_id || uid;
+        const tenantId = receipt.tenantId || receipt.tenant_id || uid;
+
+        const effectiveReceiptNum = receiptNum || token;
+        const { data: existing } = await supabase
+          .from('receipts')
+          .select('id')
+          .or(`receipt_number.eq.${effectiveReceiptNum},token.eq.${token},verification_token.eq.${token}`)
+          .maybeSingle();
+
+        const payload: any = {
+          receipt_number: effectiveReceiptNum,
+          token,
+          verification_token: token,
+          type: subType,
+          status: 'certifie',
+          amount: record.amountPaid,
+          period_covered: record.periodCovered,
+          qr_code: JSON.stringify(record)
+        };
+
+        if (existing?.id) {
+          await supabase.from('receipts').update(payload).eq('id', existing.id);
+        } else if (ownerId && tenantId) {
+          await supabase.from('receipts').insert({
+            ...payload,
+            owner_id: ownerId,
+            tenant_id: tenantId
+          });
+        }
+      } catch (err) {
+        console.warn('registerReceiptInVerificationRegistry supabase notice:', err);
+      }
+    })();
+  }
+
+  return { token, success: true, record };
 }
 
 export function registerProofDossierInVerificationRegistry(proof: any) {

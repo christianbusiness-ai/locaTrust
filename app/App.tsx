@@ -82,7 +82,30 @@ const QrVerificationWrapper: React.FC<{ forcedType?: 'contrat' | 'recu' | 'dossi
   const navigate = useNavigate();
   const params = useParams();
   const token = params.token || '';
-  const typeParam = (params.type || forcedType || 'contrat') as 'contrat' | 'recu' | 'dossier';
+
+  // Déduction intelligente du type selon l'URL et le format du jeton
+  let typeParam: 'contrat' | 'recu' | 'dossier' = (params.type as any) || forcedType;
+  if (!typeParam) {
+    const upper = token.toUpperCase();
+    if (upper.startsWith('TOK_PRF_') || upper.startsWith('PROOF-')) {
+      typeParam = 'dossier';
+    } else if (
+      upper.startsWith('TOK_REC_') ||
+      upper.startsWith('REC-') ||
+      upper.startsWith('CAUT-') ||
+      upper.startsWith('REST-') ||
+      upper.startsWith('IMP-') ||
+      upper.startsWith('RRC-') ||
+      upper.startsWith('ESP-') ||
+      upper.startsWith('WAV-') ||
+      upper.startsWith('OM-') ||
+      upper.startsWith('MTN-')
+    ) {
+      typeParam = 'recu';
+    } else {
+      typeParam = 'contrat';
+    }
+  }
 
   return (
     <Suspense fallback={<DashboardPageSkeleton />}>
@@ -298,6 +321,8 @@ export default function App() {
               <Route path="/verify/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
               <Route path="/verify/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
               <Route path="/verify/dossier/:token" element={<QrVerificationWrapper forcedType="dossier" />} />
+              <Route path="/verification/contrat/:token" element={<QrVerificationWrapper forcedType="contrat" />} />
+              <Route path="/verification/recu/:token" element={<QrVerificationWrapper forcedType="recu" />} />
               <Route path="/verification/dossier/:token" element={<QrVerificationWrapper forcedType="dossier" />} />
               <Route path="/verification/:type/:token" element={<QrVerificationWrapper />} />
 

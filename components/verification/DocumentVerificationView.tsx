@@ -57,10 +57,12 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
     setIsLoading(true);
     setLoadError(null);
     try {
-      const detectedType = type || (
-        token.startsWith('tok_prf_') || token.startsWith('PROOF-') ? 'dossier' :
-        (token.startsWith('tok_rec_') || token.startsWith('ESP-') || token.startsWith('REC-') ? 'recu' : 'contrat')
-      );
+      const upper = (token || '').toUpperCase();
+      const detectedType =
+        upper.startsWith('TOK_PRF_') || upper.startsWith('PROOF-') ? 'dossier' :
+        (upper.startsWith('TOK_REC_') || upper.startsWith('ESP-') || upper.startsWith('REC-') || upper.startsWith('CAUT-') || upper.startsWith('REST-') || upper.startsWith('IMP-') || upper.startsWith('RRC-') || upper.startsWith('WAV-') || upper.startsWith('OM-') || upper.startsWith('MTN-')) ? 'recu' :
+        (type || (upper.startsWith('LT-') || upper.startsWith('TOK_CNT_') ? 'contrat' : 'recu'));
+
       const res = await verifyDocumentToken(token, detectedType);
       setVerificationResult(res);
       if (res.proofDossier) setProofData(res.proofDossier);
@@ -736,8 +738,8 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
 
   // Si c'est un REÇU (QUITTANCE DE LOYER / REÇU DE CAUTION / RESTITUTION)
   if (receiptData && (type === 'recu' || !contractData)) {
-    const isCaution = receiptData.subType === 'caution' || receiptData.receiptNumber?.startsWith('CAUT') || receiptData.periodCovered?.toLowerCase().includes('garantie') || receiptData.periodCovered?.toLowerCase().includes('caution');
-    const isRestitution = receiptData.subType === 'restitution' || receiptData.receiptNumber?.startsWith('REST') || receiptData.periodCovered?.toLowerCase().includes('restitution');
+    const isCaution = receiptData.subType === 'caution' || receiptData.receiptNumber?.startsWith('CAUT') || receiptData.receiptNumber?.startsWith('REC-CAUT') || receiptData.receiptNumber?.startsWith('REC-CAUTION') || receiptData.periodCovered?.toLowerCase().includes('garantie') || receiptData.periodCovered?.toLowerCase().includes('caution');
+    const isRestitution = receiptData.subType === 'restitution' || receiptData.receiptNumber?.startsWith('REST') || receiptData.receiptNumber?.startsWith('RRC') || receiptData.receiptNumber?.startsWith('IMP') || receiptData.periodCovered?.toLowerCase().includes('restitution');
     
     const docTitle = isCaution
       ? 'Reçu Officiel de Caution (Dépôt de Garantie)'
