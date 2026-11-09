@@ -212,8 +212,19 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
 
     if (!pmtErr && typeof window !== 'undefined' && Array.isArray(serverPayments)) {
       try {
-        localStorage.setItem('locatrust_rent_payments', JSON.stringify(serverPayments));
-        window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: serverPayments } }));
+        const localRaw = localStorage.getItem('locatrust_rent_payments');
+        const localList: any[] = localRaw ? JSON.parse(localRaw) : [];
+        const mergedPayments = [...serverPayments];
+        if (Array.isArray(localList)) {
+          for (const lp of localList) {
+            const exists = mergedPayments.some(sp => sp.id === lp.id || (lp.reference && sp.reference === lp.reference));
+            if (!exists) {
+              mergedPayments.push(lp);
+            }
+          }
+        }
+        localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedPayments));
+        window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedPayments } }));
       } catch {}
     }
 

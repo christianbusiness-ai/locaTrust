@@ -1221,19 +1221,27 @@ export async function broadcastLiveEvent(
     timestamp: new Date().toISOString()
   };
 
+  // 1. Déclencher immédiatement l'événement local sur la fenêtre active sans attendre le réseau
+  try {
+    dispatchDomEventForType(event, fullPayload);
+  } catch (localErr) {
+    console.warn('Local DOM event dispatch error:', localErr);
+  }
+
+  // 2. Diffuser sur le WebSocket Supabase avec timeout strict de 1.5s pour éviter tout blocage réseau
   try {
     const channel = initSharedChannel();
     if (channel) {
-      await channel.send({
-        type: 'broadcast',
-        event: 'locatrust_event',
-        payload: fullPayload
-      });
+      await Promise.race([
+        channel.send({
+          type: 'broadcast',
+          event: 'locatrust_event',
+          payload: fullPayload
+        }),
+        new Promise((resolve) => setTimeout(resolve, 1500))
+      ]);
     }
   } catch (err) {
     console.warn('Realtime broadcast error:', err);
   }
-
-  // Déclencher également l'événement local immédiatement sur la fenêtre active
-  dispatchDomEventForType(event, fullPayload);
 }
