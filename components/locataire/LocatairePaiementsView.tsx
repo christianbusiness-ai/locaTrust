@@ -240,7 +240,16 @@ export const LocatairePaiementsView: React.FC = () => {
         console.warn('getStoredDeposits notice:', e);
       }
       const combinedDeps = ctnList.length > 0 ? ctnList : localDeps;
-      setDeposits(combinedDeps || []);
+      const deduplicatedCombined: any[] = [];
+      const seenContracts = new Set<string>();
+      for (const d of combinedDeps) {
+        const cNum = d.contract_number || d.contract_id || d.id;
+        if (!seenContracts.has(cNum)) {
+          seenContracts.add(cNum);
+          deduplicatedCombined.push(d);
+        }
+      }
+      setDeposits(deduplicatedCombined);
 
       // 3. Contrats réels SIGNÉS par le locataire connecté (pour les formulaires de déclaration de loyer et de caution)
       let signedContractsMap: Record<string, any> = {};

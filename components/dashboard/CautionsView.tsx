@@ -646,85 +646,114 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           };
         });
 
+        // Helper de déduplication stricte par contrat unique
+        const deduplicateDepositsList = (candidates: any[]) => {
+          const groupedByContract = new Map<string, any[]>();
+          const unassigned: any[] = [];
+
+          for (const dep of candidates) {
+            const resolvedCNum = getDisplayContractNumber(dep);
+            const cKey = (resolvedCNum && resolvedCNum !== 'LT-CONTRAT')
+              ? resolvedCNum
+              : (dep.contract_number || dep.contract_id);
+
+            if (cKey) {
+              const arr = groupedByContract.get(cKey) || [];
+              arr.push(dep);
+              groupedByContract.set(cKey, arr);
+            } else {
+              const fallbackKey = dep.tenant_id ? `${dep.tenant_id}_${dep.property?.id || dep.property?.title || 'prop'}` : null;
+              if (fallbackKey) {
+                const arr = groupedByContract.get(fallbackKey) || [];
+                arr.push(dep);
+                groupedByContract.set(fallbackKey, arr);
+              } else {
+                unassigned.push(dep);
+              }
+            }
+          }
+
+          const deduplicated: any[] = [];
+          const ghostIdsToDelete: string[] = [];
+
+          groupedByContract.forEach((group) => {
+            if (group.length === 1) {
+              deduplicated.push(group[0]);
+            } else {
+              // Préférer la déclaration ayant une vraie référence saisie par l'utilisateur
+              group.sort((a, b) => {
+                const aHasRealRef = Boolean(a.declared_reference && a.declared_reference !== 'REF-CAUTION' && a.declared_reference !== 'Mobile Money');
+                const bHasRealRef = Boolean(b.declared_reference && b.declared_reference !== 'REF-CAUTION' && b.declared_reference !== 'Mobile Money');
+                if (aHasRealRef && !bHasRealRef) return -1;
+                if (!aHasRealRef && bHasRealRef) return 1;
+
+                const aHasProof = Boolean(a.proof_url);
+                const bHasProof = Boolean(b.proof_url);
+                if (aHasProof && !bHasProof) return -1;
+                if (!aHasProof && bHasProof) return 1;
+
+                const aConfirmed = a.status === 'paye_complet' || a.status === 'caution_confirmee';
+                const bConfirmed = b.status === 'paye_complet' || b.status === 'caution_confirmee';
+                if (aConfirmed && !bConfirmed) return -1;
+                if (!aConfirmed && bConfirmed) return 1;
+
+                const aTime = a.declared_at || a.created_at ? new Date(a.declared_at || a.created_at).getTime() : 0;
+                const bTime = b.declared_at || b.created_at ? new Date(b.declared_at || b.created_at).getTime() : 0;
+                return bTime - aTime;
+              });
+
+              const best = group[0];
+              deduplicated.push(best);
+
+              for (let i = 1; i < group.length; i++) {
+                if (group[i].id && group[i].id !== best.id) {
+                  ghostIdsToDelete.push(group[i].id);
+                }
+              }
+            }
+          });
+
+          deduplicated.push(...unassigned);
+
+          if (ghostIdsToDelete.length > 0) {
+            try {
+              const currentStored = getStoredDeposits();
+              const cleanStored = currentStored.filter((d) => !ghostIdsToDelete.includes(d.id));
+              saveStoredDeposits(cleanStored);
+              const validUuids = ghostIdsToDelete.filter(isValidUuid);
+              if (validUuids.length > 0) {
+                supabase.from('cautions').delete().in('id', validUuids).then();
+              }
+            } catch {}
+          }
+
+          return deduplicated;
+        };
+
         // Fusionner avec le local store en filtrant strictement par appartenance utilisateur
         const rawLocal = getStoredDeposits() || [];
         const local = rawLocal.filter((loc: any) =>
           Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
         );
         const allCandidates = [...enrichedDeposits, ...local];
-
-        // Regrouper par identifiant unique de contrat pour dédupliquer strictement
-        const groupedByContract = new Map<string, any[]>();
-        const unassigned: any[] = [];
-
-        for (const dep of allCandidates) {
-          const cKey = dep.contract_number || dep.contract_id;
-          if (cKey) {
-            const arr = groupedByContract.get(cKey) || [];
-            arr.push(dep);
-            groupedByContract.set(cKey, arr);
-          } else {
-            unassigned.push(dep);
-          }
-        }
-
-        const deduplicated: any[] = [];
-        const ghostIdsToDelete: string[] = [];
-
-        groupedByContract.forEach((group) => {
-          if (group.length === 1) {
-            deduplicated.push(group[0]);
-          } else {
-            // Préférer la déclaration ayant une référence réelle (non vide et non par défaut)
-            group.sort((a, b) => {
-              const aHasRealRef = Boolean(a.declared_reference && a.declared_reference !== 'REF-CAUTION' && a.declared_reference !== 'Mobile Money');
-              const bHasRealRef = Boolean(b.declared_reference && b.declared_reference !== 'REF-CAUTION' && b.declared_reference !== 'Mobile Money');
-              if (aHasRealRef && !bHasRealRef) return -1;
-              if (!aHasRealRef && bHasRealRef) return 1;
-
-              const aHasProof = Boolean(a.proof_url);
-              const bHasProof = Boolean(b.proof_url);
-              if (aHasProof && !bHasProof) return -1;
-              if (!aHasProof && bHasProof) return 1;
-
-              const aConfirmed = a.status === 'paye_complet' || a.status === 'caution_confirmee';
-              const bConfirmed = b.status === 'paye_complet' || b.status === 'caution_confirmee';
-              if (aConfirmed && !bConfirmed) return -1;
-              if (!aConfirmed && bConfirmed) return 1;
-
-              const aTime = a.declared_at || a.created_at ? new Date(a.declared_at || a.created_at).getTime() : 0;
-              const bTime = b.declared_at || b.created_at ? new Date(b.declared_at || b.created_at).getTime() : 0;
-              return bTime - aTime;
-            });
-
-            const best = group[0];
-            deduplicated.push(best);
-
-            for (let i = 1; i < group.length; i++) {
-              if (group[i].id && group[i].id !== best.id) {
-                ghostIdsToDelete.push(group[i].id);
-              }
-            }
-          }
-        });
-
-        deduplicated.push(...unassigned);
-        setDeposits(deduplicated);
-
-        if (ghostIdsToDelete.length > 0) {
-          try {
-            const currentStored = getStoredDeposits();
-            const cleanStored = currentStored.filter(d => !ghostIdsToDelete.includes(d.id));
-            saveStoredDeposits(cleanStored);
-            supabase.from('cautions').delete().in('id', ghostIdsToDelete.filter(isValidUuid)).then();
-          } catch {}
-        }
+        const finalDeduplicated = deduplicateDepositsList(allCandidates);
+        setDeposits(finalDeduplicated);
       } else {
         const rawLocal = getStoredDeposits() || [];
         const local = rawLocal.filter((loc: any) =>
           Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
         );
-        setDeposits(local);
+        // Déduplication locale également en mode hors ligne ou fallback
+        const deduplicatedLocal = (() => {
+          const seen = new Set<string>();
+          return local.filter((d: any) => {
+            const key = getDisplayContractNumber(d) || d.contract_number || d.contract_id || d.id;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        })();
+        setDeposits(deduplicatedLocal);
       }
 
       // Charger les contrats actifs de l'utilisateur pour calculer exactement la caution exigée
@@ -734,7 +763,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           let cntList = rawCnts ? JSON.parse(rawCnts) : [];
           if (Array.isArray(cntList)) {
             const myActive = cntList.filter((c: any) =>
-              (isTenant ? (c.tenant_id === user.id || (c.tenant as any)?.id === user.id || c.tenant_signed) : (c.owner_id === user.id || c.agency_id === user.id)) &&
+              (isTenant ? (c.tenant_id === user.id || (c.tenant as any)?.id === user.id || c.tenant_signed) : (c.owner_id === user.id || c.agency_id === user.id || !c.owner_id)) &&
               (c.status === 'actif' || c.status === 'contrat_actif' || c.status === 'signe')
             );
             setActiveUserContracts(myActive);
@@ -747,7 +776,16 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       const local = rawLocal.filter((loc: any) =>
         Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id || loc.tenant_id === user.id))
       );
-      setDeposits(local);
+      const deduplicatedLocal = (() => {
+        const seen = new Set<string>();
+        return local.filter((d: any) => {
+          const key = getDisplayContractNumber(d) || d.contract_number || d.contract_id || d.id;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      })();
+      setDeposits(deduplicatedLocal);
     } finally {
       setIsLoading(false);
     }
@@ -767,9 +805,25 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   }, [user]);
 
   // Metrics (Caution exigée, Caution versée, Caution remboursée / retournée)
-  const totalRequested = isTenant && activeUserContracts.length > 0
-    ? activeUserContracts.reduce((sum, c) => sum + Number(c.deposit_amount || c.caution_amount || c.caution || 0), 0)
-    : deposits.reduce((sum, d) => sum + (d.amount_requested || d.amount_paid || 0), 0);
+  // Règle stricte : la caution exigée est sommée par contrat unique (aucun cumul de doublon)
+  const totalRequested = useMemo(() => {
+    if (activeUserContracts && activeUserContracts.length > 0) {
+      const seenContracts = new Set<string>();
+      return activeUserContracts.reduce((sum, c) => {
+        const cNum = c.contract_number || c.contractNumber || c.id;
+        if (cNum && seenContracts.has(cNum)) return sum;
+        if (cNum) seenContracts.add(cNum);
+        return sum + Number(c.deposit_amount || c.caution_amount || c.caution || 0);
+      }, 0);
+    }
+    const seenDeposits = new Set<string>();
+    return deposits.reduce((sum, d) => {
+      const cNum = getDisplayContractNumber(d) || d.contract_number || d.contract_id || d.id;
+      if (cNum && seenDeposits.has(cNum)) return sum;
+      if (cNum) seenDeposits.add(cNum);
+      return sum + Number(d.amount_requested || d.amount_paid || 0);
+    }, 0);
+  }, [activeUserContracts, deposits]);
 
   // Caution reçue / versée : UNIQUEMENT les cautions confirmées (status === 'paye_complet' || status === 'caution_confirmee')
   const totalCollected = deposits
@@ -815,10 +869,19 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     } catch {}
   }, [deposits]);
 
-  // Pending verification notices
-  const pendingConfirmationDeposits = deposits.filter(
-    (d) => d.status === 'caution_a_confirmer' || (d.status as any) === 'declare' || (d.status as any) === 'en_attente'
-  );
+  // Pending verification notices (dédupliquées strictement : maximum 1 bannière par contrat unique)
+  const pendingConfirmationDeposits = useMemo(() => {
+    const rawPending = deposits.filter(
+      (d) => d.status === 'caution_a_confirmer' || (d.status as any) === 'declare' || (d.status as any) === 'en_attente'
+    );
+    const seen = new Set<string>();
+    return rawPending.filter((d) => {
+      const cNum = getDisplayContractNumber(d) || d.contract_number || d.contract_id || d.id;
+      if (seen.has(cNum)) return false;
+      seen.add(cNum);
+      return true;
+    });
+  }, [deposits]);
 
   // Handle Confirmation / Validation of Caution Reception (Étape 2)
   const handleConfirmCaution = (deposit: Deposit) => {
@@ -1188,16 +1251,24 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     await reloadDeposits();
   };
 
-  const filteredDeposits = deposits.filter((d) => {
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase();
-    const matchTenant = (d.tenant?.full_name || (d as any).tenant_name || '').toLowerCase().includes(q);
-    const matchProperty = (d.property?.title || (d as any).property_title || '').toLowerCase().includes(q);
-    const matchContract = (d.contract_id || '').toLowerCase().includes(q);
-    const matchRef = (d.declared_reference || '').toLowerCase().includes(q);
-    const matchAmount = String(d.amount_requested || d.amount_paid || '').includes(q);
-    return matchTenant || matchProperty || matchContract || matchRef || matchAmount;
-  });
+  const filteredDeposits = useMemo(() => {
+    const seenContracts = new Set<string>();
+    return deposits.filter((d) => {
+      // Déduplication absolue dans la liste d'affichage : 1 dossier maximum par contrat
+      const cNum = getDisplayContractNumber(d) || d.contract_number || d.contract_id || d.id;
+      if (seenContracts.has(cNum)) return false;
+      seenContracts.add(cNum);
+
+      if (!searchTerm.trim()) return true;
+      const q = searchTerm.toLowerCase();
+      const matchTenant = (d.tenant?.full_name || (d as any).tenant_name || '').toLowerCase().includes(q);
+      const matchProperty = (d.property?.title || (d as any).property_title || '').toLowerCase().includes(q);
+      const matchContract = (d.contract_id || '').toLowerCase().includes(q) || cNum.toLowerCase().includes(q);
+      const matchRef = (d.declared_reference || '').toLowerCase().includes(q);
+      const matchAmount = String(d.amount_requested || d.amount_paid || '').includes(q);
+      return matchTenant || matchProperty || matchContract || matchRef || matchAmount;
+    });
+  }, [deposits, searchTerm]);
 
   // Détection des cautions en attente de la signature du locataire (Solution 2A)
   const depositsAwaitingTenantSignature = isTenant

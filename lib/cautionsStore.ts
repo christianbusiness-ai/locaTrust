@@ -54,16 +54,9 @@ export function declareCautionPayment(params: {
   ownerId?: string;
 }): Deposit {
   const all = getStoredDeposits();
-  // Recherche stricte par contrat (ne pas matcher uniquement par tenantId si le locataire a plusieurs baux)
-  const existing = all.find((d) =>
-    (params.contractNumber && (d.contract_number === params.contractNumber || d.contract_id === params.contractNumber)) ||
-    (params.contractId && (d.contract_id === params.contractId || d.contract_number === params.contractId))
-  );
-
   const now = new Date().toISOString();
-  let updatedDeposit: Deposit;
 
-  // Résoudre le propriétaire ou l'agence gestionnaire du bien / contrat
+  // Résoudre en priorité le propriétaire, l'agence et le numéro de contrat canonique
   let targetOwnerId = params.ownerId;
   let targetAgencyId: string | undefined = undefined;
   let propertyTitle = 'Logement LocaTrust';
@@ -116,10 +109,26 @@ export function declareCautionPayment(params: {
   }
   if (!targetOwnerId) targetOwnerId = 'usr_owner';
 
+  const normalizedTargetCNum = targetContractNumber || params.contractNumber;
+
+  // Recherche stricte : si un dossier existe déjà pour ce contrat, le METTRE À JOUR sans créer de doublon
+  const existing = all.find((d) => {
+    const dCNum = d.contract_number;
+    const dCId = d.contract_id;
+    return (
+      (normalizedTargetCNum && (dCNum === normalizedTargetCNum || dCId === normalizedTargetCNum)) ||
+      (params.contractId && (dCId === params.contractId || dCNum === params.contractId)) ||
+      (params.contractNumber && (dCNum === params.contractNumber || dCId === params.contractNumber)) ||
+      (d.tenant_id === params.tenantId && d.amount_requested === params.amount)
+    );
+  });
+
+  let updatedDeposit: Deposit;
+
   if (existing) {
     updatedDeposit = {
       ...existing,
-      contract_number: params.contractNumber || existing.contract_number || targetContractNumber,
+      contract_number: normalizedTargetCNum || existing.contract_number,
       payment_method: params.method,
       amount_paid: params.amount,
       status: 'caution_a_confirmer',
@@ -131,14 +140,12 @@ export function declareCautionPayment(params: {
       comment: params.comment || existing.comment,
       refusal_reason: undefined
     };
-    const updatedList = all.map((d) => (d.id === existing.id ? updatedDeposit : d));
-    saveStoredDeposits(updatedList);
   } else {
     const generatedId = crypto.randomUUID();
     updatedDeposit = {
       id: generatedId,
       contract_id: params.contractId,
-      contract_number: params.contractNumber || targetContractNumber,
+      contract_number: normalizedTargetCNum,
       payment_method: params.method,
       tenant_id: params.tenantId,
       owner_id: targetOwnerId,
@@ -180,13 +187,26 @@ export function declareCautionPayment(params: {
         created_at: now
       }
     };
-    saveStoredDeposits([updatedDeposit, ...all]);
   }
+
+  // Filtrer tout doublon existant pour ce contrat dans le store local
+  const updatedList = [
+    updatedDeposit,
+    ...all.filter((d) => {
+      if (d.id === updatedDeposit.id) return false;
+      const dCNum = d.contract_number;
+      const dCId = d.contract_id;
+      if (normalizedTargetCNum && (dCNum === normalizedTargetCNum || dCId === normalizedTargetCNum)) return false;
+      if (params.contractId && (dCId === params.contractId || dCNum === params.contractId)) return false;
+      if (params.contractNumber && (dCNum === params.contractNumber || dCId === params.contractNumber)) return false;
+      return true;
+    })
+  ];
+  saveStoredDeposits(updatedList);
 
   // Inscription directe dans la table cautions de Supabase pour visibilité multi-appareils immédiate
   try {
     const dbCautionPayload: Record<string, any> = {
-      id: updatedDeposit.id,
       amount_requested: Number(params.amount),
       amount_paid: Number(params.amount),
       status: 'caution_a_confirmer',
@@ -208,18 +228,39 @@ export function declareCautionPayment(params: {
     if (isValidUuid(targetAgencyId)) {
       dbCautionPayload.agency_id = targetAgencyId;
     }
-    if (targetContractNumber) {
-      dbCautionPayload.contract_number = targetContractNumber;
+    if (normalizedTargetCNum) {
+      dbCautionPayload.contract_number = normalizedTargetCNum;
     }
 
-    supabase
-      .from('cautions')
-      .upsert(dbCautionPayload)
-      .then(({ error }) => {
-        if (error) {
-          console.warn('Notice insertion caution Supabase:', error.message);
+    // Récupérer et dédupliquer dans Supabase également
+    (async () => {
+      try {
+        let existingRemoteQuery = supabase.from('cautions').select('id, contract_id, contract_number');
+        if (normalizedTargetCNum) {
+          existingRemoteQuery = existingRemoteQuery.or(`contract_number.eq.${normalizedTargetCNum},contract_id.eq.${params.contractId}`);
+        } else if (isValidUuid(params.contractId)) {
+          existingRemoteQuery = existingRemoteQuery.eq('contract_id', params.contractId);
         }
-      });
+        const { data: remoteExisting } = await existingRemoteQuery;
+        let finalRemoteId = updatedDeposit.id;
+        const duplicatesToDelete: string[] = [];
+        if (remoteExisting && remoteExisting.length > 0) {
+          finalRemoteId = remoteExisting[0].id;
+          for (let i = 1; i < remoteExisting.length; i++) {
+            if (remoteExisting[i].id !== finalRemoteId) {
+              duplicatesToDelete.push(remoteExisting[i].id);
+            }
+          }
+        }
+        dbCautionPayload.id = finalRemoteId;
+        await supabase.from('cautions').upsert(dbCautionPayload);
+        if (duplicatesToDelete.length > 0) {
+          await supabase.from('cautions').delete().in('id', duplicatesToDelete);
+        }
+      } catch (err) {
+        console.warn('Notice insertion caution Supabase:', err);
+      }
+    })();
   } catch (dbErr) {
     console.warn('Erreur upsert caution Supabase:', dbErr);
   }

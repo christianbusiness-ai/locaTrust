@@ -1240,17 +1240,31 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             return;
           }
         } else {
-          // Insérer ou mettre à jour la caution
+          // Enregistrement initial de la caution exigée (en attente du paiement / déclaration par le preneur)
           try {
-            await supabase.from('cautions').upsert({
-              id: crypto.randomUUID(),
-              contract_id: finalContractUuid,
-              tenant_id: targetTenantId,
-              owner_id: targetOwnerId,
-              amount_requested: Number(app.caution_amount || 0),
-              amount_paid: Number(app.caution_amount || 0),
-              status: 'caution_a_confirmer'
-            });
+            const { data: existingCaut } = await supabase
+              .from('cautions')
+              .select('id, declared_reference, status')
+              .eq('contract_id', finalContractUuid)
+              .maybeSingle();
+
+            if (!existingCaut) {
+              await supabase.from('cautions').insert({
+                id: crypto.randomUUID(),
+                contract_id: finalContractUuid,
+                contract_number: contractNumber,
+                tenant_id: targetTenantId,
+                owner_id: targetOwnerId,
+                amount_requested: Number(app.caution_amount || 0),
+                amount_paid: 0,
+                status: 'en_attente_paiement'
+              });
+            } else if (!existingCaut.declared_reference) {
+              await supabase.from('cautions').update({
+                contract_number: contractNumber,
+                amount_requested: Number(app.caution_amount || 0)
+              }).eq('id', existingCaut.id);
+            }
           } catch {}
 
           // Notifier le locataire que son contrat est maintenant actif et scellé
