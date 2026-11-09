@@ -1,4 +1,4 @@
-const CACHE_NAME = 'locatrust-pwa-v4';
+const CACHE_NAME = 'locatrust-pwa-v5';
 const STATIC_ASSETS = [
   '/manifest.webmanifest',
   '/favicon.svg',
