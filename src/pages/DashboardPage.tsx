@@ -2,6 +2,8 @@ import React, { Suspense, lazy } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/src/context/AuthContext';
 import { isLoggingOutInProgress } from '@/src/lib/sessionSecurity';
+import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 function lazyDashboardWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
@@ -13,23 +15,37 @@ function lazyDashboardWithRetry<T extends React.ComponentType<any>>(
       const res = await factory();
       sessionStorage.removeItem(key);
       return res;
-    } catch (err) {
+    } catch (err: any) {
       if (isLoggingOutInProgress()) {
         return { default: (() => null) as unknown as T };
       }
-      console.warn(`[LocaTrust] Erreur chargement dashboard ${roleKey}:`, err);
+      console.warn(`[LocaTrust] Erreur chargement dashboard ${roleKey}, nouvelle tentative immédiate...`, err);
+
+      // Tentative de rattrapage immédiat (résout les micro-coupures réseau)
+      try {
+        await new Promise((r) => setTimeout(r, 150));
+        const retryRes = await factory();
+        sessionStorage.removeItem(key);
+        return retryRes;
+      } catch (retryErr) {
+        console.warn(`[LocaTrust] Échec second chargement dashboard ${roleKey}:`, retryErr);
+      }
+
       const hasRetried = sessionStorage.getItem(key);
       if (!hasRetried && typeof window !== 'undefined') {
         sessionStorage.setItem(key, '1');
         if ('caches' in window) {
           try {
             const names = await caches.keys();
-            await Promise.all(names.map(n => caches.delete(n)));
+            await Promise.all(names.map((n) => caches.delete(n)));
           } catch {}
         }
         window.location.reload();
       }
-      throw err;
+
+      // Au lieu de throw err (ce qui déclencherait le flash de l'ErrorBoundary rouge),
+      // on renvoie le Skeleton élégant pendant que le rechargement s'exécute en arrière-plan.
+      return { default: (() => <DashboardPageSkeleton />) as unknown as T };
     }
   });
 }
@@ -39,10 +55,6 @@ const TenantDashboardPage = lazyDashboardWithRetry(() => import('@/app/(locatair
 const ProprietaireDashboardPage = lazyDashboardWithRetry(() => import('@/app/(proprietaire)/dashboard/page'), 'proprietaire');
 const AgencyDashboardPage = lazyDashboardWithRetry(() => import('@/app/(agence)/dashboard/page'), 'agence');
 const AdminDashboardPage = lazyDashboardWithRetry(() => import('@/app/(admin)/dashboard/page'), 'admin');
-
-import { DashboardPageSkeleton } from '@/components/common/SkeletonLoader';
-
-import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 export const DashboardPage: React.FC = () => {
   const { user, profile, loading, signOut } = useAuth();

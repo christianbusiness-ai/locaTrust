@@ -31,19 +31,31 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
       if (isLoggingOutInProgress()) {
         return { default: (() => null) as unknown as T };
       }
-      console.warn(`[LocaTrust] Erreur chargement bundle ${chunkName}:`, err);
+      console.warn(`[LocaTrust] Erreur chargement bundle ${chunkName}, nouvelle tentative immédiate...`, err);
+
+      try {
+        await new Promise((r) => setTimeout(r, 150));
+        const retryRes = await factory();
+        sessionStorage.removeItem(sessionKey);
+        return retryRes;
+      } catch (retryErr) {
+        console.warn(`[LocaTrust] Échec second chargement bundle ${chunkName}:`, retryErr);
+      }
+
       const hasRetried = sessionStorage.getItem(sessionKey);
       if (!hasRetried && typeof window !== 'undefined') {
         sessionStorage.setItem(sessionKey, '1');
         if ('caches' in window) {
           try {
             const names = await caches.keys();
-            await Promise.all(names.map(n => caches.delete(n)));
+            await Promise.all(names.map((n) => caches.delete(n)));
           } catch {}
         }
         window.location.reload();
       }
-      throw err;
+
+      // Évite de propager l'erreur pour ne pas flasher la boîte rouge d'erreur
+      return { default: (() => null) as unknown as T };
     }
   });
 }

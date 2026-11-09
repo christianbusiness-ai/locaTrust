@@ -10,14 +10,20 @@ initAccentTheme();
 
 // Gestion automatique des mises à jour de bundle et rechargement des chunks obsolètes
 if (typeof window !== 'undefined') {
-  window.addEventListener('vite:preloadError', () => {
+  window.addEventListener('vite:preloadError', (e: any) => {
     if (isLoggingOutInProgress()) return;
+    try {
+      e?.preventDefault?.();
+    } catch {}
     console.warn('[LocaTrust] Rechargement automatique suite à mise à jour de version (chunk obsolète)...');
     window.location.reload();
   });
   window.addEventListener('error', (e) => {
     if (isLoggingOutInProgress()) return;
-    if (e?.message && /Failed to fetch dynamically imported module/i.test(e.message)) {
+    if (e?.message && /Failed to fetch dynamically imported module|loading chunk/i.test(e.message)) {
+      try {
+        e?.preventDefault?.();
+      } catch {}
       console.warn('[LocaTrust] Rechargement sur erreur module dynamique...');
       window.location.reload();
     }
