@@ -55,6 +55,8 @@ import { getStoredOwnerSignature, persistOwnerSignature } from '@/lib/contractPa
 
 interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
+  isAgency?: boolean;
+  userRole?: 'agence' | 'proprietaire' | 'admin';
 }
 
 const isValidUuid = (id?: string | null): boolean => {
@@ -64,8 +66,11 @@ const isValidUuid = (id?: string | null): boolean => {
 
 export const PaiementsView: React.FC<PaiementsViewProps> = ({
   onOpenConfirmPaymentModal,
+  isAgency = false,
+  userRole
 }) => {
   const { user } = useAuth();
+  const isActuallyAgency = isAgency || userRole === 'agence' || user?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_current_role') === 'agence');
   const [payments, setPayments] = useState<RentPayment[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);

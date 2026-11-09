@@ -304,6 +304,8 @@ export default function AgencyDashboardPage({
             {activeTab === 'payments' && (
               <ErrorBoundary>
                 <PaiementsView
+                  isAgency={true}
+                  userRole="agence"
                   onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}
                 />
               </ErrorBoundary>
