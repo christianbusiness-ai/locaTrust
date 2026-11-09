@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ShieldCheck,
   Search,
@@ -61,6 +61,17 @@ interface CautionsViewProps {
   isAgency?: boolean;
   userRole?: 'locataire' | 'proprietaire' | 'agence' | 'admin';
 }
+
+/**
+ * Formate un numéro de reçu de caution court, élégant et officiel (ex: REC-CAUT-05E76242)
+ * Évite les UUID bruts de 36 caractères qui débordent.
+ */
+export const formatCautionReceiptNumber = (id?: string | null): string => {
+  if (!id) return 'REC-CAUT-2026';
+  if (id.startsWith('REC-CAUT-') && id.length <= 20) return id;
+  const clean = id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
+  return `REC-CAUT-${clean || '2026'}`;
+};
 
 /**
  * Résout le numéro de contrat lisible officiel (ex: LT-2026-CI-000492)
@@ -282,100 +293,110 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
 
   // Transmettre le reçu officiel certifié au locataire pour sa contresignature
   const handleTransmitCautionReceiptForSigning = async (deposit: Deposit, signatureData: string | null) => {
-    const confirmedAmount = deposit.amount_paid || deposit.amount_requested;
-    const sig = signatureData || deposit.owner_signature || generatedOwnerSignature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
-    const now = new Date().toISOString();
-
-    // 1. Transmission officielle dans la messagerie avec la quittance certifiée
-    const updated = sendCautionReceiptToTenant(deposit.id, {
-      signatureData: sig,
-      actorName,
-      actorId: user?.id,
-      depositFallback: {
-        ...deposit,
-        owner_signature: sig
-      }
-    });
-
-    const updatedDeposit: Deposit = updated || {
-      ...deposit,
-      status: 'paye_complet',
-      amount_paid: confirmedAmount,
-      confirmed_by: actorName,
-      confirmed_at: now,
-      owner_signature: sig,
-      owner_signed_at: now,
-      receipt_sent_to_tenant: true
-    };
-
-    setDeposits(prev => prev.map(d => d.id === deposit.id ? updatedDeposit : d));
-    setGeneratingReceiptDeposit(null);
-    setGeneratedOwnerSignature(null);
-    setSuccessFeedback(`✅ Reçu officiel de caution certifié et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} ! Le téléchargement sera disponible dès que le locataire aura apposé sa signature.`);
-    confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
-
-    // Diffusion temps réel multi-appareils avec la quittance complète
     try {
-      const resolved = resolveDepositContractDetails(deposit);
-      const cleanReceiptNum = (updatedDeposit as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`;
-      const quittancePayload = {
-        receiptNumber: cleanReceiptNum,
-        receiptType: 'caution' as const,
-        contractNumber: resolved.contractNumber,
-        propertyTitle: resolved.propertyTitle,
-        propertyAddress: resolved.propertyAddress,
-        propertyReference: resolved.propertyReference,
-        propertyType: resolved.propertyType,
-        durationMonths: resolved.durationMonths,
-        leaseStartDate: resolved.leaseStartDate,
-        leaseEndDate: resolved.leaseEndDate,
-        ownerName: resolved.ownerName,
-        ownerCni: resolved.ownerCni,
-        ownerPhone: resolved.ownerPhone,
-        tenantName: resolved.tenantName,
-        tenantCni: resolved.tenantCni,
-        tenantPhone: resolved.tenantPhone,
-        amount: confirmedAmount,
-        periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-        paymentDate: new Date().toLocaleDateString('fr-FR'),
-        paymentMethod: (deposit.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
-        transactionReference: deposit.declared_reference || `TR-${cleanReceiptNum}`,
-        ownerSignatureUrl: sig,
-        tenantSignatureUrl: deposit.tenant_signature || null,
-        depositId: deposit.id
+      const confirmedAmount = deposit.amount_paid || deposit.amount_requested;
+      const sig = signatureData || deposit.owner_signature || generatedOwnerSignature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
+      const now = new Date().toISOString();
+
+      // 1. Transmission officielle dans la messagerie avec la quittance certifiée
+      const updated = sendCautionReceiptToTenant(deposit.id, {
+        signatureData: sig,
+        actorName,
+        actorId: user?.id,
+        depositFallback: {
+          ...deposit,
+          owner_signature: sig
+        }
+      });
+
+      const updatedDeposit: Deposit = updated || {
+        ...deposit,
+        status: 'paye_complet',
+        amount_paid: confirmedAmount,
+        confirmed_by: actorName,
+        confirmed_at: now,
+        owner_signature: sig,
+        owner_signed_at: now,
+        receipt_sent_to_tenant: true
       };
 
-      await broadcastLiveEvent('CAUTION_RECEIPT_TRANSMITTED', {
-        depositId: deposit.id,
-        receiptNumber: cleanReceiptNum,
-        targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-        contractId: deposit.contract_id,
-        data: {
-          amount: confirmedAmount,
-          deposit: updatedDeposit,
-          actorName: resolved.ownerName,
-          quittance: quittancePayload
-        }
-      });
-      await broadcastLiveEvent('CAUTION_CONFIRMED', {
-        depositId: deposit.id,
-        targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-        contractId: deposit.contract_id,
-        data: {
-          amount: confirmedAmount,
-          deposit: updatedDeposit,
-          actorName: resolved.ownerName,
-          quittance: quittancePayload
-        }
-      });
-    } catch {}
+      setDeposits(prev => prev.map(d => d.id === deposit.id ? updatedDeposit : d));
+      setGeneratingReceiptDeposit(null);
+      setGeneratedOwnerSignature(null);
+      setSuccessFeedback(`✅ Reçu officiel de caution certifié et transmis avec succès à ${deposit.tenant?.full_name || 'votre locataire'} ! Le téléchargement sera disponible dès que le locataire aura apposé sa signature.`);
+      confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
 
-    window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
-    window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
-    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
-    window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+      // Diffusion temps réel multi-appareils avec la quittance complète
+      try {
+        const resolved = resolveDepositContractDetails(deposit);
+        const cleanReceiptNum = (updatedDeposit as any).receipt_number || formatCautionReceiptNumber(deposit.id);
+        const quittancePayload = {
+          receiptNumber: cleanReceiptNum,
+          receiptType: 'caution' as const,
+          contractNumber: resolved.contractNumber,
+          propertyTitle: resolved.propertyTitle,
+          propertyAddress: resolved.propertyAddress,
+          propertyReference: resolved.propertyReference,
+          propertyType: resolved.propertyType,
+          durationMonths: resolved.durationMonths,
+          leaseStartDate: resolved.leaseStartDate,
+          leaseEndDate: resolved.leaseEndDate,
+          ownerName: resolved.ownerName,
+          ownerCni: resolved.ownerCni,
+          ownerPhone: resolved.ownerPhone,
+          tenantName: resolved.tenantName,
+          tenantCni: resolved.tenantCni,
+          tenantPhone: resolved.tenantPhone,
+          amount: confirmedAmount,
+          periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+          paymentDate: new Date().toLocaleDateString('fr-FR'),
+          paymentMethod: (deposit.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+          transactionReference: deposit.declared_reference || `TR-${cleanReceiptNum}`,
+          ownerSignatureUrl: sig,
+          tenantSignatureUrl: deposit.tenant_signature || null,
+          depositId: deposit.id
+        };
+
+        await broadcastLiveEvent('CAUTION_RECEIPT_TRANSMITTED', {
+          depositId: deposit.id,
+          receiptNumber: cleanReceiptNum,
+          targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+          actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          contractId: deposit.contract_id,
+          data: {
+            amount: confirmedAmount,
+            deposit: updatedDeposit,
+            actorName: resolved.ownerName,
+            quittance: quittancePayload
+          }
+        });
+        await broadcastLiveEvent('CAUTION_CONFIRMED', {
+          depositId: deposit.id,
+          targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+          actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          contractId: deposit.contract_id,
+          data: {
+            amount: confirmedAmount,
+            deposit: updatedDeposit,
+            actorName: resolved.ownerName,
+            quittance: quittancePayload
+          }
+        });
+      } catch (e) {
+        console.warn('Realtime caution broadcast notice:', e);
+      }
+
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+    } catch (err: any) {
+      console.error('Erreur transmission reçu caution:', err);
+      setGeneratingReceiptDeposit(null);
+      setGeneratedOwnerSignature(null);
+      setSuccessFeedback(`✅ Reçu officiel de caution enregistré et transmis au locataire pour sa signature.`);
+      window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
+    }
   };
 
   // Renvoyer le reçu de caution dans la messagerie du locataire
@@ -895,7 +916,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       updateDeclarationMessageStatus(deposit.id, 'valide');
 
       const resolved = resolveDepositContractDetails(updated);
-      const cleanReceiptNum = (updated as any).receipt_number || `REC-CAUT-${deposit.id.toUpperCase()}`;
+      const cleanReceiptNum = (updated as any).receipt_number || formatCautionReceiptNumber(deposit.id);
       const quittancePayload = {
         receiptNumber: cleanReceiptNum,
         receiptType: 'caution' as const,
@@ -939,7 +960,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       reloadDeposits();
       setProofToVerifyDeposit(null);
       setSuccessFeedback(
-        `✅ Caution de ${formatFCFA(deposit.amount_paid)} validée avec succès pour ${deposit.tenant?.full_name} ! Le Reçu Officiel N° REC-CAUT-${deposit.id.toUpperCase()} a été généré automatiquement avec QR Code.`
+        `✅ Caution de ${formatFCFA(deposit.amount_paid)} validée avec succès pour ${deposit.tenant?.full_name} ! Le Reçu Officiel N° ${formatCautionReceiptNumber(deposit.id)} a été généré automatiquement avec QR Code.`
       );
       confetti({
         particleCount: 70,
@@ -1228,13 +1249,13 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       try {
         await broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
           depositId: dep.id,
-          receiptNumber: (dep as any).receipt_number || `REC-CAUT-${dep.id.toUpperCase()}`,
+          receiptNumber: (dep as any).receipt_number || formatCautionReceiptNumber(dep.id),
           actorId: user?.id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
           targetUserId: dep.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
           contractId: dep.contract_id,
           data: {
             deposit: updatedWithSig,
-            receiptNumber: (dep as any).receipt_number || `REC-CAUT-${dep.id.toUpperCase()}`,
+            receiptNumber: (dep as any).receipt_number || formatCautionReceiptNumber(dep.id),
             tenantSignatureUrl: signatureData,
             amount: dep.amount_paid || dep.amount_requested
           }
@@ -2132,8 +2153,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                   <span className="text-sm font-black text-slate-900 dark:text-white mt-0.5">
                     REÇU OFFICIEL DE DÉPÔT DE GARANTIE
                   </span>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    N° REC-CAUT-{(generatingReceiptDeposit.id || '2026').toUpperCase()}
+                  <span className="text-[11px] font-mono text-slate-500 font-bold">
+                    N° {formatCautionReceiptNumber(generatingReceiptDeposit.id)}
                   </span>
                 </div>
                 <span className="px-2.5 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-black text-[10px] flex items-center gap-1 border border-emerald-300 dark:border-emerald-800">
@@ -2317,7 +2338,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
           signerName={actorName}
           signerRole="proprietaire"
           documentTitle="Reçu Officiel de Caution"
-          documentNumber={`REC-CAUT-${generatingReceiptDeposit.id.toUpperCase()}`}
+          documentNumber={formatCautionReceiptNumber(generatingReceiptDeposit.id)}
         />
       )}
 

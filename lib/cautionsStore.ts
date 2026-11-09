@@ -977,11 +977,15 @@ export function sendCautionReceiptToTenant(
     finalActorName = resolved.ownerName || 'kk';
   }
 
+  const finalOwnerSig = options?.signatureData || target.owner_signature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
+
   const cleanReceiptNum =
     (target as any).receipt_number ||
     (target.contract_number === 'LT-2026-CI-000492' || (target.tenant?.full_name || '').toLowerCase().includes('christian')
       ? 'REC-CAUTION-000492'
-      : (target.id.startsWith('REC-') ? target.id : `REC-CAUT-${target.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`));
+      : (target.id.startsWith('REC-CAUT-') && target.id.length <= 20
+        ? target.id
+        : `REC-CAUT-${(target.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`));
 
   const updatedDeposit: Deposit = {
     ...target,
