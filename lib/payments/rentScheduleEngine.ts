@@ -206,10 +206,14 @@ export function generateContractSchedule(
   const rawStart =
     contract?.start_date ||
     contract?.lease_start_date ||
+    contract?.signed_date ||
     contract?.signed_at ||
     contract?.tenant_signed_at ||
+    contract?.owner_signed_at ||
+    contract?.documents?.signed_date ||
+    contract?.documents?.start_date ||
     contract?.created_at ||
-    '2026-10-01';
+    new Date().toISOString().split('T')[0];
 
   const startDate = parseDateSafe(rawStart);
   const contractId = contract?.id || contract?.contract_number || 'LT-2026-CI-000492';
@@ -292,6 +296,7 @@ export function reconcilePaymentsOnSchedule(
   includePending: boolean = false
 ): MonthlyScheduleItem[] {
   const updatedSchedule = schedule.map((item) => ({ ...item }));
+  const targetContractId = schedule[0]?.contract_id ? String(schedule[0].contract_id).trim() : null;
 
   const validPayments = existingPayments.filter((p) => {
     if (!p) return false;
@@ -299,6 +304,13 @@ export function reconcilePaymentsOnSchedule(
     if (!includePending && (p.status === 'declare' || p.status === 'en_attente')) {
       // Pour les calculs officiels validés, on n'inclut que les confirmés
       return false;
+    }
+    // Filtrage STRICT par contrat : un paiement d'un autre contrat ne doit jamais solder ce contrat
+    if (targetContractId && p.contract_id && String(p.contract_id).trim() !== targetContractId) {
+      const pNum = String(p.contract_number || '').trim();
+      if (!pNum || (!targetContractId.includes(pNum) && !pNum.includes(targetContractId))) {
+        return false;
+      }
     }
     return true;
   });
@@ -519,6 +531,7 @@ export function calculateRentPaymentAllocation(
     contract?.monthly_rent ||
     contract?.rent ||
     contract?.rent_amount ||
+    extractContractMonthlyRent(contract) ||
     0
   );
 

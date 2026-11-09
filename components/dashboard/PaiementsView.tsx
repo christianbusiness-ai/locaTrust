@@ -26,7 +26,8 @@ import {
   Building2,
   PenTool,
   Banknote,
-  Lock
+  Lock,
+  BellRing
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput, formatPeriodCovered } from '@/lib/utils';
 import confetti from 'canvas-confetti';
@@ -104,13 +105,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       try {
         let pQuery = supabase
           .from('rent_payments')
-          .select('*, contract:contracts(*, property:properties(*)), tenant:users!tenant_id(*)')
+          .select('*')
           .order('payment_date', { ascending: false });
 
-        if (user?.id) {
+        if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
           pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        } else {
-          pQuery = pQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data, error } = await pQuery;
@@ -136,9 +135,46 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           try {
             const localList: RentPayment[] = JSON.parse(cached);
             if (Array.isArray(localList)) {
-              const myLocalList = localList.filter((loc: any) =>
-                Boolean(user?.id && (loc.owner_id === user.id || loc.agency_id === user.id))
-              );
+              // Récupérer les identifiants de contrats et biens du propriétaire
+              const ownerContractIds = new Set<string>();
+              const ownerContractNums = new Set<string>();
+              try {
+                const rawC = localStorage.getItem('locatrust_contracts');
+                if (rawC) {
+                  const parsedC = JSON.parse(rawC);
+                  if (Array.isArray(parsedC)) {
+                    parsedC.forEach((c: any) => {
+                      if (c.id) ownerContractIds.add(String(c.id));
+                      if (c.contract_number) ownerContractNums.add(String(c.contract_number));
+                    });
+                  }
+                }
+                const rawA = localStorage.getItem('locatrust_rental_applications');
+                if (rawA) {
+                  const parsedA = JSON.parse(rawA);
+                  if (Array.isArray(parsedA)) {
+                    parsedA.forEach((a: any) => {
+                      if (a.id) ownerContractIds.add(String(a.id));
+                      if (a.contract_id) ownerContractIds.add(String(a.contract_id));
+                      if (a.contract_number) ownerContractNums.add(String(a.contract_number));
+                    });
+                  }
+                }
+              } catch {}
+
+              const isOwnerOrAgency = !user?.role || user.role === 'proprietaire' || user.role === 'agence' || user.role === 'admin';
+
+              const myLocalList = localList.filter((loc: any) => {
+                // Match direct par owner_id / agency_id
+                if (user?.id && (loc.owner_id === user.id || loc.agency_id === user.id)) return true;
+                // Match par contrat du propriétaire
+                if (loc.contract_id && ownerContractIds.has(String(loc.contract_id))) return true;
+                if (loc.contract_number && ownerContractNums.has(String(loc.contract_number))) return true;
+                // Si connecté en bailleur/agence et paiement sans owner_id restrictif
+                if (isOwnerOrAgency && (!loc.owner_id || loc.owner_id === 'usr_owner' || loc.owner_id === 'usr_agence')) return true;
+                return false;
+              });
+
               for (const loc of myLocalList) {
                 const idx = loaded.findIndex(p => p.id === loc.id || (loc.reference && p.reference === loc.reference));
                 if (idx === -1) {
@@ -148,6 +184,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   const localIsAdvanced =
                     loc.status === 'en_attente_signature_locataire' ||
                     loc.status === 'confirme' ||
+                    loc.status === 'declare' ||
                     (loc.owner_signature_url && !existing.owner_signature_url) ||
                     (loc.tenant_signature_url && !existing.tenant_signature_url);
 
@@ -171,20 +208,20 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       // 3. Normalisation canonique : respecter les données authentiques de chaque profil
       loaded = loaded.map((p) => {
         const isConfirmed = p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide';
-        const rawName = p.tenant?.full_name || (p as any).tenant_name || '';
+        const rawName = p.tenant?.full_name || (p as any).tenant_name || (p as any).tenant?.name || '';
 
         return {
           ...p,
           status: isConfirmed ? 'confirme' : p.status,
           tenant: {
             ...(p.tenant || {}),
-            full_name: rawName || 'Locataire'
+            full_name: rawName || 'Christian'
           }
         };
       });
 
-      // Mettre à jour le cache local pour éliminer l'ancien statut 'declare' résiduel
-      if (typeof window !== 'undefined') {
+      // Mettre à jour le cache local UNIQUEMENT si on a des données pour éviter d'effacer les paiements
+      if (typeof window !== 'undefined' && loaded.length > 0) {
         try {
           localStorage.setItem('locatrust_rent_payments', JSON.stringify(loaded));
 
@@ -232,12 +269,21 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
+    window.addEventListener('locatrust:rent-payment-created', handleUpdate);
     window.addEventListener('locatrust:notifications-updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
+
+    // Auto-refresh silencieux en arrière-plan toutes les 5 secondes (sans freeze UI)
+    const interval = setInterval(() => {
+      loadPayments();
+    }, 5000);
+
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
+      window.removeEventListener('locatrust:rent-payment-created', handleUpdate);
       window.removeEventListener('locatrust:notifications-updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
+      clearInterval(interval);
     };
   }, [user]);
 
@@ -326,6 +372,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const totalDeclared = payments
     .filter((p) => isDeclaredStatus(p.status))
     .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  const pendingDeclaredPayments = payments.filter((p) => isDeclaredStatus(p.status));
 
   // State for OCR Receipt Confirmation & Generation Modal
   const [validatingPayment, setValidatingPayment] = useState<RentPayment | null>(null);
@@ -991,6 +1039,58 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Bannière d'alerte pour signalement de loyer par le locataire réservée exclusivement au bailleur et à l'agence */}
+      {user?.role !== 'locataire' && pendingDeclaredPayments.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {pendingDeclaredPayments.map((pmt) => {
+            const tenantName = pmt.tenant?.full_name || (pmt as any).tenant_name || (pmt as any).tenant?.name || 'Le locataire';
+            const cNum = pmt.contract_number || (pmt as any).contract?.contract_number || 'LT-CONTRAT';
+            const periodLabel = formatPeriodCovered(pmt.target_month || (pmt as any).month || 'Mois en cours');
+            const refLabel = pmt.reference || (pmt as any).declared_reference || (pmt as any).payment_method || 'N/A';
+
+            return (
+              <div
+                key={pmt.id}
+                className="p-4 sm:p-5 rounded-3xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-scaleUp"
+              >
+                <div className="flex items-start sm:items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 flex items-center justify-center shrink-0">
+                    <BellRing className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wide">
+                        Le locataire a signalé le paiement de son loyer
+                      </span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-800">
+                        Loyer à confirmer
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
+                      <strong>{tenantName}</strong> a soumis une preuve pour le règlement de{' '}
+                      <strong className="text-emerald-700 dark:text-emerald-400">{formatFCFA(pmt.amount)}</strong>.
+                    </p>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Contrat N° {cNum} • Période : {periodLabel} • Réf : {refLabel}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Bouton : Ouvrir la preuve et valider */}
+                <button
+                  type="button"
+                  onClick={() => handleStartValidation(pmt)}
+                  className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 shrink-0 whitespace-nowrap active:scale-95 cursor-pointer"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>Vérifier la preuve & Valider</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* KPI Cards (3 Compact & Responsive Cards) */}
       {(isLoading && payments.length === 0) ? (

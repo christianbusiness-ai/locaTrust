@@ -178,8 +178,11 @@ export const LocatairePaiementsView: React.FC = () => {
             const userLocalPmts = parsed.filter((p: any) =>
               p.tenant_id === user.id ||
               p.tenant?.id === user.id ||
+              (p.tenant_name && user.name && p.tenant_name.toLowerCase().includes(user.name.toLowerCase())) ||
+              (p.tenant?.full_name && user.name && p.tenant.full_name.toLowerCase().includes(user.name.toLowerCase())) ||
               (user.email && (p.tenant?.email?.toLowerCase() === user.email.toLowerCase() || p.tenant_email?.toLowerCase() === user.email.toLowerCase())) ||
-              (p.reference && rentList.some(r => r.reference === p.reference))
+              (p.reference && rentList.some(r => r.reference === p.reference)) ||
+              (p.contract_number && userContracts.some(c => c.contract_number === p.contract_number))
             );
             userLocalPmts.forEach(lp => {
               const existingIdx = rentList.findIndex(r => (r.reference && r.reference === lp.reference) || (r.id && r.id === lp.id));
@@ -373,34 +376,36 @@ export const LocatairePaiementsView: React.FC = () => {
 
         const key = cNum.toUpperCase();
         const existing = contractsByNumMap.get(key);
-        if (!existing) {
-          contractsByNumMap.set(key, {
-            ...c,
-            contract_number: cNum,
-            tenant_signed: true,
-            status: 'actif'
-          });
-        } else {
-          contractsByNumMap.set(key, {
-            ...c,
-            ...existing,
-            id: isValidUuid(existing.id) ? existing.id : (isValidUuid(c.id) ? c.id : existing.id),
-            contract_number: cNum,
-            rent: Number(existing.rent || existing.monthly_rent || c.rent || c.monthly_rent || docs.rent_amount || 0),
-            caution: Number(existing.caution || existing.caution_amount || c.caution || c.caution_amount || docs.caution_amount || 0),
-            caution_amount: Number(existing.caution_amount || existing.caution || c.caution_amount || c.caution || docs.caution_amount || 0),
-            property: {
-              ...(c.property || {}),
-              ...(existing.property || {}),
-              title:
-                existing.property?.title && existing.property.title !== 'Logement LocaTrust' && existing.property.title !== 'Logement loué'
-                  ? existing.property.title
-                  : (c.property?.title || docs.property_title || existing.property?.title || 'Logement loué')
-            },
-            tenant_signed: true,
-            status: 'actif'
-          });
-        }
+        const resolvedRent = Number(c.monthly_rent || c.rent || c.rent_amount || existing?.monthly_rent || existing?.rent || docs.new_rent || docs.rent_amount || 0);
+        const resolvedCaution = Number(c.caution_amount || c.caution || existing?.caution_amount || existing?.caution || docs.caution_amount || (resolvedRent > 0 ? resolvedRent * 2 : 0));
+        const resolvedStartDate = c.start_date || docs.start_date || c.signed_date || docs.signed_date || c.signed_at || docs.signed_at || existing?.start_date || existing?.signed_date || c.created_at || new Date().toISOString().split('T')[0];
+        const resolvedSignedDate = c.signed_date || docs.signed_date || c.signed_at || docs.signed_at || existing?.signed_date || resolvedStartDate;
+
+        contractsByNumMap.set(key, {
+          ...c,
+          ...(existing || {}),
+          id: isValidUuid(existing?.id) ? existing.id : (isValidUuid(c.id) ? c.id : (existing?.id || c.id)),
+          contract_number: cNum,
+          rent: resolvedRent,
+          monthly_rent: resolvedRent,
+          rent_amount: resolvedRent,
+          caution: resolvedCaution,
+          caution_amount: resolvedCaution,
+          start_date: resolvedStartDate,
+          signed_date: resolvedSignedDate,
+          signed_at: c.signed_at || docs.signed_at || resolvedSignedDate,
+          created_at: c.created_at || existing?.created_at || resolvedStartDate,
+          tenant_signed: true,
+          status: 'actif',
+          property: {
+            ...(c.property || {}),
+            ...(existing?.property || {}),
+            title:
+              existing?.property?.title && existing.property.title !== 'Logement LocaTrust' && existing.property.title !== 'Logement loué'
+                ? existing.property.title
+                : (c.property?.title || docs.property_title || existing?.property?.title || 'Logement loué')
+          }
+        });
       };
 
       try {
@@ -426,6 +431,10 @@ export const LocatairePaiementsView: React.FC = () => {
               const cNum = String(a.contract_number || docs.contract_number || '').trim();
               if (!cNum || isFabricatedContractNum(cNum)) return;
 
+              const appRent = Number(docs.new_rent || a.rent_amount || docs.rent_amount || a.monthly_rent || 0);
+              const appStartDate = a.start_date || docs.start_date || a.signed_date || docs.signed_date || a.signed_at || docs.signed_at || a.created_at;
+              const appSignedDate = a.signed_date || docs.signed_date || a.signed_at || docs.signed_at || appStartDate;
+
               upsertSignedTenantContract(
                 {
                   id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
@@ -433,9 +442,14 @@ export const LocatairePaiementsView: React.FC = () => {
                   property_id: a.property_id || docs.property_id,
                   tenant_id: a.tenant_id || user.id,
                   owner_id: a.owner_id || docs.owner_id,
-                  rent: Number(docs.new_rent || a.rent_amount || docs.rent_amount || 0),
+                  rent: appRent,
+                  monthly_rent: appRent,
                   caution: Number(a.caution_amount || docs.caution_amount || 0),
                   caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
+                  start_date: appStartDate,
+                  signed_date: appSignedDate,
+                  signed_at: a.signed_at || docs.signed_at || appSignedDate,
+                  created_at: a.created_at || docs.created_at || appStartDate,
                   charges: Number(docs.new_charges ?? a.charges_amount ?? docs.charges_amount ?? 0),
                   tenant_signed: Boolean(a.tenant_signed || docs.tenant_signed),
                   tenant_signature_url: a.tenant_signature_url || docs.tenant_signature_url,
@@ -653,14 +667,35 @@ export const LocatairePaiementsView: React.FC = () => {
       const tenantUuid = user?.id && isValidUuid(user.id) ? user.id : null;
       const ownerUuid = targetOwnerId && isValidUuid(targetOwnerId) ? targetOwnerId : null;
 
+      const tenantDisplayName = user?.user_metadata?.full_name || (user as any)?.name || 'Christian';
+      const tenantPhone = user?.phone || user?.user_metadata?.phone || '+225 07 08 09 10 11';
+      const tenantEmail = user?.email || 'christian@locatrust.ci';
+
+      const contractNumber = chosenContract?.contract_number || chosenContract?.contractNumber || 'LT-2026-CI-39210687';
+      const propertyTitle = chosenContract?.property?.title || 'Maison a loué';
+
       const calculatedPeriodText = rentAllocationPreview?.periods_covered_text || targetMonth;
       const calculatedAllocations = rentAllocationPreview?.allocations || [];
 
       const newPaymentData: any = {
         contract_id: contractUuid,
-        contract_number: chosenContract?.contract_number || chosenContract?.contractNumber || undefined,
-        tenant_id: tenantUuid,
-        owner_id: ownerUuid,
+        contract_number: contractNumber,
+        property_id: chosenContract?.property_id || chosenContract?.property?.id,
+        property_title: propertyTitle,
+        tenant_id: tenantUuid || user?.id || 'usr_tenant',
+        tenant_name: tenantDisplayName,
+        tenant_email: tenantEmail,
+        tenant_phone: tenantPhone,
+        tenant: {
+          id: user?.id || tenantUuid || 'usr_tenant',
+          full_name: tenantDisplayName,
+          name: tenantDisplayName,
+          email: tenantEmail,
+          phone: tenantPhone
+        },
+        property: chosenContract?.property || { title: propertyTitle },
+        contract: chosenContract,
+        owner_id: ownerUuid || targetOwnerId || chosenContract?.owner_id || 'usr_owner',
         target_month: calculatedPeriodText,
         amount: amount,
         payment_date: new Date().toISOString().split('T')[0],
@@ -679,24 +714,28 @@ export const LocatairePaiementsView: React.FC = () => {
       const fallbackPmtUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8009-${Date.now().toString(16).padStart(12, '0')}`;
       try {
         const { data, error } = await createRentPayment(newPaymentData);
-        savedPayment = (!error && data) ? data : { ...newPaymentData, id: fallbackPmtUuid, payment_method: method };
+        savedPayment = (!error && data) ? { ...newPaymentData, ...data, id: data.id || fallbackPmtUuid, status: 'declare' } : { ...newPaymentData, id: fallbackPmtUuid, payment_method: method, status: 'declare' };
       } catch {
-        savedPayment = { ...newPaymentData, id: fallbackPmtUuid, payment_method: method };
+        savedPayment = { ...newPaymentData, id: fallbackPmtUuid, payment_method: method, status: 'declare' };
       }
 
       // Save locally for responsive offline/instant UX
       try {
         const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
-        localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...stored]));
+        const filtered = Array.isArray(stored) ? stored.filter((p: any) => p.id !== savedPayment.id && p.reference !== savedPayment.reference) : [];
+        localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...filtered]));
       } catch { }
+
+      const notifTitle = '💳 Nouveau règlement de loyer déclaré';
+      const notifDesc = `${tenantDisplayName} a déclaré le versement de son loyer (${formatFCFA(amount)} • ${method} - Réf: ${newPaymentData.reference}) pour ${calculatedPeriodText}. En attente de validation.`;
 
       // Send real notification to owner/agency in Supabase
       if (ownerUuid) {
         try {
           await supabase.from('notifications').insert({
             user_id: ownerUuid,
-            title: '💳 Nouveau règlement de loyer déclaré',
-            content: `${user?.user_metadata?.full_name || (user as any)?.name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) couvrant automatiquement : ${calculatedPeriodText}.`,
+            title: notifTitle,
+            content: notifDesc,
             type: 'paiement',
             read: false,
             payload: {
@@ -716,16 +755,16 @@ export const LocatairePaiementsView: React.FC = () => {
       // Notification globale dans locatrust_notifications pour bailleur et agence
       try {
         pushGlobalNotification({
-          title: '💳 Nouveau règlement de loyer déclaré',
-          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) couvrant automatiquement : ${calculatedPeriodText}.`,
+          title: notifTitle,
+          description: notifDesc,
           category: 'paiement',
           targetRole: 'proprietaire',
           targetUserId: targetOwnerId || undefined,
           targetTab: 'payments'
         });
         pushGlobalNotification({
-          title: '💳 Nouveau règlement de loyer déclaré',
-          description: `${user?.user_metadata?.full_name || 'Votre locataire'} a déclaré un paiement de ${formatFCFA(amount)} (${method} - Réf: ${newPaymentData.reference}) couvrant automatiquement : ${calculatedPeriodText}.`,
+          title: notifTitle,
+          description: notifDesc,
           category: 'paiement',
           targetRole: 'agence',
           targetUserId: targetOwnerId || undefined,
@@ -750,8 +789,9 @@ export const LocatairePaiementsView: React.FC = () => {
         });
       } catch { }
 
-      setPayments((prev) => [savedPayment, ...prev]);
+      setPayments((prev) => [savedPayment, ...prev.filter(p => p.id !== savedPayment.id && p.reference !== savedPayment.reference)]);
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: savedPayment }));
+      window.dispatchEvent(new CustomEvent('locatrust:rent-payment-created', { detail: savedPayment }));
 
       setShowDeclareModal(false);
       setReference('');

@@ -289,7 +289,7 @@ export async function createRentPayment(payment: any) {
       payment_date: payment.payment_date || new Date().toISOString().split('T')[0],
       payment_method: normalizedMethod,
       reference: payment.reference || `REF-${Date.now().toString().slice(-6)}`,
-      status: 'en_attente'
+      status: 'declare'
     };
 
     if (validOwnerId) cleanPayload.owner_id = validOwnerId;
@@ -304,7 +304,7 @@ export async function createRentPayment(payment: any) {
       .maybeSingle();
 
     if (!error && data) {
-      return { data: { ...payment, ...data, id: data.id, status: 'en_attente' }, error: null };
+      return { data: { ...payment, ...data, id: data.id, status: 'declare' }, error: null };
     }
 
     // Si erreur liée à une clé étrangère manquante sur contract_id
@@ -313,7 +313,7 @@ export async function createRentPayment(payment: any) {
       delete fallbackPayload.contract_id;
       const retry = await supabase.from('rent_payments').insert(fallbackPayload).select().maybeSingle();
       if (!retry.error && retry.data) {
-        return { data: { ...payment, ...retry.data, id: retry.data.id, status: 'en_attente' }, error: null };
+        return { data: { ...payment, ...retry.data, id: retry.data.id, status: 'declare' }, error: null };
       }
     }
 
