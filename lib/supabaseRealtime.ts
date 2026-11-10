@@ -263,8 +263,10 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'RECEIPT_SIGNED_BY_TENANT':
         if (typeof window !== 'undefined') {
           const pmtId = payload?.paymentId;
-          const rcpNum = payload?.data?.receipt_number;
+          const rcpNum = payload?.data?.receipt_number || payload?.reference || payload?.receiptNumber;
           const tenantName = payload?.data?.actorName || 'Le locataire';
+          const tenantSig = payload?.data?.payment?.tenant_signature_url || payload?.tenantSignatureUrl || payload?.data?.tenantSignatureUrl;
+          const ownerSig = payload?.data?.payment?.owner_signature_url || payload?.ownerSignatureUrl || payload?.data?.ownerSignatureUrl;
 
           // 1. Mettre à jour locatrust_rent_payments au statut confirme
           try {
@@ -273,11 +275,40 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
             if (Array.isArray(curPmts)) {
               curPmts = curPmts.map((p: any) => {
                 if (p.id === pmtId || (rcpNum && p.reference === rcpNum)) {
-                  return { ...p, status: 'confirme', confirmed_at: new Date().toISOString() };
+                  return {
+                    ...p,
+                    status: 'confirme',
+                    tenant_signature_url: tenantSig || p.tenant_signature_url,
+                    tenant_signature: tenantSig || p.tenant_signature,
+                    owner_signature_url: ownerSig || p.owner_signature_url,
+                    confirmed_at: new Date().toISOString()
+                  };
                 }
                 return p;
               });
               localStorage.setItem('locatrust_rent_payments', JSON.stringify(curPmts));
+            }
+          } catch {}
+
+          // 1.b Mettre à jour locatrust_tenant_receipts_v2 et locatrust_receipts
+          try {
+            const curRcpsRaw = localStorage.getItem('locatrust_tenant_receipts_v2') || localStorage.getItem('locatrust_receipts');
+            let curRcps = curRcpsRaw ? JSON.parse(curRcpsRaw) : [];
+            if (Array.isArray(curRcps)) {
+              curRcps = curRcps.map((r: any) => {
+                if (r.receipt_number === rcpNum || r.receiptNumber === rcpNum || r.payment_id === pmtId) {
+                  return {
+                    ...r,
+                    status: 'confirme',
+                    tenant_signed: true,
+                    tenant_signature_url: tenantSig || r.tenant_signature_url,
+                    owner_signature_url: ownerSig || r.owner_signature_url
+                  };
+                }
+                return r;
+              });
+              localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(curRcps));
+              localStorage.setItem('locatrust_receipts', JSON.stringify(curRcps));
             }
           } catch {}
 
@@ -305,6 +336,7 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
           window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
           window.dispatchEvent(new CustomEvent('locatrust:receipts_updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('locatrust:receipts-updated', { detail: payload }));
         }
         break;
 

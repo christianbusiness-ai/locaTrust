@@ -1499,9 +1499,14 @@ export const LocatairePaiementsView: React.FC = () => {
           finalized_at: now,
           confirmed_at: pmt.confirmed_at || now
         };
+
+        // Mise à jour robuste par ID ET par référence
+        let updatedById = false;
         if (isValidUuid(pmt.id)) {
-          await supabase.from('rent_payments').update(updatePmt).eq('id', pmt.id);
-        } else if (pmt.reference) {
+          const { data } = await supabase.from('rent_payments').update(updatePmt).eq('id', pmt.id).select();
+          if (data && data.length > 0) updatedById = true;
+        }
+        if (pmt.reference) {
           await supabase.from('rent_payments').update(updatePmt).eq('reference', pmt.reference);
         }
 
@@ -1509,6 +1514,9 @@ export const LocatairePaiementsView: React.FC = () => {
         const updateReceipt: any = {
           status: 'FINALISE',
           tenant_signature: signatureData,
+          tenant_signature_url: signatureData,
+          owner_signature: effectiveOwnerSig,
+          owner_signature_url: effectiveOwnerSig,
           tenant_signed_at: now,
           finalized_at: now
         };
@@ -1523,6 +1531,7 @@ export const LocatairePaiementsView: React.FC = () => {
         if (pmt.reference) {
           await supabase.from('document_verifications').update({
             is_tenant_signed: true,
+            tenant_signature: signatureData,
             tenant_signed_at: now,
             finalized_at: now,
             status: 'valide'

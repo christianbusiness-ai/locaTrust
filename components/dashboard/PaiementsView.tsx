@@ -185,6 +185,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
       }
 
+      // Requête sur les reçus officiels (source de vérité pour le scellement et signatures)
+      let rQuery = supabase
+        .from('receipts')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
       let cancelQuery = supabase
         .from('notifications')
         .select('*')
@@ -207,9 +214,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       }
 
       // Exécution parallèle concurrente avec timeout strict de 3.5s pour éviter tout blocage réseau
-      const [pRes, syncRes, cancelRes, notifRes] = await Promise.allSettled([
+      const syncUrl = `/api/sync?role=${user?.role || 'proprietaire'}&userId=${user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'}`;
+      const [pRes, rRes, syncRes, cancelRes, notifRes] = await Promise.allSettled([
         pQuery,
-        fetchWithTimeout('/api/sync', {}, 3500),
+        rQuery,
+        fetchWithTimeout(syncUrl, {}, 3500),
         cancelQuery,
         notifQuery
       ]);
@@ -233,8 +242,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       if (syncRes.status === 'fulfilled' && syncRes.value && syncRes.value.ok) {
         try {
           const syncJson = await syncRes.value.json();
-          if (syncJson?.payments && Array.isArray(syncJson.payments)) {
-            for (const sp of syncJson.payments) {
+          const syncPayments = syncJson?.payments || syncJson?.data?.payments;
+          if (syncPayments && Array.isArray(syncPayments)) {
+            for (const sp of syncPayments) {
               const idx = loaded.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
               if (idx === -1) {
                 loaded.push(sp);
@@ -243,7 +253,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 const currentIsMoreAdvanced =
                   (current.status === 'confirme' && sp.status !== 'confirme') ||
                   (current.status === 'en_attente_signature_locataire' && (sp.status === 'declare' || sp.status === 'en_attente')) ||
-                  (current.owner_signature_url && !sp.owner_signature_url);
+                  (current.owner_signature_url && !sp.owner_signature_url) ||
+                  (current.tenant_signature_url && !sp.tenant_signature_url);
 
                 if (!currentIsMoreAdvanced) {
                   loaded[idx] = { ...loaded[idx], ...sp };
@@ -252,6 +263,58 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             }
           }
         } catch {}
+      }
+
+      // 1.b bis Traitement des quittances Supabase et Locales (Scellement et signature locataire)
+      const finalizedReceiptsMap = new Map<string, any>();
+      if (rRes.status === 'fulfilled' && rRes.value && (rRes.value as any).data) {
+        const rData = (rRes.value as any).data;
+        if (Array.isArray(rData)) {
+          for (const r of rData) {
+            const rNum = r.receipt_number || r.receiptNumber;
+            const isFinal = r.status === 'FINALISE' || r.status === 'CONFIRME' || r.status === 'certifie' || r.status === 'confirme' || Boolean(r.tenant_signature || r.tenant_signature_url);
+            if (rNum && isFinal) {
+              finalizedReceiptsMap.set(rNum, r);
+            }
+          }
+        }
+      }
+
+      // Vérifier également les quittances locales
+      if (typeof window !== 'undefined') {
+        try {
+          const rawRcps = localStorage.getItem('locatrust_tenant_receipts_v2') || localStorage.getItem('locatrust_receipts');
+          if (rawRcps) {
+            const parsedRcps = JSON.parse(rawRcps);
+            if (Array.isArray(parsedRcps)) {
+              for (const r of parsedRcps) {
+                const rNum = r.receipt_number || r.receiptNumber;
+                const isFinal = r.status === 'FINALISE' || r.status === 'CONFIRME' || r.status === 'certifie' || r.status === 'confirme' || Boolean(r.tenant_signature || r.tenant_signature_url);
+                if (rNum && isFinal && !finalizedReceiptsMap.has(rNum)) {
+                  finalizedReceiptsMap.set(rNum, r);
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // Réconciliation immédiate : Si un reçu est signé par le locataire, promouvoir automatiquement le paiement au statut confirme
+      for (let i = 0; i < loaded.length; i++) {
+        const p = loaded[i];
+        const matchingReceipt = (p.reference && finalizedReceiptsMap.get(p.reference)) || (p.id && finalizedReceiptsMap.get(p.id));
+        if (matchingReceipt) {
+          const tSig = matchingReceipt.tenant_signature || matchingReceipt.tenant_signature_url || p.tenant_signature_url;
+          const oSig = matchingReceipt.owner_signature || matchingReceipt.owner_signature_url || p.owner_signature_url;
+          loaded[i] = {
+            ...p,
+            status: 'confirme',
+            tenant_signature_url: tSig,
+            tenant_signature: tSig,
+            owner_signature_url: oSig,
+            confirmed_at: matchingReceipt.finalized_at || matchingReceipt.confirmed_at || p.confirmed_at || new Date().toISOString()
+          };
+        }
       }
 
       // 1.c Traitement des annulations
@@ -372,6 +435,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 if (loc.status === 'annule' || loc.status === 'supprime') return false;
                 if (loc.id && serverCancelledIds.has(loc.id)) return false;
                 if (loc.reference && serverCancelledRefs.has(loc.reference)) return false;
+                // Si le paiement est déjà présent dans loaded, on DOIT inclure sa mise à jour locale !
+                if (loaded.some(p => p.id === loc.id || (loc.reference && p.reference === loc.reference))) return true;
                 // Match direct par owner_id / agency_id
                 if (user?.id && (loc.owner_id === user.id || loc.agency_id === user.id)) return true;
                 // Match par contrat du propriétaire
@@ -420,7 +485,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // 3. Normalisation canonique : respecter les données authentiques de chaque profil
       loaded = loaded.map((p) => {
-        const isConfirmed = p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide';
+        const hasTenantSig = Boolean(p.tenant_signature_url || (p as any).tenant_signature);
+        const isConfirmed = p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide' || hasTenantSig;
         const rawName = p.tenant?.full_name || (p as any).tenant_name || (p as any).tenant?.name || '';
 
         return {
@@ -580,6 +646,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
+    window.addEventListener('locatrust:receipts_updated', handleUpdate);
+    window.addEventListener('locatrust:receipts-updated', handleUpdate);
     window.addEventListener('locatrust:rent-payment-created', handleUpdate);
     window.addEventListener('locatrust:notifications-updated', handleUpdate);
     window.addEventListener('locatrust:live-sync-update', handleUpdate);
@@ -595,6 +663,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
+      window.removeEventListener('locatrust:receipts_updated', handleUpdate);
+      window.removeEventListener('locatrust:receipts-updated', handleUpdate);
       window.removeEventListener('locatrust:rent-payment-created', handleUpdate);
       window.removeEventListener('locatrust:notifications-updated', handleUpdate);
       window.removeEventListener('locatrust:live-sync-update', handleUpdate);
@@ -1371,8 +1441,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       paymentDate: new Date(pmt.confirmed_at || pmt.created_at).toLocaleDateString('fr-FR'),
       paymentMethod: pmt.reference.startsWith('OM') ? 'Orange Money' : pmt.reference.startsWith('WAVE') ? 'Wave Mobile Money' : 'Mobile Money',
       transactionReference: pmt.reference,
-      ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl,
-      tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl,
+      ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl || pmt.owner_signature_url,
+      tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl || pmt.tenant_signature_url || (pmt as any).tenant_signature,
       allocations: allocs
     });
   };
@@ -2136,7 +2206,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       {previewingReceipt && (() => {
         const resolved = resolveRealReceiptData(previewingReceipt, user);
         const effectiveOwnerSig = ownerSignatureUrl || previewingReceipt.owner_signature_url || resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id);
-        const effectiveTenantSig = tenantSignatureUrl || previewingReceipt.tenant_signature_url || resolved.tenantSignatureUrl || getStoredTenantSignature();
+        const effectiveTenantSig = tenantSignatureUrl || previewingReceipt.tenant_signature_url || (previewingReceipt as any).tenant_signature || resolved.tenantSignatureUrl || getStoredTenantSignature();
         const hasBothSignatures = Boolean(effectiveOwnerSig) && Boolean(effectiveTenantSig);
 
         let previewAllocs = (previewingReceipt as any).allocations || resolved.allocations;

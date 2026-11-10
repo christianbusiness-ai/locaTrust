@@ -80,10 +80,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (user?.id) {
+        if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
           rQuery = rQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        } else {
-          rQuery = rQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data: dbReceipts } = await rQuery;
@@ -125,10 +123,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
           .in('status', ['valide', 'confirme', 'en_attente_signature_locataire'])
           .order('payment_date', { ascending: false });
 
-        if (user?.id) {
+        if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
           pmQuery = pmQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        } else {
-          pmQuery = pmQuery.eq('id', '00000000-0000-0000-0000-000000000000');
         }
 
         const { data: validatedPayments } = await pmQuery;
