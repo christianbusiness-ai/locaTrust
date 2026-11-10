@@ -4,6 +4,7 @@ export type LiveEventType =
   | 'PAYMENT_DECLARED'
   | 'PAYMENT_CONFIRMED'
   | 'PAYMENT_REJECTED'
+  | 'PAYMENT_DELETED'
   | 'RECEIPT_TRANSMITTED'
   | 'RECEIPT_SIGNED_BY_TENANT'
   | 'CAUTION_DECLARED'
@@ -309,6 +310,54 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
 
       case 'PAYMENT_REJECTED':
         window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+        break;
+
+      case 'PAYMENT_DELETED':
+        if (typeof window !== 'undefined') {
+          const pmtId = payload?.paymentId;
+          const pmtRef = payload?.data?.reference || (payload as any)?.reference;
+
+          // 1. Ajouter aux exclusions définitives locatrust_deleted_payments
+          try {
+            const curDelRaw = localStorage.getItem('locatrust_deleted_payments');
+            const curDel = curDelRaw ? JSON.parse(curDelRaw) : [];
+            if (Array.isArray(curDel)) {
+              if (pmtId) curDel.push(pmtId);
+              if (pmtRef) curDel.push(pmtRef);
+              localStorage.setItem('locatrust_deleted_payments', JSON.stringify(Array.from(new Set(curDel))));
+            }
+          } catch {}
+
+          // 2. Retirer immédiatement de locatrust_rent_payments
+          try {
+            const curPmtsRaw = localStorage.getItem('locatrust_rent_payments');
+            let curPmts = curPmtsRaw ? JSON.parse(curPmtsRaw) : [];
+            if (Array.isArray(curPmts)) {
+              curPmts = curPmts.filter((p: any) => p.id !== pmtId && (!pmtRef || p.reference !== pmtRef));
+              localStorage.setItem('locatrust_rent_payments', JSON.stringify(curPmts));
+            }
+          } catch {}
+
+          // 3. Retirer les notifications associées dans locatrust_notifications
+          try {
+            const notifsRaw = localStorage.getItem('locatrust_notifications');
+            const curNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+            if (Array.isArray(curNotifs)) {
+              const cleanedNotifs = curNotifs.filter((n: any) => {
+                const desc = String(n.description || n.content || n.message || '');
+                const title = String(n.title || '');
+                const hasRef = pmtRef && (desc.includes(pmtRef) || title.includes(pmtRef));
+                const hasId = pmtId && (desc.includes(pmtId) || n.payload?.payment_id === pmtId || n.data?.payment_id === pmtId);
+                return !hasRef && !hasId;
+              });
+              localStorage.setItem('locatrust_notifications', JSON.stringify(cleanedNotifs));
+              window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: cleanedNotifs } }));
+            }
+          } catch {}
+
+          window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: payload }));
+          window.dispatchEvent(new CustomEvent('storage'));
+        }
         break;
 
       case 'CAUTION_DECLARED':

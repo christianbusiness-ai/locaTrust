@@ -118,6 +118,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         let pQuery = supabase
           .from('rent_payments')
           .select('*')
+          .neq('status', 'annule')
+          .neq('status', 'supprime')
           .order('payment_date', { ascending: false });
 
         if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
@@ -160,7 +162,63 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         console.warn('API /api/sync payments notice:', syncCatch);
       }
 
-      // 1.c Récupération résiliente des déclarations depuis Supabase notifications (pour affichage multi-appareils immédiat)
+      // 1.c Détection des déclarations annulées/supprimées par le locataire (cross-appareils)
+      const serverCancelledRefs = new Set<string>();
+      const serverCancelledIds = new Set<string>();
+
+      // Charger d'abord les suppressions locales
+      if (typeof window !== 'undefined') {
+        try {
+          const localDel = JSON.parse(localStorage.getItem('locatrust_deleted_payments') || '[]');
+          if (Array.isArray(localDel)) {
+            localDel.forEach((d: string) => {
+              if (d) {
+                serverCancelledRefs.add(d);
+                serverCancelledIds.add(d);
+              }
+            });
+          }
+        } catch {}
+      }
+
+      // Synchroniser avec les annulations enregistrées sur Supabase (cross-appareils)
+      try {
+        let cancelQuery = supabase
+          .from('notifications')
+          .select('*')
+          .or('type.eq.paiement_annule,title.ilike.%annulé%,content.ilike.%ANNULATION_PAIEMENT%')
+          .limit(50);
+
+        if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
+          cancelQuery = cancelQuery.eq('user_id', user.id);
+        }
+
+        const { data: cancelNotifs } = await cancelQuery;
+        if (cancelNotifs && Array.isArray(cancelNotifs)) {
+          cancelNotifs.forEach((cn: any) => {
+            const pld = cn.payload || cn.data || {};
+            if (pld.reference) serverCancelledRefs.add(String(pld.reference));
+            if (pld.payment_id) serverCancelledIds.add(String(pld.payment_id));
+            const match = cn.content?.match(/ANNULATION_PAIEMENT:([^:]+):([^:]*)/);
+            if (match) {
+              if (match[1]) serverCancelledRefs.add(match[1]);
+              if (match[2]) serverCancelledIds.add(match[2]);
+            }
+          });
+        }
+      } catch (cancelErr) {
+        console.warn('Cancelled payments query notice:', cancelErr);
+      }
+
+      // Mettre à jour locatrust_deleted_payments localement
+      if (typeof window !== 'undefined' && serverCancelledRefs.size > 0) {
+        try {
+          const mergedDel = Array.from(new Set([...Array.from(serverCancelledRefs), ...Array.from(serverCancelledIds)]));
+          localStorage.setItem('locatrust_deleted_payments', JSON.stringify(mergedDel));
+        } catch {}
+      }
+
+      // 1.d Récupération résiliente des déclarations depuis Supabase notifications (pour affichage multi-appareils immédiat)
       try {
         let notifQuery = supabase
           .from('notifications')
@@ -181,6 +239,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
             const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
             const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
+
+            // Si cette déclaration a été annulée/supprimée par le locataire, ne JAMAIS l'ajouter !
+            if (
+              (pmtRef && serverCancelledRefs.has(pmtRef)) ||
+              (pmtId && serverCancelledIds.has(pmtId))
+            ) {
+              continue;
+            }
 
             const exists = loaded.some(p => p.id === pmtId || (pmtRef && p.reference === pmtRef));
             if (!exists) {
@@ -217,57 +283,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
       } catch (notifCatch) {
         console.warn('Notifications payment extraction notice:', notifCatch);
-      }
-
-      // 1.d Règle de résilience pour le bailleur/agence :
-      // Assurer que la déclaration en attente pour Maison a loué (LT-2026-CI-39210687) est présente
-      // SAUF si le locataire l'a explicitement supprimée
-      const is3921Deleted = typeof window !== 'undefined' && (() => {
-        try {
-          const delRaw = localStorage.getItem('locatrust_deleted_payments');
-          if (!delRaw) return false;
-          const delList = JSON.parse(delRaw);
-          return Array.isArray(delList) && (delList.includes('pmt_dec_nov2026_christian_3921') || delList.includes('ESP-985745'));
-        } catch { return false; }
-      })();
-
-      const hasPaymentFor3921InLoaded = loaded.some((p: any) =>
-        (p.contract_number && (p.contract_number.includes('39210687') || p.contract_number.includes('3921'))) ||
-        (p.contract_id && String(p.contract_id).includes('3921')) ||
-        (p.property?.title && p.property.title.includes('Maison a loué')) ||
-        (p.amount === 20000 && (p.status === 'declare' || p.status === 'en_attente'))
-      );
-
-      if (!hasPaymentFor3921InLoaded && !is3921Deleted) {
-        const declared3921: RentPayment = {
-          id: 'pmt_dec_nov2026_christian_3921',
-          contract_id: 'LT-2026-CI-39210687',
-          contract_number: 'LT-2026-CI-39210687',
-          property_title: 'Maison a loué',
-          property: {
-            title: 'Maison a loué',
-            address: "100 villard, Yamoussoukro - Côte d'Ivoire",
-            city: 'Yamoussoukro'
-          },
-          tenant_id: 'usr_tenant',
-          tenant_name: 'Christian',
-          tenant: {
-            id: 'usr_tenant',
-            full_name: 'Christian',
-            email: 'christian@locatrust.ci',
-            phone: '0500552141',
-            role: 'locataire',
-            verification_status: 'verifie'
-          },
-          amount: 20000,
-          target_month: 'Novembre 2026',
-          payment_date: new Date().toISOString().split('T')[0],
-          payment_method: 'Espèces',
-          reference: 'ESP-985745',
-          status: 'declare',
-          created_at: new Date().toISOString()
-        };
-        loaded.unshift(declared3921);
       }
 
       // 2. Toujours fusionner avec les déclarations locales pour disponibilité immédiate
@@ -307,6 +322,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               const isOwnerOrAgency = !user?.role || user.role === 'proprietaire' || user.role === 'agence' || user.role === 'admin';
 
               const myLocalList = localList.filter((loc: any) => {
+                if (loc.status === 'annule' || loc.status === 'supprime') return false;
+                if (loc.id && serverCancelledIds.has(loc.id)) return false;
+                if (loc.reference && serverCancelledRefs.has(loc.reference)) return false;
                 // Match direct par owner_id / agency_id
                 if (user?.id && (loc.owner_id === user.id || loc.agency_id === user.id)) return true;
                 // Match par contrat du propriétaire
@@ -366,28 +384,51 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       if (typeof window !== 'undefined') {
         try {
           const delRaw = localStorage.getItem('locatrust_deleted_payments');
-          if (delRaw) {
-            const delList = JSON.parse(delRaw);
-            if (Array.isArray(delList) && delList.length > 0) {
-              const delSet = new Set(delList);
-              loaded = loaded.filter((p: any) => !delSet.has(p.id) && !delSet.has(p.reference));
-            }
-          }
+          const delList = delRaw ? JSON.parse(delRaw) : [];
+          const combinedDeleted = new Set([
+            ...(Array.isArray(delList) ? delList : []),
+            ...Array.from(serverCancelledRefs),
+            ...Array.from(serverCancelledIds)
+          ]);
+          loaded = loaded.filter(
+            (p: any) =>
+              p.status !== 'annule' &&
+              p.status !== 'supprime' &&
+              !combinedDeleted.has(p.id) &&
+              (!p.reference || !combinedDeleted.has(p.reference))
+          );
         } catch {}
       }
 
-      // Mettre à jour le cache local UNIQUEMENT si on a des données pour éviter d'effacer les paiements
-      if (typeof window !== 'undefined' && loaded.length > 0) {
+      // Mettre à jour le cache local du propriétaire/agence
+      if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('locatrust_rent_payments', JSON.stringify(loaded));
 
-          // Nettoyer les notifications de déclaration obsolètes pour les paiements confirmés
+          // Nettoyer les notifications des déclarations annulées ou obsolètes
           const notifsRaw = localStorage.getItem('locatrust_notifications');
           if (notifsRaw) {
             const notifs = JSON.parse(notifsRaw);
             if (Array.isArray(notifs)) {
               let changed = false;
-              const cleaned = notifs.map((n: any) => {
+              const cleaned = notifs.filter((n: any) => {
+                const desc = String(n.description || n.content || n.message || '');
+                const title = String(n.title || '');
+                const pId = n.payload?.payment_id || n.payload?.paymentId || n.data?.payment_id;
+                for (const ref of serverCancelledRefs) {
+                  if (ref && (desc.includes(ref) || title.includes(ref))) {
+                    changed = true;
+                    return false;
+                  }
+                }
+                for (const id of serverCancelledIds) {
+                  if (id && (desc.includes(id) || pId === id)) {
+                    changed = true;
+                    return false;
+                  }
+                }
+                return true;
+              }).map((n: any) => {
                 const isMatch = n.description?.includes('WAV-2026-NOV-781920') || n.content?.includes('WAV-2026-NOV-781920');
                 if (isMatch && (n.title?.includes('déclaré') || n.description?.includes('déclaré') || !n.description?.trim())) {
                   changed = true;

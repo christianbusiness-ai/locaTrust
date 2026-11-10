@@ -432,6 +432,23 @@ export const Header: React.FC<HeaderProps> = ({
               if (!matchesRole) return false;
             }
 
+            // Exclure les notifications techniques de synchronisation d'annulation
+            if (n.content && String(n.content).startsWith('ANNULATION_PAIEMENT:')) return false;
+            if (n.type === 'paiement_annule') return false;
+
+            // Exclure les notifications relatives à des paiements supprimés
+            try {
+              const delList = JSON.parse(localStorage.getItem('locatrust_deleted_payments') || '[]');
+              if (Array.isArray(delList) && delList.length > 0) {
+                const desc = String(n.description || n.content || n.message || '');
+                const title = String(n.title || '');
+                const pId = n.payload?.payment_id || n.payload?.paymentId || n.data?.payment_id;
+                for (const d of delList) {
+                  if (d && (desc.includes(d) || title.includes(d) || pId === d)) return false;
+                }
+              }
+            } catch {}
+
             return true;
           };
 

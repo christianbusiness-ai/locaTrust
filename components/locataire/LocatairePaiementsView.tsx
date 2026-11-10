@@ -300,49 +300,6 @@ export const LocatairePaiementsView: React.FC = () => {
         console.warn('Local rent payments fallback notice:', locErr);
       }
 
-      // 1.d Règle de résilience pour le contrat Maison a loué (LT-2026-CI-39210687) :
-      // Si aucune déclaration n'est encore présente pour ce contrat, insérer la déclaration déclarée en attente
-      // SAUF si le locataire l'a explicitement supprimée
-      const is3921Deleted = typeof window !== 'undefined' && (() => {
-        try {
-          const delRaw = localStorage.getItem('locatrust_deleted_payments');
-          if (!delRaw) return false;
-          const delList = JSON.parse(delRaw);
-          return Array.isArray(delList) && (delList.includes('pmt_dec_nov2026_christian_3921') || delList.includes('ESP-985745'));
-        } catch { return false; }
-      })();
-
-      const hasPaymentFor3921 = rentList.some((p: any) =>
-        (p.contract_number && (p.contract_number.includes('39210687') || p.contract_number.includes('3921'))) ||
-        (p.contract_id && String(p.contract_id).includes('3921')) ||
-        (p.property_title && p.property_title.includes('Maison a loué')) ||
-        (p.amount === 20000 && (p.status === 'declare' || p.status === 'en_attente'))
-      );
-
-      if (!hasPaymentFor3921 && !is3921Deleted) {
-        const declared3921 = {
-          id: 'pmt_dec_nov2026_christian_3921',
-          contract_id: 'LT-2026-CI-39210687',
-          contract_number: 'LT-2026-CI-39210687',
-          property_title: 'Maison a loué',
-          property: {
-            title: 'Maison a loué',
-            address: "100 villard, Yamoussoukro - Côte d'Ivoire",
-            city: 'Yamoussoukro'
-          },
-          tenant_id: user?.id || 'usr_tenant',
-          tenant_name: user?.user_metadata?.full_name || 'Christian',
-          amount: 20000,
-          target_month: 'Novembre 2026',
-          payment_date: new Date().toISOString().split('T')[0],
-          payment_method: 'Espèces',
-          reference: 'ESP-985745',
-          status: 'declare',
-          created_at: new Date().toISOString()
-        };
-        rentList.unshift(declared3921);
-      }
-
       // Exclure toute déclaration supprimée par le locataire
       if (typeof window !== 'undefined') {
         try {
@@ -1085,36 +1042,55 @@ export const LocatairePaiementsView: React.FC = () => {
       // 4. Mettre à jour l'état local du locataire immédiatement
       setPayments((prev) => prev.filter((p) => p.id !== pmt.id && p.reference !== pmt.reference));
 
-      // 5. Supprimer dans Supabase en arrière-plan (rent_payments et notifications)
+      // 5. Mettre à jour Supabase : marquer annule (permis par RLS) et tenter delete
       try {
         if (pmt.id && isValidUuid(pmt.id)) {
+          await supabase.from('rent_payments').update({ status: 'annule' }).eq('id', pmt.id);
           await supabase.from('rent_payments').delete().eq('id', pmt.id);
         }
         if (pmt.reference) {
+          await supabase.from('rent_payments').update({ status: 'annule' }).eq('reference', pmt.reference);
           await supabase.from('rent_payments').delete().eq('reference', pmt.reference);
         }
       } catch (sbErr) {
-        console.warn('Supabase delete rent_payment notice:', sbErr);
+        console.warn('Supabase cancel/delete rent_payment notice:', sbErr);
       }
 
-      try {
-        if (pmt.reference) {
-          await supabase.from('notifications').delete().ilike('content', `%${pmt.reference}%`);
+      // 6. Signaler l'annulation de manière persistante sur Supabase pour le bailleur et l'agence (cross-appareils)
+      const targetOwnerUuid = pmt.owner_id && isValidUuid(pmt.owner_id)
+        ? pmt.owner_id
+        : (pmt.contract?.owner_id && isValidUuid(pmt.contract.owner_id) ? pmt.contract.owner_id : null);
+
+      if (targetOwnerUuid) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: targetOwnerUuid,
+            title: '❌ Déclaration de loyer annulée',
+            content: `ANNULATION_PAIEMENT:${pmt.reference || ''}:${pmt.id || ''}`,
+            type: 'paiement_annule',
+            read: true,
+            payload: {
+              action: 'payment_deleted',
+              payment_id: pmt.id,
+              reference: pmt.reference
+            }
+          });
+        } catch (notifErr) {
+          console.warn('Supabase notification cancel notice:', notifErr);
         }
-        if (pmt.id && isValidUuid(pmt.id)) {
-          await supabase.from('notifications').delete().ilike('content', `%${pmt.id}%`);
-        }
-      } catch (notifErr) {
-        console.warn('Supabase delete notification notice:', notifErr);
       }
 
-      // 6. Diffuser en temps réel aux propriétaires et agences
+      // 7. Diffuser en temps réel WebSocket Supabase sur tous les appareils du bailleur et de l'agence
       try {
         await broadcastLiveEvent('PAYMENT_DELETED', {
           paymentId: pmt.id,
           reference: pmt.reference,
           tenantId: user?.id,
-          ownerId: pmt.owner_id
+          ownerId: targetOwnerUuid || pmt.owner_id,
+          data: {
+            paymentId: pmt.id,
+            reference: pmt.reference
+          }
         });
       } catch {}
 
