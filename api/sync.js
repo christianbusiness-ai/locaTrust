@@ -532,7 +532,13 @@ export default async function handler(req, res) {
 
       // Pour tout utilisateur authentifié (Propriétaire, Agence, Locataire), filtrer STRICTEMENT ses propres données
       if (cleanUserId) {
-        const isOwnerRole = role === 'proprietaire' || role === 'agence' || cleanUserId === '95efc3ce-726a-407a-9b9a-f2aad36cc79d' || cleanUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
+        const isOwnerRole =
+          role === 'proprietaire' ||
+          role === 'agence' ||
+          role === 'authenticated' ||
+          role === 'user' ||
+          cleanUserId === '95efc3ce-726a-407a-9b9a-f2aad36cc79d' ||
+          cleanUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
         const userPayments = SERVER_STORE.payments.filter(
           (p) => p && (p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId || (isOwnerRole && (!p.owner_id || p.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || p.owner_id === 'usr_owner' || p.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
         );
