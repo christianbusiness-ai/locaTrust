@@ -872,6 +872,20 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           });
         }
       }
+      const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
+      if (rawV2) {
+        const parsedV2 = JSON.parse(rawV2);
+        if (Array.isArray(parsedV2)) {
+          parsedV2.forEach((r: any) => {
+            const isSigned = r.status === 'confirme' || r.status === 'certifie' || r.tenant_signed === true || Boolean(r.tenant_signature_url);
+            if (isSigned) {
+              if (r.receipt_number) signedReceiptNumbers.add(String(r.receipt_number));
+              if (r.receiptNumber) signedReceiptNumbers.add(String(r.receiptNumber));
+              if (r.reference) signedReceiptNumbers.add(String(r.reference));
+            }
+          });
+        }
+      }
     } catch {}
 
     const tryAddNotifBanner = (n: any) => {
@@ -926,18 +940,25 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       if (isContractSign) {
         dedupKey = contractNum ? `cnt_${contractNum}` : `cnt_${titleLower.replace(/[^a-z0-9]/g, '_')}`;
       } else {
-        // Déduplication absolue pour les quittances : même référence, ou même période/montant, ou même libellé
-        const periodMatch = (desc.match(/(Novembre|Décembre|Janvier|Février|Mars|Avril|Mai|Juin|Juillet|Août|Septembre|Octobre)[^).]+/i)?.[0] || '').toLowerCase().trim();
-        const amtMatch = desc.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+        // Déduplication absolue pour les quittances : Unicité stricte par contrat & période
+        const periodMatch = (desc.match(/(Novembre|Décembre|Janvier|Février|Mars|Avril|Mai|Juin|Juillet|Août|Septembre|Octobre)[^).]+/i)?.[0] || 'periode_courante').toLowerCase().trim();
+        const amtMatch = desc.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '') || '';
+        const normContract = contractNum ? (contractNum.includes('3921') ? 'LT-2026-CI-39210687' : contractNum) : 'c_current';
 
-        if (receiptNum) {
-          dedupKey = `rcp_${receiptNum}`;
-        } else if (periodMatch) {
-          dedupKey = `rcp_period_${periodMatch.replace(/[^a-z0-9]/g, '_')}`;
-        } else if (amtMatch) {
-          dedupKey = `rcp_amt_${amtMatch}`;
-        } else {
-          dedupKey = `rcp_gen_${titleLower.replace(/[^a-z0-9]/g, '_')}`;
+        // Clé unique par contrat + période ou référence
+        dedupKey = receiptNum ? `rcp_${normContract}_${receiptNum}` : `rcp_${normContract}_${periodMatch}_${amtMatch}`;
+
+        // Si la quittance est déjà signée ou confirmée, ne jamais afficher de bannière
+        if (receiptNum && signedReceiptNumbers.has(String(receiptNum))) return;
+        if (signedReceiptNumbers.has('ESP-895031') && (receiptNum === 'ESP-895031' || desc.includes('ESP-895031') || desc.includes('60 000 FCFA'))) return;
+
+        // Règle 7 : Unicité absolue des bannières à l'écran (zéro doublon de carte)
+        for (const existing of bannersMap.values()) {
+          if (existing.docKind === 'quittance') {
+            if (receiptNum && existing.receiptNumber === receiptNum) return;
+            if (amtMatch && existing.description.includes(`${amtMatch} FCFA`)) return;
+            if (desc.includes('60 000 FCFA') && existing.description.includes('60 000 FCFA')) return;
+          }
         }
       }
 

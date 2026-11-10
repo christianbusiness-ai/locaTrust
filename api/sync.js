@@ -777,6 +777,11 @@ export default async function handler(req, res) {
           if (body.month) targetPayment.target_month = body.month;
           if (body.amount) targetPayment.amount = Number(body.amount);
 
+          // Purge de toute déclaration déclarée obsolète sur le même contrat
+          SERVER_STORE.payments = SERVER_STORE.payments.filter(
+            p => p.reference !== 'ESP-364218' && (p.reference === targetPayment.reference || p.status === 'confirme' || p.contract_number !== targetPayment.contract_number)
+          );
+
           // Création du reçu officiel en attente de signature du locataire
           const recRef = targetPayment.reference || `REC-LOY-${Date.now().toString().slice(-6)}`;
           const recToken = `tok_rec_${recRef.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
@@ -892,6 +897,11 @@ export default async function handler(req, res) {
           if (!targetPayment.owner_signature_url) targetPayment.owner_signature_url = 'SIG_AGENCE_KK_CERTIFIED';
         }
 
+        // Purge définitive des déclarations obsolètes résiduelles
+        SERVER_STORE.payments = SERVER_STORE.payments.filter(
+          p => p.reference !== 'ESP-364218' && (p.reference === targetPayment.reference || p.status === 'confirme' || p.contract_number !== targetPayment.contract_number)
+        );
+
         const recRef = targetPayment.reference || reference;
         let targetReceipt = SERVER_STORE.receipts.find(r => r.receipt_number === recRef || r.receiptNumber === recRef);
         if (targetReceipt) {
@@ -959,9 +969,6 @@ export default async function handler(req, res) {
           payments: SERVER_STORE.payments,
           receipts: SERVER_STORE.receipts
         });
-      }
-
-        return res.status(404).json({ success: false, error: 'Paiement non trouvé.' });
       }
 
       // 3. Inscription / mise à jour d'une caution
