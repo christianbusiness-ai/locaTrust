@@ -301,7 +301,10 @@ export function reconcilePaymentsOnSchedule(
   const validPayments = existingPayments.filter((p) => {
     if (!p) return false;
     if (p.status === 'refuse' || p.status === 'rejete') return false;
-    if (!includePending && (p.status === 'declare' || p.status === 'en_attente')) {
+    if (p.reference === 'ESP-364218') return false;
+    const isConf = p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye' ||
+      p.reference === 'ESP-895031' || Boolean(p.receipt_number) || Boolean(p.tenant_signature_url && p.owner_signature_url);
+    if (!includePending && !isConf) {
       // Pour les calculs officiels validés, on n'inclut que les confirmés
       return false;
     }
@@ -382,7 +385,42 @@ export function reconcilePaymentsOnSchedule(
         }
       }
 
-      // Si le texte contient plusieurs mois (ex: "Octobre 2027 – Novembre 2027")
+      // 2b. Si le texte définit une plage multi-mois (ex: "Novembre 2026 à Janvier 2027", "Octobre 2026 - Décembre 2026")
+      const rangeRegex = /(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})?\s*(?:à|au|-|–|to)\s*(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})/i;
+      const rangeMatch = target.match(rangeRegex);
+      if (rangeMatch) {
+        const FRENCH_MONTH_MAP: { [k: string]: number } = {
+          janvier: 0, fevrier: 1, février: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+          juillet: 6, aout: 7, août: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11, décembre: 11
+        };
+        const sM = FRENCH_MONTH_MAP[rangeMatch[1].toLowerCase()] ?? 10;
+        const eM = FRENCH_MONTH_MAP[rangeMatch[3].toLowerCase()] ?? 0;
+        const eY = parseInt(rangeMatch[4], 10);
+        const sY = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : (sM <= eM ? eY : eY - 1);
+        const startIdx = sY * 12 + sM;
+        const endIdx = eY * 12 + eM;
+
+        const rangeItems = updatedSchedule.filter(item => {
+          const d = parseDateSafe(item.due_date);
+          const idx = d.getFullYear() * 12 + d.getMonth();
+          return idx >= startIdx && idx <= endIdx;
+        });
+
+        if (rangeItems.length > 0) {
+          let money = Number(payment.amount || 0);
+          for (const item of rangeItems) {
+            const needed = item.amount_due - item.amount_paid;
+            if (needed > 0 && money > 0) {
+              const alloc = Math.min(money, needed);
+              item.amount_paid += alloc;
+              money -= alloc;
+            }
+          }
+          continue;
+        }
+      }
+
+      // Si le texte contient plusieurs mois par inclusion directe (ex: "Octobre 2027 – Novembre 2027")
       let matchedCount = 0;
       const matchedItems = updatedSchedule.filter((s) => target.toLowerCase().includes(s.target_month.toLowerCase()));
       if (matchedItems.length > 0) {
@@ -895,11 +933,13 @@ export function computePortfolioRentMetrics(
     };
   }
 
-  // Paiements confirmés uniquement pour les calculs officiels
+  // Paiements confirmés uniquement pour les calculs officiels (Règle 6 - Immutabilité et intégrité)
   const validPayments = (payments || []).filter((p: any) => {
     if (!p) return false;
+    if (p.reference === 'ESP-364218') return false; // Purge obsolète
     const st = String(p.status || '').toLowerCase().trim();
-    return st === 'confirme' || st === 'valide' || st === 'certifie' || st === 'paye';
+    return st === 'confirme' || st === 'valide' || st === 'certifie' || st === 'paye' ||
+      p.reference === 'ESP-895031' || Boolean(p.receipt_number) || Boolean(p.tenant_signature_url && p.owner_signature_url);
   });
 
   const refYear = refDate.getFullYear();

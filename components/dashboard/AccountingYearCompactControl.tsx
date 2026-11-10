@@ -123,8 +123,8 @@ export const AccountingYearCompactControl: React.FC<AccountingYearCompactControl
     onYearChanged?.(currentAccountingYear, false);
   };
 
-  // Filter archived years to exclude currently selected active year if needed
-  const availableArchives = archivedYears.filter((y) => y !== currentAccountingYear);
+  // Filter archived years to exclude currently selected active year if needed and strictly exclude years < 2026
+  const availableArchives = archivedYears.filter((y) => y !== currentAccountingYear && Number(y) >= 2026);
 
   return (
     <div className={`p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col gap-4 ${className}`}>

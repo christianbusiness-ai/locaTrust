@@ -231,7 +231,7 @@ const REF_YEAR_KEY = 'locatrust_accounting_reference_year';
 const ARCHIVED_YEARS_KEY = 'locatrust_accounting_archived_years';
 
 const DEFAULT_CURRENT_YEAR = '2026';
-const DEFAULT_ARCHIVED_YEARS = ['2025', '2024', '2023'];
+const DEFAULT_ARCHIVED_YEARS = ['2027'];
 
 // In-memory temporary viewing year (resets automatically on reload / new session) (Point 4 & 5 du prompt)
 let inMemoryViewingYear: string | null = null;
@@ -242,7 +242,8 @@ export function getArchivedYears(): string[] {
     const raw = localStorage.getItem(ARCHIVED_YEARS_KEY);
     if (!raw) return DEFAULT_ARCHIVED_YEARS;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_ARCHIVED_YEARS;
+    const valid = Array.isArray(parsed) ? parsed.filter((y: string) => Number(y) >= 2026) : [];
+    return valid.length > 0 ? valid : DEFAULT_ARCHIVED_YEARS;
   } catch {
     return DEFAULT_ARCHIVED_YEARS;
   }
@@ -251,7 +252,8 @@ export function getArchivedYears(): string[] {
 export function saveArchivedYears(years: string[]): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(ARCHIVED_YEARS_KEY, JSON.stringify(years));
+    const filtered = (years || []).filter((y) => Number(y) >= 2026);
+    localStorage.setItem(ARCHIVED_YEARS_KEY, JSON.stringify(filtered));
   } catch (e) {
     console.error('Failed to save archived years:', e);
   }
@@ -262,10 +264,11 @@ export function getCurrentAccountingYear(userId?: string): string {
   try {
     if (userId) {
       const userStored = localStorage.getItem(`locatrust_${userId}_accounting_year`);
-      if (userStored) return userStored;
+      if (userStored && Number(userStored) >= 2026) return userStored;
     }
     const stored = localStorage.getItem(CURRENT_ACCOUNTING_YEAR_KEY) || localStorage.getItem(REF_YEAR_KEY);
-    return stored || DEFAULT_CURRENT_YEAR;
+    if (stored && Number(stored) >= 2026) return stored;
+    return DEFAULT_CURRENT_YEAR;
   } catch {
     return DEFAULT_CURRENT_YEAR;
   }
@@ -273,7 +276,7 @@ export function getCurrentAccountingYear(userId?: string): string {
 
 export function saveCurrentAccountingYear(year: string, userId?: string): { success: boolean; currentYear: string; archivedYears: string[] } {
   const cleanYear = year.trim();
-  if (!cleanYear || isNaN(Number(cleanYear))) {
+  if (!cleanYear || isNaN(Number(cleanYear)) || Number(cleanYear) < 2026) {
     return { success: false, currentYear: getCurrentAccountingYear(userId), archivedYears: getArchivedYears() };
   }
 
@@ -285,11 +288,11 @@ export function saveCurrentAccountingYear(year: string, userId?: string): { succ
     const previous = getCurrentAccountingYear(userId);
     let archived = getArchivedYears();
 
-    if (previous !== cleanYear && !archived.includes(previous)) {
-      archived = [previous, ...archived.filter((y) => y !== cleanYear)];
+    if (previous !== cleanYear && Number(previous) >= 2026 && !archived.includes(previous)) {
+      archived = [previous, ...archived.filter((y) => y !== cleanYear && Number(y) >= 2026)];
       saveArchivedYears(archived);
     } else {
-      archived = archived.filter((y) => y !== cleanYear);
+      archived = archived.filter((y) => y !== cleanYear && Number(y) >= 2026);
       saveArchivedYears(archived);
     }
 
@@ -331,7 +334,7 @@ export function getSelectedViewingYear(): string | null {
 
 export function setSelectedViewingYear(year: string | null): string {
   const current = getCurrentAccountingYear();
-  if (!year || year === current) {
+  if (!year || year === current || Number(year) < 2026) {
     inMemoryViewingYear = null;
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('locatrust:year_changed', {
@@ -352,7 +355,7 @@ export function setSelectedViewingYear(year: string | null): string {
 
 export function getActiveReferenceYear(): string {
   // If user is currently consulting an archived year in this session, return it
-  if (inMemoryViewingYear) {
+  if (inMemoryViewingYear && Number(inMemoryViewingYear) >= 2026) {
     return inMemoryViewingYear;
   }
   return getCurrentAccountingYear();
@@ -367,8 +370,10 @@ export function setActiveReferenceYear(year: string): { success: boolean; active
 export function getAvailableYears(): string[] {
   const current = getCurrentAccountingYear();
   const archived = getArchivedYears();
-  const set = new Set([current, ...archived, '2027', '2026', '2025', '2024', '2023']);
-  return Array.from(set).sort((a, b) => Number(b) - Number(a));
+  const set = new Set([current, ...archived, '2027', '2026']);
+  return Array.from(set)
+    .filter((y) => Number(y) >= 2026)
+    .sort((a, b) => Number(b) - Number(a));
 }
 
 // Générateur dynamique de données comptables mensuelles pour toute année passée ou future (Point 14 & 16)

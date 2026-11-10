@@ -96,11 +96,7 @@ export const ReportsStatsView: React.FC = () => {
   const handleYearChange = (newYear: string) => {
     setSelectedYearState(newYear);
     setActiveReferenceYear(newYear);
-    if (newYear === '2025') {
-      setSelectedHistoricalMonth('2025-11');
-    } else {
-      setSelectedHistoricalMonth('2026-08');
-    }
+    setSelectedHistoricalMonth(`${newYear}-11`);
   };
 
   const yearRecords = useMemo(() => {
@@ -340,7 +336,7 @@ export const ReportsStatsView: React.FC = () => {
               onChange={(e) => handleYearChange(e.target.value)}
               className="bg-transparent text-xs font-black text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer"
             >
-              {getAvailableYears().map((y) => (
+              {getAvailableYears().filter((y) => Number(y) >= 2026).map((y) => (
                 <option key={y} value={y}>
                   Année {y}
                 </option>
