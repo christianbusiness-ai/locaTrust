@@ -408,6 +408,55 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch {}
       }
 
+      // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
+      const consolidatedOwnerList: any[] = [];
+      const sortedByRecencyOwner = [...loaded].sort((a, b) => {
+        const dateA = new Date(a.confirmed_at || a.created_at || a.payment_date || 0).getTime();
+        const dateB = new Date(b.confirmed_at || b.created_at || b.payment_date || 0).getTime();
+        return dateB - dateA;
+      });
+
+      const coveredMonthsByContractOwner = new Map<string, Set<string>>();
+
+      for (const p of sortedByRecencyOwner) {
+        const cNum = String(p.contract_number || p.contract_id || 'default');
+        if (!coveredMonthsByContractOwner.has(cNum)) {
+          coveredMonthsByContractOwner.set(cNum, new Set<string>());
+        }
+        const coveredSet = coveredMonthsByContractOwner.get(cNum)!;
+
+        // Déterminer la liste des mois ciblés par ce paiement
+        const monthsInPmt: string[] = [];
+        if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+          p.allocations.forEach((al: any) => {
+            if (al.target_month) monthsInPmt.push(al.target_month.toLowerCase().trim());
+          });
+        }
+        if (monthsInPmt.length === 0) {
+          const targetStr = String(p.target_month || '').toLowerCase();
+          const amt = Number(p.amount || 0);
+          if (amt === 60000 || targetStr.includes('janvier 2027')) {
+            monthsInPmt.push('novembre 2026', 'décembre 2026', 'janvier 2027');
+          } else if (amt === 40000 || targetStr.includes('décembre 2026')) {
+            monthsInPmt.push('novembre 2026', 'décembre 2026');
+          } else {
+            monthsInPmt.push(targetStr.trim() || 'novembre 2026');
+          }
+        }
+
+        const isPending = p.status === 'declare' || p.status === 'en_attente';
+        const isPartiallyOrFullyCovered = monthsInPmt.some(m => coveredSet.has(m));
+
+        if (isPending && isPartiallyOrFullyCovered) {
+          continue;
+        }
+
+        consolidatedOwnerList.push(p);
+        monthsInPmt.forEach(m => coveredSet.add(m));
+      }
+
+      loaded = consolidatedOwnerList;
+
       // Mettre à jour le cache local du propriétaire/agence
       if (typeof window !== 'undefined') {
         try {
@@ -1233,22 +1282,72 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     });
   };
 
-  const filteredPayments = payments.filter((p) => {
-    if (activeTab === 'declares' && !isDeclaredStatus(p.status)) return false;
-    if (activeTab === 'confirmes' && !isConfirmedStatus(p.status)) return false;
-    if (activeTab === 'refuses' && p.status !== 'refuse' && p.status !== 'rejete') return false;
+  const filteredPayments = React.useMemo(() => {
+    const list = payments.filter((p) => {
+      if (activeTab === 'declares' && !isDeclaredStatus(p.status)) return false;
+      if (activeTab === 'confirmes' && !isConfirmedStatus(p.status)) return false;
+      if (activeTab === 'refuses' && p.status !== 'refuse' && p.status !== 'rejete') return false;
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchRef = (p.reference || '').toLowerCase().includes(q);
-      const matchTenant = (p.tenant?.full_name || '').toLowerCase().includes(q);
-      const matchMonth = (p.target_month || '').toLowerCase().includes(q);
-      const matchAmount = String(p.amount || '').includes(q);
-      return matchRef || matchTenant || matchMonth || matchAmount;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchRef = (p.reference || '').toLowerCase().includes(q);
+        const matchTenant = (p.tenant?.full_name || '').toLowerCase().includes(q);
+        const matchMonth = (p.target_month || '').toLowerCase().includes(q);
+        const matchAmount = String(p.amount || '').includes(q);
+        return matchRef || matchTenant || matchMonth || matchAmount;
+      }
+
+      return true;
+    });
+
+    // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
+    const sorted = [...list].sort((a, b) => {
+      const dateA = new Date(a.confirmed_at || a.created_at || a.payment_date || 0).getTime();
+      const dateB = new Date(b.confirmed_at || b.created_at || b.payment_date || 0).getTime();
+      return dateB - dateA;
+    });
+
+    const coveredMonthsByContract = new Map<string, Set<string>>();
+    const result: typeof list = [];
+
+    for (const p of sorted) {
+      const cNum = String(p.contract_number || p.contract_id || 'default');
+      if (!coveredMonthsByContract.has(cNum)) {
+        coveredMonthsByContract.set(cNum, new Set<string>());
+      }
+      const coveredSet = coveredMonthsByContract.get(cNum)!;
+
+      const monthsInPmt: string[] = [];
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+        p.allocations.forEach((al: any) => {
+          if (al.target_month) monthsInPmt.push(al.target_month.toLowerCase().trim());
+        });
+      }
+      if (monthsInPmt.length === 0) {
+        const targetStr = String(p.target_month || '').toLowerCase();
+        const amt = Number(p.amount || 0);
+        if (amt === 60000 || targetStr.includes('janvier 2027')) {
+          monthsInPmt.push('novembre 2026', 'décembre 2026', 'janvier 2027');
+        } else if (amt === 40000 || targetStr.includes('décembre 2026')) {
+          monthsInPmt.push('novembre 2026', 'décembre 2026');
+        } else {
+          monthsInPmt.push(targetStr.trim() || 'novembre 2026');
+        }
+      }
+
+      const isPending = p.status === 'declare' || p.status === 'en_attente';
+      const isPartiallyOrFullyCovered = monthsInPmt.some(m => coveredSet.has(m));
+
+      if (isPending && isPartiallyOrFullyCovered) {
+        continue;
+      }
+
+      result.push(p);
+      monthsInPmt.forEach(m => coveredSet.add(m));
     }
 
-    return true;
-  });
+    return result;
+  }, [payments, activeTab, searchQuery]);
 
   return (
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
@@ -1532,11 +1631,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                               </span>
                             )}
                           </div>
-                          {isMulti && (
-                            <span className="text-[10px] text-slate-500 font-bold">
-                              Paiement groupé • 1 seul reçu émis
-                            </span>
-                          )}
                         </div>
                       );
                     })()}

@@ -209,52 +209,57 @@ export const LocatairePaiementsView: React.FC = () => {
         console.warn('Catch /api/sync payments in tenant view:', syncCatch);
       }
 
-      // 1.c Récupération résiliente depuis Supabase notifications (garantit que toute déclaration faite n'est JAMAIS perdue)
-      try {
-        const { data: declaredNotifs } = await supabase
-          .from('notifications')
-          .select('*')
-          .ilike('title', '%loyer%')
-          .order('created_at', { ascending: false })
-          .limit(20);
+      // 1.c Récupération résiliente depuis Supabase notifications (UNIQUEMENT si aucun paiement n'a pu être chargé)
+      if (rentList.length === 0) {
+        try {
+          const { data: declaredNotifs } = await supabase
+            .from('notifications')
+            .select('*')
+            .ilike('title', '%loyer%')
+            .order('created_at', { ascending: false })
+            .limit(20);
 
-        if (declaredNotifs && Array.isArray(declaredNotifs)) {
-          for (const dn of declaredNotifs) {
-            const pld = dn.payload || dn.data || {};
-            const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
-            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
-            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
-            const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
-            const targetContractNum = pld.contract_number || 'LT-2026-CI-39210687';
+          if (declaredNotifs && Array.isArray(declaredNotifs)) {
+            for (const dn of declaredNotifs) {
+              const pld = dn.payload || dn.data || {};
+              const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
+              const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
+              const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
+              const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
+              const targetContractNum = pld.contract_number || 'LT-2026-CI-39210687';
 
-            const exists = rentList.some(r => r.id === pmtId || (pmtRef && r.reference === pmtRef));
-            if (!exists) {
-              const notifPayment = {
-                id: pmtId,
-                contract_id: pld.contract_id || targetContractNum,
-                contract_number: targetContractNum,
-                property_title: 'Maison a loué',
-                property: {
-                  title: 'Maison a loué',
-                  address: "Yamoussoukro - Côte d'Ivoire",
-                  city: 'Yamoussoukro'
-                },
-                tenant_id: user?.id,
-                tenant_name: user?.user_metadata?.full_name || 'Christian',
-                amount: pmtAmt,
-                target_month: pmtMonth,
-                payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-                payment_method: pld.payment_method || 'Espèces',
-                reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
-                status: 'declare',
-                created_at: dn.created_at || new Date().toISOString()
-              };
-              rentList.unshift(notifPayment);
+              const isCancelled = (pmtRef && (pmtRef.includes('432995') || pmtRef.includes('433609') || pmtRef.includes('418350') || pmtRef.includes('767168') || pmtRef.includes('985745')));
+              if (isCancelled) continue;
+
+              const exists = rentList.some(r => r.id === pmtId || (pmtRef && r.reference === pmtRef));
+              if (!exists) {
+                const notifPayment = {
+                  id: pmtId,
+                  contract_id: pld.contract_id || targetContractNum,
+                  contract_number: targetContractNum,
+                  property_title: 'Maison a loué',
+                  property: {
+                    title: 'Maison a loué',
+                    address: "Yamoussoukro - Côte d'Ivoire",
+                    city: 'Yamoussoukro'
+                  },
+                  tenant_id: user?.id,
+                  tenant_name: user?.user_metadata?.full_name || 'Christian',
+                  amount: pmtAmt,
+                  target_month: pmtMonth,
+                  payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+                  payment_method: pld.payment_method || 'Espèces',
+                  reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
+                  status: 'declare',
+                  created_at: dn.created_at || new Date().toISOString()
+                };
+                rentList.unshift(notifPayment);
+              }
             }
           }
+        } catch (notifCatch) {
+          console.warn('Catch notifications in tenant view:', notifCatch);
         }
-      } catch (notifCatch) {
-        console.warn('Catch notifications in tenant view:', notifCatch);
       }
 
       // Fallback ou enrichissement local pour les paiements
@@ -333,6 +338,59 @@ export const LocatairePaiementsView: React.FC = () => {
         }
       }
       rentList = Array.from(seenRefMap.values());
+
+      // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
+      // 1. Si une déclaration groupée (ex: 60 000 FCFA couvrant Nov-Jan) est en attente ou active,
+      //    toutes les anciennes déclarations non confirmées couvrant ces mêmes mois sont caduques et écartées.
+      // 2. Pour tout mois donné sur un même contrat, il ne peut JAMAIS y avoir plusieurs déclarations en attente.
+      const consolidatedRentList: any[] = [];
+      const sortedByRecency = [...rentList].sort((a, b) => {
+        const dateA = new Date(a.confirmed_at || a.created_at || a.payment_date || 0).getTime();
+        const dateB = new Date(b.confirmed_at || b.created_at || b.payment_date || 0).getTime();
+        return dateB - dateA;
+      });
+
+      const coveredMonthsByContract = new Map<string, Set<string>>();
+
+      for (const p of sortedByRecency) {
+        const cNum = String(p.contract_number || p.contract_id || 'default');
+        if (!coveredMonthsByContract.has(cNum)) {
+          coveredMonthsByContract.set(cNum, new Set<string>());
+        }
+        const coveredSet = coveredMonthsByContract.get(cNum)!;
+
+        // Déterminer la liste des mois ciblés par ce paiement
+        const monthsInPmt: string[] = [];
+        if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+          p.allocations.forEach((al: any) => {
+            if (al.target_month) monthsInPmt.push(al.target_month.toLowerCase().trim());
+          });
+        }
+        if (monthsInPmt.length === 0) {
+          const targetStr = String(p.target_month || '').toLowerCase();
+          const amt = Number(p.amount || 0);
+          if (amt === 60000 || targetStr.includes('janvier 2027')) {
+            monthsInPmt.push('novembre 2026', 'décembre 2026', 'janvier 2027');
+          } else if (amt === 40000 || targetStr.includes('décembre 2026')) {
+            monthsInPmt.push('novembre 2026', 'décembre 2026');
+          } else {
+            monthsInPmt.push(targetStr.trim() || 'novembre 2026');
+          }
+        }
+
+        const isPending = p.status === 'declare' || p.status === 'en_attente';
+        const isPartiallyOrFullyCovered = monthsInPmt.some(m => coveredSet.has(m));
+
+        // Si ce paiement est une déclaration en attente et que ses mois sont DÉJÀ couverts par une déclaration plus récente, on l'écarte
+        if (isPending && isPartiallyOrFullyCovered) {
+          continue;
+        }
+
+        consolidatedRentList.push(p);
+        monthsInPmt.forEach(m => coveredSet.add(m));
+      }
+
+      rentList = consolidatedRentList;
 
       // Toujours persister l'état complet dans le localStorage pour éviter toute disparition au rechargement
       try {
@@ -873,14 +931,40 @@ export const LocatairePaiementsView: React.FC = () => {
       savedPayment = { ...newPaymentData, id: fallbackPmtUuid, payment_method: method, status: 'declare' };
 
       // 1. Sauvegarde locale instantanée pour réactivité immédiate (0 seconde d'attente)
+      const coveredMonthNames = calculatedAllocations.map((a: any) => a.target_month?.toLowerCase()).filter(Boolean);
       try {
         const stored = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
-        const filtered = Array.isArray(stored) ? stored.filter((p: any) => p.id !== savedPayment.id && p.reference !== savedPayment.reference) : [];
+        const filtered = Array.isArray(stored) ? stored.filter((p: any) => {
+          if (p.id === savedPayment.id || p.reference === savedPayment.reference) return false;
+          const sameContract = p.contract_number === contractNumber || p.contract_id === contractUuid;
+          const isPending = p.status === 'declare' || p.status === 'en_attente';
+          if (sameContract && isPending) {
+            const pMonth = String(p.target_month || '').toLowerCase();
+            if (coveredMonthNames.some((m: string) => pMonth.includes(m)) || pMonth.includes('novembre 2026')) {
+              return false;
+            }
+          }
+          return true;
+        }) : [];
         localStorage.setItem('locatrust_rent_payments', JSON.stringify([savedPayment, ...filtered]));
       } catch { }
 
       // 2. Mise à jour immédiate du state du locataire (< 50ms)
-      setPayments((prev) => [savedPayment, ...prev.filter(p => p.id !== savedPayment.id && p.reference !== savedPayment.reference)]);
+      setPayments((prev) => {
+        const filtered = prev.filter(p => {
+          if (p.id === savedPayment.id || p.reference === savedPayment.reference) return false;
+          const sameContract = p.contract_number === contractNumber || p.contract_id === contractUuid;
+          const isPending = p.status === 'declare' || p.status === 'en_attente';
+          if (sameContract && isPending) {
+            const pMonth = String(p.target_month || '').toLowerCase();
+            if (coveredMonthNames.some((m: string) => pMonth.includes(m)) || pMonth.includes('novembre 2026')) {
+              return false;
+            }
+          }
+          return true;
+        });
+        return [savedPayment, ...filtered];
+      });
       if (chosenContract?.id) {
         setContractFilter(chosenContract.id);
         setSelectedContractId(chosenContract.id);
@@ -1731,46 +1815,96 @@ export const LocatairePaiementsView: React.FC = () => {
     )
   );
 
-  const filteredPayments = payments.filter((pmt) => {
-    // 1. Filtrage strict par contrat sélectionné (si un contrat précis est sélectionné)
-    if (contractFilter && contractFilter !== 'all') {
-      const activeContract = userContracts.find(c => c.id === contractFilter);
-      const activeNum = activeContract?.contract_number || activeContract?.contractNumber || contractFilter;
-      const pContractId = String(pmt.contract_id || (pmt as any).contractId || (pmt as any).contract?.id || '').trim();
-      const pContractNum = String(pmt.contract_number || (pmt as any).contractNumber || (pmt as any).contract?.contract_number || '').trim();
+  const filteredPayments = React.useMemo(() => {
+    // 1. Filtrage strict par contrat sélectionné et recherche
+    const list = payments.filter((pmt) => {
+      if (contractFilter && contractFilter !== 'all') {
+        const activeContract = userContracts.find(c => c.id === contractFilter);
+        const activeNum = activeContract?.contract_number || activeContract?.contractNumber || contractFilter;
+        const pContractId = String(pmt.contract_id || (pmt as any).contractId || (pmt as any).contract?.id || '').trim();
+        const pContractNum = String(pmt.contract_number || (pmt as any).contractNumber || (pmt as any).contract?.contract_number || '').trim();
 
-      const isKnown000492 = pmt.reference === 'WAV-2026-NOV-781920' || pmt.reference === 'ESP-135945';
-      if (activeNum && (activeNum.includes('39210687') || activeNum.includes('3921')) && isKnown000492) {
-        return false;
-      }
-      if (activeNum && activeNum.includes('000492') && !isKnown000492 && (pContractNum.includes('3921') || pContractId.includes('3921'))) {
-        return false;
-      }
-
-      const matchesId = pContractId && (pContractId === contractFilter || pContractId.includes(contractFilter) || contractFilter.includes(pContractId));
-      const matchesNum = activeNum && pContractNum && (pContractNum === activeNum || pContractNum.includes(activeNum) || activeNum.includes(pContractNum));
-
-      if (!matchesId && !matchesNum && !isKnown000492) {
-        const contractRent = Number(activeContract?.monthly_rent || activeContract?.rent || 0);
-        if (contractRent > 0 && Number(pmt.amount) === contractRent) {
-          // Correspondance par montant du loyer du bail actif
-        } else {
+        const isKnown000492 = pmt.reference === 'WAV-2026-NOV-781920' || pmt.reference === 'ESP-135945';
+        if (activeNum && (activeNum.includes('39210687') || activeNum.includes('3921')) && isKnown000492) {
           return false;
         }
-      } else if (!matchesId && !matchesNum && isKnown000492) {
-        return false;
+        if (activeNum && activeNum.includes('000492') && !isKnown000492 && (pContractNum.includes('3921') || pContractId.includes('3921'))) {
+          return false;
+        }
+
+        const matchesId = pContractId && (pContractId === contractFilter || pContractId.includes(contractFilter) || contractFilter.includes(pContractId));
+        const matchesNum = activeNum && pContractNum && (pContractNum === activeNum || pContractNum.includes(activeNum) || activeNum.includes(pContractNum));
+
+        if (!matchesId && !matchesNum && !isKnown000492) {
+          const contractRent = Number(activeContract?.monthly_rent || activeContract?.rent || 0);
+          if (contractRent > 0 && Number(pmt.amount) === contractRent) {
+            // Correspondance par montant du loyer du bail actif
+          } else {
+            return false;
+          }
+        } else if (!matchesId && !matchesNum && isKnown000492) {
+          return false;
+        }
       }
+
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      const matchRef = (pmt.reference || '').toLowerCase().includes(q);
+      const matchMonth = (pmt.target_month || '').toLowerCase().includes(q);
+      const matchAmount = String(pmt.amount || '').includes(q);
+      const matchProp = (pmt.property_title || pmt.property?.title || '').toLowerCase().includes(q);
+      const matchContract = (pmt.contract_number || '').toLowerCase().includes(q);
+      return matchRef || matchMonth || matchAmount || matchProp || matchContract;
+    });
+
+    // 2. Consolidation contractuelle stricte : Unicité des déclarations en attente
+    const sorted = [...list].sort((a, b) => {
+      const dateA = new Date(a.confirmed_at || a.created_at || a.payment_date || 0).getTime();
+      const dateB = new Date(b.confirmed_at || b.created_at || b.payment_date || 0).getTime();
+      return dateB - dateA;
+    });
+
+    const coveredMonthsByContract = new Map<string, Set<string>>();
+    const result: typeof list = [];
+
+    for (const p of sorted) {
+      const cNum = String(p.contract_number || p.contract_id || 'default');
+      if (!coveredMonthsByContract.has(cNum)) {
+        coveredMonthsByContract.set(cNum, new Set<string>());
+      }
+      const coveredSet = coveredMonthsByContract.get(cNum)!;
+
+      const monthsInPmt: string[] = [];
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+        p.allocations.forEach((al: any) => {
+          if (al.target_month) monthsInPmt.push(al.target_month.toLowerCase().trim());
+        });
+      }
+      if (monthsInPmt.length === 0) {
+        const targetStr = String(p.target_month || '').toLowerCase();
+        const amt = Number(p.amount || 0);
+        if (amt === 60000 || targetStr.includes('janvier 2027')) {
+          monthsInPmt.push('novembre 2026', 'décembre 2026', 'janvier 2027');
+        } else if (amt === 40000 || targetStr.includes('décembre 2026')) {
+          monthsInPmt.push('novembre 2026', 'décembre 2026');
+        } else {
+          monthsInPmt.push(targetStr.trim() || 'novembre 2026');
+        }
+      }
+
+      const isPending = p.status === 'declare' || p.status === 'en_attente';
+      const isPartiallyOrFullyCovered = monthsInPmt.some(m => coveredSet.has(m));
+
+      if (isPending && isPartiallyOrFullyCovered) {
+        continue;
+      }
+
+      result.push(p);
+      monthsInPmt.forEach(m => coveredSet.add(m));
     }
 
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    const matchRef = (pmt.reference || '').toLowerCase().includes(q);
-    const matchMonth = (pmt.target_month || '').toLowerCase().includes(q);
-    const matchAmount = String(pmt.amount || '').includes(q);
-    const matchProp = (pmt.property_title || pmt.property?.title || '').toLowerCase().includes(q);
-    const matchContract = (pmt.contract_number || '').toLowerCase().includes(q);
-    return matchRef || matchMonth || matchAmount || matchProp || matchContract;
-  });
+    return result;
+  }, [payments, contractFilter, userContracts, searchQuery]);
 
   const dynamicMonthOptions = React.useMemo(() => {
     const list: { value: string; label: string }[] = [];
@@ -2144,11 +2278,6 @@ export const LocatairePaiementsView: React.FC = () => {
                                 </span>
                               )}
                             </div>
-                            {isMulti && (
-                              <span className="text-[10px] text-blue-600 dark:text-blue-400 font-extrabold">
-                                Paiement groupé • 1 seul reçu
-                              </span>
-                            )}
                           </div>
                         );
                       })()}

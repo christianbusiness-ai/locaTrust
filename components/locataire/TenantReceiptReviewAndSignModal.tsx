@@ -268,7 +268,7 @@ export const TenantReceiptReviewAndSignModal: React.FC<TenantReceiptReviewAndSig
               <div className="flex items-center justify-between border-b border-blue-100 pb-1.5">
                 <span className="text-xs font-black text-blue-950">Détail des mois couverts par ce paiement</span>
                 <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-extrabold text-[10px]">
-                  1 seul reçu émis ({modalAllocs.length} mois)
+                  {modalAllocs.length} mois couverts
                 </span>
               </div>
               <div className="flex flex-col gap-1.5">
