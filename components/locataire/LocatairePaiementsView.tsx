@@ -256,7 +256,15 @@ export const LocatairePaiementsView: React.FC = () => {
           for (const sp of pmtData) {
             const idx = rentList.findIndex(r => r.id === sp.id || (sp.reference && r.reference === sp.reference));
             if (idx === -1) rentList.push(sp);
-            else rentList[idx] = { ...rentList[idx], ...sp };
+            else {
+              const current = rentList[idx];
+              const currentIsMoreAdvanced =
+                (current.status === 'confirme' && sp.status !== 'confirme') ||
+                (current.status === 'en_attente_signature_locataire' && (sp.status === 'declare' || sp.status === 'en_attente'));
+              if (!currentIsMoreAdvanced) {
+                rentList[idx] = { ...rentList[idx], ...sp };
+              }
+            }
           }
         }
       }
@@ -272,7 +280,13 @@ export const LocatairePaiementsView: React.FC = () => {
               if (idx === -1) {
                 rentList.push(sp);
               } else {
-                rentList[idx] = { ...rentList[idx], ...sp };
+                const current = rentList[idx];
+                const currentIsMoreAdvanced =
+                  (current.status === 'confirme' && sp.status !== 'confirme') ||
+                  (current.status === 'en_attente_signature_locataire' && (sp.status === 'declare' || sp.status === 'en_attente'));
+                if (!currentIsMoreAdvanced) {
+                  rentList[idx] = { ...rentList[idx], ...sp };
+                }
               }
             }
           }
@@ -354,14 +368,30 @@ export const LocatairePaiementsView: React.FC = () => {
               if (existingIdx === -1) {
                 rentList.push(lp);
               } else {
-                rentList[existingIdx] = {
-                  ...rentList[existingIdx],
-                  ...lp,
-                  status: lp.status || rentList[existingIdx].status,
-                  tenant_signature_url: lp.tenant_signature_url || rentList[existingIdx].tenant_signature_url,
-                  owner_signature_url: lp.owner_signature_url || rentList[existingIdx].owner_signature_url,
-                  confirmed_at: lp.confirmed_at || rentList[existingIdx].confirmed_at
-                };
+                const existing = rentList[existingIdx];
+                const localIsMoreAdvanced =
+                  (lp.status === 'confirme' && existing.status !== 'confirme') ||
+                  (lp.status === 'en_attente_signature_locataire' && (existing.status === 'declare' || existing.status === 'en_attente')) ||
+                  (lp.owner_signature_url && !existing.owner_signature_url) ||
+                  (lp.tenant_signature_url && !existing.tenant_signature_url);
+
+                if (localIsMoreAdvanced) {
+                  rentList[existingIdx] = {
+                    ...existing,
+                    ...lp,
+                    status: lp.status || existing.status,
+                    tenant_signature_url: lp.tenant_signature_url || existing.tenant_signature_url,
+                    owner_signature_url: lp.owner_signature_url || existing.owner_signature_url,
+                    confirmed_at: lp.confirmed_at || existing.confirmed_at
+                  };
+                } else {
+                  rentList[existingIdx] = {
+                    ...existing,
+                    tenant_signature_url: existing.tenant_signature_url || lp.tenant_signature_url,
+                    owner_signature_url: existing.owner_signature_url || lp.owner_signature_url,
+                    confirmed_at: existing.confirmed_at || lp.confirmed_at
+                  };
+                }
               }
             });
           }
@@ -1498,6 +1528,19 @@ export const LocatairePaiementsView: React.FC = () => {
             status: 'valide'
           }).eq('document_number', pmt.reference);
         }
+
+        // Synchronisation persistante avec le serveur central /api/sync
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'sign_receipt',
+            paymentId: pmt.id,
+            reference: pmt.reference,
+            tenantSignatureUrl: signatureData,
+            ownerSignatureUrl: effectiveOwnerSig
+          })
+        }).catch((e) => console.warn('API /api/sync sign_receipt notice:', e));
       } catch (sbErr) {
         console.warn('Notice Supabase update rent_payments/receipts:', sbErr);
       }
