@@ -66,6 +66,19 @@ const isValidUuid = (id?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id.trim());
 };
 
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 3500) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+};
+
 export const PaiementsView: React.FC<PaiementsViewProps> = ({
   onOpenConfirmPaymentModal,
   isAgency = false,
@@ -73,8 +86,30 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 }) => {
   const { user } = useAuth();
   const isActuallyAgency = isAgency || userRole === 'agence' || user?.role === 'agence' || (typeof window !== 'undefined' && localStorage.getItem('locatrust_current_role') === 'agence');
-  const [payments, setPayments] = useState<RentPayment[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [payments, setPayments] = useState<RentPayment[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_rent_payments');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_rent_payments');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return false;
+        }
+      } catch {}
+    }
+    return true;
+  });
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -114,56 +149,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     try {
       let loaded: RentPayment[] = [];
 
-      // 1. Supabase rent_payments
-      try {
-        let pQuery = supabase
-          .from('rent_payments')
-          .select('*')
-          .neq('status', 'annule')
-          .neq('status', 'supprime')
-          .order('payment_date', { ascending: false });
-
-        if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
-          pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-        }
-
-        const { data, error } = await pQuery;
-
-        if (!error && data && data.length > 0) {
-          for (const sp of data) {
-            const idx = loaded.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
-            if (idx === -1) {
-              loaded.push(sp);
-            } else {
-              loaded[idx] = { ...loaded[idx], ...sp };
-            }
-          }
-        }
-      } catch (sbErr) {
-        console.warn('Supabase rent_payments query notice:', sbErr);
-      }
-
-      // 1.b Récupération depuis le serveur central /api/sync
-      try {
-        const syncRes = await fetch('/api/sync');
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
-          if (syncJson?.payments && Array.isArray(syncJson.payments)) {
-            for (const sp of syncJson.payments) {
-              const idx = loaded.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
-              if (idx === -1) {
-                loaded.push(sp);
-              } else {
-                loaded[idx] = { ...loaded[idx], ...sp };
-              }
-            }
-          }
-        }
-      } catch (syncCatch) {
-        console.warn('API /api/sync payments notice:', syncCatch);
-      }
-
-      // 1.c Détection des déclarations annulées/supprimées par le locataire (cross-appareils)
+      // Détection des déclarations annulées/supprimées par le locataire (cross-appareils)
       const serverCancelledRefs = new Set<string>();
       const serverCancelledIds = new Set<string>();
 
@@ -187,20 +173,83 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch {}
       }
 
-      // Synchroniser avec les annulations enregistrées sur Supabase (cross-appareils)
-      try {
-        let cancelQuery = supabase
-          .from('notifications')
-          .select('*')
-          .or('type.eq.paiement_annule,title.ilike.%annulé%,content.ilike.%ANNULATION_PAIEMENT%')
-          .limit(50);
+      // Préparation des requêtes parallèles rapides
+      let pQuery = supabase
+        .from('rent_payments')
+        .select('*')
+        .neq('status', 'annule')
+        .neq('status', 'supprime')
+        .order('payment_date', { ascending: false });
 
-        if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
-          cancelQuery = cancelQuery.eq('user_id', user.id);
+      if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
+        pQuery = pQuery.or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+      }
+
+      let cancelQuery = supabase
+        .from('notifications')
+        .select('*')
+        .or('type.eq.paiement_annule,title.ilike.%annulé%,content.ilike.%ANNULATION_PAIEMENT%')
+        .limit(50);
+
+      if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
+        cancelQuery = cancelQuery.eq('user_id', user.id);
+      }
+
+      let notifQuery = supabase
+        .from('notifications')
+        .select('*')
+        .ilike('title', '%loyer%')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
+        notifQuery = notifQuery.eq('user_id', user.id);
+      }
+
+      // Exécution parallèle concurrente avec timeout strict de 3.5s pour éviter tout blocage réseau
+      const [pRes, syncRes, cancelRes, notifRes] = await Promise.allSettled([
+        pQuery,
+        fetchWithTimeout('/api/sync', {}, 3500),
+        cancelQuery,
+        notifQuery
+      ]);
+
+      // 1. Traitement Supabase rent_payments
+      if (pRes.status === 'fulfilled' && pRes.value) {
+        const { data, error } = pRes.value;
+        if (!error && data && data.length > 0) {
+          for (const sp of data) {
+            const idx = loaded.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
+            if (idx === -1) {
+              loaded.push(sp);
+            } else {
+              loaded[idx] = { ...loaded[idx], ...sp };
+            }
+          }
         }
+      }
 
-        const { data: cancelNotifs } = await cancelQuery;
-        if (cancelNotifs && Array.isArray(cancelNotifs)) {
+      // 1.b Traitement /api/sync
+      if (syncRes.status === 'fulfilled' && syncRes.value && syncRes.value.ok) {
+        try {
+          const syncJson = await syncRes.value.json();
+          if (syncJson?.payments && Array.isArray(syncJson.payments)) {
+            for (const sp of syncJson.payments) {
+              const idx = loaded.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
+              if (idx === -1) {
+                loaded.push(sp);
+              } else {
+                loaded[idx] = { ...loaded[idx], ...sp };
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // 1.c Traitement des annulations
+      if (cancelRes.status === 'fulfilled' && cancelRes.value && cancelRes.value.data) {
+        const cancelNotifs = cancelRes.value.data;
+        if (Array.isArray(cancelNotifs)) {
           cancelNotifs.forEach((cn: any) => {
             const pld = cn.payload || cn.data || {};
             if (pld.reference) serverCancelledRefs.add(String(pld.reference));
@@ -212,8 +261,6 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             }
           });
         }
-      } catch (cancelErr) {
-        console.warn('Cancelled payments query notice:', cancelErr);
       }
 
       // Mettre à jour locatrust_deleted_payments localement
@@ -224,72 +271,56 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch {}
       }
 
-      // 1.d Récupération résiliente des déclarations depuis Supabase notifications (UNIQUEMENT si aucun paiement n'a pu être chargé)
-      if (loaded.length === 0) {
-        try {
-          let notifQuery = supabase
-            .from('notifications')
-            .select('*')
-            .ilike('title', '%loyer%')
-            .order('created_at', { ascending: false })
-            .limit(20);
+      // 1.d Récupération résiliente depuis notifications (uniquement si aucun paiement chargé)
+      if (loaded.length === 0 && notifRes.status === 'fulfilled' && notifRes.value && notifRes.value.data) {
+        const declaredNotifs = notifRes.value.data;
+        if (Array.isArray(declaredNotifs)) {
+          for (const dn of declaredNotifs) {
+            const pld = dn.payload || dn.data || {};
+            const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
+            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
+            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
+            const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
 
-          if (user?.id && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(user.id)) {
-            notifQuery = notifQuery.eq('user_id', user.id);
-          }
+            if (
+              (pmtRef && serverCancelledRefs.has(pmtRef)) ||
+              (pmtId && serverCancelledIds.has(pmtId))
+            ) {
+              continue;
+            }
 
-          const { data: declaredNotifs } = await notifQuery;
-          if (declaredNotifs && Array.isArray(declaredNotifs)) {
-            for (const dn of declaredNotifs) {
-              const pld = dn.payload || dn.data || {};
-              const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
-              const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
-              const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
-              const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
-
-              // Si cette déclaration a été annulée/supprimée par le locataire, ne JAMAIS l'ajouter !
-              if (
-                (pmtRef && serverCancelledRefs.has(pmtRef)) ||
-                (pmtId && serverCancelledIds.has(pmtId))
-              ) {
-                continue;
-              }
-
-              const exists = loaded.some(p => p.id === pmtId || (pmtRef && p.reference === pmtRef));
-              if (!exists) {
-                const inferredPayment: RentPayment = {
-                  id: pmtId,
-                  contract_id: pld.contract_id || 'LT-2026-CI-39210687',
-                  contract_number: pld.contract_number || 'LT-2026-CI-39210687',
-                  tenant_id: pld.tenant_id || 'usr_tenant',
-                  tenant_name: 'Christian',
-                  tenant: {
-                    id: pld.tenant_id || 'usr_tenant',
-                    full_name: 'Christian',
-                    email: 'christian@locatrust.ci',
-                    phone: '0500552141',
-                    role: 'locataire',
-                    verification_status: 'verifie'
-                  },
-                  property: {
-                    title: 'Maison a loué',
-                    address: "Yamoussoukro - Côte d'Ivoire",
-                    city: 'Yamoussoukro'
-                  },
-                  amount: pmtAmt,
-                  target_month: pmtMonth,
-                  payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-                  payment_method: pld.payment_method || 'Espèces',
-                  reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
-                  status: 'declare',
-                  created_at: dn.created_at || new Date().toISOString()
-                };
-                loaded.unshift(inferredPayment);
-              }
+            const exists = loaded.some(p => p.id === pmtId || (pmtRef && p.reference === pmtRef));
+            if (!exists) {
+              const inferredPayment: RentPayment = {
+                id: pmtId,
+                contract_id: pld.contract_id || 'LT-2026-CI-39210687',
+                contract_number: pld.contract_number || 'LT-2026-CI-39210687',
+                tenant_id: pld.tenant_id || 'usr_tenant',
+                tenant_name: 'Christian',
+                tenant: {
+                  id: pld.tenant_id || 'usr_tenant',
+                  full_name: 'Christian',
+                  email: 'christian@locatrust.ci',
+                  phone: '0500552141',
+                  role: 'locataire',
+                  verification_status: 'verifie'
+                },
+                property: {
+                  title: 'Maison a loué',
+                  address: "Yamoussoukro - Côte d'Ivoire",
+                  city: 'Yamoussoukro'
+                },
+                amount: pmtAmt,
+                target_month: pmtMonth,
+                payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+                payment_method: pld.payment_method || 'Espèces',
+                reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
+                status: 'declare',
+                created_at: dn.created_at || new Date().toISOString()
+              };
+              loaded.unshift(inferredPayment);
             }
           }
-        } catch (notifCatch) {
-          console.warn('Notifications payment extraction notice:', notifCatch);
         }
       }
 
@@ -518,7 +549,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   };
 
   useEffect(() => {
-    loadPayments();
+    loadPayments(payments.length > 0);
 
     const handleUpdate = (e?: any) => {
       if (e?.detail?.action === 'delete') {
@@ -528,16 +559,35 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       loadPayments(true);
     };
 
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        loadPayments(true);
+      }
+    };
+
     window.addEventListener('locatrust:payments-updated', handleUpdate);
     window.addEventListener('locatrust:rent-payment-created', handleUpdate);
     window.addEventListener('locatrust:notifications-updated', handleUpdate);
+    window.addEventListener('locatrust:live-sync-update', handleUpdate);
     window.addEventListener('storage', handleUpdate);
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    const periodicTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadPayments(true);
+      }
+    }, 30000);
 
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
       window.removeEventListener('locatrust:rent-payment-created', handleUpdate);
       window.removeEventListener('locatrust:notifications-updated', handleUpdate);
+      window.removeEventListener('locatrust:live-sync-update', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      clearInterval(periodicTimer);
     };
   }, [user]);
 

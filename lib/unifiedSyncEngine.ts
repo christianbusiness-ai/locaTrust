@@ -830,12 +830,12 @@ export function startLiveBackgroundSync(userId: string, role?: string): void {
     }
   };
 
-  // 4. Détection du retour au premier plan (onglet ou fenêtre active) throttlé à 60s
+  // 4. Détection du retour au premier plan (onglet ou fenêtre active) throttlé à 4s pour synchronisation instantanée
   let lastFocusSync = 0;
   const handleFocusOrVisible = () => {
     if (bgSyncActiveUserId && !isLoggingOutInProgress()) {
       const now = Date.now();
-      if (now - lastFocusSync < 60000) return; // Throttlé à 60s max pour éviter tout cycle intempestif
+      if (now - lastFocusSync < 4000) return; // Throttlé à 4s pour éviter les surcharges mais réagir instantanément
       lastFocusSync = now;
       syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
     }
@@ -857,12 +857,21 @@ export function startLiveBackgroundSync(userId: string, role?: string): void {
     window.removeEventListener('online', handleOnline);
     window.removeEventListener('focus', handleFocusOrVisible);
     window.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (bgSyncInterval) {
+      clearInterval(bgSyncInterval);
+      bgSyncInterval = null;
+    }
   };
 
-  // 5. SUPPRESSION DU POLLING RÉPÉTÉ TOUTES LES 6s :
-  // Les mises à jour fraîches proviennent exclusivement des canaux Supabase Realtime,
-  // de la reconnexion réseau (online), et du retour au premier plan (throttlé à 60s).
-  bgSyncInterval = null;
+  // 5. Synchronisation douce et silencieuse en arrière-plan (toutes les 30s) pour garantir que les données
+  // fraîches arrivent sans jamais forcer l'utilisateur à actualiser manuellement la page (même si WebSocket dort sur mobile)
+  if (!bgSyncInterval) {
+    bgSyncInterval = setInterval(() => {
+      if (document.visibilityState === 'visible' && bgSyncActiveUserId && !isLoggingOutInProgress()) {
+        syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
+      }
+    }, 30000);
+  }
 }
 
 /**

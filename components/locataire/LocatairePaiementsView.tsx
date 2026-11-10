@@ -48,12 +48,47 @@ import { getDeviceDate } from '@/lib/dateSystem';
 import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
 import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantReceiptReviewAndSignModal';
 
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 3500) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+};
+
 export const LocatairePaiementsView: React.FC = () => {
   const { user } = useAuth();
-  const [payments, setPayments] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_rent_payments');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
   const [deposits, setDeposits] = useState<any[]>([]);
   const [userContracts, setUserContracts] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('locatrust_rent_payments');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) return false;
+        }
+      } catch {}
+    }
+    return true;
+  });
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const hasLoadedOnceRef = React.useRef<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -170,29 +205,66 @@ export const LocatairePaiementsView: React.FC = () => {
     }
     setLoadError(null);
     try {
+      // Déclenchement simultané et parallèle de toutes les requêtes (Supabase + /api/sync) avec timeout strict
+      const pmtPromise = getRentPayments(user.id);
+      const syncPromise = fetchWithTimeout(`/api/sync?role=locataire&userId=${encodeURIComponent(user?.id || '')}`, {}, 3500);
+      const notifPromise = supabase
+        .from('notifications')
+        .select('*')
+        .ilike('title', '%loyer%')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      const ctnPromise = supabase
+        .from('cautions')
+        .select('*')
+        .eq('tenant_id', user.id);
+      const signedNotifsPromise = supabase
+        .from('notifications')
+        .select('title, message, description, content, data, payload')
+        .ilike('title', '%signé par le locataire%')
+        .limit(40);
+      const contractsPromise = getContracts(user.id, 'locataire');
+      const appsPromise = (user.id && isValidUuid(user.id))
+        ? supabase.from('rental_applications').select('*').eq('tenant_id', user.id)
+        : Promise.resolve({ data: [] } as any);
+
+      const [
+        pmtResult,
+        syncResult,
+        notifResult,
+        ctnResult,
+        signedNotifsResult,
+        contractsResult,
+        appsResult
+      ] = await Promise.allSettled([
+        pmtPromise,
+        syncPromise,
+        notifPromise,
+        ctnPromise,
+        signedNotifsPromise,
+        contractsPromise,
+        appsPromise
+      ]);
+
       // 1. Paiements de loyers
       let rentList: any[] = [];
 
-      try {
-        const { data: pmtData, error: pmtErr } = await getRentPayments(user.id);
-        if (pmtErr) {
-          console.warn('Notice getRentPayments:', pmtErr);
-        } else if (pmtData && pmtData.length > 0) {
+      // 1.a getRentPayments
+      if (pmtResult.status === 'fulfilled' && pmtResult.value) {
+        const { data: pmtData, error: pmtErr } = pmtResult.value;
+        if (!pmtErr && pmtData && pmtData.length > 0) {
           for (const sp of pmtData) {
             const idx = rentList.findIndex(r => r.id === sp.id || (sp.reference && r.reference === sp.reference));
             if (idx === -1) rentList.push(sp);
             else rentList[idx] = { ...rentList[idx], ...sp };
           }
         }
-      } catch (pmtCatch) {
-        console.warn('Catch getRentPayments:', pmtCatch);
       }
 
-      // 1.b Récupération des déclarations depuis le serveur central /api/sync
-      try {
-        const syncRes = await fetch(`/api/sync?role=locataire&userId=${encodeURIComponent(user?.id || '')}`);
-        if (syncRes.ok) {
-          const syncJson = await syncRes.json();
+      // 1.b /api/sync
+      if (syncResult.status === 'fulfilled' && syncResult.value && syncResult.value.ok) {
+        try {
+          const syncJson = await syncResult.value.json();
           const sPmts = syncJson?.data?.payments || syncJson?.payments;
           if (Array.isArray(sPmts)) {
             for (const sp of sPmts) {
@@ -204,61 +276,49 @@ export const LocatairePaiementsView: React.FC = () => {
               }
             }
           }
-        }
-      } catch (syncCatch) {
-        console.warn('Catch /api/sync payments in tenant view:', syncCatch);
+        } catch {}
       }
 
       // 1.c Récupération résiliente depuis Supabase notifications (UNIQUEMENT si aucun paiement n'a pu être chargé)
-      if (rentList.length === 0) {
-        try {
-          const { data: declaredNotifs } = await supabase
-            .from('notifications')
-            .select('*')
-            .ilike('title', '%loyer%')
-            .order('created_at', { ascending: false })
-            .limit(20);
+      if (rentList.length === 0 && notifResult.status === 'fulfilled' && notifResult.value) {
+        const declaredNotifs = notifResult.value.data;
+        if (declaredNotifs && Array.isArray(declaredNotifs)) {
+          for (const dn of declaredNotifs) {
+            const pld = dn.payload || dn.data || {};
+            const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
+            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
+            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
+            const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
+            const targetContractNum = pld.contract_number || 'LT-2026-CI-39210687';
 
-          if (declaredNotifs && Array.isArray(declaredNotifs)) {
-            for (const dn of declaredNotifs) {
-              const pld = dn.payload || dn.data || {};
-              const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
-              const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
-              const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
-              const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
-              const targetContractNum = pld.contract_number || 'LT-2026-CI-39210687';
+            const isCancelled = (pmtRef && (pmtRef.includes('432995') || pmtRef.includes('433609') || pmtRef.includes('418350') || pmtRef.includes('767168') || pmtRef.includes('985745')));
+            if (isCancelled) continue;
 
-              const isCancelled = (pmtRef && (pmtRef.includes('432995') || pmtRef.includes('433609') || pmtRef.includes('418350') || pmtRef.includes('767168') || pmtRef.includes('985745')));
-              if (isCancelled) continue;
-
-              const exists = rentList.some(r => r.id === pmtId || (pmtRef && r.reference === pmtRef));
-              if (!exists) {
-                const notifPayment = {
-                  id: pmtId,
-                  contract_id: pld.contract_id || targetContractNum,
-                  contract_number: targetContractNum,
-                  property_title: 'Maison a loué',
-                  property: {
-                    title: 'Maison a loué',
-                    address: "Yamoussoukro - Côte d'Ivoire",
-                    city: 'Yamoussoukro'
-                  },
-                  tenant_id: user?.id,
-                  tenant_name: user?.user_metadata?.full_name || 'Christian',
-                  amount: pmtAmt,
-                  target_month: pmtMonth,
-                  payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-                  payment_method: pld.payment_method || 'Espèces',
-                  reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
-                  status: 'declare',
-                  created_at: dn.created_at || new Date().toISOString()
-                };
-                rentList.unshift(notifPayment);
-              }
+            const exists = rentList.some(r => r.id === pmtId || (pmtRef && r.reference === pmtRef));
+            if (!exists) {
+              const notifPayment = {
+                id: pmtId,
+                contract_id: pld.contract_id || targetContractNum,
+                contract_number: targetContractNum,
+                property_title: 'Maison a loué',
+                property: {
+                  title: 'Maison a loué',
+                  address: "Yamoussoukro - Côte d'Ivoire",
+                  city: 'Yamoussoukro'
+                },
+                tenant_id: user?.id,
+                tenant_name: user?.user_metadata?.full_name || 'Christian',
+                amount: pmtAmt,
+                target_month: pmtMonth,
+                payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+                payment_method: pld.payment_method || 'Espèces',
+                reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
+                status: 'declare',
+                created_at: dn.created_at || new Date().toISOString()
+              };
+              rentList.unshift(notifPayment);
             }
           }
-        } catch (notifCatch) {
-          console.warn('Catch notifications in tenant view:', notifCatch);
         }
       }
 
@@ -412,16 +472,11 @@ export const LocatairePaiementsView: React.FC = () => {
 
       // 2. Cautions
       let ctnList: any[] = [];
-      try {
-        const { data: ctnData } = await supabase
-          .from('cautions')
-          .select('*')
-          .eq('tenant_id', user.id);
+      if (ctnResult.status === 'fulfilled' && ctnResult.value) {
+        const ctnData = ctnResult.value.data;
         if (ctnData && ctnData.length > 0) {
           ctnList = ctnData;
         }
-      } catch (ctnErr) {
-        console.warn('Supabase cautions notice:', ctnErr);
       }
 
       let localDeps: any[] = [];
@@ -464,12 +519,8 @@ export const LocatairePaiementsView: React.FC = () => {
         } catch {}
       }
 
-      try {
-        const { data: signedNotifs } = await supabase
-          .from('notifications')
-          .select('title, message, description, content, data, payload')
-          .ilike('title', '%signé par le locataire%')
-          .limit(40);
+      if (signedNotifsResult.status === 'fulfilled' && signedNotifsResult.value) {
+        const signedNotifs = signedNotifsResult.value.data;
         if (signedNotifs && Array.isArray(signedNotifs)) {
           signedNotifs.forEach((sn: any) => {
             const p = sn.data || sn.payload || {};
@@ -497,7 +548,7 @@ export const LocatairePaiementsView: React.FC = () => {
             }
           });
         }
-      } catch {}
+      }
 
       const isFabricatedContractNum = (num?: string): boolean => {
         if (!num) return true;
@@ -600,67 +651,57 @@ export const LocatairePaiementsView: React.FC = () => {
         });
       };
 
-      try {
-        const { data: cntData } = await getContracts(user.id, 'locataire');
+      if (contractsResult.status === 'fulfilled' && contractsResult.value) {
+        const cntData = contractsResult.value.data;
         if (cntData && Array.isArray(cntData)) {
           cntData.forEach((c: any) => upsertSignedTenantContract(c));
         }
-      } catch (cntErr) {
-        console.warn('getContracts notice:', cntErr);
       }
 
       // Chargement des candidatures du locataire connecté depuis Supabase
-      try {
-        if (user.id && isValidUuid(user.id)) {
-          const { data: dbApps } = await supabase
-            .from('rental_applications')
-            .select('*')
-            .eq('tenant_id', user.id);
+      if (appsResult.status === 'fulfilled' && appsResult.value) {
+        const dbApps = appsResult.value.data;
+        if (dbApps && dbApps.length > 0) {
+          dbApps.forEach((a: any) => {
+            const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
+            const cNum = String(a.contract_number || docs.contract_number || '').trim();
+            if (!cNum || isFabricatedContractNum(cNum)) return;
 
-          if (dbApps && dbApps.length > 0) {
-            dbApps.forEach((a: any) => {
-              const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
-              const cNum = String(a.contract_number || docs.contract_number || '').trim();
-              if (!cNum || isFabricatedContractNum(cNum)) return;
+            const appRent = Number(docs.new_rent || a.rent_amount || docs.rent_amount || a.monthly_rent || 0);
+            const appStartDate = a.start_date || docs.start_date || a.signed_date || docs.signed_date || a.signed_at || docs.signed_at || a.created_at;
+            const appSignedDate = a.signed_date || docs.signed_date || a.signed_at || docs.signed_at || appStartDate;
 
-              const appRent = Number(docs.new_rent || a.rent_amount || docs.rent_amount || a.monthly_rent || 0);
-              const appStartDate = a.start_date || docs.start_date || a.signed_date || docs.signed_date || a.signed_at || docs.signed_at || a.created_at;
-              const appSignedDate = a.signed_date || docs.signed_date || a.signed_at || docs.signed_at || appStartDate;
-
-              upsertSignedTenantContract(
-                {
-                  id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
-                  contract_number: cNum,
-                  property_id: a.property_id || docs.property_id,
-                  tenant_id: a.tenant_id || user.id,
-                  owner_id: a.owner_id || docs.owner_id,
-                  rent: appRent,
-                  monthly_rent: appRent,
-                  caution: Number(a.caution_amount || docs.caution_amount || 0),
-                  caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
-                  start_date: appStartDate,
-                  signed_date: appSignedDate,
-                  signed_at: a.signed_at || docs.signed_at || appSignedDate,
-                  created_at: a.created_at || docs.created_at || appStartDate,
-                  charges: Number(docs.new_charges ?? a.charges_amount ?? docs.charges_amount ?? 0),
-                  tenant_signed: Boolean(a.tenant_signed || docs.tenant_signed),
-                  tenant_signature_url: a.tenant_signature_url || docs.tenant_signature_url,
-                  status: docs.contract_status || a.status,
-                  documents: docs,
-                  property: {
-                    id: a.property_id || docs.property_id,
-                    title: a.property_title || docs.property_title || 'Logement loué',
-                    city: a.city || a.property_city || docs.property_city || "Côte d'Ivoire",
-                    address: a.property_address || docs.property_address || "Côte d'Ivoire"
-                  }
-                },
-                cNum
-              );
-            });
-          }
+            upsertSignedTenantContract(
+              {
+                id: a.contract_id || docs.contract_id || `cnt_app_${a.id}`,
+                contract_number: cNum,
+                property_id: a.property_id || docs.property_id,
+                tenant_id: a.tenant_id || user.id,
+                owner_id: a.owner_id || docs.owner_id,
+                rent: appRent,
+                monthly_rent: appRent,
+                caution: Number(a.caution_amount || docs.caution_amount || 0),
+                caution_amount: Number(a.caution_amount || docs.caution_amount || 0),
+                start_date: appStartDate,
+                signed_date: appSignedDate,
+                signed_at: a.signed_at || docs.signed_at || appSignedDate,
+                created_at: a.created_at || docs.created_at || appStartDate,
+                charges: Number(docs.new_charges ?? a.charges_amount ?? docs.charges_amount ?? 0),
+                tenant_signed: Boolean(a.tenant_signed || docs.tenant_signed),
+                tenant_signature_url: a.tenant_signature_url || docs.tenant_signature_url,
+                status: docs.contract_status || a.status,
+                documents: docs,
+                property: {
+                  id: a.property_id || docs.property_id,
+                  title: a.property_title || docs.property_title || 'Logement loué',
+                  city: a.city || a.property_city || docs.property_city || "Côte d'Ivoire",
+                  address: a.property_address || docs.property_address || "Côte d'Ivoire"
+                }
+              },
+              cNum
+            );
+          });
         }
-      } catch (e) {
-        console.warn('Erreur chargement Supabase rental_applications pour paiements:', e);
       }
 
       try {
@@ -726,16 +767,32 @@ export const LocatairePaiementsView: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchPaymentsData();
+    fetchPaymentsData(payments.length > 0);
 
     const handleUpdate = () => {
       fetchPaymentsData(true);
+    };
+
+    const handleFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchPaymentsData(true);
+      }
     };
 
     window.addEventListener('locatrust:payments-updated', handleUpdate);
     window.addEventListener('locatrust:receipts_updated', handleUpdate);
     window.addEventListener('locatrust:cautions_updated', handleUpdate);
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
+    window.addEventListener('locatrust:live-sync-update', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+
+    const periodicTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchPaymentsData(true);
+      }
+    }, 30000);
 
     const handleOpenSignReceipt = (e: any) => {
       const pId = e.detail?.paymentId || e.detail?.payment_id;
@@ -767,7 +824,12 @@ export const LocatairePaiementsView: React.FC = () => {
       window.removeEventListener('locatrust:receipts_updated', handleUpdate);
       window.removeEventListener('locatrust:cautions_updated', handleUpdate);
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
+      window.removeEventListener('locatrust:live-sync-update', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
       window.removeEventListener('locatrust:open_sign_receipt', handleOpenSignReceipt);
+      clearInterval(periodicTimer);
     };
   }, [user?.id]);
 

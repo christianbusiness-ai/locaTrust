@@ -333,7 +333,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleProfileSync = () => {
       if (mounted && !isLoggingOutInProgress()) {
         const now = Date.now();
-        if (now - lastFocusSyncTime < 60000) return; // Throttlé à 60s max (Phase 1)
+        if (now - lastFocusSyncTime < 4000) return; // Throttlé à 4s pour réactivité immédiate sans surcharge
         lastFocusSyncTime = now;
 
         refreshProfile();
@@ -349,7 +349,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && mounted && !isLoggingOutInProgress()) {
         const now = Date.now();
-        if (now - lastFocusSyncTime < 60000) return; // Throttlé à 60s max (Phase 1)
+        if (now - lastFocusSyncTime < 4000) return; // Throttlé à 4s pour réactivité immédiate sans surcharge
         lastFocusSyncTime = now;
 
         refreshProfile();

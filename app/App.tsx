@@ -192,7 +192,7 @@ const LiveSyncManager: React.FC = () => {
     const triggerGlobalSync = () => {
       if (!user?.id || isLoggingOutInProgress()) return;
       const now = Date.now();
-      if (now - lastSyncTime < 10000) return; // Limiter la fréquence de synchronisation globale (minimum 10s)
+      if (now - lastSyncTime < 3000) return; // Limiter la fréquence de synchronisation globale à 3s pour réactivité instantanée
       lastSyncTime = now;
 
       subscribeToLiveSync(user.id);

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'locatrust-pwa-v5';
+const CACHE_NAME = 'locatrust-pwa-v6';
 const STATIC_ASSETS = [
   '/manifest.webmanifest',
   '/favicon.svg',
@@ -68,10 +68,19 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. JS & CSS assets (/assets/*) : Network first, do NOT serve stale or HTML fallbacks
+  // 2. JS & CSS assets (/assets/*) : Cache-first pour les bundles hachés (chargement instantané 0ms), repli réseau
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
-      fetch(req).catch(() => caches.match(req))
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then((res) => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+          }
+          return res;
+        });
+      })
     );
     return;
   }
