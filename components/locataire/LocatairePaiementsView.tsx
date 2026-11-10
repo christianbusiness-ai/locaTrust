@@ -1584,6 +1584,24 @@ export const LocatairePaiementsView: React.FC = () => {
       const { generateOfficialReceiptPDF } = await import('@/lib/payments/officialReceiptPdfGenerator');
       const { resolveRealReceiptData } = await import('@/lib/payments/receiptDataResolver');
       const resolved = resolveRealReceiptData(pmt, user);
+
+      let allocs = pmt.allocations || (resolved as any).allocations;
+      if (!allocs || allocs.length === 0) {
+        const foundContract = userContracts.find(c => c.id === pmt.contract_id || c.contract_number === pmt.contract_number) || userContracts[0];
+        if (foundContract && pmt.amount) {
+          try {
+            const { calculateRentPaymentAllocation } = await import('@/lib/payments/rentScheduleEngine');
+            const res = calculateRentPaymentAllocation({
+              contract: foundContract,
+              paymentAmount: Number(pmt.amount),
+              paymentDate: pmt.payment_date || pmt.created_at || new Date(),
+              existingPayments: payments.filter(p => p.id !== pmt.id && p.reference !== pmt.reference)
+            });
+            allocs = res.allocations;
+          } catch {}
+        }
+      }
+
       await generateOfficialReceiptPDF({
         receiptNumber: pmt.reference,
         contractNumber: resolved.contractNumber,
@@ -1607,7 +1625,8 @@ export const LocatairePaiementsView: React.FC = () => {
         paymentMethod: pmt.payment_method || 'Mobile Money',
         transactionReference: pmt.reference,
         ownerSignatureUrl: pmt.owner_signature_url || resolved.ownerSignatureUrl,
-        tenantSignatureUrl: pmt.tenant_signature_url || resolved.tenantSignatureUrl
+        tenantSignatureUrl: pmt.tenant_signature_url || resolved.tenantSignatureUrl,
+        allocations: allocs
       });
       confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
     } catch (pdfErr) {
@@ -2499,6 +2518,73 @@ export const LocatairePaiementsView: React.FC = () => {
               {method === 'Espèces' && (
                 <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-semibold flex items-center gap-2">
                   💵 Paiement en espèces — aucune référence de transaction requise.
+                </div>
+              )}
+
+              {/* RÈGLES DE GESTION DES LOYERS : Répartition automatique par mois & statut */}
+              {rentAllocationPreview && rentAllocationPreview.allocations.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-br from-blue-50/70 to-slate-50 border border-blue-200 flex flex-col gap-2">
+                  <div className="flex items-center justify-between border-b border-blue-100 pb-1.5">
+                    <span className="text-[11px] font-black text-slate-800 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                      Répartition chronologique automatique (LocaTrust)
+                    </span>
+                    <span className="text-[10px] text-blue-700 font-extrabold bg-blue-100/80 px-2 py-0.5 rounded-full">
+                      {rentAllocationPreview.allocations.length} mois couvert{rentAllocationPreview.allocations.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-slate-100 text-slate-700 font-black border-b border-slate-200">
+                        <tr>
+                          <th className="py-1.5 px-2.5">Mois concerné</th>
+                          <th className="py-1.5 px-2.5">Montant</th>
+                          <th className="py-1.5 px-2.5 text-right">Statut</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-bold">
+                        {rentAllocationPreview.allocations.map((alloc, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/80">
+                            <td className="py-1.5 px-2.5 text-slate-800">{alloc.target_month}</td>
+                            <td className="py-1.5 px-2.5 text-blue-700 font-black">{formatFCFA(alloc.amount_allocated)}</td>
+                            <td className="py-1.5 px-2.5 text-right">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black ${
+                                alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid
+                                  ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                  : alloc.status_type === 'avance' || alloc.is_advance
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  : alloc.status_type === 'partiel'
+                                  ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                                  : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                              }`}>
+                                {alloc.status_label || (
+                                  alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid ? 'Retard régularisé' :
+                                  alloc.status_type === 'avance' || alloc.is_advance ? 'Avance' :
+                                  alloc.status_type === 'partiel' ? 'Paiement partiel' : 'Payé'
+                                )}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-50 font-black text-slate-900 border-t border-slate-200">
+                        <tr>
+                          <td className="py-1.5 px-2.5">Total affecté</td>
+                          <td className="py-1.5 px-2.5 text-emerald-700" colSpan={2}>
+                            {formatFCFA(rentAllocationPreview.total_allocated)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {rentAllocationPreview.remaining_credit > 0 && (
+                    <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[10px] font-bold flex justify-between">
+                      <span>Crédit locatif restant :</span>
+                      <span className="font-black">{formatFCFA(rentAllocationPreview.remaining_credit)}</span>
+                    </div>
+                  )}
                 </div>
               )}
 

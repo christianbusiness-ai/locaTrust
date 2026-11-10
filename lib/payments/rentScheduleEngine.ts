@@ -22,6 +22,7 @@ export interface MonthlyScheduleItem {
   amount_due: number;
   amount_paid: number;
   status: 'impaye' | 'a_payer' | 'partiel' | 'paye';
+  status_label?: string;
   payment_date?: string;
   receipt_number?: string;
   reference_txn?: string;
@@ -39,6 +40,8 @@ export interface PaymentAllocationItem {
   amount_allocated: number;    // Montant affecté par CE paiement
   remaining_balance: number;   // Solde restant dû pour ce mois après allocation
   status_after: 'paye' | 'partiel';
+  status_type: 'retard_regularise' | 'mois_en_cours' | 'avance' | 'partiel';
+  status_label: 'Retard régularisé' | 'Payé' | 'Avance' | 'Paiement partiel';
   is_past_unpaid: boolean;     // Était-ce un retard / impayé ancien ?
   is_current_month: boolean;   // Était-ce l'échéance courante ?
   is_advance: boolean;         // Est-ce une avance sur un mois futur ?
@@ -224,47 +227,43 @@ export function generateContractSchedule(
 
   const schedule: MonthlyScheduleItem[] = [];
 
-  // Débuter au mois de prise d'effet du contrat
+  // Débuter au mois de prise d'effet du contrat (le mois de signature constitue le premier mois de location)
   const curDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
 
   // Horizon : au moins jusqu'à referenceDate + horizonMonths mois
   const targetEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + horizonMonths, 1);
 
-  const currentMonthKey = `${referenceDate.getFullYear()}-${referenceDate.getMonth()}`;
-  const refMidnight = toDayMidnight(referenceDate);
+  const refYear = referenceDate.getFullYear();
+  const refMonth = referenceDate.getMonth();
+  const nowMonthIndex = refYear * 12 + refMonth;
 
   while (curDate <= targetEnd) {
     const year = curDate.getFullYear();
     const month = curDate.getMonth();
+    const monthIndex = year * 12 + month;
     const monthLabel = `${FRENCH_MONTHS[month]} ${year}`;
 
-    // Règle métier officielle :
-    // Pour un contrat signé / débutant le 07 novembre, l'échéance de paiement du mois est le 07 décembre (mois M + 1).
-    // Passé ce jour (à partir du 08 décembre), le loyer est considéré comme en retard.
-    // Si le locataire paie avant la date de paiement réel (avant le 07 décembre), ce paiement est considéré comme avance.
-    const dueMonthDate = new Date(year, month + 1, 1);
-    const dueYear = dueMonthDate.getFullYear();
-    const dueMonth = dueMonthDate.getMonth();
-    const daysInDueMonth = new Date(dueYear, dueMonth + 1, 0).getDate();
-    const actualDueDay = Math.min(dueDay, daysInDueMonth);
-    const dueDate = new Date(dueYear, dueMonth, actualDueDay);
-    const dueDateIso = `${dueYear}-${String(dueMonth + 1).padStart(2, '0')}-${String(actualDueDay).padStart(2, '0')}`;
-    const dueMidnight = toDayMidnight(dueDate);
+    // Règle officielle LocaTrust (Gestion des loyers) :
+    // 1. L'échéance d'un mois M est fixée au jour contractuel de ce même mois M (ex: 05 novembre pour novembre).
+    // 2. Un loyer n'est en retard QUE lorsque le mois concerné est terminé sans avoir été payé (monthIndex < nowMonthIndex).
+    // 3. Le mois en cours (monthIndex === nowMonthIndex) n'est JAMAIS en retard tant que le mois n'est pas terminé.
+    // 4. Tout paiement d'un mois futur non encore commencé (monthIndex > nowMonthIndex) est une avance.
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const actualDueDay = Math.min(dueDay, daysInMonth);
+    const dueDate = new Date(year, month, actualDueDay);
+    const dueDateIso = `${year}-${String(month + 1).padStart(2, '0')}-${String(actualDueDay).padStart(2, '0')}`;
 
     // Arrêter si la date de début de période dépasse la fin de contrat contractuelle
     if (contract?.end_date) {
       const endDate = parseDateSafe(contract.end_date);
-      if (toDayMidnight(curDate) >= toDayMidnight(endDate) && schedule.length > 0) {
+      if (toDayMidnight(curDate) > toDayMidnight(endDate) && schedule.length > 0) {
         break;
       }
     }
 
-    const monthKey = `${year}-${month}`;
-    // En retard UNIQUEMENT lorsque la date limite de paiement est strictement dépassée (passé ce jour)
-    const isPast = refMidnight > dueMidnight;
-    const isCurrent = monthKey === currentMonthKey;
-    // Tout paiement effectué avant la date de paiement réelle est considéré comme une avance
-    const isAdvance = refMidnight < dueMidnight;
+    const isPast = monthIndex < nowMonthIndex;
+    const isCurrent = monthIndex === nowMonthIndex;
+    const isAdvance = monthIndex > nowMonthIndex;
 
     schedule.push({
       id: `sch_${contractId}_${year}_${month + 1}`,
@@ -275,6 +274,7 @@ export function generateContractSchedule(
       amount_due: monthlyRent,
       amount_paid: 0,
       status: isPast ? 'impaye' : 'a_payer',
+      status_label: isPast ? 'Retard' : isCurrent ? 'Mois en cours' : 'À venir',
       is_past_unpaid: isPast,
       is_current_month: isCurrent,
       is_advance: isAdvance
@@ -618,6 +618,15 @@ export function calculateRentPaymentAllocation(
 
     if (availableMoney >= remainingDue) {
       // Ce mois est intégralement soldé par ce paiement
+      const isPast = Boolean(item.is_past_unpaid);
+      const isAdv = Boolean(item.is_advance);
+      const isCurr = Boolean(item.is_current_month);
+
+      const statusType: 'retard_regularise' | 'mois_en_cours' | 'avance' =
+        isPast ? 'retard_regularise' : isAdv ? 'avance' : 'mois_en_cours';
+      const statusLabel: 'Retard régularisé' | 'Payé' | 'Avance' =
+        isPast ? 'Retard régularisé' : isAdv ? 'Avance' : 'Payé';
+
       allocations.push({
         target_month: item.target_month,
         month_index: monthIdx++,
@@ -627,15 +636,21 @@ export function calculateRentPaymentAllocation(
         amount_allocated: remainingDue,
         remaining_balance: 0,
         status_after: 'paye',
-        is_past_unpaid: Boolean(item.is_past_unpaid),
-        is_current_month: Boolean(item.is_current_month),
-        is_advance: Boolean(item.is_advance)
+        status_type: statusType,
+        status_label: statusLabel,
+        is_past_unpaid: isPast,
+        is_current_month: isCurr,
+        is_advance: isAdv
       });
       availableMoney -= remainingDue;
       item.amount_paid = item.amount_due;
       item.status = 'paye';
     } else {
       // Paiement partiel pour ce mois
+      const isPast = Boolean(item.is_past_unpaid);
+      const isAdv = Boolean(item.is_advance);
+      const isCurr = Boolean(item.is_current_month);
+
       allocations.push({
         target_month: item.target_month,
         month_index: monthIdx++,
@@ -645,9 +660,11 @@ export function calculateRentPaymentAllocation(
         amount_allocated: availableMoney,
         remaining_balance: remainingDue - availableMoney,
         status_after: 'partiel',
-        is_past_unpaid: Boolean(item.is_past_unpaid),
-        is_current_month: Boolean(item.is_current_month),
-        is_advance: Boolean(item.is_advance)
+        status_type: 'partiel',
+        status_label: 'Paiement partiel',
+        is_past_unpaid: isPast,
+        is_current_month: isCurr,
+        is_advance: isAdv
       });
       item.amount_paid += availableMoney;
       item.status = 'partiel';
@@ -671,6 +688,7 @@ export function calculateRentPaymentAllocation(
       amount_due: monthlyRent,
       amount_paid: monthlyRent,
       status: 'paye',
+      status_label: 'Avance',
       is_past_unpaid: false,
       is_current_month: false,
       is_advance: true
@@ -686,6 +704,8 @@ export function calculateRentPaymentAllocation(
       amount_allocated: monthlyRent,
       remaining_balance: 0,
       status_after: 'paye',
+      status_type: 'avance',
+      status_label: 'Avance',
       is_past_unpaid: false,
       is_current_month: false,
       is_advance: true
@@ -932,17 +952,14 @@ export function computePortfolioRentMetrics(
     let currentMonthBalance = 0;
     let currentMonthStatus: 'paye' | 'partiel' | 'en_retard' | 'en_attente' = 'en_attente';
 
-    const refMidnight = toDayMidnight(refDate);
-    const currentMonthLabel = `${FRENCH_MONTHS[refMonth]} ${refYear}`.toLowerCase();
+    const nowMonthIndex = refYear * 12 + refMonth;
 
     for (const item of schedule) {
-      const dueDate = parseDateSafe(item.due_date);
-      const dueMidnight = toDayMidnight(dueDate);
-      // Règle stricte : le loyer n'est en retard QUE lorsque la date limite de paiement est strictement dépassée (passé ce jour)
-      const isDueDatePassed = refMidnight > dueMidnight;
-      // Si le locataire paie avant la date de paiement réelle, ce paiement est considéré comme une avance
-      const isBeforeRealDueDate = refMidnight < dueMidnight;
-      const isSameMonth = item.target_month.toLowerCase() === currentMonthLabel;
+      const itemDate = parseDateSafe(item.due_date);
+      const itemMonthIndex = itemDate.getFullYear() * 12 + itemDate.getMonth();
+      const isSameMonth = itemMonthIndex === nowMonthIndex;
+      const isPastMonth = itemMonthIndex < nowMonthIndex;
+      const isFutureMonth = itemMonthIndex > nowMonthIndex;
       const balance = Math.max(0, item.amount_due - item.amount_paid);
 
       // Période du mois en cours
@@ -953,17 +970,17 @@ export function computePortfolioRentMetrics(
         if (item.amount_paid >= item.amount_due) {
           currentMonthStatus = 'paye';
         } else if (item.amount_paid > 0) {
-          currentMonthStatus = isDueDatePassed ? 'en_retard' : 'partiel';
+          currentMonthStatus = 'partiel';
         } else {
-          currentMonthStatus = isDueDatePassed ? 'en_retard' : 'en_attente';
+          currentMonthStatus = 'en_attente';
         }
 
         totalExpectedRentCurrentMonth += item.amount_due;
         totalCollectedRentCurrentMonth += Math.min(item.amount_paid, item.amount_due);
       }
 
-      // 1. Échéance échue non soldée (date limite de paiement strictement dépassée : ex. à partir du 08 décembre pour une échéance au 07 décembre)
-      if (isDueDatePassed) {
+      // 1. Mois passés terminés : si non soldé, c'est un RETARD (Règle 4)
+      if (isPastMonth) {
         contractExpectedToDate += item.amount_due;
         contractCollected += item.amount_paid;
         if (balance > 0) {
@@ -972,13 +989,12 @@ export function computePortfolioRentMetrics(
           totalLateRent += balance;
           totalLateMonthsCount += 1;
         }
-      } else {
-        // 2. Échéance non encore dépassée : si le locataire a payé avant la date de paiement réelle, c'est comptabilisé en avance
-        if (item.amount_paid > 0 && isBeforeRealDueDate) {
+      } else if (isFutureMonth) {
+        // 2. Mois futurs non commencés : si le preneur a payé, c'est une AVANCE (Règle 3)
+        // Dès qu'on entre dans ce mois, isFutureMonth devient false (devient isSameMonth) et sort automatiquement des avances !
+        if (item.amount_paid > 0) {
           contractAdvance += item.amount_paid;
           totalAdvanceRent += item.amount_paid;
-        }
-        if (item.amount_paid > 0) {
           contractCollected += item.amount_paid;
         }
       }

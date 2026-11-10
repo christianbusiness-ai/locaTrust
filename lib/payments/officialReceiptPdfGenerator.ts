@@ -10,6 +10,17 @@ import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
 import { getStoredOwnerSignature, getStoredTenantSignature } from '@/lib/contractPartyResolver';
 import { triggerCelebration } from '@/lib/celebration';
 
+export interface ReceiptAllocationDetail {
+  target_month: string;
+  amount_allocated: number;
+  amount_due?: number;
+  status_label?: string;
+  status_type?: string;
+  is_past_unpaid?: boolean;
+  is_current_month?: boolean;
+  is_advance?: boolean;
+}
+
 export interface OfficialReceiptData {
   receiptNumber: string;
   receiptType?: 'loyer' | 'caution';
@@ -35,6 +46,7 @@ export interface OfficialReceiptData {
   transactionReference: string;
   ownerSignatureUrl?: string | null;
   tenantSignatureUrl?: string | null;
+  allocations?: ReceiptAllocationDetail[];
 }
 
 /**
@@ -499,43 +511,120 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.text(`:  ${safeLeaseStartDate} au ${safeLeaseEndDate}`, col2X + 32, row2Y + 22);
 
     // 5. DETAIL DU PAIEMENT TABLE (Clear sky blue or warm gold header)
-    const tableY = 120;
+    const tableY = 118;
     if (isCaution) {
       doc.setFillColor(245, 158, 11); // Warm gold #F59E0B
       doc.rect(15, tableY, 180, 7, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42); // Crisp dark text
+      doc.text('Détail du paiement', 18, tableY + 4.5);
+      doc.text('Période(s) concernée(s)', 70, tableY + 4.5);
+      doc.text('Statut', 125, tableY + 4.5);
+      doc.text('Montant total', 168, tableY + 4.5);
     } else {
       doc.setFillColor(2, 132, 199); // Sky blue #0284C7
       doc.rect(15, tableY, 180, 7, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(255, 255, 255);
+      doc.text('Détail du paiement', 18, tableY + 4.5);
+      doc.text('Mois / Période concerné', 68, tableY + 4.5);
+      doc.text('Statut affectation', 122, tableY + 4.5);
+      doc.text('Montant affecté', 168, tableY + 4.5);
     }
-    doc.text('Détail du paiement', 18, tableY + 4.5);
-    doc.text('Période(s) concernée(s)', 70, tableY + 4.5);
-    doc.text('Montant unitaire', 130, tableY + 4.5);
-    doc.text('Montant total', 170, tableY + 4.5);
 
-    // Table Content Row
-    doc.setFillColor(255, 255, 255);
-    doc.rect(15, tableY + 7, 180, 8, 'F');
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(15, 23, 42); // High-contrast dark text
-    doc.text(isCaution ? 'Dépôt de garantie (Caution légale)' : 'Loyer mensuel', 18, tableY + 12);
-    doc.text(isCaution ? 'Garantie contractuelle' : formatPeriodCovered(data.periodCovered || 'Août 2026'), 70, tableY + 12);
-    doc.text(formatFCFA(data.amount), 130, tableY + 12);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(isCaution ? 217 : 2, isCaution ? 119 : 132, isCaution ? 6 : 199);
-    doc.text(formatFCFA(data.amount), 170, tableY + 12);
+    let currentY = tableY + 7;
+    const rowHeight = 6.5;
+
+    if (isCaution) {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(15, currentY, 180, rowHeight, 'F');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(15, 23, 42);
+      doc.text('Dépôt de garantie (Caution légale)', 18, currentY + 4.5);
+      doc.text('Garantie contractuelle', 70, currentY + 4.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(5, 150, 105);
+      doc.text('Consignée', 125, currentY + 4.5);
+      doc.setTextColor(217, 119, 6);
+      doc.text(formatFCFA(data.amount), 168, currentY + 4.5);
+      currentY += rowHeight;
+    } else if (Array.isArray(data.allocations) && data.allocations.length > 0) {
+      // Règle 7 : Chaque mois couvert apparaît individuellement avec son montant et son statut
+      data.allocations.forEach((alloc, idx) => {
+        const isEven = idx % 2 === 0;
+        doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+        doc.rect(15, currentY, 180, rowHeight, 'F');
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Loyer mensuel', 18, currentY + 4.5);
+        doc.setFont('helvetica', 'bold');
+        doc.text(alloc.target_month, 68, currentY + 4.5);
+
+        // Statut spécifique : Retard régularisé, Payé, Avance, Paiement partiel
+        const statusLabel = alloc.status_label || (
+          alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid ? 'Retard régularisé' :
+          alloc.status_type === 'avance' || alloc.is_advance ? 'Avance' :
+          alloc.status_type === 'partiel' ? 'Paiement partiel' : 'Payé'
+        );
+
+        if (statusLabel.includes('Retard')) {
+          doc.setTextColor(225, 29, 72); // Rose/Red #E11D48
+        } else if (statusLabel.includes('Avance')) {
+          doc.setTextColor(217, 119, 6); // Amber #D97706
+        } else if (statusLabel.includes('partiel')) {
+          doc.setTextColor(234, 88, 12); // Orange #EA580C
+        } else {
+          doc.setTextColor(5, 150, 105); // Emerald #059669
+        }
+        doc.text(statusLabel, 122, currentY + 4.5);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(2, 132, 199);
+        doc.text(formatFCFA(alloc.amount_allocated), 168, currentY + 4.5);
+        currentY += rowHeight;
+      });
+
+      // Ligne Total récapitulatif si plusieurs mois couverts
+      if (data.allocations.length > 1) {
+        doc.setFillColor(241, 245, 249); // Slate-100
+        doc.rect(15, currentY, 180, rowHeight, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Total loyers réglés', 18, currentY + 4.5);
+        doc.text(`${data.allocations.length} mois couverts`, 68, currentY + 4.5);
+        doc.setTextColor(5, 150, 105);
+        doc.text('Soldé', 122, currentY + 4.5);
+        doc.setTextColor(11, 25, 44);
+        doc.text(formatFCFA(data.amount), 168, currentY + 4.5);
+        currentY += rowHeight;
+      }
+    } else {
+      // Fallback mois unique
+      doc.setFillColor(255, 255, 255);
+      doc.rect(15, currentY, 180, rowHeight, 'F');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(15, 23, 42);
+      doc.text('Loyer mensuel', 18, currentY + 4.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text(formatPeriodCovered(data.periodCovered || 'Août 2026'), 68, currentY + 4.5);
+      doc.setTextColor(5, 150, 105);
+      doc.text('Payé', 122, currentY + 4.5);
+      doc.setTextColor(2, 132, 199);
+      doc.text(formatFCFA(data.amount), 168, currentY + 4.5);
+      currentY += rowHeight;
+    }
 
     doc.setDrawColor(226, 232, 240);
-    doc.line(15, tableY + 15, 195, tableY + 15);
+    doc.line(15, currentY, 195, currentY);
 
     // 6. MONTANT PAYÉ & METADATA SECTION (Clear readable boxes)
-    const summaryY = 138;
+    const summaryY = Math.max(136, currentY + 5);
     // Left Box: Montant Payé
     doc.setFillColor(240, 249, 255); // Soft blue tint
     doc.setDrawColor(isCaution ? 245 : 2, isCaution ? 158 : 132, isCaution ? 11 : 199);
@@ -594,7 +683,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     }
 
     // 7. SIGNATURES & QR CODE SECTION
-    const sigY = 170;
+    const sigY = summaryY + 30;
 
     // Signature Propriétaire / Agence Box
     doc.setDrawColor(226, 232, 240);
@@ -698,7 +787,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.text(`locatrust.site/verify/recu/${targetToken.slice(0, 16)}...`, 150, sigY + 26);
 
     // 8. FOOTER NOTE
-    const footerY = 205;
+    const footerY = sigY + 34;
     doc.setDrawColor(226, 232, 240);
     doc.line(15, footerY, 195, footerY);
 

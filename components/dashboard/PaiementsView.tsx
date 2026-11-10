@@ -1169,6 +1169,27 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
   const handleDownloadReceiptPDF = async (pmt: RentPayment) => {
     const resolved = resolveRealReceiptData(pmt, user);
+    let allocs = (pmt as any).allocations || resolved.allocations;
+    if (!allocs || allocs.length === 0) {
+      const contract = (pmt as any).contract || {
+        id: pmt.contract_id || 'LT-2026-CI-000492',
+        contract_number: pmt.contract_id || 'LT-2026-CI-000492',
+        monthly_rent: extractContractMonthlyRent((pmt as any).contract) || Number(pmt.amount || 0),
+        due_day: 5
+      };
+      if (pmt.amount) {
+        try {
+          const res = calculateRentPaymentAllocation({
+            contract,
+            paymentAmount: Number(pmt.amount),
+            paymentDate: pmt.payment_date || pmt.created_at || new Date(),
+            existingPayments: payments.filter(p => p.id !== pmt.id && p.reference !== pmt.reference)
+          });
+          allocs = res.allocations;
+        } catch {}
+      }
+    }
+
     await generateOfficialReceiptPDF({
       receiptNumber: pmt.reference,
       contractNumber: resolved.contractNumber,
@@ -1193,6 +1214,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       transactionReference: pmt.reference,
       ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl,
       tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl,
+      allocations: allocs
     });
   };
 
@@ -1734,12 +1756,24 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                             <div className="flex flex-col">
                               <span className="font-extrabold text-slate-800">{alloc.target_month}</span>
-                              <div className="flex items-center gap-1.5 text-[9px]">
-                                {alloc.is_past_unpaid && <span className="text-rose-600 font-black">Régularisation impayé</span>}
-                                {alloc.is_current_month && <span className="text-blue-600 font-black">Mois courant</span>}
-                                {alloc.is_advance && <span className="text-amber-600 font-black">Avance</span>}
+                              <div className="flex items-center gap-1.5 text-[9px] mt-0.5">
+                                <span className={`px-2 py-0.5 rounded-full font-black ${
+                                  alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid
+                                    ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                    : alloc.status_type === 'avance' || alloc.is_advance
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    : alloc.status_type === 'partiel'
+                                    ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                                    : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                }`}>
+                                  {alloc.status_label || (
+                                    alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid ? 'Retard régularisé' :
+                                    alloc.status_type === 'avance' || alloc.is_advance ? 'Avance' :
+                                    alloc.status_type === 'partiel' ? 'Paiement partiel' : 'Payé'
+                                  )}
+                                </span>
                                 {alloc.status_after === 'partiel' && (
-                                  <span className="text-rose-600 font-black">Partiel (Reste : {formatFCFA(alloc.remaining_balance)})</span>
+                                  <span className="text-rose-600 font-bold">(Reste : {formatFCFA(alloc.remaining_balance)})</span>
                                 )}
                               </div>
                             </div>

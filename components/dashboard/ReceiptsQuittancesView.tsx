@@ -333,7 +333,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
       paymentMethod: r.payment_method,
       transactionReference: r.transaction_ref,
       ownerSignatureUrl: resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id),
-      tenantSignatureUrl: resolved.tenantSignatureUrl || getStoredTenantSignature()
+      tenantSignatureUrl: resolved.tenantSignatureUrl || getStoredTenantSignature(),
+      allocations: (r as any).allocations || resolved.allocations
     });
   };
 

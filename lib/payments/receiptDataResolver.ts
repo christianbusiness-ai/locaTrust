@@ -33,6 +33,7 @@ export interface ResolvedReceiptDetails {
   verificationUrl: string;
   ownerSignatureUrl: string | null;
   tenantSignatureUrl: string | null;
+  allocations?: any[];
 }
 
 export function resolveRealReceiptData(
@@ -295,6 +296,10 @@ export function resolveRealReceiptData(
     qrDataUrl = LOCATRUST_QR_CODE_DATA_URL;
   }
 
+  const receiptAllocations = Array.isArray(item?.allocations) && item.allocations.length > 0
+    ? item.allocations
+    : undefined;
+
   return {
     ownerName,
     ownerPhone,
@@ -315,6 +320,7 @@ export function resolveRealReceiptData(
     qrDataUrl,
     verificationUrl,
     ownerSignatureUrl,
-    tenantSignatureUrl
+    tenantSignatureUrl,
+    allocations: receiptAllocations
   };
 }
