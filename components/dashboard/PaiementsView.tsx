@@ -219,8 +219,18 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         console.warn('Notifications payment extraction notice:', notifCatch);
       }
 
-      // 1.d Règle absolue de résilience pour le bailleur/agence :
+      // 1.d Règle de résilience pour le bailleur/agence :
       // Assurer que la déclaration en attente pour Maison a loué (LT-2026-CI-39210687) est présente
+      // SAUF si le locataire l'a explicitement supprimée
+      const is3921Deleted = typeof window !== 'undefined' && (() => {
+        try {
+          const delRaw = localStorage.getItem('locatrust_deleted_payments');
+          if (!delRaw) return false;
+          const delList = JSON.parse(delRaw);
+          return Array.isArray(delList) && (delList.includes('pmt_dec_nov2026_christian_3921') || delList.includes('ESP-985745'));
+        } catch { return false; }
+      })();
+
       const hasPaymentFor3921InLoaded = loaded.some((p: any) =>
         (p.contract_number && (p.contract_number.includes('39210687') || p.contract_number.includes('3921'))) ||
         (p.contract_id && String(p.contract_id).includes('3921')) ||
@@ -228,7 +238,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         (p.amount === 20000 && (p.status === 'declare' || p.status === 'en_attente'))
       );
 
-      if (!hasPaymentFor3921InLoaded) {
+      if (!hasPaymentFor3921InLoaded && !is3921Deleted) {
         const declared3921: RentPayment = {
           id: 'pmt_dec_nov2026_christian_3921',
           contract_id: 'LT-2026-CI-39210687',
@@ -351,6 +361,20 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           }
         };
       });
+
+      // Exclure toute déclaration supprimée par le locataire
+      if (typeof window !== 'undefined') {
+        try {
+          const delRaw = localStorage.getItem('locatrust_deleted_payments');
+          if (delRaw) {
+            const delList = JSON.parse(delRaw);
+            if (Array.isArray(delList) && delList.length > 0) {
+              const delSet = new Set(delList);
+              loaded = loaded.filter((p: any) => !delSet.has(p.id) && !delSet.has(p.reference));
+            }
+          }
+        } catch {}
+      }
 
       // Mettre à jour le cache local UNIQUEMENT si on a des données pour éviter d'effacer les paiements
       if (typeof window !== 'undefined' && loaded.length > 0) {

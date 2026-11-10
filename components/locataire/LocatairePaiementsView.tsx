@@ -24,7 +24,8 @@ import {
   FileText,
   Download,
   PenTool,
-  Sparkles
+  Sparkles,
+  ChevronDown
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput, formatPeriodCovered } from '@/lib/utils';
 import { RentPayment } from '@/types/database.types';
@@ -78,6 +79,11 @@ export const LocatairePaiementsView: React.FC = () => {
   const [isSubmittingCaution, setIsSubmittingCaution] = useState<boolean>(false);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
+
+  // État de suppression d'une déclaration en attente
+  const [paymentToDelete, setPaymentToDelete] = useState<RentPayment | null>(null);
+  const [isDeletingPayment, setIsDeletingPayment] = useState<boolean>(false);
+  const userExplicitlyChangedFilterRef = useRef<boolean>(false);
 
   // Rent Form State (dynamique selon la date réelle de la machine)
   const [selectedContractId, setSelectedContractId] = useState<string>('');
@@ -294,8 +300,18 @@ export const LocatairePaiementsView: React.FC = () => {
         console.warn('Local rent payments fallback notice:', locErr);
       }
 
-      // 1.d Règle absolue de résilience pour le contrat Maison a loué (LT-2026-CI-39210687) :
-      // Si aucune déclaration n'est encore présente pour ce contrat, insérer la déclaration officielle déclarée en attente
+      // 1.d Règle de résilience pour le contrat Maison a loué (LT-2026-CI-39210687) :
+      // Si aucune déclaration n'est encore présente pour ce contrat, insérer la déclaration déclarée en attente
+      // SAUF si le locataire l'a explicitement supprimée
+      const is3921Deleted = typeof window !== 'undefined' && (() => {
+        try {
+          const delRaw = localStorage.getItem('locatrust_deleted_payments');
+          if (!delRaw) return false;
+          const delList = JSON.parse(delRaw);
+          return Array.isArray(delList) && (delList.includes('pmt_dec_nov2026_christian_3921') || delList.includes('ESP-985745'));
+        } catch { return false; }
+      })();
+
       const hasPaymentFor3921 = rentList.some((p: any) =>
         (p.contract_number && (p.contract_number.includes('39210687') || p.contract_number.includes('3921'))) ||
         (p.contract_id && String(p.contract_id).includes('3921')) ||
@@ -303,7 +319,7 @@ export const LocatairePaiementsView: React.FC = () => {
         (p.amount === 20000 && (p.status === 'declare' || p.status === 'en_attente'))
       );
 
-      if (!hasPaymentFor3921) {
+      if (!hasPaymentFor3921 && !is3921Deleted) {
         const declared3921 = {
           id: 'pmt_dec_nov2026_christian_3921',
           contract_id: 'LT-2026-CI-39210687',
@@ -325,6 +341,20 @@ export const LocatairePaiementsView: React.FC = () => {
           created_at: new Date().toISOString()
         };
         rentList.unshift(declared3921);
+      }
+
+      // Exclure toute déclaration supprimée par le locataire
+      if (typeof window !== 'undefined') {
+        try {
+          const delRaw = localStorage.getItem('locatrust_deleted_payments');
+          if (delRaw) {
+            const delList = JSON.parse(delRaw);
+            if (Array.isArray(delList) && delList.length > 0) {
+              const delSet = new Set(delList);
+              rentList = rentList.filter((p: any) => !delSet.has(p.id) && !delSet.has(p.reference));
+            }
+          }
+        } catch {}
       }
 
       // Toujours persister l'état complet dans le localStorage pour éviter toute disparition au rechargement
@@ -623,8 +653,8 @@ export const LocatairePaiementsView: React.FC = () => {
 
         setSelectedContractId(targetContract.id);
 
-        // Synchroniser le filtre par contrat si non encore spécifié
-        if (contractFilter === 'all') {
+        // Synchroniser le filtre par contrat si non encore spécifié par l'utilisateur
+        if (contractFilter === 'all' && !userExplicitlyChangedFilterRef.current) {
           const mainContract = allContracts.find(c => (c.contract_number && c.contract_number.includes('3921')) || (c.property?.title && c.property.title.includes('Maison a loué'))) || targetContract;
           if (mainContract) {
             setContractFilter(mainContract.id);
@@ -977,6 +1007,128 @@ export const LocatairePaiementsView: React.FC = () => {
       });
     } finally {
       setIsSubmittingPayment(false);
+    }
+  };
+
+  // Handle Tenant Deletion of an unvalidated payment declaration
+  const handleConfirmDeletePayment = async () => {
+    if (!paymentToDelete) return;
+    const pmt = paymentToDelete;
+
+    // Condition stricte : Suppression autorisée UNIQUEMENT si la déclaration n'a pas encore été validée et signée
+    const isSignedOrValidated =
+      pmt.status === 'confirme' ||
+      pmt.status === 'valide' ||
+      pmt.status === 'certifie' ||
+      pmt.status === 'paye' ||
+      pmt.status === 'en_attente_signature_locataire' ||
+      Boolean(
+        pmt.receipt_number ||
+        (pmt as any).receiptNumber ||
+        (pmt as any).quittance_number ||
+        (pmt as any).owner_signature ||
+        (pmt as any).tenant_signature
+      );
+
+    if (isSignedOrValidated) {
+      alert("Cette déclaration a déjà été validée ou signée. Aucune suppression n'est possible.");
+      setPaymentToDelete(null);
+      return;
+    }
+
+    try {
+      setIsDeletingPayment(true);
+
+      // 1. Enregistrer dans la liste noire locale d'exclusion définitive pour éviter toute réapparition
+      try {
+        const delRaw = localStorage.getItem('locatrust_deleted_payments') || '[]';
+        const delList = JSON.parse(delRaw);
+        if (Array.isArray(delList)) {
+          if (pmt.id) delList.push(pmt.id);
+          if (pmt.reference) delList.push(pmt.reference);
+          localStorage.setItem('locatrust_deleted_payments', JSON.stringify(Array.from(new Set(delList))));
+        }
+      } catch {}
+
+      // 2. Supprimer immédiatement du localStorage locatrust_rent_payments
+      try {
+        const storedRaw = localStorage.getItem('locatrust_rent_payments');
+        if (storedRaw) {
+          const storedList = JSON.parse(storedRaw);
+          if (Array.isArray(storedList)) {
+            const updated = storedList.filter((p: any) => p.id !== pmt.id && p.reference !== pmt.reference);
+            localStorage.setItem('locatrust_rent_payments', JSON.stringify(updated));
+          }
+        }
+      } catch {}
+
+      // 3. Supprimer les notifications associées dans le localStorage locatrust_notifications
+      try {
+        const notifsRaw = localStorage.getItem('locatrust_notifications');
+        if (notifsRaw) {
+          const notifsList = JSON.parse(notifsRaw);
+          if (Array.isArray(notifsList)) {
+            const cleanedNotifs = notifsList.filter((n: any) => {
+              const desc = String(n.description || n.content || n.message || '');
+              const title = String(n.title || '');
+              const ref = pmt.reference ? String(pmt.reference) : '';
+              const pId = pmt.id ? String(pmt.id) : '';
+              const hasRef = ref && (desc.includes(ref) || title.includes(ref));
+              const hasId = pId && (desc.includes(pId) || n.payload?.payment_id === pId || n.data?.payment_id === pId);
+              return !hasRef && !hasId;
+            });
+            localStorage.setItem('locatrust_notifications', JSON.stringify(cleanedNotifs));
+          }
+        }
+      } catch {}
+
+      // 4. Mettre à jour l'état local du locataire immédiatement
+      setPayments((prev) => prev.filter((p) => p.id !== pmt.id && p.reference !== pmt.reference));
+
+      // 5. Supprimer dans Supabase en arrière-plan (rent_payments et notifications)
+      try {
+        if (pmt.id && isValidUuid(pmt.id)) {
+          await supabase.from('rent_payments').delete().eq('id', pmt.id);
+        }
+        if (pmt.reference) {
+          await supabase.from('rent_payments').delete().eq('reference', pmt.reference);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase delete rent_payment notice:', sbErr);
+      }
+
+      try {
+        if (pmt.reference) {
+          await supabase.from('notifications').delete().ilike('content', `%${pmt.reference}%`);
+        }
+        if (pmt.id && isValidUuid(pmt.id)) {
+          await supabase.from('notifications').delete().ilike('content', `%${pmt.id}%`);
+        }
+      } catch (notifErr) {
+        console.warn('Supabase delete notification notice:', notifErr);
+      }
+
+      // 6. Diffuser en temps réel aux propriétaires et agences
+      try {
+        await broadcastLiveEvent('PAYMENT_DELETED', {
+          paymentId: pmt.id,
+          reference: pmt.reference,
+          tenantId: user?.id,
+          ownerId: pmt.owner_id
+        });
+      } catch {}
+
+      window.dispatchEvent(new CustomEvent('locatrust:payments-updated', {
+        detail: { action: 'delete', paymentId: pmt.id, reference: pmt.reference }
+      }));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
+      window.dispatchEvent(new CustomEvent('storage'));
+
+      setPaymentToDelete(null);
+    } catch (err: any) {
+      console.error('Erreur lors de la suppression de la déclaration:', err);
+    } finally {
+      setIsDeletingPayment(false);
     }
   };
 
@@ -1798,48 +1950,31 @@ export const LocatairePaiementsView: React.FC = () => {
         </div>
       )}      {/* Declarations History Table */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
-        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col gap-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-black text-slate-900 dark:text-white">Historique de mes règlements de loyer</h3>
-              <span className="text-xs text-slate-500">{filteredPayments.length} déclaration(s) affichée(s)</span>
-            </div>
-
-            {/* Search */}
-            <div className="relative w-full sm:w-64">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Rechercher réf, mois, montant..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600"
-              />
-            </div>
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-black text-slate-900 dark:text-white">Historique de mes règlements de loyer</h3>
+            <span className="text-xs text-slate-500">{filteredPayments.length} déclaration(s) affichée(s)</span>
           </div>
 
-          {/* Onglets sélecteurs de contrat pour le locataire */}
-          {userContracts.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-1 scrollbar-none">
-              <button
-                type="button"
-                onClick={() => setContractFilter('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-                  contractFilter === 'all'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
-              >
-                <span>Tous mes contrats</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${contractFilter === 'all' ? 'bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
-                  {payments.length}
-                </span>
-              </button>
-
+          {/* Sélecteur déroulant de contrat (remplace la barre de recherche et la ligne d'onglets) */}
+          <div className="relative w-full sm:w-80">
+            <Building2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <select
+              value={contractFilter}
+              onChange={(e) => {
+                userExplicitlyChangedFilterRef.current = true;
+                const val = e.target.value;
+                setContractFilter(val);
+                if (val !== 'all') {
+                  setSelectedContractId(val);
+                }
+              }}
+              className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-600 appearance-none cursor-pointer shadow-xs"
+            >
+              <option value="all">Tous mes contrats ({payments.length} déclarations)</option>
               {userContracts.map((cnt) => {
                 const cNum = cnt.contract_number || cnt.contractNumber || cnt.id;
                 const pTitle = cnt.property?.title || 'Logement';
-                const isSelected = contractFilter === cnt.id || contractFilter === cNum;
                 const cntPaymentsCount = payments.filter((p: any) => {
                   const pNum = p.contract_number || (p as any).contractNumber;
                   const pId = p.contract_id || (p as any).contractId;
@@ -1849,31 +1984,14 @@ export const LocatairePaiementsView: React.FC = () => {
                 }).length;
 
                 return (
-                  <button
-                    key={cnt.id}
-                    type="button"
-                    onClick={() => {
-                      setContractFilter(cnt.id);
-                      setSelectedContractId(cnt.id);
-                    }}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    <span>{pTitle}</span>
-                    <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${isSelected ? 'bg-blue-700 text-blue-100' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>
-                      {cNum}
-                    </span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? 'bg-blue-800 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
-                      {cntPaymentsCount}
-                    </span>
-                  </button>
+                  <option key={cnt.id} value={cnt.id}>
+                    {pTitle} — {cNum} ({cntPaymentsCount})
+                  </option>
                 );
               })}
-            </div>
-          )}
+            </select>
+            <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1887,7 +2005,7 @@ export const LocatairePaiementsView: React.FC = () => {
                 <th className="p-4">Référence</th>
                 <th className="p-4">Date</th>
                 <th className="p-4">Statut</th>
-                <th className="p-4 text-right">Quittance</th>
+                <th className="p-4 text-right">Actions & Quittance</th>
               </tr>
             </thead>
             {(isLoading && !hasLoadedOnceRef.current) ? (
@@ -1916,22 +2034,20 @@ export const LocatairePaiementsView: React.FC = () => {
                     <div className="flex flex-col items-center justify-center">
                       <Receipt className="w-12 h-12 text-slate-300 dark:text-slate-700 mb-3" />
                       <h4 className="text-base font-black text-slate-800 dark:text-white">
-                        {searchQuery ? "Aucun règlement correspondant trouvé" : "Aucun paiement de loyer enregistré"}
+                        {contractFilter !== 'all' ? "Aucun règlement pour ce contrat" : "Aucun paiement de loyer enregistré"}
                       </h4>
                       <p className="text-xs text-slate-500 max-w-sm mt-1 leading-relaxed">
-                        {searchQuery
-                          ? "Aucun paiement ne correspond à votre recherche. Vérifiez la référence ou le mois."
-                          : "Vous n'avez pas encore déclaré de règlement pour ce contrat. Cliquez sur « Déclarer un loyer » pour enregistrer votre premier versement par Wave, Orange Money ou Espèces."}
+                        {contractFilter !== 'all'
+                          ? "Vous n'avez pas encore déclaré de versement pour ce contrat spécifique. Cliquez sur « Déclarer un loyer » pour enregistrer votre premier règlement."
+                          : "Vous n'avez pas encore déclaré de règlement de loyer. Cliquez sur « Déclarer un loyer » pour enregistrer votre premier versement par Wave, Orange Money ou Espèces."}
                       </p>
-                      {!searchQuery && (
-                        <button
-                          type="button"
-                          onClick={handleOpenDeclareModal}
-                          className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition"
-                        >
-                          Déclarer un loyer
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={handleOpenDeclareModal}
+                        className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition"
+                      >
+                        Déclarer un loyer
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -2017,7 +2133,41 @@ export const LocatairePaiementsView: React.FC = () => {
                           )}
                         </div>
                       ) : (
-                        <span className="text-slate-400 text-[11px]">En attente validation</span>
+                        (() => {
+                          const isSignedOrValidated =
+                            pmt.status === 'confirme' ||
+                            pmt.status === 'valide' ||
+                            pmt.status === 'certifie' ||
+                            pmt.status === 'paye' ||
+                            pmt.status === 'en_attente_signature_locataire' ||
+                            Boolean(
+                              pmt.receipt_number ||
+                              (pmt as any).receiptNumber ||
+                              (pmt as any).quittance_number ||
+                              (pmt as any).owner_signature ||
+                              (pmt as any).tenant_signature
+                            );
+                          const isDeletable = !isSignedOrValidated;
+
+                          if (isDeletable) {
+                            return (
+                              <div className="flex items-center justify-end gap-2">
+                                <span className="text-slate-400 text-[11px] font-medium hidden sm:inline">En attente</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setPaymentToDelete(pmt)}
+                                  className="px-2.5 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/80 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 text-[11px] font-black inline-flex items-center gap-1.5 transition-all shadow-xs active:scale-95 cursor-pointer"
+                                  title="Supprimer cette déclaration de paiement"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Supprimer</span>
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          return <span className="text-slate-400 text-[11px]">En attente validation</span>;
+                        })()
                       )}
                     </td>
                   </tr>
@@ -2626,6 +2776,60 @@ export const LocatairePaiementsView: React.FC = () => {
           currentUser={user}
           onConfirmSignature={(signatureData) => handleConfirmTenantReceiptSignature(signatureData)}
         />
+      )}
+
+      {/* MODAL DE CONFIRMATION DE SUPPRESSION D'UNE DÉCLARATION NON VALIDÉE */}
+      {paymentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col gap-4 animate-scaleUp text-xs">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center">
+              <h3 className="text-base font-black text-slate-900 dark:text-white">
+                Supprimer cette déclaration de loyer ?
+              </h3>
+              <p className="text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                Vous êtes sur le point de supprimer votre déclaration de versement de{' '}
+                <strong className="text-slate-900 dark:text-white font-black">{formatFCFA(paymentToDelete.amount)}</strong>{' '}
+                (Réf : <span className="font-mono text-slate-700 dark:text-slate-300 font-bold">{paymentToDelete.reference}</span>).
+              </p>
+              <div className="text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-xl p-3 mt-3 text-[11px] leading-relaxed text-left flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  Cette déclaration n'ayant pas encore été validée ni signée par le bailleur, elle sera définitivement annulée et retirée de son tableau de bord.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                disabled={isDeletingPayment}
+                onClick={() => setPaymentToDelete(null)}
+                className="flex-1 py-3 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-50 cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingPayment}
+                onClick={handleConfirmDeletePayment}
+                className="flex-1 py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 disabled:opacity-50 cursor-pointer active:scale-95"
+              >
+                {isDeletingPayment ? (
+                  <span>Suppression...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Supprimer</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
