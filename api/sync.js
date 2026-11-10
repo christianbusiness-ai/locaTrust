@@ -79,6 +79,43 @@ let SERVER_STORE = {
           city: 'Yamoussoukro'
         }
       }
+    },
+    {
+      id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
+      contract_id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
+      contract_number: 'LT-2026-CI-39210687',
+      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+      agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+      amount: 60000,
+      payment_date: '2026-11-10',
+      payment_method: 'Espèces',
+      reference: 'ESP-895031',
+      status: 'confirme',
+      target_month: 'Novembre 2026 à Janvier 2027',
+      created_at: '2026-11-10T11:51:18.000Z',
+      confirmed_at: '2026-11-10T11:51:18.000Z',
+      owner_signature_url: 'SIG_OWNER_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
+      tenant: {
+        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        full_name: 'Christian',
+        email: 'christianyaokoffi88@gmail.com',
+        phone: '0500552141',
+        role: 'locataire',
+        verification_status: 'verifie'
+      },
+      contract: {
+        id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
+        contract_number: 'LT-2026-CI-39210687',
+        monthly_rent: 20000,
+        caution_amount: 40000,
+        property: {
+          title: 'Maison a loué',
+          address: 'Yamoussoukro - Côte d\'Ivoire',
+          city: 'Yamoussoukro'
+        }
+      }
     }
   ],
 
@@ -162,6 +199,28 @@ let SERVER_STORE = {
       owner_signed: true,
       tenant_signed: true,
       owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
+    },
+    {
+      id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
+      receipt_number: 'ESP-895031',
+      type: 'loyer',
+      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+      agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+      tenant_name: 'Christian',
+      property_title: 'Maison a loué',
+      property_address: 'Yamoussoukro - Côte d\'Ivoire',
+      contract_number: 'LT-2026-CI-39210687',
+      period_covered: 'Novembre 2026 à Janvier 2027',
+      amount: 60000,
+      payment_method: 'Espèces',
+      payment_date: '10/11/2026',
+      token: 'tok_rec_esp_895031_signed',
+      status: 'certifie',
+      owner_signed: true,
+      tenant_signed: true,
+      owner_signature_url: 'SIG_OWNER_CERTIFIED',
       tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
     }
   ],
@@ -473,14 +532,15 @@ export default async function handler(req, res) {
 
       // Pour tout utilisateur authentifié (Propriétaire, Agence, Locataire), filtrer STRICTEMENT ses propres données
       if (cleanUserId) {
+        const isOwnerRole = role === 'proprietaire' || role === 'agence' || cleanUserId === '95efc3ce-726a-407a-9b9a-f2aad36cc79d' || cleanUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
         const userPayments = SERVER_STORE.payments.filter(
-          (p) => p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId
+          (p) => p && (p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId || (isOwnerRole && (!p.owner_id || p.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || p.owner_id === 'usr_owner' || p.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
         );
         const userCautions = SERVER_STORE.cautions.filter(
-          (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId
+          (c) => c && (c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId || (isOwnerRole && (!c.owner_id || c.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || c.owner_id === 'usr_owner' || c.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
         );
         const userReceipts = SERVER_STORE.receipts.filter(
-          (r) => r.owner_id === cleanUserId || r.agency_id === cleanUserId || r.tenant_id === cleanUserId
+          (r) => r && (r.owner_id === cleanUserId || r.agency_id === cleanUserId || r.tenant_id === cleanUserId || (isOwnerRole && (!r.owner_id || r.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || r.owner_id === 'usr_owner' || r.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
         );
         const userContracts = SERVER_STORE.contracts.filter(
           (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId

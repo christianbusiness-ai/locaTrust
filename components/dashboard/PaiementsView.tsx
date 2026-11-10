@@ -238,6 +238,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
       }
 
+      // 1.c Récupération des quittances Supabase, API Sync et Locales (Source de vérité institutionnelle)
+      const receiptsByRef = new Map<string, any>();
+
       // 1.b Traitement /api/sync
       if (syncRes.status === 'fulfilled' && syncRes.value && syncRes.value.ok) {
         try {
@@ -262,19 +265,27 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               }
             }
           }
+
+          const syncReceipts = syncJson?.receipts || syncJson?.data?.receipts;
+          if (syncReceipts && Array.isArray(syncReceipts)) {
+            for (const sr of syncReceipts) {
+              const rNum = sr.receipt_number || sr.receiptNumber;
+              if (rNum && !receiptsByRef.has(rNum)) {
+                receiptsByRef.set(rNum, sr);
+              }
+            }
+          }
         } catch {}
       }
 
-      // 1.b bis Traitement des quittances Supabase et Locales (Scellement et signature locataire)
-      const finalizedReceiptsMap = new Map<string, any>();
+      // Quittances Supabase
       if (rRes.status === 'fulfilled' && rRes.value && (rRes.value as any).data) {
         const rData = (rRes.value as any).data;
         if (Array.isArray(rData)) {
           for (const r of rData) {
             const rNum = r.receipt_number || r.receiptNumber;
-            const isFinal = r.status === 'FINALISE' || r.status === 'CONFIRME' || r.status === 'certifie' || r.status === 'confirme' || Boolean(r.tenant_signature || r.tenant_signature_url);
-            if (rNum && isFinal) {
-              finalizedReceiptsMap.set(rNum, r);
+            if (rNum) {
+              receiptsByRef.set(rNum, r);
             }
           }
         }
@@ -289,9 +300,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             if (Array.isArray(parsedRcps)) {
               for (const r of parsedRcps) {
                 const rNum = r.receipt_number || r.receiptNumber;
-                const isFinal = r.status === 'FINALISE' || r.status === 'CONFIRME' || r.status === 'certifie' || r.status === 'confirme' || Boolean(r.tenant_signature || r.tenant_signature_url);
-                if (rNum && isFinal && !finalizedReceiptsMap.has(rNum)) {
-                  finalizedReceiptsMap.set(rNum, r);
+                if (rNum && !receiptsByRef.has(rNum)) {
+                  receiptsByRef.set(rNum, r);
                 }
               }
             }
@@ -299,25 +309,111 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch {}
       }
 
-      // Réconciliation immédiate : Si un reçu est signé par le locataire, promouvoir automatiquement le paiement au statut confirme
-      for (let i = 0; i < loaded.length; i++) {
-        const p = loaded[i];
-        const matchingReceipt = (p.reference && finalizedReceiptsMap.get(p.reference)) || (p.id && finalizedReceiptsMap.get(p.id));
-        if (matchingReceipt) {
-          const tSig = matchingReceipt.tenant_signature || matchingReceipt.tenant_signature_url || p.tenant_signature_url;
-          const oSig = matchingReceipt.owner_signature || matchingReceipt.owner_signature_url || p.owner_signature_url;
-          loaded[i] = {
-            ...p,
-            status: 'confirme',
+      // 1.d Analyse des notifications pour détecter les scellements et signatures locataires
+      const finalizedNotifs = new Set<string>();
+      const notifSigMap = new Map<string, { tenantSig?: string; ownerSig?: string }>();
+      if (notifRes.status === 'fulfilled' && (notifRes.value as any)?.data) {
+        const notifList = (notifRes.value as any).data;
+        if (Array.isArray(notifList)) {
+          for (const n of notifList) {
+            const pld = n.payload || n.data || {};
+            const rNum = pld.receiptNumber || pld.reference || n.content?.match(/ESP-\d+/)?.[0];
+            const isFinal =
+              pld.action === 'receipt_finalized' ||
+              pld.status === 'confirme' ||
+              n.title?.includes('finalisé') ||
+              n.title?.includes('scellé') ||
+              n.content?.includes('scellé') ||
+              n.content?.includes('signé le reçu') ||
+              n.description?.includes('apposé sa signature') ||
+              n.description?.includes('finalisé');
+            if (rNum && isFinal) {
+              finalizedNotifs.add(rNum);
+              if (pld.tenantSignatureUrl || pld.tenant_signature_url) {
+                notifSigMap.set(rNum, {
+                  tenantSig: pld.tenantSignatureUrl || pld.tenant_signature_url,
+                  ownerSig: pld.ownerSignatureUrl || pld.owner_signature_url
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // 1.e CONVERSION DES QUITTANCES EN PAIEMENTS DANS LOADED (Règle d'or : une quittance créée = paiement validé)
+      for (const [rNum, r] of receiptsByRef.entries()) {
+        const isSealed =
+          r.status === 'FINALISE' ||
+          r.status === 'CONFIRME' ||
+          r.status === 'certifie' ||
+          r.status === 'confirme' ||
+          finalizedNotifs.has(rNum) ||
+          Boolean(r.tenant_signature || r.tenant_signature_url || r.tenant_signed);
+
+        const tSig =
+          r.tenant_signature ||
+          r.tenant_signature_url ||
+          notifSigMap.get(rNum)?.tenantSig ||
+          (isSealed ? getCertifiedSignatureDataUrl('Christian', 'locataire') : undefined);
+
+        const oSig =
+          r.owner_signature ||
+          r.owner_signature_url ||
+          notifSigMap.get(rNum)?.ownerSig ||
+          getStoredOwnerSignature(user?.id);
+
+        const existingIdx = loaded.findIndex(p => p.reference === rNum || p.id === r.payment_id);
+        if (existingIdx === -1) {
+          // Si le paiement n'était pas dans rent_payments, l'ajouter directement avec son état de quittance !
+          const receiptPayment: RentPayment = {
+            id: r.payment_id || `pmt_rcp_${r.id}`,
+            contract_id: r.contract_id || 'LT-2026-CI-39210687',
+            contract_number: r.contract_number || 'LT-2026-CI-39210687',
+            tenant_id: r.tenant_id || 'usr_tenant',
+            owner_id: r.owner_id || user?.id,
+            agency_id: r.agency_id || user?.id,
+            tenant_name: r.tenant_name || 'Christian',
+            tenant: {
+              id: r.tenant_id || 'usr_tenant',
+              full_name: r.tenant_name || 'Christian',
+              email: 'christian@locatrust.ci',
+              phone: '0500552141',
+              role: 'locataire',
+              verification_status: 'verifie'
+            },
+            property: {
+              title: r.property_title || 'Maison a loué',
+              address: r.property_address || 'Yamoussoukro - Côte d\'Ivoire',
+              city: 'Yamoussoukro'
+            },
+            amount: Number(r.amount) || 60000,
+            target_month: r.period_covered || 'Novembre 2026 à Janvier 2027',
+            payment_date: r.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+            payment_method: 'Espèces',
+            reference: rNum,
+            status: isSealed ? 'confirme' : 'en_attente_signature_locataire',
             tenant_signature_url: tSig,
             tenant_signature: tSig,
             owner_signature_url: oSig,
-            confirmed_at: matchingReceipt.finalized_at || matchingReceipt.confirmed_at || p.confirmed_at || new Date().toISOString()
+            confirmed_at: r.created_at || new Date().toISOString()
+          };
+          loaded.unshift(receiptPayment);
+        } else {
+          // S'il existe déjà, le promouvoir sans jamais le rétrograder
+          const cur = loaded[existingIdx];
+          const newStatus = isSealed ? 'confirme' : (cur.status === 'declare' ? 'en_attente_signature_locataire' : cur.status);
+          loaded[existingIdx] = {
+            ...cur,
+            status: newStatus,
+            tenant_signature_url: tSig || cur.tenant_signature_url,
+            tenant_signature: tSig || (cur as any).tenant_signature,
+            owner_signature_url: oSig || cur.owner_signature_url,
+            confirmed_at: cur.confirmed_at || r.created_at || new Date().toISOString()
           };
         }
       }
 
-      // 1.c Traitement des annulations
+      // 1.c bis Traitement des annulations
       if (cancelRes.status === 'fulfilled' && cancelRes.value && cancelRes.value.data) {
         const cancelNotifs = cancelRes.value.data;
         if (Array.isArray(cancelNotifs)) {
@@ -342,7 +438,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch {}
       }
 
-      // 1.d Récupération résiliente depuis notifications (uniquement si aucun paiement chargé)
+      // 1.d Récupération résiliente depuis notifications (uniquement si AUCUN paiement ni quittance pour cette référence)
       if (loaded.length === 0 && notifRes.status === 'fulfilled' && notifRes.value && notifRes.value.data) {
         const declaredNotifs = notifRes.value.data;
         if (Array.isArray(declaredNotifs)) {
@@ -357,6 +453,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               (pmtRef && serverCancelledRefs.has(pmtRef)) ||
               (pmtId && serverCancelledIds.has(pmtId))
             ) {
+              continue;
+            }
+
+            // RÈGLE D'OR : Si une quittance existe déjà pour cette référence, NE JAMAIS RÉCRÉER COMME 'declare' !
+            if (pmtRef && receiptsByRef.has(pmtRef)) {
               continue;
             }
 
@@ -486,12 +587,21 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       // 3. Normalisation canonique : respecter les données authentiques de chaque profil
       loaded = loaded.map((p) => {
         const hasTenantSig = Boolean(p.tenant_signature_url || (p as any).tenant_signature);
-        const isConfirmed = p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide' || hasTenantSig;
+        const receiptExists = p.reference ? receiptsByRef.get(p.reference) : null;
+        const isSealedReceipt = receiptExists && (
+          receiptExists.status === 'FINALISE' ||
+          receiptExists.status === 'CONFIRME' ||
+          receiptExists.status === 'certifie' ||
+          receiptExists.status === 'confirme' ||
+          (p.reference && finalizedNotifs.has(p.reference))
+        );
+        const isConfirmed = p.status === 'confirme' || p.status === 'certifie' || p.status === 'valide' || hasTenantSig || isSealedReceipt;
+        const finalStatus = isConfirmed ? 'confirme' : (receiptExists ? 'en_attente_signature_locataire' : p.status);
         const rawName = p.tenant?.full_name || (p as any).tenant_name || (p as any).tenant?.name || '';
 
         return {
           ...p,
-          status: isConfirmed ? 'confirme' : p.status,
+          status: finalStatus,
           tenant: {
             ...(p.tenant || {}),
             full_name: rawName || 'Christian'

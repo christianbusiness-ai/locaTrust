@@ -1510,21 +1510,18 @@ export const LocatairePaiementsView: React.FC = () => {
           await supabase.from('rent_payments').update(updatePmt).eq('reference', pmt.reference);
         }
 
-        // Mettre à jour la table receipts
-        const updateReceipt: any = {
-          status: 'FINALISE',
-          tenant_signature: signatureData,
-          tenant_signature_url: signatureData,
-          owner_signature: effectiveOwnerSig,
-          owner_signature_url: effectiveOwnerSig,
-          tenant_signed_at: now,
-          finalized_at: now
-        };
+        // Mettre à jour la table receipts dans Supabase (uniquement colonnes valides du schéma)
         if (pmt.reference) {
-          await supabase.from('receipts').update(updateReceipt).eq('receipt_number', pmt.reference);
+          try {
+            await supabase.from('receipts').update({ status: 'FINALISE' }).eq('receipt_number', pmt.reference);
+          } catch (rcErr) {
+            console.warn('Supabase update receipts notice:', rcErr);
+          }
         }
         if (isValidUuid(pmt.contract_id)) {
-          await supabase.from('receipts').update(updateReceipt).eq('contract_id', pmt.contract_id);
+          try {
+            await supabase.from('receipts').update({ status: 'FINALISE' }).eq('contract_id', pmt.contract_id);
+          } catch {}
         }
 
         // Mettre à jour la table document_verifications

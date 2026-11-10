@@ -62,23 +62,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const clearLocatrustUserDataCache = () => {
   if (typeof window === 'undefined') return;
+  // Ne nettoyer que les sessions et identifiants temporaires, JAMAIS les baux, paiements et reçus certifiés
   const userKeys = [
-    'locatrust_properties',
-    'locatrust_contracts',
-    'locatrust_rent_payments',
-    'locatrust_deposits_v1',
-    'locatrust_caution_deposits',
-    'locatrust_receipts',
-    'locatrust_tenant_receipts_v2',
-    'locatrust_rental_applications',
-    'locatrust_maintenance_tickets',
-    'locatrust_support_tickets',
-    'locatrust_accounting_live_summary',
-    'locatrust_chat_messages_v4',
-    'locatrust_notifications',
-    'locatrust_tenants',
-    'locatrust_accounting_reports_v2',
-    'locatrust_accounting_reports',
     'locatrust_active_user',
     'locatrust_active_user_id',
     'locatrust_registered_role',
