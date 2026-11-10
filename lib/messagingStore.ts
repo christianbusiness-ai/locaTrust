@@ -1793,7 +1793,13 @@ export function sendQuittanceToTenant(quittance: ChatQuittanceAttachment, sender
         targetUserId: finalReceiver,
         senderUserId: finalSender
       };
-      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...(Array.isArray(existingNotifs) ? existingNotifs : [])]));
+      const filteredNotifs = (Array.isArray(existingNotifs) ? existingNotifs : []).filter(
+        (n: any) =>
+          n?.payload?.receiptNumber !== quittance.receiptNumber &&
+          n?.payload?.reference !== quittance.receiptNumber &&
+          !n?.description?.includes(quittance.receiptNumber)
+      );
+      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...filteredNotifs]));
       window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
     }
   } catch {}

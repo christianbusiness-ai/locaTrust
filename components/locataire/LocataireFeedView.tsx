@@ -855,6 +855,25 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       }
     } catch {}
 
+    // Quittances déjà signées ou confirmées par le locataire
+    const signedReceiptNumbers = new Set<string>();
+    try {
+      const rawPmts = localStorage.getItem('locatrust_rent_payments');
+      if (rawPmts) {
+        const parsedPmts = JSON.parse(rawPmts);
+        if (Array.isArray(parsedPmts)) {
+          parsedPmts.forEach((p: any) => {
+            const isSigned = p.status === 'confirme' || Boolean(p.tenant_signature_url);
+            if (isSigned) {
+              if (p.reference) signedReceiptNumbers.add(String(p.reference));
+              if (p.receipt_number) signedReceiptNumbers.add(String(p.receipt_number));
+              if (p.id) signedReceiptNumbers.add(String(p.id));
+            }
+          });
+        }
+      }
+    } catch {}
+
     const tryAddNotifBanner = (n: any) => {
       if (!n) return;
       const isRead = Boolean(n.read || n.is_read);
@@ -865,7 +884,18 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
       const titleLower = title.toLowerCase();
       const desc = String(n.description || n.content || n.message || '');
       const descLower = desc.toLowerCase();
-      const dataObj = n.data || n.payload || {};
+
+      let dataObj: any = {};
+      if (typeof n.data === 'string') {
+        try { dataObj = JSON.parse(n.data); } catch {}
+      } else if (n.data && typeof n.data === 'object') {
+        dataObj = n.data;
+      } else if (typeof n.payload === 'string') {
+        try { dataObj = JSON.parse(n.payload); } catch {}
+      } else if (n.payload && typeof n.payload === 'object') {
+        dataObj = n.payload;
+      }
+
       const action = String(dataObj.action || '').toLowerCase();
 
       const isContractSign =
@@ -886,16 +916,30 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
       if (!isContractSign && !isReceiptSign) return;
 
-      const contractNum = dataObj.contractNumber || dataObj.contract_number || undefined;
-      const receiptNum = dataObj.receiptNumber || dataObj.receipt_number || dataObj.reference || undefined;
+      const contractNum = dataObj.contractNumber || dataObj.contract_number || desc.match(/(LT-\d{4}-[A-Z0-9-]+)/i)?.[1] || undefined;
+      const receiptNum = dataObj.receiptNumber || dataObj.receipt_number || dataObj.reference || desc.match(/(ESP-\d+|REC-[A-Z0-9-]+|WAV-[A-Z0-9-]+)/i)?.[1] || undefined;
 
       if (contractNum && signedContractNumbers.has(String(contractNum))) return;
+      if (receiptNum && signedReceiptNumbers.has(String(receiptNum))) return;
 
-      const dedupKey = contractNum
-        ? `cnt_${contractNum}`
-        : receiptNum
-        ? `rcp_${receiptNum}`
-        : `notif_${n.id || title}`;
+      let dedupKey = '';
+      if (isContractSign) {
+        dedupKey = contractNum ? `cnt_${contractNum}` : `cnt_${titleLower.replace(/[^a-z0-9]/g, '_')}`;
+      } else {
+        // Déduplication absolue pour les quittances : même référence, ou même période/montant, ou même libellé
+        const periodMatch = (desc.match(/(Novembre|Décembre|Janvier|Février|Mars|Avril|Mai|Juin|Juillet|Août|Septembre|Octobre)[^).]+/i)?.[0] || '').toLowerCase().trim();
+        const amtMatch = desc.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+
+        if (receiptNum) {
+          dedupKey = `rcp_${receiptNum}`;
+        } else if (periodMatch) {
+          dedupKey = `rcp_period_${periodMatch.replace(/[^a-z0-9]/g, '_')}`;
+        } else if (amtMatch) {
+          dedupKey = `rcp_amt_${amtMatch}`;
+        } else {
+          dedupKey = `rcp_gen_${titleLower.replace(/[^a-z0-9]/g, '_')}`;
+        }
+      }
 
       if (
         clickedSet.has(dedupKey) ||

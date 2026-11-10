@@ -214,15 +214,51 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       try {
         const localRaw = localStorage.getItem('locatrust_rent_payments');
         const localList: any[] = localRaw ? JSON.parse(localRaw) : [];
-        const mergedPayments = [...serverPayments];
+        const map = new Map<string, any>();
+
+        // 1. Ajouter les paiements serveur
+        for (const sp of serverPayments) {
+          const key = sp.reference || sp.id;
+          map.set(key, sp);
+        }
+
+        // 2. Fusionner intelligemment avec le cache local (Règle d'or : ne JAMAIS rétrograder un paiement validé/signé à 'declare')
         if (Array.isArray(localList)) {
           for (const lp of localList) {
-            const exists = mergedPayments.some(sp => sp.id === lp.id || (lp.reference && sp.reference === lp.reference));
-            if (!exists) {
-              mergedPayments.push(lp);
+            const key = lp.reference || lp.id;
+            if (!map.has(key)) {
+              map.set(key, lp);
+            } else {
+              const current = map.get(key);
+              const localIsMoreAdvanced =
+                (lp.status === 'confirme' && current.status !== 'confirme') ||
+                (lp.status === 'en_attente_signature_locataire' && (current.status === 'declare' || current.status === 'en_attente')) ||
+                (lp.owner_signature_url && !current.owner_signature_url) ||
+                (lp.tenant_signature_url && !current.tenant_signature_url);
+
+              if (localIsMoreAdvanced) {
+                map.set(key, {
+                  ...current,
+                  ...lp,
+                  status: lp.status || current.status,
+                  owner_signature_url: lp.owner_signature_url || current.owner_signature_url,
+                  tenant_signature_url: lp.tenant_signature_url || current.tenant_signature_url,
+                  confirmed_at: lp.confirmed_at || current.confirmed_at,
+                  target_month: lp.target_month || current.target_month
+                });
+              } else {
+                map.set(key, {
+                  ...current,
+                  owner_signature_url: current.owner_signature_url || lp.owner_signature_url,
+                  tenant_signature_url: current.tenant_signature_url || lp.tenant_signature_url,
+                  confirmed_at: current.confirmed_at || lp.confirmed_at
+                });
+              }
             }
           }
         }
+
+        const mergedPayments = Array.from(map.values());
         localStorage.setItem('locatrust_rent_payments', JSON.stringify(mergedPayments));
         window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: { payments: mergedPayments } }));
       } catch {}
@@ -612,6 +648,20 @@ async function pushPendingLocalDataToServer(userId: string) {
                   p.id = res.data.id;
                   modified = true;
                 }
+              } else if (p.status === 'en_attente_signature_locataire' || p.status === 'confirme' || p.owner_signature_url) {
+                // Si le paiement local a été validé ou signé, synchroniser son statut sur Supabase
+                try {
+                  await supabase
+                    .from('rent_payments')
+                    .update({
+                      status: p.status,
+                      owner_signature_url: p.owner_signature_url,
+                      tenant_signature_url: p.tenant_signature_url,
+                      confirmed_at: p.confirmed_at,
+                      target_month: p.target_month
+                    })
+                    .eq('id', existing.id);
+                } catch {}
               }
             }
           }

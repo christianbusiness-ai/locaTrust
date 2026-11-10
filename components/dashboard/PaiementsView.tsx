@@ -239,7 +239,15 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               if (idx === -1) {
                 loaded.push(sp);
               } else {
-                loaded[idx] = { ...loaded[idx], ...sp };
+                const current = loaded[idx];
+                const currentIsMoreAdvanced =
+                  (current.status === 'confirme' && sp.status !== 'confirme') ||
+                  (current.status === 'en_attente_signature_locataire' && (sp.status === 'declare' || sp.status === 'en_attente')) ||
+                  (current.owner_signature_url && !sp.owner_signature_url);
+
+                if (!currentIsMoreAdvanced) {
+                  loaded[idx] = { ...loaded[idx], ...sp };
+                }
               }
             }
           }
@@ -381,9 +389,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 } else {
                   const existing = loaded[idx];
                   const localIsAdvanced =
-                    loc.status === 'en_attente_signature_locataire' ||
-                    loc.status === 'confirme' ||
-                    loc.status === 'declare' ||
+                    (loc.status === 'confirme' && existing.status !== 'confirme') ||
+                    (loc.status === 'en_attente_signature_locataire' && (existing.status === 'declare' || existing.status === 'en_attente')) ||
                     (loc.owner_signature_url && !existing.owner_signature_url) ||
                     (loc.tenant_signature_url && !existing.tenant_signature_url);
 
@@ -395,6 +402,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                       owner_signature_url: loc.owner_signature_url || existing.owner_signature_url,
                       tenant_signature_url: loc.tenant_signature_url || existing.tenant_signature_url,
                       confirmed_at: loc.confirmed_at || existing.confirmed_at
+                    };
+                  } else {
+                    loaded[idx] = {
+                      ...existing,
+                      owner_signature_url: existing.owner_signature_url || loc.owner_signature_url,
+                      tenant_signature_url: existing.tenant_signature_url || loc.tenant_signature_url,
+                      confirmed_at: existing.confirmed_at || loc.confirmed_at
                     };
                   }
                 }
@@ -852,19 +866,44 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         const updatePayload: any = {
           status: 'en_attente_signature_locataire',
           target_month: targetPeriodFormatted,
-          receipt_number: extractedOcrData.reference
+          receipt_number: extractedOcrData.reference,
+          owner_signature_url: effectiveOwnerSig,
+          confirmed_at: new Date().toISOString()
         };
         if (proposedAllocations?.allocations) {
           updatePayload.allocations = proposedAllocations.allocations;
         }
+
+        let didUpdate = false;
         if (pmtUuid) {
-          await supabase.from('rent_payments').update(updatePayload).eq('id', pmtUuid);
-        } else if (validatingPayment.reference) {
-          await supabase.from('rent_payments').update(updatePayload).eq('reference', validatingPayment.reference);
+          const { data } = await supabase.from('rent_payments').update(updatePayload).eq('id', pmtUuid).select();
+          if (data && data.length > 0) didUpdate = true;
+        }
+        if (!didUpdate && validatingPayment.reference) {
+          const { data } = await supabase.from('rent_payments').update(updatePayload).eq('reference', validatingPayment.reference).select();
+          if (data && data.length > 0) didUpdate = true;
+        }
+        if (!didUpdate && extractedOcrData.reference) {
+          await supabase.from('rent_payments').update(updatePayload).eq('reference', extractedOcrData.reference);
         }
       } catch (sbUpdateErr) {
         console.warn('Notice Supabase update rent_payments:', sbUpdateErr);
       }
+
+      // 1.b Synchronisation persistante avec le serveur central /api/sync
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'confirm_payment',
+          paymentId: validatingPayment.id,
+          reference: extractedOcrData.reference,
+          ownerSignatureUrl: effectiveOwnerSig,
+          payment: confirmedPmt,
+          amount: extractedOcrData.amount,
+          month: targetPeriodFormatted
+        })
+      }).catch((e) => console.warn('API /api/sync confirm_payment notice:', e));
 
       // 2. Création/mise à jour du reçu dans Supabase (Table receipts)
       try {
@@ -1021,7 +1060,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           };
           const notifsRaw = localStorage.getItem('locatrust_notifications');
           const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
-          const updatedNotifs = [newNotif, ...(Array.isArray(currentNotifs) ? currentNotifs : [])];
+          const filtered = (Array.isArray(currentNotifs) ? currentNotifs : []).filter(
+            (n: any) =>
+              n?.payload?.receiptNumber !== extractedOcrData.reference &&
+              n?.payload?.reference !== extractedOcrData.reference &&
+              !n?.description?.includes(extractedOcrData.reference)
+          );
+          const updatedNotifs = [newNotif, ...filtered];
           localStorage.setItem('locatrust_notifications', JSON.stringify(updatedNotifs));
           window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updatedNotifs } }));
         }

@@ -696,12 +696,26 @@ export default async function handler(req, res) {
       // 2. Validation / Confirmation du paiement par le bailleur ou l'agence (Émission du reçu en attente de contre-signature)
       if (action === 'confirm_payment' || action === 'validate_payment') {
         const { paymentId, reference, ownerSignatureUrl } = body;
-        const targetPayment = SERVER_STORE.payments.find(p => p.id === paymentId || p.reference === reference);
+        let targetPayment = SERVER_STORE.payments.find(p => (paymentId && p.id === paymentId) || (reference && p.reference === reference));
+
+        if (!targetPayment && body.payment) {
+          targetPayment = {
+            ...body.payment,
+            id: paymentId || body.payment.id || `pmt_${Date.now()}`,
+            reference: reference || body.payment.reference || `REF-${Date.now().toString().slice(-6)}`,
+            status: 'en_attente_signature_locataire',
+            owner_signature_url: ownerSignatureUrl || body.payment.owner_signature_url,
+            confirmed_at: new Date().toISOString()
+          };
+          SERVER_STORE.payments.unshift(targetPayment);
+        }
 
         if (targetPayment) {
           targetPayment.status = 'en_attente_signature_locataire';
           targetPayment.confirmed_at = new Date().toISOString();
           if (ownerSignatureUrl) targetPayment.owner_signature_url = ownerSignatureUrl;
+          if (body.month) targetPayment.target_month = body.month;
+          if (body.amount) targetPayment.amount = Number(body.amount);
 
           // Création du reçu officiel en attente de signature du locataire
           const recRef = targetPayment.reference || `REC-LOY-${Date.now().toString().slice(-6)}`;
