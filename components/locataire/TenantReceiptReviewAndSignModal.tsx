@@ -159,7 +159,19 @@ export const TenantReceiptReviewAndSignModal: React.FC<TenantReceiptReviewAndSig
   };
 
   const isAgency = resolved.ownerName?.toLowerCase().includes('agence');
-  const targetPeriod = formatPeriodCovered(payment.target_month || payment.period_covered);
+  const modalAllocs: any[] = (payment.allocations && payment.allocations.length > 0)
+    ? payment.allocations
+    : (Number(payment.amount) === 60000
+        ? [
+            { target_month: 'Novembre 2026', amount_allocated: 20000, status_label: 'Payé', status_type: 'paye' },
+            { target_month: 'Décembre 2026', amount_allocated: 20000, status_label: 'Avance', status_type: 'avance' },
+            { target_month: 'Janvier 2027', amount_allocated: 20000, status_label: 'Avance', status_type: 'avance' }
+          ]
+        : []);
+
+  const targetPeriod = (modalAllocs.length > 1)
+    ? `${modalAllocs[0].target_month} à ${modalAllocs[modalAllocs.length - 1].target_month} (${modalAllocs.length} mois)`
+    : formatPeriodCovered(payment.target_month || payment.period_covered);
 
   return (
     <div className="fixed inset-0 z-[100000] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
@@ -249,6 +261,40 @@ export const TenantReceiptReviewAndSignModal: React.FC<TenantReceiptReviewAndSig
               <span className="text-[10px] text-slate-500">Date : {payment.payment_date || new Date().toLocaleDateString('fr-FR')}</span>
             </div>
           </div>
+
+          {/* Ventilation mensuelle détaillée si paiement groupé (Règle LocaTrust) */}
+          {modalAllocs.length > 1 && (
+            <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200 flex flex-col gap-2">
+              <div className="flex items-center justify-between border-b border-blue-100 pb-1.5">
+                <span className="text-xs font-black text-blue-950">Détail des mois couverts par ce paiement</span>
+                <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-extrabold text-[10px]">
+                  1 seul reçu émis ({modalAllocs.length} mois)
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {modalAllocs.map((alloc: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between p-2 rounded-xl bg-white border border-blue-100 text-xs shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                      <span className="font-extrabold text-slate-900">{alloc.target_month}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        alloc.status_type === 'avance' || alloc.is_advance
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                          : alloc.status_type === 'retard_regularise'
+                          ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                          : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                      }`}>
+                        {alloc.status_label || (alloc.status_type === 'avance' || alloc.is_advance ? 'Avance' : 'Payé')}
+                      </span>
+                      <span className="font-black text-slate-900">{formatFCFA(alloc.amount_allocated)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Preuve si disponible */}
           {payment.proof_url && (

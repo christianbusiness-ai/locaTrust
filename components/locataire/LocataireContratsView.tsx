@@ -1176,7 +1176,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
       amenities: equipments,
       propertyDescription,
       durationMonths: cnt.duration_months || 12,
-      startDate: cnt.start_date || '01/01/2026',
+      startDate: cnt.start_date || '01/11/2026',
       rent: Number(cnt.rent || 0),
       cautionMonths: 2,
       chargesAmount: Number(cnt.charges_amount ?? cnt.charges ?? 0),
