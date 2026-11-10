@@ -2320,97 +2320,101 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       {/* MODAL FORMEL DE REFUS DE PAIEMENT (PHASE 2) */}
       {rejectingPayment && (
-        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 flex flex-col gap-4 animate-scaleUp">
-            <div className="flex items-center justify-between border-b pb-3">
+        <div className="fixed inset-0 z-[100000] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 font-sans animate-fadeIn overflow-y-auto">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full max-h-[90vh] sm:max-h-[85vh] my-auto shadow-2xl border border-slate-200 flex flex-col animate-scaleUp overflow-hidden">
+            {/* Header (fixe, compact) */}
+            <div className="shrink-0 flex items-center justify-between border-b border-slate-100 p-4 sm:p-5 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center font-black">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center font-black shrink-0">
                   <XCircle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black text-slate-900">Refuser la déclaration de loyer</h3>
+                  <h3 className="text-sm sm:text-base font-black text-slate-900">Refuser la déclaration de loyer</h3>
                   <p className="text-[11px] text-slate-500">Un motif clair et précis est obligatoirement notifié au locataire</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setRejectingPayment(null)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+                className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Récapitulatif du versement */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Locataire & Période</span>
-                <span className="font-extrabold text-slate-900">{rejectingPayment.tenant?.full_name || 'Locataire'}</span>
-                <span className="text-slate-500 block text-[11px]">{rejectingPayment.target_month || 'Loyer'}</span>
+            {/* Corps défilable avec scrollbar intégrée */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 py-3 flex flex-col gap-3 min-h-0">
+              {/* Récapitulatif du versement */}
+              <div className="p-3 rounded-xl sm:rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Locataire & Période</span>
+                  <span className="font-extrabold text-slate-900">{rejectingPayment.tenant?.full_name || 'Locataire'}</span>
+                  <span className="text-slate-500 block text-[11px]">{rejectingPayment.target_month || 'Loyer'}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Montant Déclaré</span>
+                  <span className="font-black text-rose-600 text-sm">{formatFCFA(rejectingPayment.amount)}</span>
+                  <span className="font-mono text-[10px] text-slate-500 block">{rejectingPayment.reference}</span>
+                </div>
               </div>
-              <div className="text-right">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Montant Déclaré</span>
-                <span className="font-black text-rose-600 text-sm">{formatFCFA(rejectingPayment.amount)}</span>
-                <span className="font-mono text-[10px] text-slate-500 block">{rejectingPayment.reference}</span>
+
+              {/* Sélecteur de motifs prédéfinis */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-black text-slate-800">Sélectionnez le motif principal du refus :</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[
+                    { id: 'reference_introuvable', label: 'Référence introuvable', desc: 'Transaction inexistante sur le compte Mobile Money / bancaire.' },
+                    { id: 'montant_incomplet', label: 'Montant incomplet', desc: 'La somme reçue est inférieure au montant du loyer dû.' },
+                    { id: 'erreur_periode', label: 'Erreur échéance / bien', desc: 'Le règlement ne correspond pas au mois ou au logement indiqué.' },
+                    { id: 'autre', label: 'Autre motif spécifique', desc: 'Préciser les détails dans le champ ci-dessous.' }
+                  ].map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        setRejectionPreset(preset.id);
+                        if (preset.id === 'reference_introuvable') {
+                          setRejectionReasonInput('Référence de transaction introuvable ou non créditée sur le compte.');
+                        } else if (preset.id === 'montant_incomplet') {
+                          setRejectionReasonInput('Le montant effectif reçu est inférieur au loyer mensuel prévu au bail.');
+                        } else if (preset.id === 'erreur_periode') {
+                          setRejectionReasonInput('Erreur d\'imputation sur le mois ou sur la référence du contrat de bail.');
+                        } else {
+                          setRejectionReasonInput('');
+                        }
+                      }}
+                      className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition-all text-xs cursor-pointer ${
+                        rejectionPreset === preset.id
+                          ? 'border-rose-500 bg-rose-50/70 text-rose-950 font-bold shadow-xs ring-1 ring-rose-400'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <span className="font-black text-slate-900 leading-tight">{preset.label}</span>
+                      <span className="text-[10px] text-slate-500 font-normal leading-snug line-clamp-2">{preset.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Champ texte libre du motif */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-700">Détail du motif communiqué au locataire :</label>
+                <textarea
+                  value={rejectionReasonInput}
+                  onChange={(e) => setRejectionReasonInput(e.target.value)}
+                  rows={2}
+                  placeholder="Indiquez clairement la raison du rejet pour permettre au locataire de régulariser..."
+                  className="w-full p-2.5 rounded-xl border border-slate-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 text-xs text-slate-900 outline-none resize-none"
+                />
               </div>
             </div>
 
-            {/* Sélecteur de motifs prédéfinis */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-black text-slate-800">Sélectionnez le motif principal du refus :</label>
-              <div className="grid grid-cols-1 gap-2">
-                {[
-                  { id: 'reference_introuvable', label: 'Référence introuvable', desc: 'Transaction inexistante sur le compte Mobile Money / bancaire.' },
-                  { id: 'montant_incomplet', label: 'Montant versé incomplet', desc: 'La somme reçue est inférieure au montant du loyer dû.' },
-                  { id: 'erreur_periode', label: 'Erreur sur l\'échéance ou le bien', desc: 'Le règlement ne correspond pas au mois ou au logement indiqué.' },
-                  { id: 'autre', label: 'Autre motif spécifique', desc: 'Préciser les détails dans le champ ci-dessous.' }
-                ].map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => {
-                      setRejectionPreset(preset.id);
-                      if (preset.id === 'reference_introuvable') {
-                        setRejectionReasonInput('Référence de transaction introuvable ou non créditée sur le compte.');
-                      } else if (preset.id === 'montant_incomplet') {
-                        setRejectionReasonInput('Le montant effectif reçu est inférieur au loyer mensuel prévu au bail.');
-                      } else if (preset.id === 'erreur_periode') {
-                        setRejectionReasonInput('Erreur d\'imputation sur le mois ou sur la référence du contrat de bail.');
-                      } else {
-                        setRejectionReasonInput('');
-                      }
-                    }}
-                    className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition-all text-xs cursor-pointer ${
-                      rejectionPreset === preset.id
-                        ? 'border-rose-500 bg-rose-50/70 text-rose-950 font-bold'
-                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <span className="font-black text-slate-900">{preset.label}</span>
-                    <span className="text-[10px] text-slate-500 font-normal">{preset.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Champ texte libre du motif */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-slate-700">Détail du motif communiqué au locataire :</label>
-              <textarea
-                value={rejectionReasonInput}
-                onChange={(e) => setRejectionReasonInput(e.target.value)}
-                rows={3}
-                placeholder="Indiquez clairement la raison du rejet pour permettre au locataire de régulariser..."
-                className="w-full p-3 rounded-xl border border-slate-300 focus:border-rose-500 focus:ring-1 focus:ring-rose-500 text-xs text-slate-900 outline-none resize-none"
-              />
-            </div>
-
-            {/* Boutons d'action */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+            {/* Boutons d'action (fixe en bas, toujours visible) */}
+            <div className="shrink-0 flex items-center justify-end gap-2 p-3 sm:p-4 border-t border-slate-100 bg-slate-50/50">
               <button
                 type="button"
                 onClick={() => setRejectingPayment(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200/60 transition-colors cursor-pointer"
               >
                 Annuler
               </button>
@@ -2418,7 +2422,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 type="button"
                 disabled={isSubmittingRejection || !rejectionReasonInput.trim()}
                 onClick={handleConfirmRejection}
-                className={`px-5 py-2 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow-md transition-all cursor-pointer ${
+                className={`px-5 py-2.5 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow-md transition-all cursor-pointer ${
                   isSubmittingRejection || !rejectionReasonInput.trim()
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     : 'bg-rose-600 hover:bg-rose-500 active:scale-95'
