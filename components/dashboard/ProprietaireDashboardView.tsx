@@ -29,7 +29,13 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { Link } from 'react-router-dom';
-import { getActiveReferenceYear, getAvailableYears } from '@/lib/reports/accountingHistoryStore';
+import {
+  getActiveReferenceYear,
+  getAvailableYears,
+  getCurrentAccountingYear,
+  setSelectedViewingYear,
+  generateSyntheticYearRecords
+} from '@/lib/reports/accountingHistoryStore';
 import { computePortfolioRentMetrics } from '@/lib/payments/rentScheduleEngine';
 import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
 import { calculateQuotaFromDataset, getQuotaPrice } from '@/lib/quotaEngine';
@@ -420,6 +426,40 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     }
   }, [profile?.accounting_year]);
 
+  // Re-synchronisation réactive immédiate de la comptabilité dès que l'exercice change
+  useEffect(() => {
+    if (!user?.id || isDemo) return;
+    let isCancelled = false;
+    fetchRealAccountingData(user.id, selectedYear)
+      .then((dataset) => {
+        if (!isCancelled && dataset) {
+          setRealAccountingDataset(dataset);
+        }
+      })
+      .catch((err) => {
+        console.warn('Error fetching accounting dataset for year:', selectedYear, err);
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [user?.id, selectedYear, isDemo]);
+
+  const handleYearChange = async (newYear: string) => {
+    if (!newYear || Number(newYear) < 2026) return;
+    setSelectedYear(newYear);
+    setSelectedViewingYear(newYear);
+    if (!isDemo && user?.id) {
+      try {
+        const dataset = await fetchRealAccountingData(user.id, newYear);
+        if (dataset) {
+          setRealAccountingDataset(dataset);
+        }
+      } catch (err) {
+        console.warn('Failed to load accounting data for year:', newYear, err);
+      }
+    }
+  };
+
   // Calculs dynamiques unifiés basés sur computePortfolioRentMetrics (Règles 1 à 10)
   const portfolioMetrics = computePortfolioRentMetrics(realProps, realContracts, realPayments, new Date());
 
@@ -473,49 +513,70 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     year: realAccountingDataset?.synthesis?.depensesMaintenance || 0
   };
 
-  // DONNÉES ANNUELLES DE L'EXERCICE (Tableau comptable mensuel unifié)
-  const annualData2026 = isDemo ? [
-    { month: 'Janvier', expected: 2800000, collected: 2800000, late: 0, maintenance: 35000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Février', expected: 2800000, collected: 2800000, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Mars', expected: 2800000, collected: 2800000, late: 0, maintenance: 50000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Avril', expected: 2800000, collected: 2800000, late: 0, maintenance: 25000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Mai', expected: 2800000, collected: 2800000, late: 0, maintenance: 40000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Juin', expected: 2800000, collected: 2800000, late: 0, maintenance: 0, cautionRefunded: 700000, otherExpenses: 0 },
-    { month: 'Juillet', expected: 2800000, collected: 2800000, late: 0, maintenance: 90000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Août', expected: 2800000, collected: 2450000, late: 350000, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Septembre', expected: 2800000, collected: 2450000, late: 350000, maintenance: 45000, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Octobre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Novembre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-    { month: 'Décembre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
-  ] : (realAccountingDataset?.monthlyBreakdown?.map(m => ({
-    month: m.monthName,
-    expected: m.expectedRent,
-    collected: m.collectedRent,
-    late: m.lateRent,
-    maintenance: m.maintenanceExpense,
-    cautionRefunded: m.cautionRefunded,
-    otherExpenses: m.otherExpenses
-  })) || []);
+  // DONNÉES ANNUELLES DE L'EXERCICE (Tableau comptable mensuel unifié réactif)
+  const annualData2026 = useMemo(() => {
+    if (isDemo) {
+      if (selectedYear === '2026') {
+        return [
+          { month: 'Janvier', expected: 2800000, collected: 2800000, late: 0, maintenance: 35000, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Février', expected: 2800000, collected: 2800000, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Mars', expected: 2800000, collected: 2800000, late: 0, maintenance: 50000, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Avril', expected: 2800000, collected: 2800000, late: 0, maintenance: 25000, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Mai', expected: 2800000, collected: 2800000, late: 0, maintenance: 40000, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Juin', expected: 2800000, collected: 2800000, late: 0, maintenance: 0, cautionRefunded: 700000, otherExpenses: 0 },
+          { month: 'Juillet', expected: 2800000, collected: 2800000, late: 0, maintenance: 90000, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Août', expected: 2800000, collected: 2450000, late: 350000, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Septembre', expected: 2800000, collected: 2450000, late: 350000, maintenance: 45000, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Octobre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Novembre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+          { month: 'Décembre', expected: 2800000, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, otherExpenses: 0 },
+        ];
+      } else {
+        return generateSyntheticYearRecords(Number(selectedYear)).map((m) => ({
+          month: m.monthName,
+          expected: m.expectedRent,
+          collected: m.collectedRent,
+          late: m.lateRent,
+          maintenance: m.maintenanceExpense,
+          cautionRefunded: m.cautionRefunded,
+          otherExpenses: m.otherExpenses
+        }));
+      }
+    }
+    return (
+      realAccountingDataset?.monthlyBreakdown?.map((m) => ({
+        month: m.monthName,
+        expected: m.expectedRent,
+        collected: m.collectedRent,
+        late: m.lateRent,
+        maintenance: m.maintenanceExpense,
+        cautionRefunded: m.cautionRefunded,
+        otherExpenses: m.otherExpenses
+      })) || []
+    );
+  }, [isDemo, selectedYear, realAccountingDataset]);
 
   // Calculs totaux annuels
-  const annualTotals = annualData2026.reduce(
-    (acc, m) => {
-      const totalIn = m.collected;
-      const totalOut = m.maintenance + m.cautionRefunded + m.otherExpenses;
-      const net = totalIn - totalOut;
-      return {
-        expected: acc.expected + m.expected,
-        collected: acc.collected + m.collected,
-        late: acc.late + m.late,
-        maintenance: acc.maintenance + m.maintenance,
-        cautionRefunded: acc.cautionRefunded + m.cautionRefunded,
-        totalIn: acc.totalIn + totalIn,
-        totalOut: acc.totalOut + totalOut,
-        net: acc.net + net,
-      };
-    },
-    { expected: 0, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, totalIn: 0, totalOut: 0, net: 0 }
-  );
+  const annualTotals = useMemo(() => {
+    return annualData2026.reduce(
+      (acc, m) => {
+        const totalIn = m.collected;
+        const totalOut = m.maintenance + m.cautionRefunded + m.otherExpenses;
+        const net = totalIn - totalOut;
+        return {
+          expected: acc.expected + m.expected,
+          collected: acc.collected + m.collected,
+          late: acc.late + m.late,
+          maintenance: acc.maintenance + m.maintenance,
+          cautionRefunded: acc.cautionRefunded + m.cautionRefunded,
+          totalIn: acc.totalIn + totalIn,
+          totalOut: acc.totalOut + totalOut,
+          net: acc.net + net,
+        };
+      },
+      { expected: 0, collected: 0, late: 0, maintenance: 0, cautionRefunded: 0, totalIn: 0, totalOut: 0, net: 0 }
+    );
+  }, [annualData2026]);
 
   const netMetrics = isDemo ? {
     month: 2405000,
@@ -877,12 +938,13 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
             <span className="text-xs font-bold text-slate-500">Exercice :</span>
             <select
               value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
+              onChange={(e) => handleYearChange(e.target.value)}
               className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
             >
-              <option value={selectedYear}>{selectedYear} (En cours)</option>
-              {getAvailableYears().filter(y => y !== selectedYear && Number(y) >= 2026).map(y => (
-                <option key={y} value={y}>{y} (Archivé)</option>
+              {getAvailableYears().map((y) => (
+                <option key={y} value={y}>
+                  {y} {y === getCurrentAccountingYear() ? '(En cours)' : Number(y) > Number(getCurrentAccountingYear()) ? '(Futur / Prévisionnel)' : '(Archivé)'}
+                </option>
               ))}
             </select>
           </div>

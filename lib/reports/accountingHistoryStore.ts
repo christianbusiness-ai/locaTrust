@@ -377,7 +377,7 @@ export function getAvailableYears(): string[] {
 }
 
 // Générateur dynamique de données comptables mensuelles pour toute année passée ou future (Point 14 & 16)
-function generateSyntheticYearRecords(targetYear: number): MonthAccountingRecord[] {
+export function generateSyntheticYearRecords(targetYear: number): MonthAccountingRecord[] {
   const monthNames = [
     'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
     'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
