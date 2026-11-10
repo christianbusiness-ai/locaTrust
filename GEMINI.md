@@ -216,3 +216,13 @@ Tout futur modèle d'IA (Gemini, Claude, GPT, etc.) travaillant sur ce projet **
 ### Règle 5 : Persistance & Événements
 * Toute mise à jour de candidature dans le `localStorage` (`locatrust_rental_applications`) doit être accompagnée de l'émission de l'événement personnalisé `window.dispatchEvent(new CustomEvent('locatrust:applications-updated', ...))` pour garantir la synchronisation instantanée de toutes les vues.
 * Tout contrat finalisé doit également être inscrit dans `locatrust_contracts` afin d'être immédiatement visible et téléchargeable depuis l'espace Locataire.
+
+### Règle 6 : Immutabilité et Non-Rétrogradation des Règlements de Loyers et Quittances
+* **Protection stricte des statuts avancés** : Un règlement de loyer ayant atteint le statut `en_attente_signature_locataire` (validé par le bailleur) ou `confirme` (scellé avec signature du preneur), ou possédant une signature électronique (`owner_signature_url`, `tenant_signature_url`), ne peut **JAMAIS** être rétrogradé à `declare` ou `en_attente` lors d'une synchronisation en arrière-plan ou d'un rechargement.
+* **Synchronisation bidirectionnelle immédiate** : Dès qu'une validation ou signature a lieu, elle doit être transmise simultanément à Supabase, au cache local et à l'API centrale `/api/sync` (`action: 'confirm_payment'` ou `'sign_receipt'`).
+* **Algorithme de fusion (Merge)** : Dans `PaiementsView`, `LocatairePaiementsView` et `unifiedSyncEngine`, la fusion entre les données distantes et locales doit toujours donner la priorité au statut le plus avancé et conserver les signatures apposées.
+
+### Règle 7 : Unicité Contractuelle des Notifications et Bannières de Signature
+* Pour un reçu ou un contrat donné, **une seule et unique notification / bannière d'invitation à signer** peut apparaître à l'écran du locataire (`LocataireFeedView`).
+* La déduplication doit être multicritère et absolue : par référence de document (`receiptNumber`, `reference`), par période couverte (`target_month`) et par contrat (`contract_number`).
+* Dès qu'un document est signé ou finalisé, toutes les bannières associées sont automatiquement masquées et ne réapparaissent plus jamais.
