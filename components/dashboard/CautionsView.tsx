@@ -53,6 +53,7 @@ import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceipt
 import { updateDeclarationMessageStatus, sendChatMessage, isValidUuid } from '@/lib/messagingStore';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton, TenantCardSkeleton } from '@/components/common/SkeletonLoader';
@@ -1181,7 +1182,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       amount: dep.amount_paid,
       periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
       paymentDate: new Date(dep.created_at).toLocaleDateString('fr-FR'),
-      paymentMethod: getDisplayPaymentMethod(dep).replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+      paymentMethod: formatRealPaymentMethod(dep.payment_method || getDisplayPaymentMethod(dep), dep.declared_reference, cleanNum),
       transactionReference: dep.declared_reference || `TR-${cleanNum}`,
       ownerSignatureUrl: dep.owner_signature || 'SIG_OWNER',
       tenantSignatureUrl: dep.tenant_signature || 'SIG_TENANT'

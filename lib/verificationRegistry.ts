@@ -281,6 +281,74 @@ function buildContractVerificationResult(
   };
 }
 
+/**
+ * Normalise et détecte de manière infaillible le mode de règlement réel
+ * pour tous les documents certifiés (Quittances de loyer, Reçus de caution, Restitutions).
+ * S'adapte au mode réel (Espèces, Wave CI, Orange Money CI, MTN Mobile Money, Moov Money, Virement Bancaire, Chèque)
+ */
+export function formatRealPaymentMethod(
+  declaredMethod?: string | null,
+  reference?: string | null,
+  receiptNumber?: string | null
+): string {
+  const m = (declaredMethod || '').trim();
+  const ref = `${reference || ''} ${receiptNumber || ''}`.toUpperCase();
+
+  // 1. Détection prioritaire par référence de transaction ou numéro de reçu
+  if (ref.includes('ESP-') || ref.startsWith('ESP') || ref.includes('ESPECE') || ref.includes('CASH')) {
+    return 'Espèces (Règlement direct)';
+  }
+  if (ref.includes('WAV-') || ref.includes('WAVE')) {
+    return 'Wave CI';
+  }
+  if (ref.includes('OM-') || ref.includes('ORANGE') || ref.includes('CI_OM_') || ref.includes('OM_CI')) {
+    return 'Orange Money CI';
+  }
+  if (ref.includes('MTN-') || ref.includes('MOMO')) {
+    return 'MTN Mobile Money';
+  }
+  if (ref.includes('MOOV-') || ref.includes('MOOV')) {
+    return 'Moov Money';
+  }
+  if (ref.includes('VIR-') || ref.includes('VIREMENT') || ref.includes('VIR_') || ref.includes('BNQ') || ref.includes('BANK')) {
+    return 'Virement Bancaire';
+  }
+  if (ref.includes('CHQ-') || ref.includes('CHEQUE')) {
+    return 'Chèque Bancaire';
+  }
+
+  // 2. Détection par libellé textuel si déclaré explicitement
+  if (m) {
+    if (/esp[eèé]ce|cash|direct/i.test(m)) {
+      return 'Espèces (Règlement direct)';
+    }
+    if (/wave/i.test(m)) {
+      return 'Wave CI';
+    }
+    if (/orange/i.test(m) || /^om\b/i.test(m)) {
+      return 'Orange Money CI';
+    }
+    if (/mtn|momo/i.test(m)) {
+      return 'MTN Mobile Money';
+    }
+    if (/moov/i.test(m)) {
+      return 'Moov Money';
+    }
+    if (/virement|bancaire|bank/i.test(m)) {
+      return 'Virement Bancaire';
+    }
+    if (/ch[eèé]que/i.test(m)) {
+      return 'Chèque Bancaire';
+    }
+    const clean = m.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim();
+    if (clean && clean !== 'Mobile Money' && clean !== 'Mobile Money / Paiement Certifié' && clean !== 'Paiement Certifié LocaTrust' && clean !== 'Paiement Certifié' && clean !== 'Mobile Money / Virement') {
+      return clean;
+    }
+  }
+
+  return 'Mobile Money';
+}
+
 function buildReceiptVerificationResult(
   token: string,
   params: {
@@ -306,6 +374,7 @@ function buildReceiptVerificationResult(
   const isCaution = params.subType === 'caution';
   const isRestitution = params.subType === 'restitution';
   const isValid = params.status === 'valide';
+  const resolvedPaymentMethod = formatRealPaymentMethod(params.paymentMethod, params.transactionReference, params.receiptNumber);
 
   const rRec: ReceiptVerificationRecord = {
     type: 'recu',
@@ -319,7 +388,7 @@ function buildReceiptVerificationResult(
     amountPaid: params.amountPaid,
     currency: 'FCFA',
     paymentDate: params.paymentDate,
-    paymentMethod: params.paymentMethod,
+    paymentMethod: resolvedPaymentMethod,
     transactionReference: params.transactionReference,
     parties: {
       ownerName: params.ownerName,
@@ -668,6 +737,21 @@ export async function verifyDocumentToken(
           }
         }
 
+        // Récupérer le mode de paiement réel depuis rent_payments ou cautions si absent des métadonnées
+        let declaredMethod = meta.paymentMethod;
+        if (!declaredMethod && dbRcp.receipt_number) {
+          try {
+            const { data: pmtRows } = await supabase
+              .from('rent_payments')
+              .select('payment_method')
+              .eq('reference', dbRcp.receipt_number)
+              .limit(1);
+            if (pmtRows?.[0]?.payment_method) {
+              declaredMethod = pmtRows[0].payment_method;
+            }
+          } catch {}
+        }
+
         const isConfirmed =
           dbRcp.status === 'certifie' ||
           dbRcp.status === 'valide' ||
@@ -685,7 +769,7 @@ export async function verifyDocumentToken(
           periodCovered: dbRcp.period_covered || meta.periodCovered || 'Quittance officielle certifiée',
           amountPaid: Number(dbRcp.amount || dbRcp.amount_paid || meta.amountPaid || 0),
           paymentDate: dbRcp.created_at ? new Date(dbRcp.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-          paymentMethod: meta.paymentMethod || 'Mobile Money / Paiement Certifié',
+          paymentMethod: declaredMethod || formatRealPaymentMethod(null, dbRcp.receipt_number, token),
           transactionReference: dbRcp.receipt_number || token,
           ownerName,
           tenantName,

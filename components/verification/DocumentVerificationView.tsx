@@ -28,6 +28,7 @@ import {
   DocumentVerificationStatus,
   VerifyDocumentResult,
   verifyDocumentToken,
+  formatRealPaymentMethod,
   maskPersonName
 } from '@/lib/verificationRegistry';
 import { formatFCFA } from '@/lib/utils';
@@ -861,7 +862,9 @@ export const DocumentVerificationView: React.FC<DocumentVerificationViewProps> =
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[10px]">Mode de règlement :</span>
-                  <span className="font-bold">{receiptData.paymentMethod}</span>
+                  <span className="font-bold">
+                    {formatRealPaymentMethod(receiptData.paymentMethod, receiptData.transactionReference, receiptData.receiptNumber)}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[10px]">Référence de transaction :</span>

@@ -47,6 +47,7 @@ import { SignatureModal } from '@/components/common/SignatureModal';
 import { getDeviceDate } from '@/lib/dateSystem';
 import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
 import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantReceiptReviewAndSignModal';
+import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 3500) => {
   const controller = new AbortController();
@@ -1795,7 +1796,7 @@ export const LocatairePaiementsView: React.FC = () => {
         amount: dep.amount_paid || dep.amount_requested || 60000,
         periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
         paymentDate: dep.declared_at ? new Date(dep.declared_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-        paymentMethod: dep.payment_method ? (dep.payment_method.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)') : 'Espèces (cash)',
+        paymentMethod: formatRealPaymentMethod(dep.payment_method, dep.declared_reference, cleanNum),
         transactionReference: dep.declared_reference || `TR-${cleanNum}`,
         ownerSignatureUrl: dep.owner_signature || 'SIG_CERTIFIED_OWNER',
         tenantSignatureUrl: dep.tenant_signature || 'SIG_CERTIFIED_TENANT'
@@ -1861,7 +1862,7 @@ export const LocatairePaiementsView: React.FC = () => {
         amount: pmt.amount,
         periodCovered: periodCoveredText,
         paymentDate: pmt.payment_date,
-        paymentMethod: pmt.payment_method || 'Mobile Money',
+        paymentMethod: formatRealPaymentMethod(pmt.payment_method, pmt.reference),
         transactionReference: pmt.reference,
         ownerSignatureUrl: pmt.owner_signature_url || resolved.ownerSignatureUrl,
         tenantSignatureUrl: pmt.tenant_signature_url || resolved.tenantSignatureUrl,

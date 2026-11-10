@@ -3,7 +3,7 @@
 import jsPDF from 'jspdf';
 import { formatFCFA, formatPeriodCovered } from '@/lib/utils';
 import { LOCATRUST_QR_CODE_DATA_URL } from '@/lib/qrCodeData';
-import { registerReceiptInVerificationRegistry } from '@/lib/verificationRegistry';
+import { registerReceiptInVerificationRegistry, formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { LOCATRUST_OFFICIAL_LOGO_BASE64 } from '@/lib/officialLogoBase64';
 import { generateScannableQrCodeDataUrl } from '@/lib/qr/qrGenerator';
 import { getCertifiedSignatureDataUrl } from '@/lib/signatureHelper';
@@ -169,6 +169,8 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       ? `${effectiveAllocations[0].target_month} à ${effectiveAllocations[effectiveAllocations.length - 1].target_month}`
       : data.periodCovered;
 
+    const realPaymentMethod = formatRealPaymentMethod(data.paymentMethod, data.transactionReference, data.receiptNumber);
+
     // Register receipt in verification registry with exact subType
     const verification = registerReceiptInVerificationRegistry({
       receiptNumber: data.receiptNumber,
@@ -176,7 +178,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       contractToken: data.contractToken || 'tok_cnt_ci2026_000492',
       periodCovered: effectivePeriodCovered,
       amountPaid: data.amount,
-      paymentMethod: data.paymentMethod,
+      paymentMethod: realPaymentMethod,
       transactionReference: data.transactionReference,
       ownerName: safeOwnerName,
       tenantName: data.tenantName,
@@ -686,7 +688,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFont('helvetica', 'bold');
     doc.text('Mode de paiement', 105, summaryY + 12);
     doc.setFont('helvetica', 'normal');
-    doc.text(`:  ${cleanPdf(data.paymentMethod, 'Espèces (cash)')}`, 140, summaryY + 12);
+    doc.text(`:  ${cleanPdf(realPaymentMethod, 'Espèces (cash)')}`, 140, summaryY + 12);
 
     doc.setFont('helvetica', 'bold');
     doc.text('Réf. transaction', 105, summaryY + 17.5);

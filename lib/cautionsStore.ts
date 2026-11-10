@@ -3,6 +3,7 @@ import { ChatMessage, getStoredMessages, saveStoredMessages, sendChatMessage, se
 import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 
 const STORAGE_KEY = 'locatrust_deposits_v1';
 
@@ -1064,7 +1065,7 @@ export function sendCautionReceiptToTenant(
     amount: confirmedAmount,
     periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
     paymentDate: new Date().toLocaleDateString('fr-FR'),
-    paymentMethod: (target.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+    paymentMethod: formatRealPaymentMethod(target.payment_method, target.declared_reference, cleanReceiptNum),
     transactionReference: target.declared_reference || `TR-${cleanReceiptNum}`,
     ownerSignatureUrl: finalOwnerSig,
     tenantSignatureUrl: target.tenant_signature || null,
@@ -1087,7 +1088,7 @@ export function sendCautionReceiptToTenant(
         contractToken: `tok_cnt_${resolved.contractNumber.replace(/[^a-zA-Z0-9]/g, '')}`,
         periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
         amountPaid: confirmedAmount,
-        paymentMethod: (target.payment_method || 'Espèces (cash)').replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, '').trim() || 'Espèces (cash)',
+        paymentMethod: formatRealPaymentMethod(target.payment_method, target.declared_reference, cleanReceiptNum),
         transactionReference: target.declared_reference || `TR-${cleanReceiptNum}`,
         ownerName: finalActorName,
         tenantName: resolved.tenantName,

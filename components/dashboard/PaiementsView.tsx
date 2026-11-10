@@ -53,6 +53,7 @@ import { ActionConfirmationModal, ConfirmationType } from '@/components/common/A
 import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
+import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { getStoredOwnerSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
 
 interface PaiementsViewProps {
@@ -1087,6 +1088,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // 2. Création/mise à jour du reçu dans Supabase (Table receipts)
       try {
+        const effectiveRealMethod = formatRealPaymentMethod(
+          extractedOcrData.payment_method || validatingPayment.payment_method,
+          extractedOcrData.reference
+        );
+
         await supabase.from('receipts').upsert({
           receipt_number: extractedOcrData.reference,
           type: 'loyer',
@@ -1099,7 +1105,22 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           verification_token: verificationToken,
           period_covered: targetPeriodFormatted,
           status: 'EN_ATTENTE_SIGNATURE_LOCATAIRE',
-          pdf_url: `https://locatrust.site/verify/recu/${verificationToken}`
+          pdf_url: `https://locatrust.site/verify/recu/${verificationToken}`,
+          qr_code: JSON.stringify({
+            paymentMethod: effectiveRealMethod,
+            transactionReference: extractedOcrData.reference,
+            contractNumber: resolvedContract.contractNumber,
+            periodCovered: targetPeriodFormatted,
+            amountPaid: extractedOcrData.amount,
+            parties: {
+              ownerName: resolvedContract.ownerName,
+              tenantName: resolvedContract.tenantName
+            },
+            property: {
+              type: resolvedContract.propertyType,
+              location: resolvedContract.propertyLocation
+            }
+          })
         }, { onConflict: 'receipt_number' });
       } catch (sbReceiptErr) {
         console.warn('Notice Supabase insert receipts:', sbReceiptErr);
@@ -1420,7 +1441,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           amount: pmt.amount,
           periodCovered: targetMonth,
           paymentDate: new Date(pmt.confirmed_at || pmt.payment_date || Date.now()).toLocaleDateString('fr-FR'),
-          paymentMethod: pmt.reference?.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
+          paymentMethod: formatRealPaymentMethod(pmt.payment_method, pmt.reference, receiptNum),
           transactionReference: pmt.reference || receiptNum,
           ownerName: ownerName,
           tenantName: tenantName,
@@ -1549,7 +1570,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       amount: pmt.amount,
       periodCovered: pmt.target_month,
       paymentDate: new Date(pmt.confirmed_at || pmt.created_at).toLocaleDateString('fr-FR'),
-      paymentMethod: pmt.reference.startsWith('OM') ? 'Orange Money' : pmt.reference.startsWith('WAVE') ? 'Wave Mobile Money' : 'Mobile Money',
+      paymentMethod: formatRealPaymentMethod(pmt.payment_method, pmt.reference),
       transactionReference: pmt.reference,
       ownerSignatureUrl: ownerSignatureUrl || resolved.ownerSignatureUrl || pmt.owner_signature_url,
       tenantSignatureUrl: tenantSignatureUrl || resolved.tenantSignatureUrl || pmt.tenant_signature_url || (pmt as any).tenant_signature,
