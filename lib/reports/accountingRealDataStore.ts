@@ -4,7 +4,9 @@ import {
   computePortfolioRentMetrics,
   extractContractMonthlyRent,
   parseDateSafe,
-  resolveContractDueDay
+  resolveContractDueDay,
+  generateContractSchedule,
+  reconcilePaymentsOnSchedule
 } from '@/lib/payments/rentScheduleEngine';
 
 export interface RealAccountingSynthesis {
@@ -598,11 +600,52 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const resultatNet = totalEncaisse - totalDepense;
     const tauxRecouvrement = portfolioMetrics.recoveryRateCurrentMonth;
 
-    // 7. Ventilation chronologique multi-mois exacte de tous les encaissements confirmés
+    // 7. Ventilation chronologique multi-mois exacte et chaînage des avances
     const paymentAllocationsByMonthKey = new Map<string, number>();
+    const processedPaymentKeys = new Set<string>();
 
+    activeContracts.forEach((c: any) => {
+      const cNum = String(c.contract_number || c.id || '').trim();
+      const cId = String(c.id || cNum).trim();
+      const cTenantId = String(c.tenant_id || c.tenant?.id || '').trim();
+
+      const cPayments = realPayments.filter((p: any) => {
+        if (!isPaymentConfirmed(p)) return false;
+        const pContractId = String(p.contract_id || p.contract?.id || p.contract?.contract_number || '').trim();
+        const pTenantId = String(p.tenant_id || '').trim();
+        if (pContractId && (pContractId === cId || pContractId === cNum || cNum.includes(pContractId))) return true;
+        if (cTenantId && pTenantId === cTenantId) return true;
+        return false;
+      });
+
+      cPayments.forEach((p: any) => {
+        if (p.id) processedPaymentKeys.add(String(p.id));
+        if (p.reference) processedPaymentKeys.add(String(p.reference));
+        if (p.receipt_number) processedPaymentKeys.add(String(p.receipt_number));
+      });
+
+      const sched = generateContractSchedule(c, new Date(), 36);
+      const reconciled = reconcilePaymentsOnSchedule(sched, cPayments, false);
+
+      reconciled.forEach((item) => {
+        if (item.amount_paid > 0) {
+          const d = parseDateSafe(item.due_date);
+          const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
+          paymentAllocationsByMonthKey.set(mKey, prev + item.amount_paid);
+        }
+      });
+    });
+
+    // Paiements autonomes ou déclarés hors contrat actif immédiat
     realPayments
-      .filter((p: any) => isPaymentConfirmed(p))
+      .filter(
+        (p: any) =>
+          isPaymentConfirmed(p) &&
+          !processedPaymentKeys.has(String(p.id)) &&
+          !processedPaymentKeys.has(String(p.reference)) &&
+          !processedPaymentKeys.has(String(p.receipt_number))
+      )
       .forEach((p: any) => {
         const periodStr = p.target_month || p.period_covered || p.period || '';
         const allocs = parsePaymentPeriodAllocations(periodStr, Number(p.amount) || 0, p.payment_date || p.created_at);

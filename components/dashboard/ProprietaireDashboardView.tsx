@@ -36,7 +36,7 @@ import {
   setSelectedViewingYear,
   generateSyntheticYearRecords
 } from '@/lib/reports/accountingHistoryStore';
-import { computePortfolioRentMetrics } from '@/lib/payments/rentScheduleEngine';
+import { computePortfolioRentMetrics, checkAndNotifyExhaustedAdvances } from '@/lib/payments/rentScheduleEngine';
 import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
 import { calculateQuotaFromDataset, getQuotaPrice } from '@/lib/quotaEngine';
 
@@ -321,6 +321,13 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         });
       }
       setRealPayments(loadedPayments);
+
+      // Règle fondamentale : vérifier l'épuisement des avances et notifier les locataires si nécessaire
+      try {
+        checkAndNotifyExhaustedAdvances(finalContracts, loadedPayments, new Date());
+      } catch (advErr) {
+        console.warn('Vérification avances épuisées:', advErr);
+      }
 
       // 4. Candidatures de location (Supabase + /api/sync + localStorage)
       let finalApps: any[] = [...loadedApps];

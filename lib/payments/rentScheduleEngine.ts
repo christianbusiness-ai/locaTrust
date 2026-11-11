@@ -13,6 +13,9 @@
  * 4. Aucune modification rétroactive de l'historique comptable existant.
  */
 
+import { formatFCFA } from '@/lib/utils';
+import { supabase } from '@/src/lib/supabase';
+
 export interface MonthlyScheduleItem {
   id: string;
   contract_id: string;
@@ -414,6 +417,22 @@ export function reconcilePaymentsOnSchedule(
               const alloc = Math.min(money, needed);
               item.amount_paid += alloc;
               money -= alloc;
+            }
+          }
+
+          // Si un reliquat subsiste (ex: paiement supérieur à la plage, ou mois déjà soldés par une avance précédente),
+          // affecter immédiatement le solde chronologiquement sur les mois futurs suivants (chaînage d'avances)
+          if (money > 0) {
+            const lastRangeIdx = updatedSchedule.indexOf(rangeItems[rangeItems.length - 1]);
+            for (let i = lastRangeIdx + 1; i < updatedSchedule.length; i++) {
+              if (money <= 0) break;
+              const nextItem = updatedSchedule[i];
+              const needed = nextItem.amount_due - nextItem.amount_paid;
+              if (needed > 0) {
+                const alloc = Math.min(money, needed);
+                nextItem.amount_paid += alloc;
+                money -= alloc;
+              }
             }
           }
           continue;
@@ -1087,5 +1106,167 @@ export function computePortfolioRentMetrics(
     recoveryRateCurrentMonth,
     contractResults
   };
+}
+
+/**
+ * RÈGLE FONDAMENTALE DES AVANCES DE LOYERS (Consommation progressive & Alerte d'épuisement) :
+ * Vérifie l'ensemble des contrats actifs. Lorsque l'avance d'un locataire est totalement
+ * consommée et qu'il entre dans un nouveau mois non couvert sans paiement effectué,
+ * déclenche automatiquement une notification officielle invitant le preneur à régler le loyer.
+ */
+export function checkAndNotifyExhaustedAdvances(
+  contracts: any[] = [],
+  payments: any[] = [],
+  refDate: Date | string = new Date()
+): { contractId: string; targetMonth: string; amountDue: number; notified: boolean }[] {
+  if (typeof window === 'undefined') return [];
+  const referenceDate = typeof refDate === 'string' ? parseDateSafe(refDate) : (refDate || new Date());
+  const refYear = referenceDate.getFullYear();
+  const refMonth = referenceDate.getMonth();
+  const nowMonthIndex = refYear * 12 + refMonth;
+
+  const results: { contractId: string; targetMonth: string; amountDue: number; notified: boolean }[] = [];
+
+  const activeContracts = (contracts || []).filter((c: any) => {
+    if (!c) return false;
+    const st = String(c.status || '').toLowerCase().trim();
+    return st === 'actif' || st === 'contrat_actif' || st === 'signe';
+  });
+
+  const validPayments = (payments || []).filter((p: any) => {
+    if (!p) return false;
+    if (p.reference === 'ESP-364218') return false;
+    const st = String(p.status || '').toLowerCase().trim();
+    return (
+      st === 'confirme' ||
+      st === 'valide' ||
+      st === 'certifie' ||
+      st === 'paye' ||
+      p.reference === 'ESP-895031' ||
+      Boolean(p.receipt_number) ||
+      Boolean(p.tenant_signature_url && p.owner_signature_url)
+    );
+  });
+
+  for (const contract of activeContracts) {
+    const contractNum = contract.contract_number || contract.id || 'LT-CONTRAT';
+    const contractId = contract.id || contractNum;
+    const tenantId = contract.tenant_id || contract.tenant?.id;
+    if (!tenantId) continue;
+
+    const contractPayments = validPayments.filter((p: any) => {
+      const pContractId = p.contract_id || p.contract?.id || p.contract?.contract_number;
+      if (pContractId && (pContractId === contractId || pContractId === contractNum)) return true;
+      if (tenantId && p.tenant_id === tenantId) return true;
+      return false;
+    });
+
+    const schedule = generateContractSchedule(contract, referenceDate, 36);
+    const reconciled = reconcilePaymentsOnSchedule(schedule, contractPayments, false);
+
+    // Trouver le mois courant selon la date de référence
+    const currentItem = reconciled.find((item) => {
+      const d = parseDateSafe(item.due_date);
+      return d.getFullYear() * 12 + d.getMonth() === nowMonthIndex;
+    });
+
+    if (!currentItem) continue;
+
+    // Le mois en cours n'est pas soldé
+    const isUnpaidThisMonth = currentItem.amount_paid < currentItem.amount_due;
+
+    // Mois précédent soldé
+    const prevItem = reconciled.find((item) => {
+      const d = parseDateSafe(item.due_date);
+      return d.getFullYear() * 12 + d.getMonth() === nowMonthIndex - 1;
+    });
+
+    const hadPreviousCoverage = prevItem ? prevItem.amount_paid >= prevItem.amount_due : false;
+
+    // Détecter si le contrat a déjà bénéficié d'avances de loyer
+    const hasAdvanceHistory = contractPayments.some((p: any) => {
+      const target = String(p.target_month || p.period_covered || '').toLowerCase();
+      return (
+        target.includes(' à ') ||
+        target.includes(' au ') ||
+        target.includes(' - ') ||
+        target.includes(' – ') ||
+        (Array.isArray(p.allocations) && p.allocations.length > 1) ||
+        Number(p.amount) > Number(contract.monthly_rent || contract.rent || 0)
+      );
+    });
+
+    if (isUnpaidThisMonth && (hadPreviousCoverage || hasAdvanceHistory)) {
+      const notifKey = `locatrust_adv_exhausted_${contractNum}_${currentItem.target_month}`;
+      const alreadySent = localStorage.getItem(notifKey);
+
+      if (!alreadySent) {
+        const propTitle = contract.property?.title || contract.property_title || 'votre logement';
+        const notifTitle = "Avance de loyer épuisée — Loyer dû";
+        const notifDesc = `Votre avance de loyer est désormais épuisée. Le loyer de ${currentItem.target_month} (${formatFCFA(currentItem.amount_due)}) pour "${propTitle}" est maintenant exigible. Merci d'effectuer votre déclaration de paiement.`;
+
+        try {
+          const rawNotifs = localStorage.getItem('locatrust_notifications');
+          let notifsList: any[] = [];
+          if (rawNotifs) {
+            try {
+              notifsList = JSON.parse(rawNotifs);
+            } catch {}
+          }
+
+          const newNotif = {
+            id: `notif_adv_exp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            title: notifTitle,
+            description: notifDesc,
+            timestamp: "À l'instant",
+            category: 'paiement' as const,
+            read: false,
+            targetTab: 'paiements',
+            userId: tenantId,
+            contractNumber: contractNum,
+            targetMonth: currentItem.target_month
+          };
+
+          notifsList.unshift(newNotif);
+          localStorage.setItem('locatrust_notifications', JSON.stringify(notifsList));
+          localStorage.setItem(notifKey, 'true');
+
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { newNotif } }));
+
+          try {
+            supabase
+              .from('notifications')
+              .insert([
+                {
+                  user_id: tenantId,
+                  title: notifTitle,
+                  message: notifDesc,
+                  category: 'paiement',
+                  read: false,
+                  data: {
+                    contractNumber: contractNum,
+                    targetMonth: currentItem.target_month,
+                    type: 'advance_exhausted'
+                  }
+                }
+              ])
+              .then(() => {})
+              .catch(() => {});
+          } catch {}
+
+          results.push({
+            contractId: String(contractId),
+            targetMonth: currentItem.target_month,
+            amountDue: currentItem.amount_due,
+            notified: true
+          });
+        } catch (e) {
+          console.warn('Erreur notification avance épuisée:', e);
+        }
+      }
+    }
+  }
+
+  return results;
 }
 

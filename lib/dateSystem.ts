@@ -8,6 +8,7 @@ import { formatFCFA } from '@/lib/utils';
 import { sendChatMessage } from '@/lib/messagingStore';
 import { supabase } from '@/src/lib/supabase';
 import { checkAndSendContractExpiryNotifications } from '@/lib/contractRenewalManager';
+import { checkAndNotifyExhaustedAdvances } from '@/lib/payments/rentScheduleEngine';
 
 let memoryTimeOffsetMs = 0;
 
@@ -470,6 +471,13 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
         }
       }
     });
+
+    // 4. Vérification universelle de l'épuisement des avances de loyer et notification automatique
+    try {
+      checkAndNotifyExhaustedAdvances(contracts, payments, getDeviceDate());
+    } catch (e) {
+      console.warn('Erreur vérification avances épuisées dateSystem:', e);
+    }
 
     return alertsToReturn;
   } catch (err) {

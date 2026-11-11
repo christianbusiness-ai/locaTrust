@@ -45,7 +45,7 @@ import { getStoredOwnerSignature, persistTenantSignature } from '@/lib/signature
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getDeviceDate } from '@/lib/dateSystem';
-import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult } from '@/lib/payments/rentScheduleEngine';
+import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult, checkAndNotifyExhaustedAdvances } from '@/lib/payments/rentScheduleEngine';
 import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantReceiptReviewAndSignModal';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 
@@ -752,6 +752,13 @@ export const LocatairePaiementsView: React.FC = () => {
 
       const allContracts = Array.from(contractsByNumMap.values());
       setUserContracts(allContracts);
+
+      // Règle universelle : vérifier l'épuisement des avances et notifier le locataire si nécessaire
+      try {
+        checkAndNotifyExhaustedAdvances(allContracts, rentList, new Date());
+      } catch (e) {
+        console.warn('Vérification avances épuisées locataire:', e);
+      }
 
       if (allContracts.length > 0) {
         const targetContract = (!selectedContractId || !allContracts.some(c => c.id === selectedContractId))
