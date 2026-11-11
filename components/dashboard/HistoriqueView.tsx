@@ -143,7 +143,8 @@ export const HistoriqueView: React.FC = () => {
             target_month: r.period_covered || 'Mois réglé',
             amount: Number(r.amount) || 0,
             payment_method: r.payment_method || 'Mobile Money',
-            reference: r.token || r.id.slice(0, 10),
+            reference: r.receipt_number || r.reference || r.id.slice(0, 10),
+            token: r.token,
             issued_date: new Date(r.created_at || Date.now()).toLocaleDateString('fr-FR'),
             status: 'valide'
           }))
