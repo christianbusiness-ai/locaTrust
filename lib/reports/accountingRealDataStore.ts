@@ -469,7 +469,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     // 4b. Normalisation stricte : tout paiement validé par reçu ou signatures est formellement 'confirme' (Règle 6)
     realPayments = realPayments.filter((p: any) => p && p.reference !== 'ESP-364218').map((p: any) => {
       const hasReceipt = realReceipts.some((r: any) => r.receipt_number === p.reference || r.receipt_number === p.receipt_number);
-      if (hasReceipt || p.reference === 'ESP-895031' || (p.tenant_signature_url && p.owner_signature_url)) {
+      if (hasReceipt || (p.tenant_signature_url && p.owner_signature_url)) {
         return { ...p, status: 'confirme' };
       }
       return p;
@@ -488,12 +488,18 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const isPaymentConfirmed = (p: any): boolean => {
       if (!p || p.reference === 'ESP-364218') return false;
       const s = String(p.status || '').toLowerCase().trim();
-      return s === 'confirme' || s === 'valide' || s === 'paye' || s === 'certifie' ||
-        p.reference === 'ESP-895031' || Boolean(p.receipt_number) || Boolean(p.tenant_signature_url && p.owner_signature_url);
+      return (
+        s === 'confirme' ||
+        s === 'valide' ||
+        s === 'paye' ||
+        s === 'certifie' ||
+        Boolean(p.receipt_number) ||
+        Boolean(p.tenant_signature_url && p.owner_signature_url)
+      );
     };
 
     const isPaymentPending = (p: any): boolean => {
-      if (!p || p.reference === 'ESP-364218' || p.reference === 'ESP-895031') return false;
+      if (!p || p.reference === 'ESP-364218') return false;
       if (isPaymentConfirmed(p)) return false;
       const s = String(p.status || '').toLowerCase().trim();
       return s === 'declare' || s === 'en_attente' || s === 'en_attente_validation' || s === 'a_verifier';

@@ -102,21 +102,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            const hasEsp895031 = parsed.some((p: any) => p.reference === 'ESP-895031');
             return parsed
-              .filter((p: any) => {
-                if (hasEsp895031 && canonicalContractKey(p) === 'LT-2026-CI-39210687' && p.reference !== 'ESP-895031') return false;
-                if (p.reference === 'ESP-364218') return false;
-                return true;
-              })
+              .filter((p: any) => p && p.reference !== 'ESP-364218')
               .map((p: any) => {
-                if (p.reference === 'ESP-895031') {
+                const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
+                if (isBothSigned || p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie') {
                   return {
                     ...p,
-                    status: 'confirme',
-                    tenant_signature_url: p.tenant_signature_url || 'SIG_TENANT_CHRISTIAN_CERTIFIED',
-                    owner_signature_url: p.owner_signature_url || 'SIG_OWNER_CERTIFIED',
-                    tenant: { ...(p.tenant || {}), full_name: 'Christian' }
+                    status: 'confirme'
                   };
                 }
                 return p;
@@ -638,16 +631,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         );
 
         // Si le reçu existe et est certifié/scellé ou signé par le locataire, le paiement est CONFIRMÉ
-        // Règle 6 & Règle d'or : ESP-895031, WAV-2026-NOV-781920 et ESP-135945 sont des reçus officiellement scellés
         const isConfirmed =
           p.status === 'confirme' ||
           p.status === 'certifie' ||
           p.status === 'valide' ||
           hasTenantSig ||
-          isSealedReceipt ||
-          p.reference === 'ESP-895031' ||
-          p.reference === 'WAV-2026-NOV-781920' ||
-          p.reference === 'ESP-135945';
+          isSealedReceipt;
 
         const finalStatus = isConfirmed
           ? 'confirme'
@@ -656,14 +645,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           : p.status;
 
         const rawName = p.tenant?.full_name || (p as any).tenant_name || (p as any).tenant?.name || '';
-        const cleanName = rawName && !rawName.toLowerCase().includes('locataire') ? rawName : 'Christian';
+        const cleanName = rawName || 'Locataire';
 
         return {
           ...p,
           status: finalStatus,
-          tenant_signature_url: p.tenant_signature_url || receiptExists?.tenant_signature_url || (finalStatus === 'confirme' ? 'SIG_TENANT_CHRISTIAN_CERTIFIED' : undefined),
+          tenant_signature_url: p.tenant_signature_url || receiptExists?.tenant_signature_url || (finalStatus === 'confirme' ? (p.tenant_signature_url || receiptExists?.tenant_signature_url || 'SIG_TENANT_CERTIFIED') : undefined),
           owner_signature_url: p.owner_signature_url || receiptExists?.owner_signature_url || 'SIG_OWNER_CERTIFIED',
-          confirmed_at: p.confirmed_at || (finalStatus === 'confirme' ? '2026-11-10T11:51:18.000Z' : undefined),
+          confirmed_at: p.confirmed_at || receiptExists?.created_at || (finalStatus === 'confirme' ? new Date().toISOString() : undefined),
           tenant: {
             ...(p.tenant || {}),
             full_name: cleanName
@@ -832,15 +821,16 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           try {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed)) {
-              const hasEsp895031 = parsed.some((p: any) => p.reference === 'ESP-895031');
               setPayments(
                 parsed
-                  .filter((p: any) => {
-                    if (hasEsp895031 && canonicalContractKey(p) === 'LT-2026-CI-39210687' && p.reference !== 'ESP-895031') return false;
-                    if (p.reference === 'ESP-364218') return false;
-                    return true;
+                  .filter((p: any) => p && p.reference !== 'ESP-364218')
+                  .map((p: any) => {
+                    const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
+                    if (isBothSigned || p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie') {
+                      return { ...p, status: 'confirme' };
+                    }
+                    return p;
                   })
-                  .map((p: any) => (p.reference === 'ESP-895031' ? { ...p, status: 'confirme', tenant_signature_url: p.tenant_signature_url || 'SIG_TENANT_CHRISTIAN_CERTIFIED', owner_signature_url: p.owner_signature_url || 'SIG_OWNER_CERTIFIED', tenant: { ...(p.tenant || {}), full_name: 'Christian' } } : p))
               );
             }
           } catch { }
@@ -982,7 +972,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     const rawDeclared = payments.filter((p) => {
       if (!isDeclaredStatus(p.status)) return false;
       // Si une quittance existe déjà pour cette référence, ce n'est PLUS une déclaration en attente
-      if (p.reference && (p.reference === 'ESP-895031' || p.reference === 'ESP-364218' || p.reference === 'WAV-2026-NOV-781920' || p.reference === 'ESP-135945')) {
+      if (p.reference && p.reference === 'ESP-364218') {
         return false;
       }
       if (p.owner_signature_url || p.tenant_signature_url || (p as any).tenant_signature) {

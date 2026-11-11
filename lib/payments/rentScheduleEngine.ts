@@ -305,8 +305,13 @@ export function reconcilePaymentsOnSchedule(
     if (!p) return false;
     if (p.status === 'refuse' || p.status === 'rejete') return false;
     if (p.reference === 'ESP-364218') return false;
-    const isConf = p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye' ||
-      p.reference === 'ESP-895031' || Boolean(p.receipt_number) || Boolean(p.tenant_signature_url && p.owner_signature_url);
+    const isConf =
+      p.status === 'confirme' ||
+      p.status === 'valide' ||
+      p.status === 'certifie' ||
+      p.status === 'paye' ||
+      Boolean(p.receipt_number) ||
+      Boolean(p.tenant_signature_url && p.owner_signature_url);
     if (!includePending && !isConf) {
       // Pour les calculs officiels validés, on n'inclut que les confirmés
       return false;
@@ -957,8 +962,14 @@ export function computePortfolioRentMetrics(
     if (!p) return false;
     if (p.reference === 'ESP-364218') return false; // Purge obsolète
     const st = String(p.status || '').toLowerCase().trim();
-    return st === 'confirme' || st === 'valide' || st === 'certifie' || st === 'paye' ||
-      p.reference === 'ESP-895031' || Boolean(p.receipt_number) || Boolean(p.tenant_signature_url && p.owner_signature_url);
+    return (
+      st === 'confirme' ||
+      st === 'valide' ||
+      st === 'certifie' ||
+      st === 'paye' ||
+      Boolean(p.receipt_number) ||
+      Boolean(p.tenant_signature_url && p.owner_signature_url)
+    );
   });
 
   const refYear = refDate.getFullYear();
@@ -1142,7 +1153,6 @@ export function checkAndNotifyExhaustedAdvances(
       st === 'valide' ||
       st === 'certifie' ||
       st === 'paye' ||
-      p.reference === 'ESP-895031' ||
       Boolean(p.receipt_number) ||
       Boolean(p.tenant_signature_url && p.owner_signature_url)
     );

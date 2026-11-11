@@ -194,43 +194,72 @@ export const ReceiptsQuittancesView: React.FC = () => {
         seenRefs.add(ref);
 
         const matchingPmt = paymentsMap.get(ref) || (r.rent_payment_id && paymentsMap.get(r.rent_payment_id)) || (r.id && paymentsMap.get(r.id));
-        const matchingContract = localContracts.find((c: any) => c.contract_number === r.contract_number || c.id === r.contract_id);
+        const matchingContract = localContracts.find((c: any) => c.contract_number === r.contract_number || c.id === r.contract_id || (matchingPmt && (c.id === matchingPmt.contract_id || c.contract_number === matchingPmt.contract_number)));
 
         // Règle institutionnelle LocaTrust : une quittance émise a TOUJOURS été validée et signée par le bailleur
         const ownerSigned = true;
 
         // Le locataire a signé si le reçu est finalisé/confirmé ou si sa signature est présente
-        const rStatus = String(r.status || '').toUpperCase();
-        const pStatus = String(matchingPmt?.status || '').toLowerCase();
-        const tenantSigned = Boolean(
-          rStatus === 'FINALISE' ||
-          rStatus === 'CONFIRME' ||
-          rStatus === 'CERTIFIE' ||
-          pStatus === 'confirme' ||
-          pStatus === 'valide' ||
-          pStatus === 'certifie' ||
+        const isConfirmedOrFinal = (status?: string): boolean => {
+          if (!status) return false;
+          const s = String(status).trim().toLowerCase();
+          return (
+            s === 'confirme' ||
+            s === 'confirmé' ||
+            s === 'finalise' ||
+            s === 'finalisé' ||
+            s === 'certifie' ||
+            s === 'certifié' ||
+            s === 'valide' ||
+            s === 'validé' ||
+            s === 'paye' ||
+            s === 'payé'
+          );
+        };
+
+        const hasTenantSig = Boolean(
           r.tenant_signature ||
           r.tenant_signature_url ||
           r.tenant_signed ||
           matchingPmt?.tenant_signature_url ||
           matchingPmt?.tenant_signature ||
-          finalizedNotifs.has(ref) ||
-          ref === 'ESP-895031'
+          matchingPmt?.tenant_signed
         );
 
-        const effectiveToken = r.token || r.verification_token || matchingPmt?.token || matchingPmt?.verification_token || (ref === 'ESP-895031' ? 'tok_rec_esp_895031_1794319707479' : `tok_rec_${ref.toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+        const tenantSigned = isConfirmedOrFinal(r.status) || isConfirmedOrFinal(matchingPmt?.status) || hasTenantSig || finalizedNotifs.has(ref);
+
+        const effectiveToken = r.token || r.verification_token || matchingPmt?.token || matchingPmt?.verification_token || `tok_rec_${ref.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
         const effectiveDate = r.payment_date || (matchingPmt?.payment_date ? new Date(matchingPmt.payment_date).toLocaleDateString('fr-FR') : (r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')));
+
+        const effectiveTenantName =
+          (r.tenant_name && r.tenant_name !== 'Locataire')
+            ? r.tenant_name
+            : (matchingPmt?.tenant?.full_name || matchingPmt?.tenant_name || matchingContract?.tenant_name || matchingContract?.applicant_name || 'Locataire');
+
+        const effectivePropertyTitle =
+          (r.property_title && r.property_title !== 'Bien immobilier')
+            ? r.property_title
+            : (matchingPmt?.contract?.property?.title || matchingPmt?.property_title || matchingContract?.property_title || matchingContract?.property?.title || 'Bien immobilier');
+
+        const effectiveContractNum =
+          r.contract_number || matchingPmt?.contract_number || matchingPmt?.contract?.contract_number || matchingContract?.contract_number || 'N/A';
+
+        const effectivePeriod =
+          r.period_covered || matchingPmt?.target_month || matchingPmt?.period_covered || 'Période réglée';
+
+        const effectiveAmount =
+          Number(r.amount || r.amount_paid || matchingPmt?.amount || 0);
 
         allRows.push({
           id: r.id || `rec_${ref}`,
           receipt_number: ref,
           receipt_type: (r.type || 'loyer') as 'loyer' | 'caution',
-          tenant_name: r.tenant_name && r.tenant_name !== 'Locataire' ? r.tenant_name : (matchingPmt?.tenant?.full_name || matchingPmt?.tenant_name || matchingContract?.tenant_name || 'Christian'),
-          property_title: r.property_title && r.property_title !== 'Bien immobilier' ? r.property_title : (matchingPmt?.contract?.property?.title || matchingPmt?.property_title || matchingContract?.property_title || 'Maison a loué'),
+          tenant_name: effectiveTenantName,
+          property_title: effectivePropertyTitle,
           property_address: r.property_address || matchingPmt?.contract?.property?.address || matchingContract?.property_address || '',
-          contract_number: r.contract_number || matchingPmt?.contract_number || matchingContract?.contract_number || 'LT-2026-CI-39210687',
-          period_covered: r.period_covered || matchingPmt?.target_month || matchingPmt?.period_covered || 'Novembre 2026 à Janvier 2027',
-          amount: Number(r.amount || r.amount_paid || matchingPmt?.amount || 60000),
+          contract_number: effectiveContractNum,
+          period_covered: effectivePeriod,
+          amount: effectiveAmount,
           payment_method: r.payment_method || matchingPmt?.payment_method || 'Mobile Money',
           payment_date: effectiveDate,
           transaction_ref: matchingPmt?.reference || ref,
@@ -248,34 +277,57 @@ export const ReceiptsQuittancesView: React.FC = () => {
         if (!ref || seenRefs.has(ref)) continue;
         const pStatus = String(p.status || '').toLowerCase();
         const hasSig = Boolean(p.owner_signature_url || p.tenant_signature_url);
-        if (!['confirme', 'valide', 'en_attente_signature_locataire'].includes(pStatus) && !hasSig && ref !== 'ESP-895031') {
+        if (!['confirme', 'valide', 'en_attente_signature_locataire', 'certifie', 'paye'].includes(pStatus) && !hasSig) {
           continue;
         }
         seenRefs.add(ref);
 
+        const matchingContract = localContracts.find((c: any) => c.contract_number === p.contract_number || c.id === p.contract_id);
         const ownerSigned = true;
+
+        const isConfirmedOrFinal = (status?: string): boolean => {
+          if (!status) return false;
+          const s = String(status).trim().toLowerCase();
+          return (
+            s === 'confirme' ||
+            s === 'confirmé' ||
+            s === 'finalise' ||
+            s === 'finalisé' ||
+            s === 'certifie' ||
+            s === 'certifié' ||
+            s === 'valide' ||
+            s === 'validé' ||
+            s === 'paye' ||
+            s === 'payé'
+          );
+        };
+
         const tenantSigned = Boolean(
-          pStatus === 'confirme' ||
-          pStatus === 'valide' ||
+          isConfirmedOrFinal(p.status) ||
           p.tenant_signature_url ||
           p.tenant_signed ||
-          finalizedNotifs.has(ref) ||
-          ref === 'ESP-895031'
+          finalizedNotifs.has(ref)
         );
 
-        const effectiveToken = p.token || p.verification_token || (ref === 'ESP-895031' ? 'tok_rec_esp_895031_1794319707479' : `tok_rec_${ref.toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+        const effectiveToken = p.token || p.verification_token || `tok_rec_${ref.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
         const effectiveDate = p.payment_date ? new Date(p.payment_date).toLocaleDateString('fr-FR') : (p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'));
+
+        const effectiveTenantName = p.tenant?.full_name || p.tenant_name || matchingContract?.tenant_name || matchingContract?.applicant_name || 'Locataire';
+        const effectivePropertyTitle = p.contract?.property?.title || p.property_title || matchingContract?.property_title || matchingContract?.property?.title || 'Bien immobilier';
+        const effectiveContractNum = p.contract?.contract_number || p.contract_number || matchingContract?.contract_number || 'N/A';
+        const effectivePeriod = p.target_month || p.period_covered || 'Période réglée';
+        const effectiveAmount = Number(p.amount || 0);
 
         allRows.push({
           id: p.id || `pmt_${ref}`,
           receipt_number: ref,
           receipt_type: 'loyer',
-          tenant_name: p.tenant?.full_name || p.tenant_name || 'Christian',
-          property_title: p.contract?.property?.title || p.property_title || 'Maison a loué',
-          property_address: p.contract?.property?.address || '',
-          contract_number: p.contract?.contract_number || p.contract_number || 'LT-2026-CI-39210687',
-          period_covered: p.target_month || p.period_covered || 'Novembre 2026 à Janvier 2027',
-          amount: Number(p.amount) || 60000,
+          tenant_name: effectiveTenantName,
+          property_title: effectivePropertyTitle,
+          property_address: p.contract?.property?.address || matchingContract?.property_address || '',
+          contract_number: effectiveContractNum,
+          period_covered: effectivePeriod,
+          amount: effectiveAmount,
           payment_method: p.payment_method || 'Mobile Money',
           payment_date: effectiveDate,
           transaction_ref: ref,
@@ -291,23 +343,29 @@ export const ReceiptsQuittancesView: React.FC = () => {
       for (const cd of localDeposits) {
         const isMine = !user?.id || cd.owner_id === user.id || cd.agency_id === user.id || !cd.owner_id;
         if (!isMine) continue;
-        const cRef = cd.receipt_number || `REC-CAUTION-${(cd.contract_number || '210687').slice(-6)}`;
+        const cRef = cd.receipt_number || (cd.contract_number ? `REC-CAUTION-${cd.contract_number.slice(-6)}` : `REC-CAUTION-${String(cd.id || Date.now()).slice(-6)}`);
         if (seenRefs.has(cRef)) continue;
         seenRefs.add(cRef);
 
+        const matchingContract = localContracts.find((c: any) => c.contract_number === cd.contract_number || c.id === cd.contract_id);
         const effectiveToken = cd.token || cd.verification_token || `T_${(cd.id || cRef).slice(0, 16)}`;
         const effectiveDate = new Date(cd.confirmed_at || cd.created_at || Date.now()).toLocaleDateString('fr-FR');
+
+        const effectiveTenantName = cd.tenant?.full_name || cd.tenant_name || matchingContract?.tenant_name || 'Locataire';
+        const effectivePropertyTitle = cd.property?.title || cd.property_title || matchingContract?.property_title || 'Logement LocaTrust';
+        const effectiveContractNum = cd.contract_number || matchingContract?.contract_number || 'N/A';
+        const effectiveAmount = Number(cd.amount_paid || cd.amount_requested || cd.amount || 0);
 
         allRows.push({
           id: cd.id || `loc_cau_${cRef}`,
           receipt_number: cRef,
           receipt_type: 'caution',
-          tenant_name: cd.tenant?.full_name || cd.tenant_name || 'Locataire',
-          property_title: cd.property?.title || cd.property_title || 'Logement LocaTrust',
-          property_address: cd.property?.address || cd.property_address || '',
-          contract_number: cd.contract_number || 'LT-2026-CI-39210687',
+          tenant_name: effectiveTenantName,
+          property_title: effectivePropertyTitle,
+          property_address: cd.property?.address || cd.property_address || matchingContract?.property_address || '',
+          contract_number: effectiveContractNum,
           period_covered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-          amount: Number(cd.amount_paid || cd.amount_requested || 40000),
+          amount: effectiveAmount,
           payment_method: cd.payment_method || 'Wave CI / Mobile Money',
           payment_date: effectiveDate,
           transaction_ref: cd.declared_reference || cRef,

@@ -313,8 +313,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         loadedPayments = loadedPayments.filter(p => p && p.reference !== 'ESP-364218').map((p: any) => {
           const hasRec = knownReceiptRefs.has(p.reference) || knownReceiptRefs.has(p.receipt_number) || knownReceiptRefs.has(p.id);
           const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
-          const isSpecialConfirmed = p.reference === 'ESP-895031';
-          if (hasRec || isBothSigned || isSpecialConfirmed) {
+          const isConfirmedStatus = p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie';
+          if (hasRec || isBothSigned || isConfirmedStatus) {
             return { ...p, status: 'confirme', is_confirmed: true };
           }
           return p;
@@ -651,7 +651,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         const pendingApps = realApplications.filter((a: any) => a.status === 'en_attente');
         // Paiements réels en attente (exclure formellement les règlements validés, scellés ou en cours de signature locataire)
         const pendingPayments = realPayments.filter((p: any) => {
-          if (p.reference === 'ESP-364218' || p.reference === 'ESP-895031') return false;
+          if (p.reference === 'ESP-364218') return false;
           if (p.receipt_number || p.owner_signature_url) return false;
           if (p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye') return false;
           if (p.status === 'en_attente_signature_locataire') return false;
