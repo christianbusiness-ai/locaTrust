@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '@/src/lib/supabase';
 import { KpiGridSkeleton, PriorityNotificationSkeleton } from '@/components/common/SkeletonLoader';
 import { TopProgressBar } from '@/components/common/TopProgressBar';
