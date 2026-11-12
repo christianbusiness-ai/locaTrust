@@ -56,3 +56,4 @@ Toute tâche, fonctionnalité, refactorisation ou correction de bug DOIT valider
 - [ ] **Would the same account see identical data on another device?**
 - [ ] **Are important events persisted, not only broadcast?**
 - [ ] **Is the display cache limited to the allowed exception?**
+

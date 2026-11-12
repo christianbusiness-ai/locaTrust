@@ -48,3 +48,4 @@ Array.from(fileCount.entries())
   .forEach(([file, count]) => {
     console.log(`  • ${file.padEnd(55)} : ${count} violations`);
   });
+

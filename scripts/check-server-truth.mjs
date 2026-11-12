@@ -325,3 +325,4 @@ if (isReportOnly || (!isStrict && !process.env.CI)) {
   console.log('========================================================================\n');
   process.exit(1);
 }
+

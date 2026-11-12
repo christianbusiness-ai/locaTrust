@@ -57,3 +57,4 @@ WHAT IS ALLOWED (the only exceptions)
 - [ ] **Are important events persisted, not only broadcast?**
 - [ ] **Is the display cache limited to the allowed exception?**
 - [ ] **Did `npm run check:rules` pass in CI?**
+
