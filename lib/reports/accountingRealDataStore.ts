@@ -5,9 +5,11 @@ import {
   extractContractMonthlyRent,
   parseDateSafe,
   resolveContractDueDay,
+  resolveContractEffectiveStartDate,
   generateContractSchedule,
   reconcilePaymentsOnSchedule
 } from '@/lib/payments/rentScheduleEngine';
+import { getUnifiedReceipts } from '@/lib/receiptsStore';
 
 export interface RealAccountingSynthesis {
   loyersAttendus: number;
@@ -405,6 +407,45 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             });
           }
         }
+
+        // Intégration des contrats actifs depuis locatrust_rental_applications
+        const rawApps = localStorage.getItem('locatrust_rental_applications');
+        if (rawApps) {
+          const apps = JSON.parse(rawApps);
+          if (Array.isArray(apps)) {
+            const knownCNums = new Set(realContracts.map((c: any) => c.contract_number || c.id));
+            apps.filter((a: any) => isMine(a) && (a.status === 'contrat_actif' || a.documents?.contract_status === 'contrat_actif')).forEach((a: any) => {
+              const cNum = a.contract_number || a.id;
+              if (cNum && !knownCNums.has(cNum) && !knownCNums.has(a.id)) {
+                realContracts.push({
+                  id: a.id,
+                  contract_number: a.contract_number,
+                  property_id: a.property_id,
+                  tenant_id: a.tenant_id,
+                  monthly_rent: Number(a.monthly_rent || a.rent_amount || a.rent || 0),
+                  caution_amount: Number(a.caution_amount || 0),
+                  signed_date: a.signed_date || a.documents?.signed_date || a.signed_at,
+                  signed_at: a.signed_at || a.documents?.signed_at,
+                  start_date: a.start_date || a.documents?.start_date || a.signed_date,
+                  status: 'actif',
+                  tenant_signed: true
+                });
+                knownCNums.add(cNum);
+              }
+            });
+          }
+        }
+
+        // Intégration du Registre Unifié des Reçus (locatrust_receipts + locatrust_tenant_receipts_v2)
+        const unifiedLocalReceipts = getUnifiedReceipts(userId);
+        const knownRNums = new Set(realReceipts.map((r: any) => r.receipt_number || r.receiptNumber));
+        unifiedLocalReceipts.forEach((ur: any) => {
+          const num = ur.receipt_number || ur.receiptNumber;
+          if (num && !knownRNums.has(num)) {
+            realReceipts.push(ur);
+            knownRNums.add(num);
+          }
+        });
       } catch {}
     }
 
@@ -636,6 +677,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       reconciled.forEach((item) => {
         if (item.amount_paid > 0) {
           const d = parseDateSafe(item.due_date);
+          const cStart = resolveContractEffectiveStartDate(c);
+          const cStartMonthStart = new Date(cStart.getFullYear(), cStart.getMonth(), 1);
+          // RÈGLE ABSOLUE : Aucun loyer ou encaissement ne peut être alloué avant la signature du contrat
+          if (d < cStartMonthStart) return;
           const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
           const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
           paymentAllocationsByMonthKey.set(mKey, prev + item.amount_paid);
@@ -669,9 +714,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const monthStart = new Date(currentYearNum, idx, 1);
       const monthEnd = new Date(currentYearNum, idx + 1, 0, 23, 59, 59);
 
-      // Contrats réellement actifs durant CE mois spécifique
+      // Contrats réellement actifs durant CE mois spécifique (calculs partant de la signature)
       const contractsActiveThisMonth = activeContracts.filter((c: any) => {
-        const cStart = parseDateSafe(c.start_date || c.lease_start_date || c.created_at);
+        const cStart = resolveContractEffectiveStartDate(c);
         if (cStart > monthEnd) return false;
         if (c.end_date) {
           const cEnd = parseDateSafe(c.end_date);
@@ -690,7 +735,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
       // Retard pour ce mois : un loyer n'est en retard QUE lorsque la date limite de paiement réelle (mois M + 1 au jour d'échéance du contrat) est strictement dépassée
       const overdueExpectedForMonth = contractsActiveThisMonth.reduce((sum: number, c: any) => {
-        const cStart = parseDateSafe(c.start_date || c.lease_start_date || c.created_at);
+        const cStart = resolveContractEffectiveStartDate(c);
         const cDueDay = resolveContractDueDay(c, cStart);
         const dueMonthDate = new Date(currentYearNum, idx + 1, 1);
         const daysInDueMonth = new Date(dueMonthDate.getFullYear(), dueMonthDate.getMonth() + 1, 0).getDate();

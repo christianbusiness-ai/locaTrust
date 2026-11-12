@@ -46,6 +46,7 @@ import { createRentalApplication } from '@/lib/supabase/services';
 import { supabase } from '@/src/lib/supabase';
 import { sendChatMessage, sendRealChatMessage, saveUserScopedContact, setActiveChatPartnerForUser } from '@/lib/messagingStore';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { getUnifiedReceipts } from '@/lib/receiptsStore';
 
 const isValidUuid = (str?: string | null): boolean =>
   Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
@@ -872,20 +873,15 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
           });
         }
       }
-      const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
-      if (rawV2) {
-        const parsedV2 = JSON.parse(rawV2);
-        if (Array.isArray(parsedV2)) {
-          parsedV2.forEach((r: any) => {
-            const isSigned = r.status === 'confirme' || r.status === 'certifie' || r.tenant_signed === true || Boolean(r.tenant_signature_url);
-            if (isSigned) {
-              if (r.receipt_number) signedReceiptNumbers.add(String(r.receipt_number));
-              if (r.receiptNumber) signedReceiptNumbers.add(String(r.receiptNumber));
-              if (r.reference) signedReceiptNumbers.add(String(r.reference));
-            }
-          });
+      const unifiedRcps = getUnifiedReceipts(user?.id);
+      unifiedRcps.forEach((r: any) => {
+        const isSigned = r.status === 'confirme' || r.status === 'certifie' || r.tenant_signed === true || Boolean(r.tenant_signature_url);
+        if (isSigned) {
+          if (r.receipt_number) signedReceiptNumbers.add(String(r.receipt_number));
+          if (r.receiptNumber) signedReceiptNumbers.add(String(r.receiptNumber));
+          if (r.reference) signedReceiptNumbers.add(String(r.reference));
         }
-      }
+      });
     } catch {}
 
     const tryAddNotifBanner = (n: any) => {

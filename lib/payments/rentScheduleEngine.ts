@@ -156,19 +156,54 @@ export function toDayMidnight(d: Date): number {
 }
 
 /**
+ * Résout la date de prise d'effet contractuelle réelle d'un bail :
+ * RÈGLE FONDAMENTALE : Les calculs des montants et des échéances doivent obligatoirement
+ * partir de la DATE DE SIGNATURE DU CONTRAT (signed_date, signed_at, tenant_signed_at).
+ * Aucun loyer attendu, retard ou allocation ne peut précéder la date de signature effective.
+ */
+export function resolveContractEffectiveStartDate(contract: any): Date {
+  if (!contract) return new Date();
+
+  // 1. Priorité absolue : date effective de signature du bail
+  const rawSignature =
+    contract.signed_date ||
+    contract.signed_at ||
+    contract.tenant_signed_at ||
+    contract.owner_signed_at ||
+    contract.documents?.signed_date ||
+    contract.documents?.signed_at ||
+    contract.documents?.tenant_signed_at ||
+    contract.documents?.owner_signed_at;
+
+  if (rawSignature) {
+    const dt = parseDateSafe(rawSignature);
+    if (!isNaN(dt.getTime())) return dt;
+  }
+
+  // 2. Date de début formellement stipulée au bail ou date d'entrée
+  const rawStart =
+    contract.start_date ||
+    contract.lease_start_date ||
+    contract.entry_date ||
+    contract.entryDate ||
+    contract.documents?.start_date;
+
+  if (rawStart) {
+    const dt = parseDateSafe(rawStart);
+    if (!isNaN(dt.getTime())) return dt;
+  }
+
+  // 3. Fallback sur la création du contrat ou la date courante
+  return parseDateSafe(contract.created_at || new Date());
+}
+
+/**
  * Résout le jour mensuel d'échéance réel du contrat :
  * Par défaut, si le contrat est signé / prend effet le 07 novembre, l'échéance mensuelle est le 07 de chaque mois
  * (1ère échéance le 07 décembre).
  */
 export function resolveContractDueDay(contract: any, fallbackStartDate?: Date): number {
-  const rawStart =
-    contract?.start_date ||
-    contract?.lease_start_date ||
-    contract?.signed_at ||
-    contract?.tenant_signed_at ||
-    contract?.signed_date ||
-    contract?.created_at;
-  const startDt = fallbackStartDate || (rawStart ? parseDateSafe(rawStart) : new Date());
+  const startDt = fallbackStartDate || resolveContractEffectiveStartDate(contract);
   const startDay = startDt.getDate() || 7;
   const rawDue = Number(contract?.due_day || contract?.payment_due_day || 0);
   if (rawDue >= 1 && rawDue <= 31 && rawDue !== 5) {
@@ -177,8 +212,6 @@ export function resolveContractDueDay(contract: any, fallbackStartDate?: Date): 
   return startDay;
 }
 
-/**
- * Génère l'échéancier mensuel complet d'un contrat de bail
 /**
  * Extrait de façon dynamique et robuste le loyer mensuel réel prévu au contrat ou au bien depuis la base de données
  */
@@ -200,7 +233,7 @@ export function extractContractMonthlyRent(contract: any): number {
 
 /**
  * Génère l'échéancier mensuel prévisionnel pour un contrat de bail donné,
- * depuis la date de début jusqu'à un horizon futur suffisant
+ * partant obligatoirement de la date de signature effective du contrat.
  */
 export function generateContractSchedule(
   contract: any,
@@ -209,19 +242,8 @@ export function generateContractSchedule(
 ): MonthlyScheduleItem[] {
   const monthlyRent = extractContractMonthlyRent(contract);
 
-  const rawStart =
-    contract?.start_date ||
-    contract?.lease_start_date ||
-    contract?.signed_date ||
-    contract?.signed_at ||
-    contract?.tenant_signed_at ||
-    contract?.owner_signed_at ||
-    contract?.documents?.signed_date ||
-    contract?.documents?.start_date ||
-    contract?.created_at ||
-    new Date().toISOString().split('T')[0];
-
-  const startDate = parseDateSafe(rawStart);
+  // RÈGLE ABSOLUE : L'échéancier débute strictement à la date de signature du contrat
+  const startDate = resolveContractEffectiveStartDate(contract);
   const contractId = contract?.id || contract?.contract_number || 'cnt_default';
   const tenantId = contract?.tenant_id || contract?.tenant?.id || 'usr_tenant';
 
@@ -230,7 +252,7 @@ export function generateContractSchedule(
 
   const schedule: MonthlyScheduleItem[] = [];
 
-  // Débuter au mois de prise d'effet du contrat (le mois de signature constitue le premier mois de location)
+  // Débuter strictement au mois de signature / prise d'effet du contrat
   const curDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
 
   // Horizon : au moins jusqu'à referenceDate + horizonMonths mois

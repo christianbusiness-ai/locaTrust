@@ -48,6 +48,7 @@ import { getDeviceDate } from '@/lib/dateSystem';
 import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocationResult, checkAndNotifyExhaustedAdvances } from '@/lib/payments/rentScheduleEngine';
 import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantReceiptReviewAndSignModal';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
+import { getUnifiedReceipts, saveUnifiedReceipts } from '@/lib/receiptsStore';
 
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 3500) => {
   const controller = new AbortController();
@@ -1471,22 +1472,16 @@ export const LocatairePaiementsView: React.FC = () => {
         }
       } catch {}
 
-      // 3. Mettre à jour locatrust_tenant_receipts_v2
+      // 3. Mettre à jour le Registre Unifié des Reçus (locatrust_receipts et locatrust_tenant_receipts_v2)
       try {
-        const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
-        if (rawV2) {
-          const list = JSON.parse(rawV2);
-          if (Array.isArray(list)) {
-            const updatedV2 = list.map((r: any) => {
-              if (r.receipt_number === pmt.reference || r.receiptNumber === pmt.reference || r.payment_id === pmt.id) {
-                return { ...r, owner_signature_url: effectiveOwnerSig, tenant_signature_url: signatureData, status: 'confirme' };
-              }
-              return r;
-            });
-            localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(updatedV2));
-            window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
+        const unifiedList = getUnifiedReceipts();
+        const updatedList = unifiedList.map((r: any) => {
+          if (r.receipt_number === pmt.reference || r.receiptNumber === pmt.reference || r.payment_id === pmt.id) {
+            return { ...r, owner_signature_url: effectiveOwnerSig, tenant_signature_url: signatureData, status: 'confirme' };
           }
-        }
+          return r;
+        });
+        saveUnifiedReceipts(updatedList);
       } catch {}
 
       // 4. Mettre à jour Supabase (Tables rent_payments et receipts)

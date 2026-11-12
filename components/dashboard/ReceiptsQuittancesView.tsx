@@ -26,6 +26,7 @@ import { TableRowsSkeleton } from '@/components/common/SkeletonLoader';
 import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 import { getStoredOwnerSignature, getStoredTenantSignature } from '@/lib/signatureHelper';
+import { getUnifiedReceipts } from '@/lib/receiptsStore';
 
 interface OfficialReceiptRow {
   id: string;
@@ -89,8 +90,7 @@ export const ReceiptsQuittancesView: React.FC = () => {
         } catch {}
 
         try {
-          const rawRcps = localStorage.getItem('locatrust_tenant_receipts_v2') || localStorage.getItem('locatrust_receipts');
-          if (rawRcps) localReceipts = JSON.parse(rawRcps) || [];
+          localReceipts = getUnifiedReceipts(user?.id) || [];
         } catch {}
 
         try {

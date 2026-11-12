@@ -48,6 +48,7 @@ import {
 } from '@/lib/payments/rentScheduleEngine';
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
+import { getUnifiedReceipts, upsertUnifiedReceipt } from '@/lib/receiptsStore';
 import { sendQuittanceToTenant } from '@/lib/messagingStore';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
@@ -321,19 +322,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
       }
 
-      // Vérifier également les quittances locales
+      // Vérifier également les quittances du registre unifié
       if (typeof window !== 'undefined') {
         try {
-          const rawRcps = localStorage.getItem('locatrust_tenant_receipts_v2') || localStorage.getItem('locatrust_receipts');
-          if (rawRcps) {
-            const parsedRcps = JSON.parse(rawRcps);
-            if (Array.isArray(parsedRcps)) {
-              for (const r of parsedRcps) {
-                const rNum = r.receipt_number || r.receiptNumber;
-                if (rNum && !receiptsByRef.has(rNum)) {
-                  receiptsByRef.set(rNum, r);
-                }
-              }
+          const unifiedRcps = getUnifiedReceipts(user?.id);
+          for (const r of unifiedRcps) {
+            const rNum = r.receipt_number || r.receiptNumber;
+            if (rNum && !receiptsByRef.has(rNum)) {
+              receiptsByRef.set(rNum, r);
             }
           }
         } catch { }
@@ -1295,33 +1291,28 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         console.warn('sendQuittanceToTenant notice:', msgErr);
       }
 
-      // Persister également dans locatrust_tenant_receipts_v2 pour visibilité immédiate côté locataire
+      // Persister dans le Registre Unifié des Reçus (synchronise immédiatement locatrust_receipts et locatrust_tenant_receipts_v2)
       const receiptUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8007-${Date.now().toString(16).padStart(12, '0')}`;
       try {
-        const rawV2 = localStorage.getItem('locatrust_tenant_receipts_v2');
-        let receiptsV2 = rawV2 ? JSON.parse(rawV2) : [];
-        if (Array.isArray(receiptsV2)) {
-          receiptsV2 = receiptsV2.filter((r: any) => (r.receipt_number !== extractedOcrData.reference && r.receiptNumber !== extractedOcrData.reference));
-          receiptsV2.unshift({
-            id: receiptUuid,
-            receipt_number: extractedOcrData.reference,
-            receiptNumber: extractedOcrData.reference,
-            type: 'loyer',
-            contract_id: validatingPayment.contract_id,
-            tenant_id: tenantId,
-            owner_id: ownerId,
-            amount: extractedOcrData.amount,
-            period_covered: targetPeriodFormatted,
-            payment_date: new Date().toISOString(),
-            payment_method: extractedOcrData.payment_method,
-            created_at: new Date().toISOString(),
-            owner_signature_url: effectiveOwnerSig,
-            status: 'en_attente_signature_locataire'
-          });
-          localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(receiptsV2));
-          window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
-        }
-      } catch { }
+        upsertUnifiedReceipt({
+          id: receiptUuid,
+          receipt_number: extractedOcrData.reference,
+          receiptNumber: extractedOcrData.reference,
+          type: 'loyer',
+          contract_id: validatingPayment.contract_id,
+          tenant_id: tenantId,
+          owner_id: ownerId,
+          amount: extractedOcrData.amount,
+          period_covered: targetPeriodFormatted,
+          payment_date: new Date().toISOString(),
+          payment_method: extractedOcrData.payment_method,
+          created_at: new Date().toISOString(),
+          owner_signature_url: effectiveOwnerSig,
+          status: 'en_attente_signature_locataire'
+        });
+      } catch (saveErr) {
+        console.warn('Erreur upsertUnifiedReceipt notice:', saveErr);
+      }
 
       // Marquer la notification initiale de déclaration comme traitée
       try {

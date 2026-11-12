@@ -36,9 +36,10 @@ import {
   setSelectedViewingYear,
   generateSyntheticYearRecords
 } from '@/lib/reports/accountingHistoryStore';
-import { computePortfolioRentMetrics, checkAndNotifyExhaustedAdvances } from '@/lib/payments/rentScheduleEngine';
+import { computePortfolioRentMetrics, checkAndNotifyExhaustedAdvances, FRENCH_MONTHS } from '@/lib/payments/rentScheduleEngine';
 import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
 import { calculateQuotaFromDataset, getQuotaPrice } from '@/lib/quotaEngine';
+import { getUnifiedReceipts } from '@/lib/receiptsStore';
 
 interface ProprietaireDashboardViewProps {
   onNavigateTab: (tabId: string) => void;
@@ -234,7 +235,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       }
       setRealContracts(finalContracts);
 
-      // 3. Règlements de loyers (Supabase + /api/sync + localStorage + reçus certifiés)
+      // 3. Règlements de loyers (Supabase + /api/sync + registre unifié des reçus)
       if (currentUserId) {
         const knownReceiptRefs = new Set<string>();
         try {
@@ -245,23 +246,27 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           if (recData && Array.isArray(recData)) {
             recData.forEach((r: any) => {
               if (r.receipt_number) knownReceiptRefs.add(r.receipt_number);
+              if (r.receiptNumber) knownReceiptRefs.add(r.receiptNumber);
               if (r.payment_id) knownReceiptRefs.add(r.payment_id);
+              if (r.id) knownReceiptRefs.add(r.id);
             });
           }
         } catch {}
 
         if (typeof window !== 'undefined') {
           try {
-            const rawRec = localStorage.getItem('locatrust_receipts');
-            if (rawRec) {
-              const parsedRec = JSON.parse(rawRec);
-              if (Array.isArray(parsedRec)) {
-                parsedRec.forEach((r: any) => {
-                  if (r.receipt_number) knownReceiptRefs.add(r.receipt_number);
-                  if (r.payment_id) knownReceiptRefs.add(r.payment_id);
-                });
-              }
-            }
+            const unifiedRcps = getUnifiedReceipts(currentUserId);
+            unifiedRcps.forEach((r: any) => {
+              if (r.receipt_number) knownReceiptRefs.add(r.receipt_number);
+              if (r.receiptNumber) knownReceiptRefs.add(r.receiptNumber);
+              if (r.payment_id) knownReceiptRefs.add(r.payment_id);
+              if (r.id) knownReceiptRefs.add(r.id);
+              if (r.reference) knownReceiptRefs.add(r.reference);
+              if (r.token) knownReceiptRefs.add(r.token);
+              const cKey = String(r.contract_id || r.contract_number || '').trim();
+              const pKey = String(r.period_covered || r.target_month || '').trim();
+              if (cKey && pKey) knownReceiptRefs.add(`${cKey}_${pKey}`);
+            });
           } catch {}
         }
 
@@ -649,12 +654,17 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       ) : (() => {
         // Demandes réelles en attente
         const pendingApps = realApplications.filter((a: any) => a.status === 'en_attente');
-        // Paiements réels en attente (exclure formellement les règlements validés, scellés ou en cours de signature locataire)
+        // Paiements réels en attente (exclure formellement les règlements validés, scellés ou ayant déjà une quittance générée)
         const pendingPayments = realPayments.filter((p: any) => {
           if (p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse' || p.status === 'rejete') return false;
           if (p.receipt_number || p.owner_signature_url) return false;
           if (p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye') return false;
           if (p.status === 'en_attente_signature_locataire') return false;
+          const ref = String(p.reference || p.receipt_number || p.id || '').trim();
+          if (ref && knownReceiptRefs.has(ref)) return false;
+          const contractKey = String(p.contract_id || p.contract?.id || p.contract_number || '').trim();
+          const periodKey = String(p.target_month || p.period_covered || '').trim();
+          if (contractKey && periodKey && knownReceiptRefs.has(`${contractKey}_${periodKey}`)) return false;
           return p.status === 'declare';
         });
 
@@ -989,7 +999,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                   const totalIn = row.collected;
                   const totalOut = row.maintenance + row.cautionRefunded + row.otherExpenses;
                   const net = totalIn - totalOut;
-                  const isCurrentMonth = row.month === 'Septembre';
+                  const currentMonthName = FRENCH_MONTHS[new Date().getMonth()];
+                  const isCurrentMonth = row.month === currentMonthName && String(selectedYear) === String(new Date().getFullYear());
 
                   return (
                     <tr

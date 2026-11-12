@@ -4,6 +4,7 @@ import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
+import { getUnifiedReceipts, saveUnifiedReceipts } from '@/lib/receiptsStore';
 
 const STORAGE_KEY = 'locatrust_deposits_v1';
 
@@ -552,29 +553,26 @@ export function signCautionReceipt(
     });
   } catch { }
 
-  // 2. Mettre à jour le registre des reçus du locataire (locatrust_tenant_receipts_v2)
+  // 2. Mettre à jour le Registre Unifié des Reçus (synchronise locatrust_receipts et locatrust_tenant_receipts_v2)
   try {
     if (typeof window !== 'undefined') {
-      const rawReceipts = localStorage.getItem('locatrust_tenant_receipts_v2');
-      if (rawReceipts) {
-        const list = JSON.parse(rawReceipts);
-        if (Array.isArray(list)) {
-          const updatedReceipts = list.map((r: any) => {
-            const matchesDeposit =
-              r.depositId === target.id ||
-              (cleanDepId && r.depositId && r.depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
-              (r.receiptNumber && cleanDepId && r.receiptNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().includes(cleanDepId)) ||
-              (r.contractNumber && (r.contractNumber === target.contract_id || r.contractNumber === target.contract_number));
-            if (matchesDeposit) {
-              return {
-                ...r,
-                ...(party === 'owner' ? { ownerSignatureUrl: signatureData } : { tenantSignatureUrl: signatureData })
-              };
-            }
-            return r;
-          });
-          localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(updatedReceipts));
-        }
+      const list = getUnifiedReceipts();
+      if (Array.isArray(list)) {
+        const updatedReceipts = list.map((r: any) => {
+          const matchesDeposit =
+            r.depositId === target.id ||
+            (cleanDepId && r.depositId && r.depositId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanDepId) ||
+            (r.receiptNumber && cleanDepId && r.receiptNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase().includes(cleanDepId)) ||
+            (r.contractNumber && (r.contractNumber === target.contract_id || r.contractNumber === target.contract_number));
+          if (matchesDeposit) {
+            return {
+              ...r,
+              ...(party === 'owner' ? { ownerSignatureUrl: signatureData, owner_signature_url: signatureData } : { tenantSignatureUrl: signatureData, tenant_signature_url: signatureData })
+            };
+          }
+          return r;
+        });
+        saveUnifiedReceipts(updatedReceipts);
       }
     }
   } catch { }
@@ -746,17 +744,14 @@ export function resolveDepositContractDetails(dep: Deposit) {
         }
       }
 
-      // 3. Recherche dans locatrust_tenant_receipts_v2
-      const rawReceipts = localStorage.getItem('locatrust_tenant_receipts_v2');
-      if (rawReceipts) {
-        const rcps = JSON.parse(rawReceipts);
-        if (Array.isArray(rcps)) {
-          matchedReceipt = rcps.find((r: any) =>
-            r.depositId === dep.id ||
-            r.contractNumber === rawContractId ||
-            (r.receiptNumber && dep.id && r.receiptNumber.includes(dep.id.slice(0, 8).toUpperCase()))
-          );
-        }
+      // 3. Recherche dans le Registre Unifié des Reçus
+      const unifiedRcps = getUnifiedReceipts();
+      if (Array.isArray(unifiedRcps)) {
+        matchedReceipt = unifiedRcps.find((r: any) =>
+          r.depositId === dep.id ||
+          r.contractNumber === rawContractId ||
+          (r.receiptNumber && dep.id && r.receiptNumber.includes(dep.id.slice(0, 8).toUpperCase()))
+        );
       }
 
       // 4. Recherche dans locatrust_chat_messages_v4
