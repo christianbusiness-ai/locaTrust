@@ -19,6 +19,8 @@ export interface MonthAccountingRecord {
   activeTenants: number;
   contractsActive: number;
   contractsSigned: number;
+  agencyCommission?: number;
+  netReversedToMandants?: number;
 }
 
 export interface PeriodSummary {

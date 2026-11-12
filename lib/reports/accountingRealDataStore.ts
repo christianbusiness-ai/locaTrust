@@ -27,6 +27,10 @@ export interface RealAccountingSynthesis {
   totalDepense: number;
   resultatNet: number;
   tauxRecouvrement: number;
+  isAgency?: boolean;
+  agencyMandantsCount?: number;
+  commissionsAgence?: number;
+  totalReverseMandants?: number;
 }
 
 export interface RealAccountingDataset {
@@ -225,8 +229,11 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       }
     }
 
-    const isAgency = userProfile?.account_type === 'agence' || userProfile?.role === 'agence';
-    const isTenant = userProfile?.account_type === 'locataire';
+    const activeRole = typeof window !== 'undefined'
+      ? (localStorage.getItem('locatrust_user_role') || localStorage.getItem('locatrust_active_role') || localStorage.getItem('currentRole'))
+      : null;
+    const isAgency = userProfile?.account_type === 'agence' || userProfile?.role === 'agence' || activeRole === 'agence';
+    const isTenant = userProfile?.account_type === 'locataire' || userProfile?.role === 'locataire' || activeRole === 'locataire';
 
     // 1. Requêtes Supabase directes sans jointures relationnelles instables (pour éviter PGRST200)
     let pQuery = supabase.from('properties').select('*').is('deleted_at', null);
@@ -304,16 +311,64 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     let realTickets: any[] = ticketsRes.status === 'fulfilled' && Array.isArray(ticketsRes.value.data) ? ticketsRes.value.data : [];
     const allProfiles: any[] = profilesRes.status === 'fulfilled' && Array.isArray(profilesRes.value.data) ? profilesRes.value.data : [];
 
+    // Propriétés gérées par l'utilisateur ou l'agence (Support multi-mandats agence)
+    const agencyPropIds = new Set<string>(realProps.map((p: any) => String(p.id)));
+    const agencyMandantIds = new Set<string>();
+
     // 3. Synchronisation multi-appareils (/api/sync) et résilience locale isolée par utilisateur
     if (typeof window !== 'undefined') {
-      const isMine = (x: any) =>
-        x &&
-        (x.owner_id === userId ||
+      try {
+        const rawLocalProps = localStorage.getItem('locatrust_properties');
+        if (rawLocalProps) {
+          const localProps = JSON.parse(rawLocalProps);
+          if (Array.isArray(localProps)) {
+            localProps.forEach((lp: any) => {
+              const isMatch =
+                lp.owner_id === userId ||
+                lp.agency_id === userId ||
+                lp.agencyId === userId ||
+                (isAgency && (lp.mandant_id || lp.mandant_name || lp.agency_id === userId || lp.agencyId === userId));
+              if (isMatch && !agencyPropIds.has(String(lp.id))) {
+                realProps.push(lp);
+                agencyPropIds.add(String(lp.id));
+              }
+            });
+          }
+        }
+
+        // Mandats d'agence
+        const rawMandates = localStorage.getItem(`locatrust_agency_mandates_${userId}`) || localStorage.getItem('locatrust_agency_mandates');
+        if (rawMandates) {
+          const list = JSON.parse(rawMandates);
+          if (Array.isArray(list)) {
+            list.forEach((m: any) => {
+              if (m.id) agencyMandantIds.add(String(m.id));
+              if (m.owner_id) agencyMandantIds.add(String(m.owner_id));
+            });
+          }
+        }
+      } catch {}
+
+      const isMine = (x: any) => {
+        if (!x) return false;
+        if (
+          x.owner_id === userId ||
           x.agency_id === userId ||
+          x.agencyId === userId ||
           x.tenant_id === userId ||
           x.user_id === userId ||
           x.targetUserId === userId ||
-          x.senderUserId === userId);
+          x.senderUserId === userId
+        ) return true;
+        // Ingestion complète pour les Agences Immobilières :
+        // Tout contrat, paiement, candidature, caution ou ticket portant sur un bien sous mandat de l'agence
+        const propId = String(x.property_id || x.property?.id || '').trim();
+        if (propId && agencyPropIds.has(propId)) return true;
+        const mandantId = String(x.mandant_id || x.mandantId || '').trim();
+        if (mandantId && agencyMandantIds.has(mandantId)) return true;
+        if (isAgency && x.owner_id && agencyMandantIds.has(String(x.owner_id))) return true;
+        return false;
+      };
 
       try {
         const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(userId || '')}`);
@@ -577,12 +632,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     // Contrats actifs (Exclusion stricte des contrats terminés/clos)
     const activeContracts = realContracts.filter((c: any) => {
       const st = String(c?.status || '').toLowerCase().trim();
-      return (
-        (st === 'actif' || st === 'signe' || st === 'contrat_actif') &&
-        st !== 'termine' &&
-        st !== 'cloture' &&
-        st !== 'resilie'
-      );
+      return st === 'actif' || st === 'signe' || st === 'contrat_actif';
     });
 
     // Loyer mensuel attendu (cumul des baux actifs uniquement : 0 si aucun contrat actif)
@@ -763,6 +813,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       });
       const monthMaint = monthTickets.reduce((s: number, t: any) => s + (Number(t.cost || t.amount || t.final_cost) || 0), 0);
 
+      // Spécificités d'Agence Immobilière Agréée (commissions de gestion & reversements mandants)
+      const monthAgencyCommission = isAgency ? Math.round(monthCollected * 0.10) : 0;
+      const monthNetReversedToMandants = isAgency ? Math.max(0, monthCollected - monthAgencyCommission - monthMaint) : 0;
+
       return {
         monthKey,
         monthName: mName,
@@ -779,7 +833,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         activeProperties: realProps.length,
         activeTenants: contractsActiveThisMonth.length,
         contractsActive: contractsActiveThisMonth.length,
-        contractsSigned: 0
+        contractsSigned: 0,
+        agencyCommission: monthAgencyCommission,
+        netReversedToMandants: monthNetReversedToMandants
       };
     });
 
@@ -988,7 +1044,11 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         totalEncaisse: totalEncaisseExercice,
         totalDepense: totalDepenseExercice,
         resultatNet: resultatNetExercice,
-        tauxRecouvrement
+        tauxRecouvrement,
+        isAgency,
+        agencyMandantsCount: isAgency ? (agencyMandantIds.size || new Set(realProps.map((p: any) => p.mandant_id || p.owner_id || p.mandant_name).filter(Boolean)).size) : 0,
+        commissionsAgence: isAgency ? Math.round(totalEncaisseExercice * 0.10) : 0,
+        totalReverseMandants: isAgency ? Math.max(0, totalEncaisseExercice - Math.round(totalEncaisseExercice * 0.10) - depensesMaintenance) : 0
       },
       encaissements: mappedEncaissements,
       loyers: mappedLoyers,
@@ -1034,7 +1094,11 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         totalEncaisse: 0,
         totalDepense: 0,
         resultatNet: 0,
-        tauxRecouvrement: 0
+        tauxRecouvrement: 0,
+        isAgency: false,
+        agencyMandantsCount: 0,
+        commissionsAgence: 0,
+        totalReverseMandants: 0
       },
       encaissements: [],
       loyers: [],

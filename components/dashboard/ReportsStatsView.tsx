@@ -485,6 +485,36 @@ export const ReportsStatsView: React.FC = () => {
         </div>
       </div>
 
+      {/* 2.b EN-TÊTE SPÉCIFIQUE AGENCE IMMOBILIÈRE AGRÉÉE */}
+      {realDataset?.synthesis?.isAgency && (
+        <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-sm border border-blue-800/40 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center shrink-0 border border-white/20">
+              <Building2 className="w-6 h-6 text-blue-300" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs uppercase font-black text-blue-300 tracking-wider">Activité Agence Immobilière</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-black">
+                  {realDataset.synthesis.agencyMandantsCount || 1} mandant{(realDataset.synthesis.agencyMandantsCount || 1) > 1 ? 's' : ''} sous gestion
+                </span>
+              </div>
+              <h4 className="text-base font-black text-white mt-0.5">Honoraires de Gérance & Reversements Mandants</h4>
+            </div>
+          </div>
+          <div className="flex items-center gap-6 divide-x divide-white/10">
+            <div className="text-right">
+              <span className="text-[10px] uppercase font-bold text-blue-200 block">Commissions Agence (10%)</span>
+              <span className="text-lg font-black text-emerald-400">+{formatFCFA(realDataset.synthesis.commissionsAgence || 0)}</span>
+            </div>
+            <div className="pl-6 text-right">
+              <span className="text-[10px] uppercase font-bold text-blue-200 block">Net Reversé aux Propriétaires</span>
+              <span className="text-lg font-black text-white">{formatFCFA(realDataset.synthesis.totalReverseMandants || 0)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 3. SUB-NAVIGATION FOR RESTORED DETAILED SECTIONS (Point 13 & 14) */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800">
         {[

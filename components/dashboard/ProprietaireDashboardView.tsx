@@ -106,7 +106,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
             .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`)
             .is('deleted_at', null);
           if (propsData) finalProps = propsData;
-        } catch {}
+        } catch { }
 
         if (finalProps.length === 0 && typeof window !== 'undefined') {
           try {
@@ -117,7 +117,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                 finalProps = parsed.filter(isMine);
               }
             }
-          } catch {}
+          } catch { }
         }
       }
       setRealProps(finalProps);
@@ -158,7 +158,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               }
             });
           }
-        } catch {}
+        } catch { }
 
         try {
           const { data: contractsData } = await supabase
@@ -179,7 +179,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               };
             });
           }
-        } catch {}
+        } catch { }
 
         if (typeof window !== 'undefined') {
           try {
@@ -230,7 +230,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                 });
               }
             }
-          } catch {}
+          } catch { }
         }
       }
       setRealContracts(finalContracts);
@@ -251,7 +251,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               if (r.id) knownReceiptRefs.add(r.id);
             });
           }
-        } catch {}
+        } catch { }
 
         if (typeof window !== 'undefined') {
           try {
@@ -267,7 +267,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               const pKey = String(r.period_covered || r.target_month || '').trim();
               if (cKey && pKey) knownReceiptRefs.add(`${cKey}_${pKey}`);
             });
-          } catch {}
+          } catch { }
         }
 
         try {
@@ -282,7 +282,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               else loadedPayments[idx] = { ...loadedPayments[idx], ...sp };
             });
           }
-        } catch {}
+        } catch { }
 
         if (typeof window !== 'undefined') {
           try {
@@ -311,7 +311,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                 });
               }
             }
-          } catch {}
+          } catch { }
         }
 
         // Normalisation stricte : filtrer les paiements annulés et sceller les paiements confirmés
@@ -341,9 +341,9 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         const isMyApp = (a: any) =>
           Boolean(
             a &&
-              (a.owner_id === currentUserId ||
-                a.agency_id === currentUserId ||
-                (a.property_id && myPropIds.has(a.property_id)))
+            (a.owner_id === currentUserId ||
+              a.agency_id === currentUserId ||
+              (a.property_id && myPropIds.has(a.property_id)))
           );
 
         try {
@@ -358,7 +358,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               }
             });
           }
-        } catch {}
+        } catch { }
 
         if (typeof window !== 'undefined') {
           try {
@@ -373,7 +373,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                 });
               }
             }
-          } catch {}
+          } catch { }
         }
       }
       setRealApplications(finalApps);
@@ -612,7 +612,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     <div className="flex flex-col gap-6 w-full animate-fadeIn pb-12 font-sans relative">
       {/* Barre fine de progression en arrière-plan (Phase 1) */}
       <TopProgressBar active={isRefreshing} />
-      
+
       {/* 1. TOP BANNER GREETING AVEC ACTIONS RAPIDES ÉPURÉES */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex flex-col gap-1">
@@ -732,201 +732,201 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         <KpiGridSkeleton count={6} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-        
-        {/* CARTE 1 : BIENS IMMOBILIERS (Point 2 - Vision rapide : 12 / Actifs 10, Inactifs 2) */}
-        <div
-          onClick={() => onNavigateTab('properties')}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-blue-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
-          title="Cliquez pour ouvrir le menu Biens immobiliers"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <Building2 className="w-4.5 h-4.5" />
+
+          {/* CARTE 1 : BIENS IMMOBILIERS (Point 2 - Vision rapide : 12 / Actifs 10, Inactifs 2) */}
+          <div
+            onClick={() => onNavigateTab('properties')}
+            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-blue-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
+            title="Cliquez pour ouvrir le menu Biens immobiliers"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Building2 className="w-4.5 h-4.5" />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">BIENS IMMOBILIERS</span>
               </div>
-              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">BIENS IMMOBILIERS</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xl font-black text-slate-900">{totalProps}</span>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xl font-black text-slate-900">{totalProps}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                <span className="text-slate-600 font-medium">Actifs :</span>
+                <strong className="text-emerald-700 font-black">{activeProps}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                <span className="text-slate-600 font-medium">Inactifs :</span>
+                <strong className="text-slate-600 font-black">{inactiveProps}</strong>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-600 font-medium">Actifs :</span>
-              <strong className="text-emerald-700 font-black">{activeProps}</strong>
+          {/* CARTE 2 : LOCATAIRES (Point 3 - Uniquement locataires actifs) */}
+          <div
+            onClick={() => onNavigateTab('tenants')}
+            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
+            title="Cliquez pour ouvrir le menu Locataires"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Users className="w-4.5 h-4.5" />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">LOCATAIRES</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xl font-black text-slate-900">{totalTenants}</span>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              </div>
             </div>
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-600 font-medium">Inactifs :</span>
-              <strong className="text-slate-600 font-black">{inactiveProps}</strong>
+
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100">
+                <span className="text-emerald-900 font-bold">Locataires actifs :</span>
+                <strong className="text-emerald-700 font-black">{totalTenants}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg text-slate-500">
+                <span>Anciens locataires :</span>
+                <span className="font-semibold text-slate-700">Archivés dans Historique</span>
+              </div>
+            </div>
+          </div>
+
+          {/* CARTE 3 : LOYERS (Point 4 - Attendu, Encaissé, Restant, En retard) */}
+          <div
+            onClick={() => onNavigateTab('payments')}
+            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-amber-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
+            title="Cliquez pour ouvrir Paiements et loyers"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Wallet className="w-4.5 h-4.5" />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">LOYERS CE MOIS</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-black text-blue-700">{formatFCFA(rentMetrics.collected)}</span>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-amber-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1 rounded-md">
+                <span className="text-slate-500">Montant attendu :</span>
+                <strong className="text-slate-900">{formatFCFA(rentMetrics.expected)}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1 rounded-md">
+                <span className="text-emerald-900 font-bold">Montant encaissé :</span>
+                <strong className="text-emerald-700 font-black">{formatFCFA(rentMetrics.collected)}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-indigo-50/80 px-2.5 py-1 rounded-md border border-indigo-100">
+                <span className="text-indigo-900 font-bold">Montant en avance (avance loyer) :</span>
+                <strong className="text-indigo-700 font-black">{formatFCFA(rentMetrics.advance)}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-rose-50 px-2.5 py-1 rounded-md">
+                <span className="text-rose-900 font-bold">Montant restant (retard) :</span>
+                <strong className="text-rose-700 font-black">{formatFCFA(rentMetrics.late)}</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* CARTE 4 : CAUTIONS (Point 5 - Caution attendue, Caution détenue) */}
+          <div
+            onClick={() => onNavigateTab('guarantees')}
+            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-cyan-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
+            title="Cliquez pour ouvrir Cautions"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-cyan-100 text-cyan-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <ShieldCheck className="w-4.5 h-4.5" />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">CAUTIONS</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-black text-cyan-800">{formatFCFA(cautionMetrics.held)}</span>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-cyan-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                <span className="text-slate-500">Caution attendue :</span>
+                <strong className="text-slate-900">{formatFCFA(cautionMetrics.expected)}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-cyan-50 px-2.5 py-1.5 rounded-lg border border-cyan-100">
+                <span className="text-cyan-900 font-bold">Caution détenue :</span>
+                <strong className="text-cyan-700 font-black">{formatFCFA(cautionMetrics.held)}</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* CARTE 5 : MAINTENANCE (Point 6 - Dépensé ce mois / Dépensé cette année) */}
+          <div
+            onClick={() => onNavigateTab('maintenance')}
+            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-orange-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
+            title="Cliquez pour ouvrir Maintenance"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Wrench className="w-4.5 h-4.5" />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">MAINTENANCE</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-black text-orange-700">{formatFCFA(maintenanceMetrics.month)}</span>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-orange-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                <span className="text-slate-500">Montant dépensé ce mois :</span>
+                <strong className="text-slate-900 font-black">{formatFCFA(maintenanceMetrics.month)}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
+                <span className="text-slate-500">Montant dépensé cette année :</span>
+                <strong className="text-slate-900 font-black">{formatFCFA(maintenanceMetrics.year)}</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* CARTE 6 : RÉSULTAT NET (Point 7 - Résultat net du mois / Résultat net de l'année) */}
+          <div
+            onClick={() => onNavigateTab('stats')}
+            className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
+            title="Cliquez pour ouvrir Rapport et statistiques"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <TrendingUp className="w-4.5 h-4.5" />
+                </div>
+                <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">RÉSULTAT NET</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm font-black text-emerald-700">+{formatFCFA(netMetrics.month)}</span>
+                <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100">
+                <span className="text-emerald-900 font-bold">Résultat net du mois :</span>
+                <strong className="text-emerald-700 font-black">+{formatFCFA(netMetrics.month)}</strong>
+              </div>
+              <div className="flex items-center justify-between bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-100">
+                <span className="text-blue-900 font-bold">Résultat net de l'année :</span>
+                <strong className="text-blue-800 font-black">+{formatFCFA(netMetrics.year)}</strong>
+              </div>
             </div>
           </div>
         </div>
-
-        {/* CARTE 2 : LOCATAIRES (Point 3 - Uniquement locataires actifs) */}
-        <div
-          onClick={() => onNavigateTab('tenants')}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-emerald-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
-          title="Cliquez pour ouvrir le menu Locataires"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <Users className="w-4.5 h-4.5" />
-              </div>
-              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">LOCATAIRES</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xl font-black text-slate-900">{totalTenants}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100">
-              <span className="text-emerald-900 font-bold">Locataires actifs :</span>
-              <strong className="text-emerald-700 font-black">{totalTenants}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg text-slate-500">
-              <span>Anciens locataires :</span>
-              <span className="font-semibold text-slate-700">Archivés dans Historique</span>
-            </div>
-          </div>
-        </div>
-
-        {/* CARTE 3 : LOYERS (Point 4 - Attendu, Encaissé, Restant, En retard) */}
-        <div
-          onClick={() => onNavigateTab('payments')}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-amber-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
-          title="Cliquez pour ouvrir Paiements et loyers"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <Wallet className="w-4.5 h-4.5" />
-              </div>
-              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">LOYERS CE MOIS</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-black text-blue-700">{formatFCFA(rentMetrics.collected)}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-amber-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1 rounded-md">
-              <span className="text-slate-500">Montant attendu :</span>
-              <strong className="text-slate-900">{formatFCFA(rentMetrics.expected)}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1 rounded-md">
-              <span className="text-emerald-900 font-bold">Montant encaissé :</span>
-              <strong className="text-emerald-700 font-black">{formatFCFA(rentMetrics.collected)}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-indigo-50/80 px-2.5 py-1 rounded-md border border-indigo-100">
-              <span className="text-indigo-900 font-bold">Montant en avance (avance loyer) :</span>
-              <strong className="text-indigo-700 font-black">{formatFCFA(rentMetrics.advance)}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-rose-50 px-2.5 py-1 rounded-md">
-              <span className="text-rose-900 font-bold">Montant restant (retard) :</span>
-              <strong className="text-rose-700 font-black">{formatFCFA(rentMetrics.late)}</strong>
-            </div>
-          </div>
-        </div>
-
-        {/* CARTE 4 : CAUTIONS (Point 5 - Caution attendue, Caution détenue) */}
-        <div
-          onClick={() => onNavigateTab('guarantees')}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-cyan-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
-          title="Cliquez pour ouvrir Cautions"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-cyan-100 text-cyan-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <ShieldCheck className="w-4.5 h-4.5" />
-              </div>
-              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">CAUTIONS</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-black text-cyan-800">{formatFCFA(cautionMetrics.held)}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-cyan-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-500">Caution attendue :</span>
-              <strong className="text-slate-900">{formatFCFA(cautionMetrics.expected)}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-cyan-50 px-2.5 py-1.5 rounded-lg border border-cyan-100">
-              <span className="text-cyan-900 font-bold">Caution détenue :</span>
-              <strong className="text-cyan-700 font-black">{formatFCFA(cautionMetrics.held)}</strong>
-            </div>
-          </div>
-        </div>
-
-        {/* CARTE 5 : MAINTENANCE (Point 6 - Dépensé ce mois / Dépensé cette année) */}
-        <div
-          onClick={() => onNavigateTab('maintenance')}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-orange-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
-          title="Cliquez pour ouvrir Maintenance"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <Wrench className="w-4.5 h-4.5" />
-              </div>
-              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">MAINTENANCE</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-black text-orange-700">{formatFCFA(maintenanceMetrics.month)}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-orange-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-500">Montant dépensé ce mois :</span>
-              <strong className="text-slate-900 font-black">{formatFCFA(maintenanceMetrics.month)}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg">
-              <span className="text-slate-500">Montant dépensé cette année :</span>
-              <strong className="text-slate-900 font-black">{formatFCFA(maintenanceMetrics.year)}</strong>
-            </div>
-          </div>
-        </div>
-
-        {/* CARTE 6 : RÉSULTAT NET (Point 7 - Résultat net du mois / Résultat net de l'année) */}
-        <div
-          onClick={() => onNavigateTab('stats')}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-500 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col justify-between gap-3 active:scale-[0.99]"
-          title="Cliquez pour ouvrir Rapport et statistiques"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <TrendingUp className="w-4.5 h-4.5" />
-              </div>
-              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider">RÉSULTAT NET</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-black text-emerald-700">+{formatFCFA(netMetrics.month)}</span>
-              <ArrowUpRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex items-center justify-between bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100">
-              <span className="text-emerald-900 font-bold">Résultat net du mois :</span>
-              <strong className="text-emerald-700 font-black">+{formatFCFA(netMetrics.month)}</strong>
-            </div>
-            <div className="flex items-center justify-between bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-100">
-              <span className="text-blue-900 font-bold">Résultat net de l'année :</span>
-              <strong className="text-blue-800 font-black">+{formatFCFA(netMetrics.year)}</strong>
-            </div>
-          </div>
-        </div>
-      </div>
       )}
 
 
@@ -1005,9 +1005,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                   return (
                     <tr
                       key={idx}
-                      className={`hover:bg-slate-50/80 transition-colors ${
-                        isCurrentMonth ? 'bg-blue-50/40 font-semibold' : ''
-                      }`}
+                      className={`hover:bg-slate-50/80 transition-colors ${isCurrentMonth ? 'bg-blue-50/40 font-semibold' : ''
+                        }`}
                     >
                       <td className="py-3 px-3.5 font-bold text-slate-900 flex items-center gap-1.5">
                         {isCurrentMonth && <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />}
@@ -1063,7 +1062,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
       {/* 4. ACTIONS RAPIDES & DERNIÈRES NOTIFICATIONS LOCATIVES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        
+
         {/* Contrats récents réels */}
         {(() => {
           const realContracts = (() => {
@@ -1074,7 +1073,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                   const list = JSON.parse(raw);
                   if (Array.isArray(list)) return list;
                 }
-              } catch (e) {}
+              } catch (e) { }
             }
             return [];
           })();

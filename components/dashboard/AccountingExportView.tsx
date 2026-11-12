@@ -59,7 +59,7 @@ export const AccountingExportView: React.FC = () => {
   const currentPeriodObj = ACCOUNTING_PERIODS.find((p) => p.id === selectedPeriod) || ACCOUNTING_PERIODS[0];
 
   // Mandants STRICTEMENT réservés aux agences immobilières (AUCUN accès pour les propriétaires)
-  const isAgency = profile?.account_type === 'agence';
+  const isAgency = profile?.account_type === 'agence' || profile?.role === 'agence' || (typeof window !== 'undefined' && (localStorage.getItem('locatrust_user_role') === 'agence' || localStorage.getItem('currentRole') === 'agence'));
   const agencyId = user?.id;
   const [mandantsList, setMandantsList] = useState<{ id: string; full_name: string; phone?: string }[]>(() => {
     return isAgency && agencyId ? getAgencyMandates(agencyId) : [];

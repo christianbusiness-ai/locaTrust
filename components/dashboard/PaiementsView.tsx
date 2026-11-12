@@ -635,8 +635,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         const finalStatus = isConfirmed
           ? 'confirme'
           : receiptExists
-          ? 'en_attente_signature_locataire'
-          : p.status;
+            ? 'en_attente_signature_locataire'
+            : p.status;
 
         const rawName = p.tenant?.full_name || (p as any).tenant_name || (p as any).tenant?.name || '';
         const cleanName = rawName || 'Locataire';
@@ -1824,8 +1824,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           <div
             onClick={() => setActiveTab('confirmes')}
             className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${activeTab === 'confirmes'
-                ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
-                : 'bg-white border-slate-200 shadow-sm hover:border-emerald-300'
+              ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
+              : 'bg-white border-slate-200 shadow-sm hover:border-emerald-300'
               }`}
           >
             <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
@@ -1840,8 +1840,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           <div
             onClick={() => setActiveTab('declares')}
             className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${activeTab === 'declares'
-                ? 'bg-amber-50/70 border-amber-500 shadow-md ring-2 ring-amber-500/20'
-                : 'bg-white border-slate-200 shadow-sm hover:border-amber-300'
+              ? 'bg-amber-50/70 border-amber-500 shadow-md ring-2 ring-amber-500/20'
+              : 'bg-white border-slate-200 shadow-sm hover:border-amber-300'
               }`}
           >
             <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
@@ -1856,8 +1856,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           <div
             onClick={() => setActiveTab('tous')}
             className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center gap-3.5 ${activeTab === 'tous'
-                ? 'bg-blue-50/70 border-blue-500 shadow-md ring-2 ring-blue-500/20'
-                : 'bg-white border-slate-200 shadow-sm hover:border-blue-300'
+              ? 'bg-blue-50/70 border-blue-500 shadow-md ring-2 ring-blue-500/20'
+              : 'bg-white border-slate-200 shadow-sm hover:border-blue-300'
               }`}
           >
             <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -2299,12 +2299,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                               <span className="font-extrabold text-slate-800">{alloc.target_month}</span>
                               <div className="flex items-center gap-1.5 text-[9px] mt-0.5">
                                 <span className={`px-2 py-0.5 rounded-full font-black ${alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid
-                                    ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                                    : alloc.status_type === 'avance' || alloc.is_advance
-                                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                                      : alloc.status_type === 'partiel'
-                                        ? 'bg-orange-100 text-orange-700 border border-orange-200'
-                                        : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                  ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                                  : alloc.status_type === 'avance' || alloc.is_advance
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    : alloc.status_type === 'partiel'
+                                      ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                                      : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
                                   }`}>
                                   {alloc.status_label || (
                                     alloc.status_type === 'retard_regularise' || alloc.is_past_unpaid ? 'Retard régularisé' :
@@ -2407,8 +2407,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   disabled={isSubmittingValidation || !ownerSignatureUrl}
                   onClick={handleFinalizeValidation}
                   className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${isSubmittingValidation || !ownerSignatureUrl
-                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-80'
-                      : 'bg-emerald-600 hover:bg-emerald-500 active:scale-95'
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-80'
+                    : 'bg-emerald-600 hover:bg-emerald-500 active:scale-95'
                     }`}
                   title={!ownerSignatureUrl ? "Veuillez apposer votre signature avant de transmettre le reçu" : "Transmettre le reçu au locataire pour sa signature"}
                 >
@@ -2609,10 +2609,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                             <td className="p-2.5 text-slate-800 font-semibold">{alloc.target_month}</td>
                             <td className="p-2.5">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${alloc.status_type === 'avance' || alloc.is_advance
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : alloc.status_type === 'retard_regularise'
-                                    ? 'bg-rose-100 text-rose-700'
-                                    : 'bg-emerald-100 text-emerald-700'
+                                ? 'bg-amber-100 text-amber-800'
+                                : alloc.status_type === 'retard_regularise'
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-emerald-100 text-emerald-700'
                                 }`}>
                                 {alloc.status_label || (alloc.status_type === 'avance' || alloc.is_advance ? 'Avance' : 'Payé')}
                               </span>
@@ -2809,8 +2809,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     disabled={!hasBothSignatures}
                     title={hasBothSignatures ? "Télécharger le reçu officiel au format PDF" : "Le reçu doit être signé par le propriétaire et le locataire avant téléchargement"}
                     className={`px-5 py-2.5 rounded-xl font-extrabold text-xs shadow-md flex items-center gap-1.5 transition-all ${hasBothSignatures
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
-                        : 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed opacity-75'
+                      ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
+                      : 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed opacity-75'
                       }`}
                   >
                     {hasBothSignatures ? <Download className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
@@ -2962,8 +2962,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                         }
                       }}
                       className={`p-2 rounded-xl border text-left flex flex-col gap-0.5 transition-all text-xs cursor-pointer ${rejectionPreset === preset.id
-                          ? 'border-rose-500 bg-rose-50/70 text-rose-950 font-bold shadow-xs ring-1 ring-rose-400'
-                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                        ? 'border-rose-500 bg-rose-50/70 text-rose-950 font-bold shadow-xs ring-1 ring-rose-400'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
                         }`}
                     >
                       <span className="font-black text-slate-900 leading-tight text-[11px]">{preset.label}</span>
@@ -3000,8 +3000,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 disabled={isSubmittingRejection || !rejectionReasonInput.trim()}
                 onClick={handleConfirmRejection}
                 className={`px-4 py-2 rounded-xl text-xs font-black text-white flex items-center gap-1.5 shadow-md transition-all cursor-pointer ${isSubmittingRejection || !rejectionReasonInput.trim()
-                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-rose-600 hover:bg-rose-500 active:scale-95'
+                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                  : 'bg-rose-600 hover:bg-rose-500 active:scale-95'
                   }`}
               >
                 <XCircle className="w-3.5 h-3.5" />
