@@ -55,7 +55,7 @@ import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/Skeleton
 import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
-import { getStoredOwnerSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
+import { getStoredOwnerSignature, getStoredTenantSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
 
 interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
@@ -2425,7 +2425,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       {previewingReceipt && (() => {
         const resolved = resolveRealReceiptData(previewingReceipt, user);
         const effectiveOwnerSig = ownerSignatureUrl || previewingReceipt.owner_signature_url || resolved.ownerSignatureUrl || getStoredOwnerSignature(user?.id);
-        const effectiveTenantSig = tenantSignatureUrl || previewingReceipt.tenant_signature_url || (previewingReceipt as any).tenant_signature || resolved.tenantSignatureUrl || getStoredTenantSignature();
+        const effectiveTenantSig = tenantSignatureUrl || previewingReceipt.tenant_signature_url || (previewingReceipt as any).tenant_signature || resolved.tenantSignatureUrl || getStoredTenantSignature(previewingReceipt.tenant_id);
         const hasBothSignatures = Boolean(effectiveOwnerSig) && Boolean(effectiveTenantSig);
 
         let previewAllocs = (previewingReceipt as any).allocations || resolved.allocations;
