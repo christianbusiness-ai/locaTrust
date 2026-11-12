@@ -6,6 +6,10 @@
     "dev": "vite --host --port 3000",
     "build": "vite build",
     "preview": "vite preview",
+    "check:rules": "node scripts/check-server-truth.mjs",
+    "check:rules:strict": "node scripts/check-server-truth.mjs --strict",
+    "check:rules:report": "node scripts/check-server-truth.mjs --report-only",
+    "test:server-truth": "node tests/bundleServerTruth.test.mjs",
     "check:no-flicker": "node scripts/check-no-skeleton-flicker.js"
   },
   "dependencies": {
@@ -30,8 +34,11 @@
     "@types/node": "^20.17.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.72.2",
+    "@typescript-eslint/parser": "^8.72.2",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.5.5",
+    "eslint": "^10.14.0",
     "postcss": "^8.5.28",
     "supabase": "^2.119.0",
     "tailwindcss": "^3.4.19",
