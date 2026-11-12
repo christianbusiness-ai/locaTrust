@@ -311,12 +311,12 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     let realTickets: any[] = ticketsRes.status === 'fulfilled' && Array.isArray(ticketsRes.value.data) ? ticketsRes.value.data : [];
     const allProfiles: any[] = profilesRes.status === 'fulfilled' && Array.isArray(profilesRes.value.data) ? profilesRes.value.data : [];
 
-    // Propriétés gérées par l'utilisateur ou l'agence (Support multi-mandats agence)
-    const agencyPropIds = new Set<string>(realProps.map((p: any) => String(p.id)));
-    const agencyMandantIds = new Set<string>();
-
     // 3. Synchronisation multi-appareils (/api/sync) et résilience locale isolée par utilisateur
     if (typeof window !== 'undefined') {
+      // 1.b Propriétés gérées par l'utilisateur ou l'agence (Support multi-mandats agence)
+      const agencyPropIds = new Set<string>(realProps.map((p: any) => String(p.id)));
+      const agencyMandantIds = new Set<string>();
+
       try {
         const rawLocalProps = localStorage.getItem('locatrust_properties');
         if (rawLocalProps) {
@@ -632,7 +632,12 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     // Contrats actifs (Exclusion stricte des contrats terminés/clos)
     const activeContracts = realContracts.filter((c: any) => {
       const st = String(c?.status || '').toLowerCase().trim();
-      return st === 'actif' || st === 'signe' || st === 'contrat_actif';
+      return (
+        (st === 'actif' || st === 'signe' || st === 'contrat_actif') &&
+        st !== 'termine' &&
+        st !== 'cloture' &&
+        st !== 'resilie'
+      );
     });
 
     // Loyer mensuel attendu (cumul des baux actifs uniquement : 0 si aucun contrat actif)
@@ -1044,11 +1049,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         totalEncaisse: totalEncaisseExercice,
         totalDepense: totalDepenseExercice,
         resultatNet: resultatNetExercice,
-        tauxRecouvrement,
-        isAgency,
-        agencyMandantsCount: isAgency ? (agencyMandantIds.size || new Set(realProps.map((p: any) => p.mandant_id || p.owner_id || p.mandant_name).filter(Boolean)).size) : 0,
-        commissionsAgence: isAgency ? Math.round(totalEncaisseExercice * 0.10) : 0,
-        totalReverseMandants: isAgency ? Math.max(0, totalEncaisseExercice - Math.round(totalEncaisseExercice * 0.10) - depensesMaintenance) : 0
+        tauxRecouvrement
       },
       encaissements: mappedEncaissements,
       loyers: mappedLoyers,
@@ -1094,11 +1095,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         totalEncaisse: 0,
         totalDepense: 0,
         resultatNet: 0,
-        tauxRecouvrement: 0,
-        isAgency: false,
-        agencyMandantsCount: 0,
-        commissionsAgence: 0,
-        totalReverseMandants: 0
+        tauxRecouvrement: 0
       },
       encaissements: [],
       loyers: [],

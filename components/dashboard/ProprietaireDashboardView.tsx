@@ -77,7 +77,29 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const [realPayments, setRealPayments] = useState<any[]>([]);
   const [realApplications, setRealApplications] = useState<any[]>([]);
   const [realAccountingDataset, setRealAccountingDataset] = useState<RealAccountingDataset | null>(null);
+  const [dbReceiptRefs, setDbReceiptRefs] = useState<string[]>([]);
   const isFetchingRef = React.useRef(false);
+
+  const knownReceiptRefs = useMemo(() => {
+    const refs = new Set<string>(dbReceiptRefs);
+    if (typeof window !== 'undefined') {
+      try {
+        const unifiedRcps = getUnifiedReceipts(user?.id);
+        unifiedRcps.forEach((r: any) => {
+          if (r.receipt_number) refs.add(r.receipt_number);
+          if (r.receiptNumber) refs.add(r.receiptNumber);
+          if (r.payment_id) refs.add(r.payment_id);
+          if (r.id) refs.add(r.id);
+          if (r.reference) refs.add(r.reference);
+          if (r.token) refs.add(r.token);
+          const cKey = String(r.contract_id || r.contract_number || '').trim();
+          const pKey = String(r.period_covered || r.target_month || '').trim();
+          if (cKey && pKey) refs.add(`${cKey}_${pKey}`);
+        });
+      } catch { }
+    }
+    return refs;
+  }, [dbReceiptRefs, user?.id]);
 
   const showSkeleton = isLoading && !hasLoadedOnceRef.current;
 
@@ -237,7 +259,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
       // 3. Règlements de loyers (Supabase + /api/sync + registre unifié des reçus)
       if (currentUserId) {
-        const knownReceiptRefs = new Set<string>();
+        const currentReceiptRefs = new Set<string>();
+        const serverRefs: string[] = [];
         try {
           const { data: recData } = await supabase
             .from('receipts')
@@ -245,27 +268,31 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
             .or(`owner_id.eq.${currentUserId},agency_id.eq.${currentUserId}`);
           if (recData && Array.isArray(recData)) {
             recData.forEach((r: any) => {
-              if (r.receipt_number) knownReceiptRefs.add(r.receipt_number);
-              if (r.receiptNumber) knownReceiptRefs.add(r.receiptNumber);
-              if (r.payment_id) knownReceiptRefs.add(r.payment_id);
-              if (r.id) knownReceiptRefs.add(r.id);
+              if (r.receipt_number) { currentReceiptRefs.add(r.receipt_number); serverRefs.push(r.receipt_number); }
+              if (r.receiptNumber) { currentReceiptRefs.add(r.receiptNumber); serverRefs.push(r.receiptNumber); }
+              if (r.payment_id) { currentReceiptRefs.add(r.payment_id); serverRefs.push(r.payment_id); }
+              if (r.id) { currentReceiptRefs.add(r.id); serverRefs.push(r.id); }
             });
           }
         } catch { }
+
+        if (serverRefs.length > 0) {
+          setDbReceiptRefs(serverRefs);
+        }
 
         if (typeof window !== 'undefined') {
           try {
             const unifiedRcps = getUnifiedReceipts(currentUserId);
             unifiedRcps.forEach((r: any) => {
-              if (r.receipt_number) knownReceiptRefs.add(r.receipt_number);
-              if (r.receiptNumber) knownReceiptRefs.add(r.receiptNumber);
-              if (r.payment_id) knownReceiptRefs.add(r.payment_id);
-              if (r.id) knownReceiptRefs.add(r.id);
-              if (r.reference) knownReceiptRefs.add(r.reference);
-              if (r.token) knownReceiptRefs.add(r.token);
+              if (r.receipt_number) currentReceiptRefs.add(r.receipt_number);
+              if (r.receiptNumber) currentReceiptRefs.add(r.receiptNumber);
+              if (r.payment_id) currentReceiptRefs.add(r.payment_id);
+              if (r.id) currentReceiptRefs.add(r.id);
+              if (r.reference) currentReceiptRefs.add(r.reference);
+              if (r.token) currentReceiptRefs.add(r.token);
               const cKey = String(r.contract_id || r.contract_number || '').trim();
               const pKey = String(r.period_covered || r.target_month || '').trim();
-              if (cKey && pKey) knownReceiptRefs.add(`${cKey}_${pKey}`);
+              if (cKey && pKey) currentReceiptRefs.add(`${cKey}_${pKey}`);
             });
           } catch { }
         }
@@ -316,7 +343,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
         // Normalisation stricte : filtrer les paiements annulés et sceller les paiements confirmés
         loadedPayments = loadedPayments.filter(p => p && p.status !== 'annule' && p.status !== 'supprime').map((p: any) => {
-          const hasRec = knownReceiptRefs.has(p.reference) || knownReceiptRefs.has(p.receipt_number) || knownReceiptRefs.has(p.id);
+          const hasRec = currentReceiptRefs.has(p.reference) || currentReceiptRefs.has(p.receipt_number) || currentReceiptRefs.has(p.id);
           const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
           const isConfirmedStatus = p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie';
           if (hasRec || isBothSigned || isConfirmedStatus) {
