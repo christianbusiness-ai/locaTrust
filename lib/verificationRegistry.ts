@@ -1144,9 +1144,9 @@ export async function verifyDocumentToken(
             .eq('account_type', 'locataire')
             .order('updated_at', { ascending: false })
             .limit(5);
-          const christianProf = tProfs?.find((p: any) => p.full_name?.toLowerCase().includes('christian')) || tProfs?.[0];
-          if (christianProf?.full_name) {
-            tenantName = christianProf.full_name;
+          const locataireProf = tProfs?.[0];
+          if (locataireProf?.full_name) {
+            tenantName = locataireProf.full_name;
           }
 
           const propLocation =

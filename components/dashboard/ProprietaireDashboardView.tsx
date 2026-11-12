@@ -168,7 +168,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
             finalContracts = contractsData.map((c: any) => {
               const cNum = c.contract_number || c.id;
               const sigStr = c.tenant_signature || c.tenant_signature_url || (cNum ? signedByNotifSigs.get(cNum) : '') || '';
-              const isSigned = Boolean((typeof sigStr === 'string' && sigStr.length > 15) || cNum === 'LT-2026-CI-000492');
+              const isSigned = Boolean((typeof sigStr === 'string' && sigStr.length > 15) || c.status === 'actif' || c.tenant_signed);
               const isTerm = c.status === 'termine' || c.status === 'resilie' || c.status === 'cloture';
               return {
                 ...c,
@@ -189,7 +189,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
                 parsed.filter(isMine).forEach((c: any) => {
                   const cNum = c.contract_number || c.id;
                   const sigStr = c.tenant_signature || c.tenant_signature_url || (cNum ? signedByNotifSigs.get(cNum) : '') || '';
-                  const isSigned = Boolean((typeof sigStr === 'string' && sigStr.length > 15) || cNum === 'LT-2026-CI-000492');
+                  const isSigned = Boolean((typeof sigStr === 'string' && sigStr.length > 15) || c.status === 'actif' || c.tenant_signed);
                   const isTerm = c.status === 'termine' || c.status === 'resilie' || c.status === 'cloture';
                   const normalizedC = {
                     ...c,
@@ -212,7 +212,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
               if (Array.isArray(apps)) {
                 apps.filter((a: any) => {
                   const sig = a.tenant_signature_url || a.documents?.tenant_signature_url || (a.contract_number ? signedByNotifSigs.get(a.contract_number) : '');
-                  return Boolean((typeof sig === 'string' && sig.length > 15) || a.contract_number === 'LT-2026-CI-000492') && isMine(a);
+                  return Boolean((typeof sig === 'string' && sig.length > 15) || a.status === 'contrat_actif' || a.documents?.contract_status === 'contrat_actif') && isMine(a);
                 }).forEach((a: any) => {
                   if (a.contract_number && !finalContracts.some(fc => fc.contract_number === a.contract_number || fc.id === a.id)) {
                     finalContracts.push({
@@ -309,8 +309,8 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           } catch {}
         }
 
-        // Normalisation stricte : filtrer les tests obsolètes et sceller les paiements confirmés
-        loadedPayments = loadedPayments.filter(p => p && p.reference !== 'ESP-364218').map((p: any) => {
+        // Normalisation stricte : filtrer les paiements annulés et sceller les paiements confirmés
+        loadedPayments = loadedPayments.filter(p => p && p.status !== 'annule' && p.status !== 'supprime').map((p: any) => {
           const hasRec = knownReceiptRefs.has(p.reference) || knownReceiptRefs.has(p.receipt_number) || knownReceiptRefs.has(p.id);
           const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
           const isConfirmedStatus = p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie';
@@ -651,7 +651,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         const pendingApps = realApplications.filter((a: any) => a.status === 'en_attente');
         // Paiements réels en attente (exclure formellement les règlements validés, scellés ou en cours de signature locataire)
         const pendingPayments = realPayments.filter((p: any) => {
-          if (p.reference === 'ESP-364218') return false;
+          if (p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse' || p.status === 'rejete') return false;
           if (p.receipt_number || p.owner_signature_url) return false;
           if (p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye') return false;
           if (p.status === 'en_attente_signature_locataire') return false;

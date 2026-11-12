@@ -105,7 +105,7 @@ export const LegalContractAnalyzerModal: React.FC<LegalContractAnalyzerModalProp
   isOpen,
   onClose,
   contractTitle = 'Bail d\'Habitation Ivoirien',
-  contractNumber = 'LT-2026-CI-000492',
+  contractNumber = 'LT-CONTRAT',
   clausesText,
   onApplyCorrection
 }) => {

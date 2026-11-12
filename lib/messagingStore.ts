@@ -2058,22 +2058,10 @@ export function sendContractReminderToTenant(
 
 export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachment) {
   const isCaution = q.receiptType === 'caution' || q.receiptNumber.includes('CAUT');
-  let ownerName = q.ownerName;
-  if (!ownerName || /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(ownerName) || ownerName.startsWith('usr_')) {
-    ownerName = 'kk';
-  }
-  let ownerPhone = q.ownerPhone;
-  if (!ownerPhone || ownerPhone === '+225 07 00 00 00 00' || ownerPhone === '+225 07 08 09 10 11') {
-    ownerPhone = '0500552141';
-  }
-  let propAddr = q.propertyAddress;
-  if (!propAddr || propAddr.trim() === 'Abidjan' || propAddr.trim() === "Abidjan, Côte d'Ivoire") {
-    propAddr = "100 villard, yamoussoukro - Côte d'Ivoire";
-  }
-  let propRef = q.propertyReference;
-  if (!propRef || propRef === 'BIEN-000492' || propRef === 'BIEN-CAUT-001') {
-    propRef = 'BIEN-1B0E4B';
-  }
+  let ownerName = q.ownerName || 'Bailleur';
+  let ownerPhone = q.ownerPhone || '';
+  let propAddr = q.propertyAddress || "Côte d'Ivoire";
+  let propRef = q.propertyReference || 'BIEN-LOCATRUST';
 
   const pdfData: OfficialReceiptData = {
     receiptNumber: q.receiptNumber,
@@ -2090,9 +2078,9 @@ export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachm
     ownerName: ownerName,
     ownerCni: q.ownerCni || 'CI987654321',
     ownerPhone: ownerPhone,
-    tenantName: q.tenantName || 'christian',
-    tenantCni: q.tenantCni || 'CI123456789',
-    tenantPhone: q.tenantPhone || '0500552141',
+    tenantName: q.tenantName || 'Locataire',
+    tenantCni: q.tenantCni || '',
+    tenantPhone: q.tenantPhone || '',
     amount: q.amount,
     periodCovered: q.periodCovered,
     paymentDate: q.paymentDate,

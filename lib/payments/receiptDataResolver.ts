@@ -157,21 +157,19 @@ export function resolveRealReceiptData(
   // --- Locataire ---
   let tenantName =
     item?.tenant?.full_name ||
+    item?.tenant_name ||
     matchedContract?.tenant?.full_name ||
     matchedContract?.tenant_name ||
     matchedApplication?.applicant_name ||
-    'Christian';
-
-  if (/christian/i.test(tenantName)) {
-    tenantName = 'Christian';
-  }
+    'Locataire';
 
   let tenantPhone =
     item?.tenant?.phone ||
+    item?.tenant_phone ||
     matchedContract?.tenant?.phone ||
     matchedContract?.tenant_phone ||
     matchedApplication?.applicant_phone ||
-    '07 00 12 34 56';
+    '';
 
   let tenantCni =
     item?.tenant?.cni_number ||
@@ -187,7 +185,7 @@ export function resolveRealReceiptData(
     matchedContract?.property_title ||
     matchedApplication?.property_title ||
     item?.contract?.property?.title ||
-    '100 villard';
+    'Bien immobilier';
 
   let propertyAddress =
     matchedProperty?.address ||
@@ -195,16 +193,12 @@ export function resolveRealReceiptData(
     matchedContract?.property?.address ||
     matchedContract?.property_address ||
     matchedApplication?.property_address ||
-    'Yamoussoukro - Côte d\'Ivoire';
-
-  if (propertyAddress.trim() === 'Abidjan' || propertyAddress.trim() === 'Abidjan, Côte d\'Ivoire') {
-    propertyAddress = '100 villard, Yamoussoukro - Côte d\'Ivoire';
-  }
+    "Côte d'Ivoire";
 
   let propertyReference =
     matchedProperty?.reference ||
     matchedContract?.property?.reference ||
-    'BIEN-1B0E4B';
+    'BIEN-LOCATRUST';
 
   let propertyType =
     matchedProperty?.type ||
@@ -216,8 +210,9 @@ export function resolveRealReceiptData(
   let contractNumber =
     matchedContract?.contract_number ||
     matchedApplication?.contract_number ||
+    item?.contract_number ||
     item?.contract_id ||
-    'LT-2026-CI-000492';
+    'LT-CONTRAT';
 
   // Sanitisation si UUID brut
   if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(contractNumber)) {

@@ -288,7 +288,7 @@ return (
         <div className="flex flex-col gap-1.5 min-w-0">
           <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight break-words">
-              {formData.fullName || 'christian'}
+              {formData.fullName || 'Locataire'}
             </h2>
             {/* Badge officiel attribué après validation administrative */}
             {isVerified && (

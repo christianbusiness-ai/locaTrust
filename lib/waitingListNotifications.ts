@@ -214,8 +214,8 @@ export function deduplicateAndNormalizeNotifications(list: any[], userId?: strin
   for (const raw of list) {
     if (!raw) continue;
     const isRead = isNotificationRead(raw, userId);
-    const title = String(raw.title || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
-    const description = String(raw.description || raw.content || raw.message || '').replace(/christian\s+yao\s+koffi/gi, 'Christian');
+    const title = String(raw.title || '');
+    const description = String(raw.description || raw.content || raw.message || '');
     const normalized = {
       ...raw,
       title,

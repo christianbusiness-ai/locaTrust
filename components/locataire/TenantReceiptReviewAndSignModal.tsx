@@ -390,7 +390,7 @@ export const TenantReceiptReviewAndSignModal: React.FC<TenantReceiptReviewAndSig
             )}
           </div>
           <div className="flex items-center justify-between text-[10px] text-slate-500 px-1">
-            <span>Signataire : <strong>{currentUser?.user_metadata?.full_name || 'Christian'}</strong></span>
+            <span>Signataire : <strong>{currentUser?.user_metadata?.full_name || (currentUser as any)?.name || 'Locataire'}</strong></span>
             <span className="text-emerald-700 font-bold">✓ Enregistrée dans Supabase avec valeur probante</span>
           </div>
         </div>

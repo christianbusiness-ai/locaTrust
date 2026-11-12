@@ -170,7 +170,7 @@ export const TenantsListView: React.FC = () => {
             if (!c) return false;
             const cNum = c.contract_number || c.id;
             const sig = c.tenant_signature || c.tenant_signature_url || (cNum ? signedSigsByNum.get(cNum) : '') || '';
-            const hasRealSig = (typeof sig === 'string' && sig.length > 15) || cNum === 'LT-2026-CI-000492';
+            const hasRealSig = (typeof sig === 'string' && sig.length > 15) || c.status === 'actif' || c.tenant_signed;
             return hasRealSig || c.status === 'resilie' || c.status === 'termine';
           });
 
@@ -178,7 +178,7 @@ export const TenantsListView: React.FC = () => {
             const matchedProfile = profilesMap.get(c.tenant_id);
             const cNum = c.contract_number || c.id;
             const sig = c.tenant_signature || c.tenant_signature_url || (cNum ? signedSigsByNum.get(cNum) : '') || '';
-            const hasRealSig = (typeof sig === 'string' && sig.length > 15) || cNum === 'LT-2026-CI-000492';
+            const hasRealSig = (typeof sig === 'string' && sig.length > 15) || c.status === 'actif' || c.tenant_signed;
             const isTerm = c.status === 'resilie' || c.status === 'termine' || c.status === 'cloture';
             return {
               id: c.tenant_id || c.id || `t_${idx}`,

@@ -130,7 +130,7 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                 amount: amount || 0,
                 propertyTitle: pmtData?.property?.title || 'Logement loué',
                 ownerName: actor,
-                tenantName: 'christian',
+                tenantName: pmtData?.tenant_name || pmtData?.tenant?.full_name || 'Locataire',
                 periodsCovered: pmtData?.period_text || 'Mois en cours',
                 date: new Date().toISOString(),
                 token: `tok_rec_${rcpNum}`
@@ -643,8 +643,8 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                     property: {
                       ...(d.property || {}),
                       title: q?.propertyTitle || d.property?.title || 'appartement',
-                      address: q?.propertyAddress || d.property?.address || "100 villard, yamoussoukro - Côte d'Ivoire",
-                      reference: q?.propertyReference || d.property?.reference || 'BIEN-1B0E4B',
+                      address: q?.propertyAddress || d.property?.address || "Côte d'Ivoire",
+                      reference: q?.propertyReference || d.property?.reference || 'BIEN-LOCATRUST',
                       owner_name: actor
                     }
                   };
@@ -663,13 +663,13 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                   property: {
                     ...(incomingDeposit.property || {}),
                     title: q?.propertyTitle || incomingDeposit.property?.title || 'appartement',
-                    address: q?.propertyAddress || incomingDeposit.property?.address || "100 villard, yamoussoukro - Côte d'Ivoire",
-                    reference: q?.propertyReference || incomingDeposit.property?.reference || 'BIEN-1B0E4B',
+                    address: q?.propertyAddress || incomingDeposit.property?.address || "Côte d'Ivoire",
+                    reference: q?.propertyReference || incomingDeposit.property?.reference || 'BIEN-LOCATRUST',
                     owner_name: actor
                   }
                 } : {
                   id: depId || `dep_${Date.now()}`,
-                  contract_id: payload?.contractId || q?.contractNumber || 'LT-2026-CI-000492',
+                  contract_id: payload?.contractId || q?.contractNumber || 'LT-CONTRAT',
                   property_id: q?.propertyId || 'prop_default',
                   tenant_id: receiverId,
                   owner_id: senderId,
@@ -683,15 +683,15 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
                   confirmed_by: actor,
                   property: {
                     title: q?.propertyTitle || 'appartement',
-                    address: q?.propertyAddress || "100 villard, yamoussoukro - Côte d'Ivoire",
-                    reference: q?.propertyReference || 'BIEN-1B0E4B',
+                    address: q?.propertyAddress || "Côte d'Ivoire",
+                    reference: q?.propertyReference || 'BIEN-LOCATRUST',
                     owner_name: actor
                   },
                   tenant: {
                     id: receiverId,
-                    full_name: q?.tenantName || 'christian',
-                    phone: q?.tenantPhone || '0500552141',
-                    cni: q?.tenantCni || 'CI123456789'
+                    full_name: q?.tenantName || 'Locataire',
+                    phone: q?.tenantPhone || '',
+                    cni: q?.tenantCni || ''
                   }
                 };
                 list.unshift(synDep);

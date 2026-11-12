@@ -108,15 +108,8 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
 
     let safeOwnerCni = data.ownerCni || 'CI987654321';
 
-    let safePropertyAddress = data.propertyAddress || "100 villard, yamoussoukro - Côte d'Ivoire";
-    if (safePropertyAddress.trim() === 'Abidjan' || safePropertyAddress.trim() === "Abidjan, Côte d'Ivoire") {
-      safePropertyAddress = "100 villard, yamoussoukro - Côte d'Ivoire";
-    }
-
-    let safePropertyReference = data.propertyReference || 'BIEN-1B0E4B';
-    if (safePropertyReference === 'BIEN-000492' || safePropertyReference === 'BIEN-CAUT-001') {
-      safePropertyReference = 'BIEN-1B0E4B';
-    }
+    let safePropertyAddress = data.propertyAddress || "Côte d'Ivoire";
+    let safePropertyReference = data.propertyReference || 'BIEN-LOCATRUST';
 
     // Dynamic lease calculation from contract signature / payment date
     let safeLeaseStartDate = data.leaseStartDate;
@@ -175,7 +168,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     const verification = registerReceiptInVerificationRegistry({
       receiptNumber: data.receiptNumber,
       contractNumber: data.contractNumber,
-      contractToken: data.contractToken || 'tok_cnt_ci2026_000492',
+      contractToken: data.contractToken || undefined,
       periodCovered: effectivePeriodCovered,
       amountPaid: data.amount,
       paymentMethod: realPaymentMethod,
@@ -432,7 +425,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFontSize(7);
     doc.setTextColor(51, 65, 85);
     doc.text('Nom et prénom', col1X + 5, row1Y + 12);
-    const safeTenantName = /christian/i.test(data.tenantName || '') ? 'Christian' : (data.tenantName || 'Christian');
+    const safeTenantName = data.tenantName || 'Locataire';
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(15, 23, 42);
     doc.text(`:  ${safeTenantName}`, col1X + 28, row1Y + 12);
@@ -766,7 +759,7 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.text('Signature du locataire', 73, sigY + 20);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
-    const displayTenantName = /christian/i.test(data.tenantName || '') ? 'Christian' : (data.tenantName || 'Christian');
+    const displayTenantName = data.tenantName || 'Locataire';
     doc.text(displayTenantName, 73, sigY + 24);
 
     // QR Code Verification Box

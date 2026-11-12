@@ -378,9 +378,9 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
                   monthly_rent: Number(a.rent_amount || a.property?.rent || a.monthly_rent || 0),
                   signed_date: effectiveSigned,
                   tenant_id: a.tenant_id,
-                  tenant_name: a.applicant_name || a.tenant_name || 'Christian',
+                  tenant_name: a.applicant_name || a.tenant_name || 'Locataire',
                   owner_id: a.owner_id,
-                  owner_name: a.owner_name || 'KK',
+                  owner_name: a.owner_name || 'Bailleur',
                   due_day: a.due_day ? Number(a.due_day) : (parsedSigned.getDate() || 16)
                 });
               }

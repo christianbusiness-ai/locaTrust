@@ -76,7 +76,7 @@ export const formatCautionReceiptNumber = (id?: string | null): string => {
 };
 
 /**
- * Résout le numéro de contrat lisible officiel (ex: LT-2026-CI-000492)
+ * Résout le numéro de contrat lisible officiel (ex: LT-2026-CI-...)
  * au lieu d'un UUID brut de base de données.
  */
 export const getDisplayContractNumber = (dep?: Deposit | null): string => {

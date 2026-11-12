@@ -467,7 +467,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     });
 
     // 4b. Normalisation stricte : tout paiement validé par reçu ou signatures est formellement 'confirme' (Règle 6)
-    realPayments = realPayments.filter((p: any) => p && p.reference !== 'ESP-364218').map((p: any) => {
+    realPayments = realPayments.filter((p: any) => p && p.status !== 'annule' && p.status !== 'supprime').map((p: any) => {
       const hasReceipt = realReceipts.some((r: any) => r.receipt_number === p.reference || r.receipt_number === p.receipt_number);
       if (hasReceipt || (p.tenant_signature_url && p.owner_signature_url)) {
         return { ...p, status: 'confirme' };
@@ -486,7 +486,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
     // 6. Qualification précise des statuts de paiement (Section 5 du prompt)
     const isPaymentConfirmed = (p: any): boolean => {
-      if (!p || p.reference === 'ESP-364218') return false;
+      if (!p || p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse' || p.status === 'rejete') return false;
       const s = String(p.status || '').toLowerCase().trim();
       return (
         s === 'confirme' ||
@@ -499,7 +499,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     };
 
     const isPaymentPending = (p: any): boolean => {
-      if (!p || p.reference === 'ESP-364218') return false;
+      if (!p || p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse' || p.status === 'rejete') return false;
       if (isPaymentConfirmed(p)) return false;
       const s = String(p.status || '').toLowerCase().trim();
       return s === 'declare' || s === 'en_attente' || s === 'en_attente_validation' || s === 'a_verifier';

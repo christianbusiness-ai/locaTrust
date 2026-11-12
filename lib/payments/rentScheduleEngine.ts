@@ -222,7 +222,7 @@ export function generateContractSchedule(
     new Date().toISOString().split('T')[0];
 
   const startDate = parseDateSafe(rawStart);
-  const contractId = contract?.id || contract?.contract_number || 'LT-2026-CI-000492';
+  const contractId = contract?.id || contract?.contract_number || 'cnt_default';
   const tenantId = contract?.tenant_id || contract?.tenant?.id || 'usr_tenant';
 
   // Jour contractuel d'exigibilité (ex: si signé le 07 novembre, échéance le 07 du mois suivant : 07 décembre)
@@ -303,8 +303,7 @@ export function reconcilePaymentsOnSchedule(
 
   const validPayments = existingPayments.filter((p) => {
     if (!p) return false;
-    if (p.status === 'refuse' || p.status === 'rejete') return false;
-    if (p.reference === 'ESP-364218') return false;
+    if (p.status === 'refuse' || p.status === 'rejete' || p.status === 'annule' || p.status === 'supprime') return false;
     const isConf =
       p.status === 'confirme' ||
       p.status === 'valide' ||
@@ -321,14 +320,6 @@ export function reconcilePaymentsOnSchedule(
       const pContractId = String(p.contract_id || p.contractId || p.contract?.id || '').trim();
       const pContractNum = String(p.contract_number || p.contractNumber || p.contract?.contract_number || '').trim();
 
-      // Exclusion formelle des paiements de démonstration ou d'autres baux historiques
-      if (
-        (targetContractId.includes('39210687') || targetContractId.includes('3921')) &&
-        (p.reference === 'WAV-2026-NOV-781920' || p.reference === 'ESP-135945' || pContractId.includes('000492') || pContractNum.includes('000492'))
-      ) {
-        return false;
-      }
-
       if (pContractId || pContractNum) {
         const matchesId = pContractId && (pContractId === targetContractId || targetContractId.includes(pContractId) || pContractId.includes(targetContractId));
         const matchesNum = pContractNum && (pContractNum === targetContractId || targetContractId.includes(pContractNum) || pContractNum.includes(targetContractId));
@@ -336,10 +327,7 @@ export function reconcilePaymentsOnSchedule(
           return false;
         }
       } else {
-        // Si le paiement n'indique aucun contrat et que la référence est l'une de celles du bail 000492
-        if (p.reference === 'WAV-2026-NOV-781920' || p.reference === 'ESP-135945') {
-          return false;
-        }
+        return false;
       }
     }
     return true;
@@ -618,8 +606,9 @@ export function calculateRentPaymentAllocation(
 
   const contractNumber =
     contract?.contract_number ||
+    contract?.contractNumber ||
     contract?.id ||
-    'LT-2026-CI-000492';
+    'LT-CONTRAT';
 
   const contractId = contract?.id || contractNumber;
 
@@ -960,8 +949,8 @@ export function computePortfolioRentMetrics(
   // Paiements confirmés uniquement pour les calculs officiels (Règle 6 - Immutabilité et intégrité)
   const validPayments = (payments || []).filter((p: any) => {
     if (!p) return false;
-    if (p.reference === 'ESP-364218') return false; // Purge obsolète
     const st = String(p.status || '').toLowerCase().trim();
+    if (st === 'refuse' || st === 'rejete' || st === 'annule' || st === 'supprime') return false;
     return (
       st === 'confirme' ||
       st === 'valide' ||
@@ -1146,8 +1135,8 @@ export function checkAndNotifyExhaustedAdvances(
 
   const validPayments = (payments || []).filter((p: any) => {
     if (!p) return false;
-    if (p.reference === 'ESP-364218') return false;
     const st = String(p.status || '').toLowerCase().trim();
+    if (st === 'refuse' || st === 'rejete' || st === 'annule' || st === 'supprime') return false;
     return (
       st === 'confirme' ||
       st === 'valide' ||

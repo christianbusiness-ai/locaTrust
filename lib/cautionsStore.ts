@@ -613,14 +613,14 @@ export function signCautionReceipt(
   } catch { }
 
   // 4. Si c'est le locataire qui signe, notifier immédiatement le propriétaire / l'agence et diffuser en temps réel
-  const cleanNum = (target as any).receipt_number || (target.contract_number === 'LT-2026-CI-000492' || (target.tenant?.full_name || '').toLowerCase().includes('christian') ? 'REC-CAUTION-000492' : `REC-CAUT-${target.id.toUpperCase()}`);
+  const cleanNum = (target as any).receipt_number || (target.id.startsWith('REC-CAUT-') ? target.id : `REC-CAUT-${target.id.toUpperCase()}`);
   if (party === 'tenant' && typeof window !== 'undefined') {
     try {
       const ownerId = target.owner_id || 'usr_owner';
       const notifItem = {
         id: `notif_caut_signed_${Date.now()}`,
         title: '✅ Reçu de caution contresigné par le locataire',
-        description: `Le locataire ${target.tenant?.full_name || 'Christian'} a apposé sa signature certifiée sur le reçu N° ${cleanNum}. Le document est officiellement scellé et téléchargeable.`,
+        description: `Le locataire ${target.tenant?.full_name || 'Locataire'} a apposé sa signature certifiée sur le reçu N° ${cleanNum}. Le document est officiellement scellé et téléchargeable.`,
         time: "À l'instant",
         unread: true,
         type: 'caution',
@@ -817,11 +817,7 @@ export function resolveDepositContractDetails(dep: Deposit) {
     dep.property?.address ||
     dep.property?.description ||
     (matchedContract?.property?.commune ? `${matchedContract.property.commune}, ${matchedContract.property.city || 'Abidjan'} - Côte d'Ivoire` : null) ||
-    "100 villard, yamoussoukro - Côte d'Ivoire";
-
-  if (!propertyAddress || propertyAddress.trim() === 'Abidjan' || propertyAddress.trim() === "Abidjan, Côte d'Ivoire") {
-    propertyAddress = "100 villard, yamoussoukro - Côte d'Ivoire";
-  }
+    "Côte d'Ivoire";
 
   let propertyReference =
     matchedContract?.property_reference ||
@@ -831,10 +827,10 @@ export function resolveDepositContractDetails(dep: Deposit) {
     (matchedProperty?.id ? (matchedProperty.id.startsWith('prop_') ? matchedProperty.id : `BIEN-${matchedProperty.id.slice(0, 6).toUpperCase()}`) : null) ||
     (matchedContract?.property?.id ? (matchedContract.property.id.startsWith('prop_') ? matchedContract.property.id : `BIEN-${matchedContract.property.id.slice(0, 6).toUpperCase()}`) : null) ||
     (dep.property?.id ? (dep.property.id.startsWith('prop_') ? dep.property.id : `BIEN-${dep.property.id.slice(0, 6).toUpperCase()}`) : null) ||
-    'BIEN-1B0E4B';
+    'BIEN-LOCATRUST';
 
-  if (!propertyReference || propertyReference === 'BIEN-000492' || propertyReference === 'BIEN-CAUT-001') {
-    propertyReference = 'BIEN-1B0E4B';
+  if (!propertyReference) {
+    propertyReference = 'BIEN-LOCATRUST';
   }
 
   const propertyType =
@@ -923,11 +919,7 @@ export function resolveDepositContractDetails(dep: Deposit) {
     matchedContract?.tenant?.full_name ||
     matchedReceipt?.tenantName ||
     dep.tenant?.full_name ||
-    'christian';
-
-  if (tenantName.toLowerCase().includes('christian')) {
-    tenantName = 'christian';
-  }
+    'Locataire';
 
   let tenantCni =
     matchedContract?.tenant_cni ||
@@ -994,11 +986,9 @@ export function sendCautionReceiptToTenant(
 
   const cleanReceiptNum =
     (target as any).receipt_number ||
-    (target.contract_number === 'LT-2026-CI-000492' || (target.tenant?.full_name || '').toLowerCase().includes('christian')
-      ? 'REC-CAUTION-000492'
-      : (target.id.startsWith('REC-CAUT-') && target.id.length <= 20
-        ? target.id
-        : `REC-CAUT-${(target.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`));
+    (target.id.startsWith('REC-CAUT-') && target.id.length <= 25
+      ? target.id
+      : `REC-CAUT-${(target.id || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`);
 
   const updatedDeposit: Deposit = {
     ...target,
@@ -1019,19 +1009,6 @@ export function sendCautionReceiptToTenant(
 
   let senderId = options?.actorId || target.owner_id || resolved.ownerId || 'usr_owner';
   let receiverId = target.tenant_id || resolved.tenantId || 'usr_tenant';
-
-  // Résolution stricte vers Christian si les informations correspondent à Christian
-  const tenantNameLower = (resolved.tenantName || target.tenant?.full_name || '').toLowerCase();
-  const tenantPhone = (resolved.tenantPhone || target.tenant?.phone || '').replace(/\s+/g, '');
-  if (
-    tenantNameLower.includes('christian') ||
-    tenantPhone.includes('0500552141') ||
-    receiverId.includes('christian') ||
-    receiverId === 'usr_tenant' ||
-    receiverId === 'usr_locataire'
-  ) {
-    receiverId = 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
-  }
 
   // Résolution stricte vers KK / Agence
   const actorLower = (finalActorName || resolved.ownerName || '').toLowerCase();
@@ -1114,7 +1091,7 @@ export function sendCautionReceiptToTenant(
       }));
       localStorage.setItem(`locatrust_contact_${receiverId}`, JSON.stringify({
         id: receiverId,
-        name: resolved.tenantName || 'christian',
+        name: resolved.tenantName || 'Locataire',
         role: 'Locataire',
         propertyTitle: resolved.propertyTitle,
         phone: resolved.tenantPhone

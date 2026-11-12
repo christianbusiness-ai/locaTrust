@@ -121,7 +121,7 @@ export async function checkAndSendContractExpiryNotifications(userId?: string) {
       const expiry = getContractExpiryDetails(c);
       const contractNumber = c.contract_number || c.id || 'LT-2026';
       const propertyTitle = c.property_title || c.property?.title || 'Logement';
-      const tenantName = c.tenant_name || c.tenant?.full_name || 'Christian';
+      const tenantName = c.tenant_name || c.tenant?.full_name || 'Locataire';
       const ownerId = c.owner_id || c.owner?.id || 'usr_owner';
       const tenantId = c.tenant_id || c.tenant?.id || 'usr_tenant';
 

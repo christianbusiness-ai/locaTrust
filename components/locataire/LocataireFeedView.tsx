@@ -611,8 +611,8 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
 
       // 1. Mémoriser le contact actif AVANT l'envoi pour que la diffusion Realtime contienne toutes les métadonnées
       if (typeof window !== 'undefined') {
-        const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Christian';
-        const myPhone = profile?.phone || (user as any)?.phone || '+225 05 00 00 00 00';
+        const myName = profile?.full_name || user?.name || (user as any)?.full_name || 'Locataire';
+        const myPhone = profile?.phone || (user as any)?.phone || '';
         const myAvatar = profile?.avatar_url || (user as any)?.avatar_url || localStorage.getItem('locatrust_user_avatar') || '';
         saveUserScopedContact(targetOwnerId, {
           id: applicantId,
@@ -943,21 +943,19 @@ export const LocataireFeedView: React.FC<LocataireFeedViewProps> = ({
         // Déduplication absolue pour les quittances : Unicité stricte par contrat & période
         const periodMatch = (desc.match(/(Novembre|Décembre|Janvier|Février|Mars|Avril|Mai|Juin|Juillet|Août|Septembre|Octobre)[^).]+/i)?.[0] || 'periode_courante').toLowerCase().trim();
         const amtMatch = desc.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '') || '';
-        const normContract = contractNum ? (contractNum.includes('3921') ? 'LT-2026-CI-39210687' : contractNum) : 'c_current';
+        const normContract = contractNum ? String(contractNum).trim() : 'c_current';
 
         // Clé unique par contrat + période ou référence
         dedupKey = receiptNum ? `rcp_${normContract}_${receiptNum}` : `rcp_${normContract}_${periodMatch}_${amtMatch}`;
 
         // Si la quittance est déjà signée ou confirmée, ne jamais afficher de bannière
         if (receiptNum && signedReceiptNumbers.has(String(receiptNum))) return;
-        if (signedReceiptNumbers.has('ESP-895031') && (receiptNum === 'ESP-895031' || desc.includes('ESP-895031') || desc.includes('60 000 FCFA'))) return;
 
         // Règle 7 : Unicité absolue des bannières à l'écran (zéro doublon de carte)
         for (const existing of bannersMap.values()) {
           if (existing.docKind === 'quittance') {
             if (receiptNum && existing.receiptNumber === receiptNum) return;
             if (amtMatch && existing.description.includes(`${amtMatch} FCFA`)) return;
-            if (desc.includes('60 000 FCFA') && existing.description.includes('60 000 FCFA')) return;
           }
         }
       }

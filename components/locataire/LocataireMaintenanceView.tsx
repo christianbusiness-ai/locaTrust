@@ -108,7 +108,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         const cTenantId = c.tenant_id || c.tenant?.id;
         if (cTenantId && user.id && cTenantId !== user.id) return false;
         const sig = c.tenant_signature_url || c.tenant_signature || '';
-        const isSigned = Boolean((typeof sig === 'string' && sig.length > 15) || c.tenant_signed || cNum === 'LT-2026-CI-000492');
+        const isSigned = Boolean((typeof sig === 'string' && sig.length > 15) || c.tenant_signed || c.status === 'actif');
         return isSigned && c.status !== 'termine' && c.status !== 'resilie';
       });
 

@@ -610,9 +610,11 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         const dbSig = c.tenant_signature_url || c.tenant_signature || mapEntry?.tenant_signature_url || '';
         const hasRealTenantSig =
           (typeof dbSig === 'string' && dbSig.length > 15) ||
-          cKey === 'LT-2026-CI-000492';
+          c.status === 'contrat_actif' ||
+          c.status === 'actif' ||
+          c.tenant_signed;
 
-        // Si la ligne DB avait été marquée actif sans vraie signature locataire (ex: LT-2026-CI-39210687 avant signature), la rétablir en attente
+        // Si la ligne DB avait été marquée actif sans vraie signature locataire, la rétablir en attente
         if (!hasRealTenantSig && (c.tenant_signed || c.status === 'actif')) {
           try {
             supabase
@@ -699,7 +701,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
               const hasContractNum = Boolean(cNum && !isFabricatedNum(cNum));
               const isTransmitted = (a.status === 'en_attente_signature_locataire' || Boolean(docs.contract_transmitted)) && hasContractNum;
               const appSig = a.tenant_signature_url || docs.tenant_signature_url || (cNum ? signedContractsMap[cNum]?.tenant_signature_url : '');
-              const isSignedByTenant = Boolean(hasContractNum && ((appSig && String(appSig).length > 15) || cNum === 'LT-2026-CI-000492'));
+              const isSignedByTenant = Boolean(hasContractNum && ((appSig && String(appSig).length > 15) || a.status === 'contrat_actif' || a.status === 'actif' || docs.contract_status === 'contrat_actif'));
               const isTerminated = docs.contract_status === 'termine' || a.status === 'termine';
               const isPrep = a.status === 'en_redaction_bail' && !hasContractNum;
 
@@ -826,7 +828,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
               if (isActiveOrTransmitted && cNum && !isFabricatedNum(cNum)) {
                 const mapEntry = signedContractsMap[cNum];
                 const sigUrl = a.tenant_signature_url || docs.tenant_signature_url || mapEntry?.tenant_signature_url;
-                const isSigned = Boolean((sigUrl && String(sigUrl).length > 15) || cNum === 'LT-2026-CI-000492');
+                const isSigned = Boolean((sigUrl && String(sigUrl).length > 15) || a.status === 'contrat_actif' || docs.contract_status === 'contrat_actif');
                 localContracts.push({
                   id: `cnt_app_${a.id}`,
                   contract_number: cNum,
@@ -869,7 +871,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
         const key = c.contract_number || c.id;
         const mapEntry = key ? signedContractsMap[key] : null;
         const cSig = c.tenant_signature_url || c.tenant_signature || mapEntry?.tenant_signature_url || '';
-        const cHasSig = (typeof cSig === 'string' && cSig.length > 15) || key === 'LT-2026-CI-000492';
+        const cHasSig = (typeof cSig === 'string' && cSig.length > 15) || c.status === 'contrat_actif' || c.status === 'actif' || c.tenant_signed;
 
         if (!map.has(key)) {
           const isTerm = c.status === 'resilie' || c.status === 'termine' || c.status === 'cloture' || mapEntry?.status === 'termine';
@@ -885,7 +887,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
           const mergedSig = (typeof exSig === 'string' && exSig.length > 15)
             ? exSig
             : (typeof cSig === 'string' && cSig.length > 15 ? cSig : '');
-          const isSigned = Boolean(mergedSig || key === 'LT-2026-CI-000492');
+          const isSigned = Boolean(mergedSig || existing?.status === 'contrat_actif' || existing?.status === 'actif' || c.status === 'contrat_actif' || c.status === 'actif');
           const isTerm =
             existing.status === 'resilie' ||
             existing.status === 'termine' ||

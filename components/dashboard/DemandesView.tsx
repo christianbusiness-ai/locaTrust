@@ -369,7 +369,8 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         const appSigStr = String(dbA.tenant_signature_url || docsObj.tenant_signature_url || '');
         const hasRealAppTenantSig =
           (appSigStr.startsWith('data:image/') && appSigStr.length > 50) ||
-          (dbA.contract_number || docsObj.contract_number) === 'LT-2026-CI-000492';
+          dbA.status === 'contrat_actif' ||
+          docsObj.contract_status === 'contrat_actif';
 
         const resolvedStatus =
           docsObj.contract_status === 'termine'
@@ -502,7 +503,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
                 (lc: any) => (dc.contract_number && lc.contract_number === dc.contract_number) || lc.id === dc.id
               );
               const dcSig = dc.tenant_signature || dc.tenant_signature_url || '';
-              const dcHasRealSig = (typeof dcSig === 'string' && dcSig.length > 15) || dc.contract_number === 'LT-2026-CI-000492';
+              const dcHasRealSig = (typeof dcSig === 'string' && dcSig.length > 15) || dc.tenant_signed || dc.status === 'actif';
               if (existingIdx === -1) {
                 contractsList.push({
                   ...dc,
@@ -512,7 +513,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
               } else {
                 const exSig = contractsList[existingIdx].tenant_signature_url || contractsList[existingIdx].tenant_signature || '';
                 const mergedSig = dcHasRealSig ? dcSig : (typeof exSig === 'string' && exSig.length > 15 ? exSig : '');
-                const isRealSigned = Boolean(mergedSig || dc.contract_number === 'LT-2026-CI-000492');
+                const isRealSigned = Boolean(mergedSig || dc.tenant_signed || dc.status === 'actif');
                 contractsList[existingIdx] = {
                   ...contractsList[existingIdx],
                   ...dc,
@@ -584,7 +585,9 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
             '';
           const tenantSigned = Boolean(
             (typeof sigUrl === 'string' && sigUrl.length > 15) ||
-            cNum === 'LT-2026-CI-000492'
+            matchingC?.tenant_signed ||
+            matchingC?.status === 'actif' ||
+            (app as any).status === 'contrat_actif'
           );
           const ownerSigned = Boolean(
             matchingC?.owner_signed ||
@@ -1490,7 +1493,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
       const resolvedEquipmentsList = resolvedDeclaredEquipments ? [resolvedDeclaredEquipments] : [];
 
       await generateOfficialContractPdf({
-        contractNumber: app.contract_number || matchedContract?.contract_number || 'LT-2026-CI-000492',
+        contractNumber: app.contract_number || matchedContract?.contract_number || 'LT-CONTRAT',
         isAgency: resolved.isAgency,
         ownerName: resolved.ownerName,
         mandantName: resolved.mandantName,
@@ -2428,7 +2431,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           signerName={signingTenantApp.tenant_name}
           signerRole="locataire"
           documentTitle={`Bail d'Habitation pour ${signingTenantApp.property_title}`}
-          documentNumber={signingTenantApp.contract_number || 'LT-2026-CI-000492'}
+          documentNumber={signingTenantApp.contract_number || 'Bail de location'}
         />
       )}
 
@@ -2446,7 +2449,7 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
           signerName={profile?.full_name || user?.user_metadata?.full_name || ((profile?.role as any) === 'agence' ? "Directeur d'Agence" : "Propriétaire Bailleur")}
           signerRole={(profile?.account_type === 'agence' || (profile?.role as any) === 'agence') ? 'agence' : 'bailleur'}
           documentTitle={`Bail d'Habitation pour ${signingOwnerApp.property_title}`}
-          documentNumber={signingOwnerApp.contract_number || 'LT-2026-CI-000492'}
+          documentNumber={signingOwnerApp.contract_number || 'Bail de location'}
         />
       )}
 

@@ -182,7 +182,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
             data.tenant_signature ||
             data.tenant_signature_url ||
             appDocs.tenant_signature_url ||
-            (contractNumber === 'LT-2026-CI-000492' ? getCertifiedSignatureDataUrl(tenantProf?.full_name || 'Locataire', 'locataire') : null);
+            ((data.status === 'actif' || data.status === 'contrat_actif') ? getCertifiedSignatureDataUrl(tenantProf?.full_name || 'Locataire', 'locataire') : null);
           const isTrulySigned = Boolean(realTenantSig && String(realTenantSig).length > 15);
           const isTermine =
             data.status === 'termine' ||
@@ -397,7 +397,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       return directSig;
     }
     if (mapSig) return mapSig;
-    if (contractNumber === 'LT-2026-CI-000492') {
+    if (realContract?.status === 'actif' || realContract?.status === 'contrat_actif' || realContract?.tenant_signed) {
       return getCertifiedSignatureDataUrl(realContract?.tenant?.full_name || 'Locataire', 'locataire');
     }
     return null;
@@ -424,7 +424,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       const sigTenant =
         (directSig && typeof directSig === 'string' && directSig.length > 15 ? directSig : null) ||
         mapSig ||
-        (contractNumber === 'LT-2026-CI-000492' ? getCertifiedSignatureDataUrl(realContract?.tenant?.full_name || 'Locataire', 'locataire') : null);
+        ((realContract.status === 'actif' || realContract.status === 'contrat_actif' || realContract.tenant_signed) ? getCertifiedSignatureDataUrl(realContract?.tenant?.full_name || 'Locataire', 'locataire') : null);
       if (sigOwner) setOwnerSignatureUrl(sigOwner);
       setTenantSignatureUrl(sigTenant || null);
     }

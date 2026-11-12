@@ -972,7 +972,7 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
     setCurrentStep('preview');
   };
 
-  const [activeVerificationToken, setActiveVerificationToken] = useState<string>('tok_cnt_ci2026_000492');
+  const [activeVerificationToken, setActiveVerificationToken] = useState<string>('');
   const [transmitAfterOwnerSignature, setTransmitAfterOwnerSignature] = useState<boolean>(false);
 
   const handleFinalSignAndTransmit = async (overrideOwnerSig?: string | any) => {

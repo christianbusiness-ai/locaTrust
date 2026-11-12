@@ -69,8 +69,6 @@ const isValidUuid = (id?: string | null): boolean => {
 
 const canonicalContractKey = (item: any): string => {
   const val = String(item?.contract_number || item?.contract_id || item?.contract?.contract_number || item?.contract?.id || '').trim();
-  if (val.includes('39210687') || val.includes('0a712408')) return 'LT-2026-CI-39210687';
-  if (val.includes('000492') || val.includes('781920') || val.includes('135945')) return 'LT-2026-CI-000492';
   return val || 'default_contract';
 };
 
@@ -103,7 +101,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
             return parsed
-              .filter((p: any) => p && p.reference !== 'ESP-364218')
+              .filter((p: any) => p && p.status !== 'annule' && p.status !== 'supprime')
               .map((p: any) => {
                 const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
                 if (isBothSigned || p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie') {
@@ -386,7 +384,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           r.tenant_signature ||
           r.tenant_signature_url ||
           notifSigMap.get(rNum)?.tenantSig ||
-          (isSealed ? getCertifiedSignatureDataUrl('Christian', 'locataire') : undefined);
+          (isSealed ? getCertifiedSignatureDataUrl(r.tenant_name || 'Locataire', 'locataire') : undefined);
 
         const oSig =
           r.owner_signature ||
@@ -399,29 +397,29 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           // Si le paiement n'était pas dans rent_payments, l'ajouter directement avec son état de quittance !
           const receiptPayment: RentPayment = {
             id: r.payment_id || `pmt_rcp_${r.id}`,
-            contract_id: r.contract_id || 'LT-2026-CI-39210687',
-            contract_number: r.contract_number || 'LT-2026-CI-39210687',
+            contract_id: r.contract_id || `cnt_${r.id}`,
+            contract_number: r.contract_number || r.contract_id || 'Bail en cours',
             tenant_id: r.tenant_id || 'usr_tenant',
             owner_id: r.owner_id || user?.id,
             agency_id: r.agency_id || user?.id,
-            tenant_name: r.tenant_name || 'Christian',
+            tenant_name: r.tenant_name || 'Locataire',
             tenant: {
               id: r.tenant_id || 'usr_tenant',
-              full_name: r.tenant_name || 'Christian',
-              email: 'christian@locatrust.ci',
-              phone: '0500552141',
+              full_name: r.tenant_name || 'Locataire',
+              email: r.tenant_email || '',
+              phone: r.tenant_phone || '',
               role: 'locataire',
               verification_status: 'verifie'
             },
             property: {
-              title: r.property_title || 'Maison a loué',
-              address: r.property_address || 'Yamoussoukro - Côte d\'Ivoire',
-              city: 'Yamoussoukro'
+              title: r.property_title || 'Bien immobilier',
+              address: r.property_address || '',
+              city: r.property_city || ''
             },
-            amount: Number(r.amount) || 60000,
-            target_month: r.period_covered || 'Novembre 2026 à Janvier 2027',
+            amount: Number(r.amount) || 0,
+            target_month: r.period_covered || 'Mois réglé',
             payment_date: r.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-            payment_method: 'Espèces',
+            payment_method: r.payment_method || 'Mobile Money',
             reference: rNum,
             status: isSealed ? 'confirme' : 'en_attente_signature_locataire',
             tenant_signature_url: tSig,
@@ -497,28 +495,28 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             if (!exists) {
               const inferredPayment: RentPayment = {
                 id: pmtId,
-                contract_id: pld.contract_id || 'LT-2026-CI-39210687',
-                contract_number: pld.contract_number || 'LT-2026-CI-39210687',
+                contract_id: pld.contract_id || `cnt_${pmtId}`,
+                contract_number: pld.contract_number || pld.contract_id || 'Bail en cours',
                 tenant_id: pld.tenant_id || 'usr_tenant',
-                tenant_name: 'Christian',
+                tenant_name: pld.tenant_name || 'Locataire',
                 tenant: {
                   id: pld.tenant_id || 'usr_tenant',
-                  full_name: 'Christian',
-                  email: 'christian@locatrust.ci',
-                  phone: '0500552141',
+                  full_name: pld.tenant_name || 'Locataire',
+                  email: pld.tenant_email || '',
+                  phone: pld.tenant_phone || '',
                   role: 'locataire',
                   verification_status: 'verifie'
                 },
                 property: {
-                  title: 'Maison a loué',
-                  address: "Yamoussoukro - Côte d'Ivoire",
-                  city: 'Yamoussoukro'
+                  title: pld.property_title || 'Bien immobilier',
+                  address: pld.property_address || '',
+                  city: pld.property_city || ''
                 },
                 amount: pmtAmt,
                 target_month: pmtMonth,
                 payment_date: dn.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-                payment_method: pld.payment_method || 'Espèces',
-                reference: pmtRef || `ESP-${Date.now().toString().slice(-6)}`,
+                payment_method: pld.payment_method || 'Mobile Money',
+                reference: pmtRef || `REF-${Date.now().toString().slice(-6)}`,
                 status: 'declare',
                 created_at: dn.created_at || new Date().toISOString()
               };
@@ -680,24 +678,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch { }
       }
 
-      // Nettoyage absolu des doublons de test sur LT-2026-CI-39210687
-      // Sur ce contrat, ESP-895031 (60 000 FCFA couvrant Nov 2026 à Jan 2027) est l'unique règlement valide
-      const purgedObsoleteRefs = new Set<string>(['ESP-364218']);
+      const purgedObsoleteRefs = new Set<string>();
       const purgedObsoleteIds = new Set<string>();
-
-      const hasEsp895031 = loaded.some(p => p.reference === 'ESP-895031');
-      if (hasEsp895031) {
-        loaded = loaded.filter(p => {
-          if (p.reference === 'ESP-895031') return true;
-          const cKey = canonicalContractKey(p);
-          if (cKey === 'LT-2026-CI-39210687') {
-            if (p.reference) purgedObsoleteRefs.add(p.reference);
-            if (p.id) purgedObsoleteIds.add(p.id);
-            return false;
-          }
-          return true;
-        });
-      }
 
       // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
       // Règle d'or : Priorité absolue aux statuts avancés (confirmé > en attente signature > déclaré)
@@ -735,21 +717,16 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         }
         if (monthsInPmt.length === 0) {
           const targetStr = String(p.target_month || '').toLowerCase();
-          const amt = Number(p.amount || 0);
-          if (amt === 60000 || targetStr.includes('janvier 2027')) {
-            monthsInPmt.push('novembre 2026', 'décembre 2026', 'janvier 2027');
-          } else if (amt === 40000 || targetStr.includes('décembre 2026')) {
-            monthsInPmt.push('novembre 2026', 'décembre 2026');
-          } else {
-            monthsInPmt.push(targetStr.trim() || 'novembre 2026');
+          if (targetStr) {
+            monthsInPmt.push(targetStr.trim());
           }
         }
 
         const isPending = p.status === 'declare' || p.status === 'en_attente';
-        const isPartiallyOrFullyCovered = monthsInPmt.some(m => coveredSet.has(m));
+        const isPartiallyOrFullyCovered = monthsInPmt.length > 0 && monthsInPmt.some(m => coveredSet.has(m));
 
         // Purge automatique : Si cette déclaration en attente est obsolète ou couverte par un reçu déjà validé/scellé
-        if (isPending && (isPartiallyOrFullyCovered || p.reference === 'ESP-364218')) {
+        if (isPending && isPartiallyOrFullyCovered) {
           if (p.reference) purgedObsoleteRefs.add(p.reference);
           if (p.id) purgedObsoleteIds.add(p.id);
           continue;
@@ -793,11 +770,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 }
                 return true;
               }).map((n: any) => {
-                const isMatch =
-                  n.description?.includes('WAV-2026-NOV-781920') ||
-                  n.content?.includes('WAV-2026-NOV-781920') ||
-                  n.description?.includes('ESP-895031') ||
-                  n.description?.includes('ESP-364218');
+                const pld = n.payload || n.data || {};
+                const rRef = pld.receiptNumber || pld.reference;
+                const isMatch = rRef && (receiptsByRef.has(rRef) || loaded.some((p: any) => p.reference === rRef && p.status === 'confirme'));
                 if (isMatch && (n.title?.includes('déclaré') || n.description?.includes('déclaré') || !n.description?.trim())) {
                   changed = true;
                   return { ...n, unread: false, read: true, processed: true };
@@ -823,7 +798,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             if (Array.isArray(parsed)) {
               setPayments(
                 parsed
-                  .filter((p: any) => p && p.reference !== 'ESP-364218')
+                  .filter((p: any) => p && p.status !== 'annule' && p.status !== 'supprime')
                   .map((p: any) => {
                     const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
                     if (isBothSigned || p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie') {
@@ -901,8 +876,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       customSimMethod,
       `OM-CI-${Math.floor(100000 + Math.random() * 900000)}`,
       user?.user_metadata?.full_name || 'Bailleur',
-      'LT-2026-CI-000492',
-      'Appartement 3 pièces Cocody Riviera 3'
+      payments[0]?.contract_id || 'LT-CONTRAT',
+      payments[0]?.property_title || 'Bien immobilier'
     );
 
     setRentSchedule(result.updatedSchedule);
@@ -971,10 +946,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const pendingDeclaredPayments = React.useMemo(() => {
     const rawDeclared = payments.filter((p) => {
       if (!isDeclaredStatus(p.status)) return false;
-      // Si une quittance existe déjà pour cette référence, ce n'est PLUS une déclaration en attente
-      if (p.reference && p.reference === 'ESP-364218') {
-        return false;
-      }
+      if (p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse') return false;
       if (p.owner_signature_url || p.tenant_signature_url || (p as any).tenant_signature) {
         return false;
       }
@@ -1069,13 +1041,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       };
     }
 
-    const rent = extractContractMonthlyRent(validatingPayment.contract) || 20000;
+    const rent = extractContractMonthlyRent(validatingPayment.contract) || Number(validatingPayment.amount || 0);
     const contract = validatingPayment.contract || {
-      id: validatingPayment.contract_id || 'LT-2026-CI-39210687',
-      contract_number: validatingPayment.contract_number || validatingPayment.contract_id || 'LT-2026-CI-39210687',
-      start_date: (validatingPayment as any).start_date || '2026-11-05',
+      id: validatingPayment.contract_id || `cnt_${validatingPayment.id}`,
+      contract_number: validatingPayment.contract_number || validatingPayment.contract_id || 'Bail en cours',
+      start_date: (validatingPayment as any).start_date || validatingPayment.payment_date || new Date().toISOString(),
       monthly_rent: rent,
-      due_day: 5
+      due_day: validatingPayment.due_day || 5
     };
 
     const res = calculateRentPaymentAllocation({
@@ -1125,9 +1097,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           extractedOcrData.amount,
           extractedOcrData.payment_method,
           extractedOcrData.reference,
-          validatingPayment.tenant?.full_name || user?.user_metadata?.full_name || 'Christian',
-          validatingPayment.contract_id || 'LT-2026-CI-000492',
-          validatingPayment.contract?.property?.title || 'Logement certifié'
+          validatingPayment.tenant?.full_name || validatingPayment.tenant_name || user?.user_metadata?.full_name || 'Locataire',
+          validatingPayment.contract_id || validatingPayment.contract_number || 'LT-CONTRAT',
+          validatingPayment.property_title || validatingPayment.contract?.property?.title || 'Logement certifié'
         );
         setRentSchedule(result.updatedSchedule);
         setLastAllocationResult(result);
@@ -1666,8 +1638,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     let allocs = (pmt as any).allocations || resolved.allocations;
     if (!allocs || allocs.length === 0) {
       const contract = (pmt as any).contract || {
-        id: pmt.contract_id || 'LT-2026-CI-000492',
-        contract_number: pmt.contract_id || 'LT-2026-CI-000492',
+        id: pmt.contract_id || 'LT-CONTRAT',
+        contract_number: pmt.contract_number || pmt.contract_id || 'LT-CONTRAT',
         monthly_rent: extractContractMonthlyRent((pmt as any).contract) || Number(pmt.amount || 0),
         due_day: 5
       };
@@ -2008,14 +1980,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   <tr key={pmt.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="p-4 font-bold text-slate-900">
                       <div className="flex flex-col">
-                        <span>{/christian/i.test(pmt.tenant?.full_name || '') ? 'Christian' : (pmt.tenant?.full_name || 'Locataire')}</span>
+                        <span>{pmt.tenant?.full_name || pmt.tenant_name || 'Locataire'}</span>
                         <span className="text-[11px] text-slate-400 font-normal">{pmt.payment_date}</span>
                       </div>
                     </td>
                     <td className="p-4">
                       {(() => {
                         // Résolution dynamique de la période couverte
-                        let label = 'Novembre 2026';
+                        let label = pmt.target_month || 'Période en cours';
                         let count = 1;
                         let isMulti = false;
 

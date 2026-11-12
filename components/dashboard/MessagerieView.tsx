@@ -1455,7 +1455,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
             },
             tenant: {
               id: currentUserId,
-              full_name: signingTarget.quittance.tenantName || 'christian'
+              full_name: signingTarget.quittance.tenantName || 'Locataire'
             }
           } as any;
 

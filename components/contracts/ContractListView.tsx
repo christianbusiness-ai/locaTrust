@@ -232,7 +232,12 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
               const cNum = a.contract_number || docs.contract_number;
               if (!cNum) return;
               const appSig = docs.tenant_signature_url || a.tenant_signature_url || signedByNotifSigs.get(cNum) || '';
-              const isSigned = Boolean((typeof appSig === 'string' && appSig.length > 15) || cNum === 'LT-2026-CI-000492');
+              const isSigned = Boolean(
+                (typeof appSig === 'string' && appSig.length > 15) ||
+                a.status === 'contrat_actif' ||
+                docs.contract_status === 'contrat_actif' ||
+                a.status === 'actif'
+              );
               const isAppTerm = docs.contract_status === 'termine' || a.status === 'termine' || terminatedByNotifNums.has(cNum);
               if (isAppTerm) terminatedByNotifNums.add(cNum);
 
@@ -315,7 +320,13 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                     lc.tenant_signature ||
                     signedByNotifSigs.get(cNum) ||
                     '';
-                  const isSigned = Boolean((typeof mergedSig === 'string' && mergedSig.length > 15) || cNum === 'LT-2026-CI-000492');
+                  const isSigned = Boolean(
+                    (typeof mergedSig === 'string' && mergedSig.length > 15) ||
+                    lc.status === 'contrat_actif' ||
+                    lc.status === 'actif' ||
+                    rawCombined[idx].status === 'contrat_actif' ||
+                    rawCombined[idx].status === 'actif'
+                  );
                   rawCombined[idx] = {
                     ...lc,
                     ...rawCombined[idx],
@@ -353,7 +364,9 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
           const sigUrl = c.tenant_signature_url || c.tenant_signature || signedByNotifSigs.get(cNum) || '';
           const isSignedByTenant = Boolean(
             (typeof sigUrl === 'string' && sigUrl.length > 15) ||
-            cNum === 'LT-2026-CI-000492'
+            c.tenant_signed ||
+            c.status === 'contrat_actif' ||
+            c.status === 'actif'
           );
           const isTermine =
             c.status === 'termine' ||
@@ -362,7 +375,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
             terminatedByNotifNums.has(cNum);
 
           if (!isSignedByTenant && !isTermine && (c.status === 'actif' || c.tenant_signed)) {
-            // Rétablir en attente de signature locataire si le contrat n'a pas encore de vraie signature locataire (ex: LT-2026-CI-39210687)
+            // Rétablir en attente de signature locataire si le contrat n'a pas encore de vraie signature locataire
             try {
               supabase.from('contracts').update({ status: 'en_attente', tenant_signed: false }).eq('contract_number', cNum).then();
             } catch {}

@@ -86,7 +86,7 @@ export function getDefaultRealisticAvatar(name?: string, role?: string): string 
   if (cleanRole.includes('propriétaire') || cleanRole.includes('bailleur') || clean.includes('bailleur')) {
     return SUGGESTED_AVATARS[1]; // Photo professionnelle propriétaire bailleur
   }
-  if (cleanRole.includes('locataire') || clean.includes('christian') || clean.includes('locataire')) {
+  if (cleanRole.includes('locataire') || clean.includes('locataire')) {
     return SUGGESTED_AVATARS[0]; // Photo professionnelle locataire
   }
   let sum = 0;
