@@ -861,28 +861,45 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
 
       // Déduplication par contract_number en vérifiant strictement la présence d'une vraie signature locataire
       const map = new Map<string, any>();
+      const cRefToKey = new Map<string, string>();
+
       loadedDbContracts.forEach((c) => {
         if (!belongsToCurrentTenant(c)) return;
-        const key = c.contract_number || c.id;
-        if (isFabricatedNum(key)) return;
-        map.set(key, c);
+        const cNum = c.contract_number ? String(c.contract_number).trim() : '';
+        const cId = c.id ? String(c.id).trim() : '';
+        const primaryKey = cNum || cId;
+        if (!primaryKey || isFabricatedNum(primaryKey)) return;
+
+        map.set(primaryKey, c);
+        if (cNum) cRefToKey.set(cNum, primaryKey);
+        if (cId) cRefToKey.set(cId, primaryKey);
       });
+
       localContracts.forEach((c) => {
-        const key = c.contract_number || c.id;
-        const mapEntry = key ? signedContractsMap[key] : null;
+        if (!belongsToCurrentTenant(c)) return;
+        const cNum = c.contract_number ? String(c.contract_number).trim() : '';
+        const cId = c.id ? String(c.id).trim() : '';
+        const primaryKey = cNum || cId;
+        if (!primaryKey || isFabricatedNum(primaryKey)) return;
+
+        const mapEntry = cNum ? signedContractsMap[cNum] : null;
         const cSig = c.tenant_signature_url || c.tenant_signature || mapEntry?.tenant_signature_url || '';
         const cHasSig = (typeof cSig === 'string' && cSig.length > 15) || c.status === 'contrat_actif' || c.status === 'actif' || c.tenant_signed;
 
-        if (!map.has(key)) {
+        const existingKey = (cNum && cRefToKey.get(cNum)) || (cId && cRefToKey.get(cId));
+
+        if (!existingKey || !map.has(existingKey)) {
           const isTerm = c.status === 'resilie' || c.status === 'termine' || c.status === 'cloture' || mapEntry?.status === 'termine';
-          map.set(key, {
+          map.set(primaryKey, {
             ...c,
             tenant_signed: cHasSig,
             tenant_signature_url: cHasSig ? (cSig || undefined) : undefined,
             status: isTerm ? 'termine' : (cHasSig ? 'actif' : 'en_attente_signature_locataire')
           });
+          if (cNum) cRefToKey.set(cNum, primaryKey);
+          if (cId) cRefToKey.set(cId, primaryKey);
         } else {
-          const existing = map.get(key);
+          const existing = map.get(existingKey);
           const exSig = existing.tenant_signature_url || existing.tenant_signature || '';
           const mergedSig = (typeof exSig === 'string' && exSig.length > 15)
             ? exSig
@@ -898,7 +915,7 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
             : isSigned
             ? 'actif'
             : 'en_attente_signature_locataire';
-          map.set(key, {
+          map.set(existingKey, {
             ...c,
             ...existing,
             renewal_status: existing.renewal_status || c.renewal_status,
@@ -916,6 +933,8 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
               c.owner_signature,
             status: mergedStatus
           });
+          if (cNum) cRefToKey.set(cNum, existingKey);
+          if (cId) cRefToKey.set(cId, existingKey);
         }
       });
 
@@ -934,16 +953,18 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
           .order('created_at', { ascending: false });
         if (rcpData && Array.isArray(rcpData)) {
           rcpData.forEach((r: any) => {
-            const num = r.receipt_number || r.id;
+            const rNum = String(r.receipt_number || '').trim();
+            const rId = String(r.id || '').trim();
             const amt = Number(r.amount) || 0;
             // Rejeter les faux reçus (montant 0 ou hash temporaire)
-            if (amt <= 0 || num === 'REC-2026-253306' || num.includes('253306') || num.startsWith('REC-CAUT-') || num.includes('42CAB66D')) {
-              // Suppression asynchrone du faux reçu en base
+            if (amt <= 0 || rNum === 'REC-2026-253306' || rNum.includes('253306') || rNum.startsWith('REC-CAUT-') || rNum.includes('42CAB66D')) {
               try { supabase.from('receipts').delete().eq('id', r.id).then(); } catch {}
               return;
             }
-            if (!seenReceiptNums.has(num)) {
-              seenReceiptNums.add(num);
+            const isKnown = (rNum && seenReceiptNums.has(rNum)) || (rId && seenReceiptNums.has(rId));
+            if (!isKnown) {
+              if (rNum) seenReceiptNums.add(rNum);
+              if (rId) seenReceiptNums.add(rId);
               combinedReceipts.push(r);
             }
           });
@@ -968,15 +989,18 @@ export const LocataireContratsView: React.FC<LocataireContratsViewProps> = ({
               localStorage.setItem('locatrust_tenant_receipts_v2', JSON.stringify(cleanedV2));
             }
             cleanedV2.forEach((item: any) => {
-              const num = item.receiptNumber || item.receipt_number || item.id;
-              if (num && !seenReceiptNums.has(num)) {
-                seenReceiptNums.add(num);
+              const rNum = String(item.receiptNumber || item.receipt_number || '').trim();
+              const rId = String(item.id || '').trim();
+              const isKnown = (rNum && seenReceiptNums.has(rNum)) || (rId && seenReceiptNums.has(rId));
+              if (!isKnown) {
+                if (rNum) seenReceiptNums.add(rNum);
+                if (rId) seenReceiptNums.add(rId);
                 combinedReceipts.push({
-                  id: item.id || `rcp_${num}`,
-                  receipt_number: num,
+                  id: item.id || `rcp_${rNum}`,
+                  receipt_number: rNum || rId,
                   period: item.periodsCovered || item.period || 'Mois en cours',
                   amount: Number(item.amount) || 0,
-                  token: item.token || `tok_${num}`,
+                  token: item.token || `tok_${rNum}`,
                   type: item.type || 'loyer',
                   owner_name: item.ownerName === 'Nat Yao' || (item.ownerName && item.ownerName.toLowerCase() === 'kk') ? 'KK' : (item.ownerName || 'KK'),
                   property_title: item.propertyTitle,

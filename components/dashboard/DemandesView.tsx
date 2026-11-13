@@ -479,8 +479,18 @@ export const DemandesView: React.FC<DemandesViewProps> = ({
         return dbItem;
       });
 
+      const dbContractNums = new Set(dbApps.map(a => a.contract_number).filter(Boolean));
+      const dbPropTenantPairs = new Set(dbApps.map(a => `${a.property_id}_${a.tenant_id}`));
+
+      const uniqueLocalApps = relevantLocalApps.filter((a) => {
+        if (dbIds.has(a.id)) return false;
+        if (a.contract_number && dbContractNums.has(a.contract_number)) return false;
+        if (a.property_id && a.tenant_id && dbPropTenantPairs.has(`${a.property_id}_${a.tenant_id}`)) return false;
+        return true;
+      });
+
       const combined = [
-        ...relevantLocalApps.filter((a) => !dbIds.has(a.id)),
+        ...uniqueLocalApps,
         ...mergedDbApps
       ];
 

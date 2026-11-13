@@ -1482,7 +1482,11 @@ export const LegalContractGeneratorModal: React.FC<LegalContractGeneratorModalPr
       };
       const updatedContracts = [
         newContractRecord,
-        ...existingContracts.filter((c: any) => c.contract_number !== contractNumber)
+        ...existingContracts.filter((c: any) => 
+          c.contract_number !== contractNumber && 
+          c.id !== generatedContractUuid &&
+          (!finalPropId || c.property_id !== finalPropId)
+        )
       ];
       localStorage.setItem('locatrust_contracts', JSON.stringify(updatedContracts));
       window.dispatchEvent(

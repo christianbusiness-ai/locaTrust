@@ -181,7 +181,40 @@ export function getUnifiedReceipts(userId?: string): UnifiedReceiptRecord[] {
 export function saveUnifiedReceipts(receipts: any[]): void {
   if (typeof window === 'undefined') return;
 
-  const normalizedList = (receipts || []).map(normalizeReceipt);
+  const dedupMap = new Map<string, UnifiedReceiptRecord>();
+  const refToKeyMap = new Map<string, string>();
+
+  (receipts || []).forEach((r) => {
+    if (!r) return;
+    const norm = normalizeReceipt(r);
+    const refKey = (norm.receipt_number || norm.reference || '').trim().toLowerCase();
+    const idKey = (norm.id || '').trim().toLowerCase();
+    const primaryKey = refKey || idKey;
+    if (!primaryKey) return;
+
+    const existingKey = (refKey && refToKeyMap.get(refKey)) || (idKey && refToKeyMap.get(idKey));
+    if (!existingKey || !dedupMap.has(existingKey)) {
+      dedupMap.set(primaryKey, norm);
+      if (refKey) refToKeyMap.set(refKey, primaryKey);
+      if (idKey) refToKeyMap.set(idKey, primaryKey);
+    } else {
+      const existing = dedupMap.get(existingKey)!;
+      const ownerSig = existing.owner_signature_url || norm.owner_signature_url;
+      const tenantSig = existing.tenant_signature_url || norm.tenant_signature_url;
+      const isConfirmed = existing.status === 'confirme' || norm.status === 'confirme' || Boolean(ownerSig && tenantSig);
+      dedupMap.set(existingKey, {
+        ...existing,
+        ...norm,
+        owner_signature_url: ownerSig,
+        tenant_signature_url: tenantSig,
+        status: isConfirmed ? 'confirme' : (norm.status || existing.status)
+      });
+      if (refKey) refToKeyMap.set(refKey, existingKey);
+      if (idKey) refToKeyMap.set(idKey, existingKey);
+    }
+  });
+
+  const normalizedList = Array.from(dedupMap.values());
   const serialized = JSON.stringify(normalizedList);
 
   try {
@@ -199,11 +232,14 @@ export function saveUnifiedReceipts(receipts: any[]): void {
 export function upsertUnifiedReceipt(receipt: any): UnifiedReceiptRecord {
   const norm = normalizeReceipt(receipt);
   const current = getUnifiedReceipts();
-  const key = (norm.receipt_number || norm.id).trim().toLowerCase();
+  const normRef = (norm.receipt_number || norm.reference || '').trim().toLowerCase();
+  const normId = (norm.id || '').trim().toLowerCase();
 
-  const idx = current.findIndex(
-    (r) => (r.receipt_number || r.id).trim().toLowerCase() === key
-  );
+  const idx = current.findIndex((r) => {
+    const rRef = (r.receipt_number || r.reference || '').trim().toLowerCase();
+    const rId = (r.id || '').trim().toLowerCase();
+    return (normRef && rRef && normRef === rRef) || (normId && rId && normId === rId);
+  });
 
   let updatedList: UnifiedReceiptRecord[];
   if (idx === -1) {

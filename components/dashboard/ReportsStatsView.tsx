@@ -106,8 +106,8 @@ export const ReportsStatsView: React.FC = () => {
     if (realDataset?.monthlyBreakdown && realDataset.monthlyBreakdown.length > 0) {
       return realDataset.monthlyBreakdown;
     }
-    return [];
-  }, [realDataset]);
+    return getYearRecords(selectedYear);
+  }, [realDataset, selectedYear]);
 
   // Mois filtrés selon la période choisie (ce mois, mois précédent, trimestre, année)
   const filteredMonths = useMemo(() => {
@@ -118,7 +118,15 @@ export const ReportsStatsView: React.FC = () => {
       const currentMonthNum = String(now.getMonth() + 1).padStart(2, '0');
       const currentKey = `${selectedYear}-${currentMonthNum}`;
       const found = yearRecords.filter((r) => r.monthKey === currentKey);
-      return found.length > 0 ? found : [yearRecords[Math.min(now.getMonth(), yearRecords.length - 1)]];
+      if (found.length > 0 && (found[0].expectedRent > 0 || found[0].collectedRent > 0)) {
+        return found;
+      }
+      // Chercher le mois actif avec activité (loyer attendu ou encaissé), ex: Novembre 2026
+      const activeMonth = yearRecords.find((r) => r.expectedRent > 0 || r.collectedRent > 0);
+      if (activeMonth) return [activeMonth];
+      if (found.length > 0) return found;
+      const fallbackIdx = Math.min(Math.max(0, now.getMonth()), yearRecords.length - 1);
+      return yearRecords[fallbackIdx] ? [yearRecords[fallbackIdx]] : [];
     }
 
     if (period === 'mois_precedent') {

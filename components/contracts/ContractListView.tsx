@@ -210,9 +210,12 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
       const { data } = await query;
       if (data && Array.isArray(data)) {
         data.forEach((c: any) => {
-          const key = c.contract_number || c.id;
-          if (key && !seenContractIds.has(key)) {
-            seenContractIds.add(key);
+          const cNum = c.contract_number;
+          const cId = c.id;
+          const isKnown = (cNum && seenContractIds.has(cNum)) || (cId && seenContractIds.has(cId));
+          if (!isKnown) {
+            if (cNum) seenContractIds.add(cNum);
+            if (cId) seenContractIds.add(cId);
             rawCombined.push(c);
           }
         });
@@ -230,22 +233,26 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
             appRows.forEach((a: any) => {
               const docs = a.documents && typeof a.documents === 'object' ? a.documents : {};
               const cNum = a.contract_number || docs.contract_number;
-              if (!cNum) return;
-              const appSig = docs.tenant_signature_url || a.tenant_signature_url || signedByNotifSigs.get(cNum) || '';
+              const aId = a.id;
+              if (!cNum && !aId) return;
+              const appSig = docs.tenant_signature_url || a.tenant_signature_url || (cNum && signedByNotifSigs.get(cNum)) || '';
               const isSigned = Boolean(
                 (typeof appSig === 'string' && appSig.length > 15) ||
                 a.status === 'contrat_actif' ||
                 docs.contract_status === 'contrat_actif' ||
                 a.status === 'actif'
               );
-              const isAppTerm = docs.contract_status === 'termine' || a.status === 'termine' || terminatedByNotifNums.has(cNum);
-              if (isAppTerm) terminatedByNotifNums.add(cNum);
+              const isAppTerm = (cNum && terminatedByNotifNums.has(cNum)) || docs.contract_status === 'termine' || a.status === 'termine';
+              if (isAppTerm && cNum) terminatedByNotifNums.add(cNum);
 
-              if (!seenContractIds.has(cNum)) {
-                seenContractIds.add(cNum);
+              const isKnown = (cNum && seenContractIds.has(cNum)) || (aId && seenContractIds.has(aId));
+
+              if (!isKnown) {
+                if (cNum) seenContractIds.add(cNum);
+                if (aId) seenContractIds.add(aId);
                 rawCombined.push({
-                  id: docs.contract_id || cNum,
-                  contract_number: cNum,
+                  id: docs.contract_id || aId || cNum,
+                  contract_number: cNum || aId,
                   property_id: a.property_id,
                   tenant_id: a.tenant_id,
                   owner_id: a.owner_id || user.id,
@@ -270,7 +277,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
                   created_at: a.created_at
                 });
               } else {
-                const idx = rawCombined.findIndex((rc) => (rc.contract_number || rc.id) === cNum);
+                const idx = rawCombined.findIndex((rc) => (cNum && rc.contract_number === cNum) || (aId && rc.id === aId));
                 if (idx !== -1) {
                   rawCombined[idx] = {
                     ...rawCombined[idx],
@@ -297,7 +304,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
         } catch {}
       }
 
-      // Fusion avec locatrust_contracts en localStorage
+      // Fusion avec locatrust_contracts en localStorage (uniquement si le contrat n'existe pas déjà)
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_contracts');
@@ -305,20 +312,22 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
             const list = JSON.parse(raw);
             const myList = Array.isArray(list) ? list.filter((c: any) => !user?.id || c.owner_id === user.id || c.agency_id === user.id || c.owner?.id === user.id) : [];
             myList.forEach((lc: any) => {
-              const cNum = lc.contract_number || lc.id;
-              if (!cNum) return;
-              if (!seenContractIds.has(cNum)) {
-                seenContractIds.add(cNum);
+              const cNum = lc.contract_number;
+              const cId = lc.id;
+              const isKnown = (cNum && seenContractIds.has(cNum)) || (cId && seenContractIds.has(cId));
+              if (!isKnown) {
+                if (cNum) seenContractIds.add(cNum);
+                if (cId) seenContractIds.add(cId);
                 rawCombined.push(lc);
               } else {
-                const idx = rawCombined.findIndex((rc) => (rc.contract_number || rc.id) === cNum);
+                const idx = rawCombined.findIndex((rc) => (cNum && rc.contract_number === cNum) || (cId && rc.id === cId));
                 if (idx !== -1) {
                   const mergedSig =
                     rawCombined[idx].tenant_signature ||
                     rawCombined[idx].tenant_signature_url ||
                     lc.tenant_signature_url ||
                     lc.tenant_signature ||
-                    signedByNotifSigs.get(cNum) ||
+                    (cNum && signedByNotifSigs.get(cNum)) ||
                     '';
                   const isSigned = Boolean(
                     (typeof mergedSig === 'string' && mergedSig.length > 15) ||

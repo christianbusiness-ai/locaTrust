@@ -164,12 +164,26 @@ export const MaintenanceView: React.FC = () => {
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
-            parsed.forEach((pt: any) => {
-              const isMine = !user?.id || pt.owner_id === user.id || pt.agency_id === user.id || pt.tenant_id === user.id;
-              if (isMine && !list.some(l => l.id === pt.id || l.ticketNumber === pt.ticketNumber)) {
-                list.push(pt);
-              }
-            });
+            if (list.length === 0) {
+              // Mode hors ligne : afficher le cache local
+              parsed.forEach((pt: any) => {
+                const isMine = !user?.id || pt.owner_id === user.id || pt.agency_id === user.id || pt.tenant_id === user.id;
+                if (isMine && !list.some(l => l.id === pt.id || l.ticketNumber === pt.ticketNumber)) {
+                  list.push(pt);
+                }
+              });
+            } else {
+              // Le serveur Supabase est la source de vérité : enrichir sans dupliquer
+              parsed.forEach((pt: any) => {
+                const idx = list.findIndex(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber));
+                if (idx !== -1) {
+                  list[idx] = {
+                    ...list[idx],
+                    notes: pt.notes && pt.notes.length > (list[idx].notes?.length || 0) ? pt.notes : list[idx].notes
+                  };
+                }
+              });
+            }
           }
         }
       } catch {}

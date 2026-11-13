@@ -253,7 +253,23 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
 
             const existingKey = (lpRef && refToKeyMap.get(lpRef)) || (lpId && refToKeyMap.get(lpId));
+            
+            // Vérifier également si ce paiement local correspond sémantiquement à un paiement serveur existant
+            const lpDateStr = String(lp.payment_date || lp.created_at || '').slice(0, 10);
+            const isSemanticDuplicate = Array.from(map.values()).some((sp: any) => {
+              const spDateStr = String(sp.payment_date || sp.created_at || '').slice(0, 10);
+              const spAmt = Number(String(sp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+              const spRef = String(sp.receipt_number || sp.reference || '').toLowerCase().trim();
+              const lpRefLower = lpRef.toLowerCase();
+              return (spAmt === amt && (spDateStr === lpDateStr || (sp.contract_id && sp.contract_id === lp.contract_id))) ||
+                     (spRef && lpRefLower && (spRef.includes(lpRefLower) || lpRefLower.includes(spRef)));
+            });
+
             if (!existingKey || !map.has(existingKey)) {
+              if (isSemanticDuplicate) {
+                // Correspond à un paiement serveur existant : ne jamais créer un doublon
+                continue;
+              }
               map.set(primaryKey, lp);
               if (lpRef) refToKeyMap.set(lpRef, primaryKey);
               if (lpId) refToKeyMap.set(lpId, primaryKey);

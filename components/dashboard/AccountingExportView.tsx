@@ -233,13 +233,20 @@ export const AccountingExportView: React.FC = () => {
   const activeDataset = React.useMemo(() => {
     if (!accountingData) return null;
 
-    // Dédoublonnage canonique de sécurité des encaissements
+    // Dédoublonnage canonique et multicritère des encaissements
     const seenEncKeys = new Set<string>();
     const cleanEncaissements = (accountingData.encaissements || []).filter((e: any) => {
-      const k = String(e.receiptNo || e.ref || '').trim();
-      if (!k) return true;
-      if (seenEncKeys.has(k)) return false;
-      seenEncKeys.add(k);
+      const rNo = String(e.receiptNo || '').toLowerCase().trim();
+      const ref = String(e.ref || '').toLowerCase().trim();
+      const contentKey = `${e.contractNo || ''}_${e.date || ''}_${e.amount || ''}_${e.period || ''}`.toLowerCase();
+
+      if (rNo && seenEncKeys.has(rNo)) return false;
+      if (ref && seenEncKeys.has(ref)) return false;
+      if (contentKey && seenEncKeys.has(contentKey)) return false;
+
+      if (rNo) seenEncKeys.add(rNo);
+      if (ref) seenEncKeys.add(ref);
+      if (contentKey) seenEncKeys.add(contentKey);
       return true;
     });
 
@@ -264,7 +271,7 @@ export const AccountingExportView: React.FC = () => {
         return targetPropertyIds.size === 0 || targetPropertyIds.has(l.property_id || l.property?.id);
       });
 
-      const filteredEncaissements = (accountingData.encaissements || []).filter((e: any) => {
+      const filteredEncaissements = cleanEncaissements.filter((e: any) => {
         return targetPropertyIds.size === 0 || targetPropertyIds.has(e.property_id || e.property?.id);
       });
 

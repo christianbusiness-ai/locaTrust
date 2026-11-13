@@ -201,8 +201,19 @@ export const TenantsListView: React.FC = () => {
               receipts: []
             };
           });
-          setTenants(dbTenants);
-          localStorage.setItem('locatrust_tenants', JSON.stringify(dbTenants));
+
+          // Dédoublonnage strict des locataires par identifiant et contrat
+          const seenTenantKeys = new Set<string>();
+          const uniqueTenants: TenantProfile[] = [];
+          for (const t of dbTenants) {
+            const key = `${t.id}_${t.contractNumber}`;
+            if (seenTenantKeys.has(key)) continue;
+            seenTenantKeys.add(key);
+            uniqueTenants.push(t);
+          }
+
+          setTenants(uniqueTenants);
+          localStorage.setItem('locatrust_tenants', JSON.stringify(uniqueTenants));
         } else {
           if (!hasLoadedOnceRef.current) {
             setTenants([]);

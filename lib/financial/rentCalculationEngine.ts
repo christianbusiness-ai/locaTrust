@@ -353,13 +353,23 @@ export function analyzeContractSituation(
     }
 
     if (matches) {
-      // Dédoublonnage strict par numéro de quittance ou référence de transaction
+      // Dédoublonnage strict par numéro de quittance, référence, identifiant et signature sémantique
       const pRef = String(p.receipt_number || p.reference || '').trim();
       const pId = String(p.id || '').trim();
-      if (pRef && seenPaymentKeys.has(pRef)) return;
-      if (pId && seenPaymentKeys.has(pId)) return;
-      if (pRef) seenPaymentKeys.add(pRef);
-      if (pId) seenPaymentKeys.add(pId);
+      const pRefNorm = pRef.toLowerCase();
+      const pIdNorm = pId.toLowerCase();
+      const pAmtNum = cleanAmount(p.amount);
+      const pDateStr = String(p.payment_date || p.created_at || '').slice(0, 10);
+      const pTargetStr = String(p.period_covered || p.target_month || '').toLowerCase().trim();
+      const pSig = `${pAmtNum}_${pDateStr}_${pTargetStr}`;
+
+      if (pRefNorm && seenPaymentKeys.has(pRefNorm)) return;
+      if (pIdNorm && seenPaymentKeys.has(pIdNorm)) return;
+      if (pSig && seenPaymentKeys.has(pSig)) return;
+
+      if (pRefNorm) seenPaymentKeys.add(pRefNorm);
+      if (pIdNorm) seenPaymentKeys.add(pIdNorm);
+      if (pSig) seenPaymentKeys.add(pSig);
       rentPayments.push(p);
     }
   });
@@ -415,8 +425,8 @@ export function analyzeContractSituation(
       let remaining = pAmt;
       explicitMonths.forEach((mKey) => {
         const item = schedule.find((s) => s.monthKey === mKey);
-        if (item && remaining > 0) {
-          const alloc = Math.min(monthlyRent, remaining);
+        if (item && item.balanceRemaining > 0 && remaining > 0) {
+          const alloc = Math.min(item.balanceRemaining, remaining);
           item.amountPaid += alloc;
           item.balanceRemaining = Math.max(0, item.amountDue - item.amountPaid);
           item.allocations.push({

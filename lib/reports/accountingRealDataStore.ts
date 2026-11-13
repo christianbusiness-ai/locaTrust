@@ -1049,7 +1049,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     // 7. Calcul unifié et rigoureux via computeOwnerFinancialMetrics (Règles 1 à 10 du prompt)
     const effectiveReferenceDate = (currentYearNum === now.getFullYear())
       ? now
-      : (currentYearNum < now.getFullYear() ? new Date(currentYearNum, 11, 31) : now);
+      : (currentYearNum < now.getFullYear() ? new Date(currentYearNum, 11, 31) : new Date(currentYearNum, 0, 15));
 
     const ownerFinancialMetrics = computeOwnerFinancialMetrics(
       realProps,
@@ -1166,13 +1166,20 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       };
     });
 
-    // Dédoublonnage strict du Journal des Encaissements par numéro de reçu ou référence
+    // Dédoublonnage strict et multicritère du Journal des Encaissements
     const seenEncKeys = new Set<string>();
     mappedEncaissements = mappedEncaissements.filter((e: any) => {
-      const k = String(e.receiptNo || e.ref || '').trim();
-      if (!k) return true;
-      if (seenEncKeys.has(k)) return false;
-      seenEncKeys.add(k);
+      const rNo = String(e.receiptNo || '').toLowerCase().trim();
+      const ref = String(e.ref || '').toLowerCase().trim();
+      const contentKey = `${e.contractNo || ''}_${e.date || ''}_${e.amount || ''}_${e.period || ''}`.toLowerCase();
+
+      if (rNo && seenEncKeys.has(rNo)) return false;
+      if (ref && seenEncKeys.has(ref)) return false;
+      if (contentKey && seenEncKeys.has(contentKey)) return false;
+
+      if (rNo) seenEncKeys.add(rNo);
+      if (ref) seenEncKeys.add(ref);
+      if (contentKey) seenEncKeys.add(contentKey);
       return true;
     });
 
