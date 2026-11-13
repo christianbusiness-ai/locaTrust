@@ -605,37 +605,25 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 return false;
               });
 
-              for (const loc of myLocalList) {
-                const locRef = String(loc.receipt_number || loc.reference || '').trim();
-                const idx = loaded.findIndex(p => {
-                  const pRef = String(p.receipt_number || p.reference || '').trim();
-                  return (locRef && pRef && locRef === pRef) || p.id === loc.id;
-                });
-                if (idx === -1) {
-                  loaded.unshift(loc);
-                } else {
-                  const existing = loaded[idx];
-                  const localIsAdvanced =
-                    (loc.status === 'confirme' && existing.status !== 'confirme') ||
-                    (loc.status === 'en_attente_signature_locataire' && (existing.status === 'declare' || existing.status === 'en_attente')) ||
-                    (loc.owner_signature_url && !existing.owner_signature_url) ||
-                    (loc.tenant_signature_url && !existing.tenant_signature_url);
-
-                  if (localIsAdvanced) {
+              if (loaded.length === 0 && myLocalList.length > 0) {
+                // Mode hors-ligne / fallback initial uniquement si Supabase n'a rien renvoyé
+                loaded = myLocalList;
+              } else {
+                // Le serveur est la source de vérité : enrichir les paiements serveur avec les signatures récentes
+                for (const loc of myLocalList) {
+                  const locRef = String(loc.receipt_number || loc.reference || '').trim();
+                  const idx = loaded.findIndex(p => {
+                    const pRef = String(p.receipt_number || p.reference || '').trim();
+                    return (locRef && pRef && locRef === pRef) || p.id === loc.id;
+                  });
+                  if (idx !== -1) {
+                    const existing = loaded[idx];
                     loaded[idx] = {
                       ...existing,
-                      ...loc,
-                      status: loc.status || existing.status,
                       owner_signature_url: loc.owner_signature_url || existing.owner_signature_url,
                       tenant_signature_url: loc.tenant_signature_url || existing.tenant_signature_url,
+                      status: (loc.status === 'confirme' || existing.status === 'confirme') ? 'confirme' : (existing.status || loc.status),
                       confirmed_at: loc.confirmed_at || existing.confirmed_at
-                    };
-                  } else {
-                    loaded[idx] = {
-                      ...existing,
-                      owner_signature_url: existing.owner_signature_url || loc.owner_signature_url,
-                      tenant_signature_url: existing.tenant_signature_url || loc.tenant_signature_url,
-                      confirmed_at: existing.confirmed_at || loc.confirmed_at
                     };
                   }
                 }

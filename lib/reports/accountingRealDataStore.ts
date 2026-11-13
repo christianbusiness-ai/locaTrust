@@ -583,7 +583,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
               localStorage.setItem('locatrust_rent_payments', JSON.stringify(cleanLocalPmts));
             } catch {}
 
-            cleanLocalPmts
+            const validLocalPmts = cleanLocalPmts
               .filter((lp: any) => {
                 if (!isMine(lp)) return false;
                 if (lp.status === 'annule' || lp.status === 'supprime' || lp.status === 'refuse') return false;
@@ -591,23 +591,31 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                 const id = String(lp.id || '').trim();
                 if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
                 const numAmt = Number(String(lp.amount || 0).replace(/[\s\u00A0,]/g, ''));
-                if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false; // Bloquer tout montant test anormal
+                if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false;
                 return true;
-              })
-              .forEach((lp: any) => {
+              });
+
+            if (realPayments.length === 0 && validLocalPmts.length > 0) {
+              // Mode fallback / premier chargement sans réponse serveur
+              realPayments.push(...validLocalPmts);
+            } else {
+              // Le serveur Supabase est la source de vérité : enrichir uniquement les paiements existants
+              validLocalPmts.forEach((lp: any) => {
                 const lpRef = String(lp.reference || lp.receipt_number || '').trim();
                 const idx = realPayments.findIndex((p: any) => {
                   const pRef = String(p.reference || p.receipt_number || '').trim();
                   return (lpRef && pRef && pRef === lpRef) || (lp.id && p.id === lp.id);
                 });
                 if (idx !== -1) {
-                  if (realPayments[idx].status !== 'confirme') {
-                    realPayments[idx] = { ...realPayments[idx], ...lp };
-                  }
-                } else {
-                  realPayments.push(lp);
+                  realPayments[idx] = {
+                    ...realPayments[idx],
+                    owner_signature_url: lp.owner_signature_url || realPayments[idx].owner_signature_url,
+                    tenant_signature_url: lp.tenant_signature_url || realPayments[idx].tenant_signature_url,
+                    status: (lp.status === 'confirme' || realPayments[idx].status === 'confirme') ? 'confirme' : realPayments[idx].status
+                  };
                 }
               });
+            }
           }
         }
 
@@ -671,7 +679,12 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     }
 
     // 4. Intégration des reçus certifiés (receipts) s'ils ne sont pas déjà comptabilisés dans rent_payments ou cautions
-    const knownPaymentRefs = new Set(realPayments.map((p: any) => p.receipt_number || p.reference || p.id));
+    const knownPaymentRefs = new Set<string>();
+    realPayments.forEach((p: any) => {
+      if (p.receipt_number) knownPaymentRefs.add(String(p.receipt_number).trim());
+      if (p.reference) knownPaymentRefs.add(String(p.reference).trim());
+      if (p.id) knownPaymentRefs.add(String(p.id).trim());
+    });
     
     // Clés d'identification complètes pour dédoublonnage strict des cautions
     const knownCautionKeys = new Set<string>();
@@ -690,23 +703,49 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const rNum = String(r.receipt_number || r.receiptNumber || r.id || '').trim();
       if (deletedKeysSet.has(rNum)) return;
 
-      if (r.type === 'loyer' && r.receipt_number && !knownPaymentRefs.has(r.receipt_number)) {
-        realPayments.push({
-          id: r.payment_id || r.id,
-          receipt_number: r.receipt_number,
-          reference: r.receipt_number,
-          amount: rAmt,
-          status: 'confirme',
-          payment_date: r.created_at ? r.created_at.split('T')[0] : '2026-11-10',
-          target_month: r.period_covered || 'Novembre 2026 à Janvier 2027',
-          period_covered: r.period_covered || 'Novembre 2026 à Janvier 2027',
-          tenant_id: r.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-          owner_id: r.owner_id || userId,
-          agency_id: r.agency_id,
-          contract_id: r.contract_id || '0a712408-7819-4711-8e05-bfa1be4a1ed0',
-          property_id: r.property_id || realProps[0]?.id || '59cc106e-d787-448d-9513-5c9e2aa2e184'
-        });
-        knownPaymentRefs.add(r.receipt_number);
+      if (r.type === 'loyer' && r.receipt_number) {
+        const isKnown =
+          knownPaymentRefs.has(r.receipt_number) ||
+          (r.payment_id && knownPaymentRefs.has(r.payment_id)) ||
+          (r.id && knownPaymentRefs.has(r.id));
+
+        if (!isKnown) {
+          realPayments.push({
+            id: r.payment_id || r.id,
+            receipt_number: r.receipt_number,
+            reference: r.receipt_number,
+            amount: rAmt,
+            status: 'confirme',
+            payment_date: r.created_at ? r.created_at.split('T')[0] : '2026-11-10',
+            target_month: r.period_covered || 'Novembre 2026 à Janvier 2027',
+            period_covered: r.period_covered || 'Novembre 2026 à Janvier 2027',
+            tenant_id: r.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+            owner_id: r.owner_id || userId,
+            agency_id: r.agency_id,
+            contract_id: r.contract_id || '0a712408-7819-4711-8e05-bfa1be4a1ed0',
+            property_id: r.property_id || realProps[0]?.id || '59cc106e-d787-448d-9513-5c9e2aa2e184'
+          });
+          knownPaymentRefs.add(r.receipt_number);
+          if (r.payment_id) knownPaymentRefs.add(r.payment_id);
+          if (r.id) knownPaymentRefs.add(r.id);
+        } else {
+          // Enrichir le statut du paiement existant sans jamais créer un doublon
+          const idx = realPayments.findIndex((p: any) =>
+            p.receipt_number === r.receipt_number ||
+            p.reference === r.receipt_number ||
+            p.id === r.payment_id ||
+            p.id === r.id
+          );
+          if (idx !== -1) {
+            realPayments[idx] = {
+              ...realPayments[idx],
+              status: 'confirme',
+              receipt_number: r.receipt_number || realPayments[idx].receipt_number,
+              tenant_signature_url: r.tenant_signature_url || realPayments[idx].tenant_signature_url,
+              owner_signature_url: r.owner_signature_url || realPayments[idx].owner_signature_url
+            };
+          }
+        }
       } else if (r.type === 'caution') {
         const isAlreadyKnown =
           (r.receipt_number && knownCautionKeys.has(String(r.receipt_number))) ||
