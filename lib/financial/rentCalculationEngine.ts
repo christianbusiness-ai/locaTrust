@@ -1,20 +1,23 @@
 /**
- * LOCATRUST — MOTEUR CENTRAL DE CALCUL DES LOYERS ET DES FINANCES LOCATIVES
+ * LOCATRUST — MOTEUR DE CALCUL DES LOYERS ET DES FINANCES LOCATIVES
  * 
- * Fichier de référence unique pour tous les calculs financiers liés aux loyers dans LocaTrust.
+ * ATTENTION - RÈGLE FONDAMENTALE : LE SERVEUR EST LA SEULE ET UNIQUE SOURCE DE VÉRITÉ.
+ * 
+ * Ce fichier N'EST PAS une source de données ni une source de vérité. Il ne stocke
+ * aucune donnée métier et ne possède aucun état interne persistant.
+ * Toutes les données réelles (contrats, paiements, cautions, reçus, signatures, utilisateurs)
+ * proviennent et vivent exclusivement sur le SERVEUR (Supabase Postgres + Storage).
+ * 
+ * RÔLE UNIQUE DE CE FICHIER :
+ * Fournir les fonctions de calcul pures et sans état (stateless calculations) :
+ * - Calculer les loyers attendus et encaissés à partir des données transmises par le serveur.
+ * - Calculer la consommation progressive des avances au fil des mois sans créer de faux paiements.
+ * - Calculer les retards par rapport aux échéances contractuelles.
+ * - Ventiler les paiements multi-mois de manière transparente pour les reçus et tableaux de bord.
+ * - Isoler la caution sous séquestre pour ne jamais la mélanger aux loyers encaissés.
+ * - Calculer les commissions de gestion d'agence et les reversements nets aux mandants.
+ * 
  * Conforme à la Loi ivoirienne n° 2019-576 du 26 juin 2019 et aux Actes Uniformes de l'OHADA.
- * 
- * RÈGLES FONDAMENTALES :
- * 1. LE LOYER COMMENCE TOUJOURS AU MOIS DE SIGNATURE DU CONTRAT (Règle 2).
- *    Si signé le 17 novembre 2026, premier mois de location = novembre 2026.
- * 2. DISTINCTION ABSOLUE ENTRE CAUTION ET LOYER (Règle 3).
- *    La caution est un dépôt de garantie sous séquestre, jamais intégrée dans les loyers encaissés.
- * 3. ANALYSE ET IDENTIFICATION DU CAS AVANT CHAQUE CALCUL (Règle 4 & 5) :
- *    - CAS 1 : Premier paiement après signature.
- *    - CAS 2 : Paiement de plusieurs mois en avance avec consommation progressive automatique sans création de faux paiements.
- *    - CAS 3 : Retard de paiement après échéance contractuelle stricte.
- *    - CAS 4 : Régularisation des dettes les plus anciennes en premier.
- * 4. SOURCE UNIQUE DE VÉRITÉ : Propriétaire, Agence, Locataire et Mandants utilisent les mêmes règles.
  */
 
 // ============================================================================
