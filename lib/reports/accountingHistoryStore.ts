@@ -46,187 +46,37 @@ export interface PeriodSummary {
   monthlyBreakdown: MonthAccountingRecord[];
 }
 
-// Données historiques réelles 2026
-const HISTORICAL_2026: MonthAccountingRecord[] = [
-  {
-    monthKey: '2026-01',
-    monthName: 'Janvier',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 35000,
-    cautionReceived: 700000,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 1
-  },
-  {
-    monthKey: '2026-02',
-    monthName: 'Février',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 0,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-03',
-    monthName: 'Mars',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 50000,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-04',
-    monthName: 'Avril',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 25000,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-05',
-    monthName: 'Mai',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 40000,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-06',
-    monthName: 'Juin',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 0,
-    cautionReceived: 0,
-    cautionRefunded: 700000,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-07',
-    monthName: 'Juillet',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2800000,
-    lateRent: 0,
-    unpaidRent: 0,
-    otherIncome: 0,
-    maintenanceExpense: 90000,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-08',
-    monthName: 'Août',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2450000,
-    lateRent: 350000,
-    unpaidRent: 350000,
-    otherIncome: 0,
-    maintenanceExpense: 0,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 0
-  },
-  {
-    monthKey: '2026-09',
-    monthName: 'Septembre',
-    year: 2026,
-    expectedRent: 2800000,
-    collectedRent: 2450000,
-    lateRent: 350000,
-    unpaidRent: 350000,
-    otherIncome: 0,
-    maintenanceExpense: 45000,
-    cautionReceived: 0,
-    cautionRefunded: 0,
-    otherExpenses: 0,
-    activeProperties: 10,
-    activeTenants: 7,
-    contractsActive: 7,
-    contractsSigned: 1
-  }
-];
+// Modèle mensuel standard initialisé à 0 (Aucune donnée fictive - Règle "SERVER IS THE SOURCE OF TRUTH")
+function createEmptyYearRecords(targetYear: number): MonthAccountingRecord[] {
+  const monthNames = [
+    'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+  ];
+  return monthNames.map((name, idx) => {
+    const mNum = (idx + 1).toString().padStart(2, '0');
+    return {
+      monthKey: `${targetYear}-${mNum}`,
+      monthName: name,
+      year: targetYear,
+      expectedRent: 0,
+      collectedRent: 0,
+      lateRent: 0,
+      unpaidRent: 0,
+      otherIncome: 0,
+      maintenanceExpense: 0,
+      cautionReceived: 0,
+      cautionRefunded: 0,
+      otherExpenses: 0,
+      activeProperties: 0,
+      activeTenants: 0,
+      contractsActive: 0,
+      contractsSigned: 0
+    };
+  });
+}
 
-// Données historiques réelles 2025 (Exercice clos conservé pour consultation)
-const HISTORICAL_2025: MonthAccountingRecord[] = [
-  { monthKey: '2025-01', monthName: 'Janvier', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 20000, cautionReceived: 650000, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 1 },
-  { monthKey: '2025-02', monthName: 'Février', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 0, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-03', monthName: 'Mars', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 30000, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-04', monthName: 'Avril', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 15000, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-05', monthName: 'Mai', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 25000, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-06', monthName: 'Juin', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 0, cautionReceived: 0, cautionRefunded: 650000, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-07', monthName: 'Juillet', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 40000, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-08', monthName: 'Août', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 0, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-09', monthName: 'Septembre', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 50000, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-10', monthName: 'Octobre', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 20000, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-11', monthName: 'Novembre', year: 2025, expectedRent: 2600000, collectedRent: 2600000, lateRent: 0, unpaidRent: 0, otherIncome: 0, maintenanceExpense: 0, cautionReceived: 0, cautionRefunded: 0, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 },
-  { monthKey: '2025-12', monthName: 'Décembre', year: 2025, expectedRent: 2600000, collectedRent: 2250000, lateRent: 350000, unpaidRent: 350000, otherIncome: 0, maintenanceExpense: 40000, cautionReceived: 0, cautionRefunded: 750000, otherExpenses: 0, activeProperties: 9, activeTenants: 6, contractsActive: 6, contractsSigned: 0 }
-];
+const HISTORICAL_2026: MonthAccountingRecord[] = createEmptyYearRecords(2026);
+const HISTORICAL_2025: MonthAccountingRecord[] = createEmptyYearRecords(2025);
 
 const CURRENT_ACCOUNTING_YEAR_KEY = 'locatrust_current_accounting_year';
 const REF_YEAR_KEY = 'locatrust_accounting_reference_year';
@@ -380,75 +230,14 @@ export function getAvailableYears(): string[] {
     .sort((a, b) => Number(b) - Number(a));
 }
 
-// Générateur dynamique de données comptables mensuelles pour toute année passée ou future (Point 14 & 16)
+// Générateur de structure comptable mensuelle pour toute année demandée (zéro montant fictif)
 export function generateSyntheticYearRecords(targetYear: number): MonthAccountingRecord[] {
-  const monthNames = [
-    'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
-  ];
-  const baseRent = 0;
-
-  return monthNames.map((name, idx) => {
-    const mNum = (idx + 1).toString().padStart(2, '0');
-    return {
-      monthKey: `${targetYear}-${mNum}`,
-      monthName: name,
-      year: targetYear,
-      expectedRent: 0,
-      collectedRent: 0,
-      lateRent: 0,
-      unpaidRent: 0,
-      otherIncome: 0,
-      maintenanceExpense: 0,
-      cautionReceived: 0,
-      cautionRefunded: 0,
-      otherExpenses: 0,
-      activeProperties: 0,
-      activeTenants: 0,
-      contractsActive: 0,
-      contractsSigned: 0
-    };
-  });
+  return createEmptyYearRecords(targetYear);
 }
 
 export function getYearRecords(year: string = '2026', isDemo: boolean = false): MonthAccountingRecord[] {
-  if (isDemo) {
-    if (year === '2026') return HISTORICAL_2026;
-    if (year === '2025') return HISTORICAL_2025;
-    const parsed = parseInt(year, 10);
-    if (!isNaN(parsed)) {
-      return generateSyntheticYearRecords(parsed);
-    }
-    return HISTORICAL_2026;
-  }
-
-  // Pour un compte réel, générer une structure mensuelle propre à zéro
   const targetYear = parseInt(year, 10) || 2026;
-  const monthNames = [
-    'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-    'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
-  ];
-  return monthNames.map((name, idx) => {
-    const mNum = (idx + 1).toString().padStart(2, '0');
-    return {
-      monthKey: `${targetYear}-${mNum}`,
-      monthName: name,
-      year: targetYear,
-      expectedRent: 0,
-      collectedRent: 0,
-      lateRent: 0,
-      unpaidRent: 0,
-      otherIncome: 0,
-      maintenanceExpense: 0,
-      cautionReceived: 0,
-      cautionRefunded: 0,
-      otherExpenses: 0,
-      activeProperties: 0,
-      activeTenants: 0,
-      contractsActive: 0,
-      contractsSigned: 0
-    };
-  });
+  return createEmptyYearRecords(targetYear);
 }
 
 // Liste des mois disponibles pour le filtre "Mois précédent"

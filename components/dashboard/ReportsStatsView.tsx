@@ -172,9 +172,7 @@ export const ReportsStatsView: React.FC = () => {
     }
 
     const expectedRent = filteredMonths.reduce((s, m) => s + (m.expectedRent || 0), 0);
-    const collectedRent = period === 'annee'
-      ? Math.max(realDataset.synthesis.loyersEncaisses, filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0))
-      : filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0);
+    const collectedRent = filteredMonths.reduce((s, m) => s + (m.collectedRent || 0), 0);
     const lateRent = filteredMonths.reduce((s, m) => s + (m.lateRent || 0), 0);
     const unpaidRent = filteredMonths.reduce((s, m) => s + (m.unpaidRent || 0), 0);
     const otherIncome = filteredMonths.reduce((s, m) => s + (m.otherIncome || 0), 0);
@@ -192,7 +190,7 @@ export const ReportsStatsView: React.FC = () => {
     const totalIncome = collectedRent + otherIncome;
     const totalExpenses = maintenanceExpense + cautionRefunded + otherExpenses;
     const netResult = totalIncome - totalExpenses;
-    const recoveryRate = expectedRent > 0 ? Math.round((collectedRent / expectedRent) * 100) : (collectedRent > 0 ? 100 : 0);
+    const recoveryRate = expectedRent > 0 ? Math.min(100, Math.round((collectedRent / expectedRent) * 100)) : (collectedRent > 0 ? 100 : 0);
 
     let periodLabel = `Exercice Annuel ${selectedYear}`;
     if (period === 'ce_mois') {

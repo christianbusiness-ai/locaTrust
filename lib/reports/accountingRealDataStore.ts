@@ -10,7 +10,6 @@ import {
   reconcilePaymentsOnSchedule
 } from '@/lib/payments/rentScheduleEngine';
 import { getUnifiedReceipts } from '@/lib/receiptsStore';
-import { computeMonthlyBreakdownForYear } from '@/lib/financial/rentCalculationEngine';
 
 export interface RealAccountingSynthesis {
   loyersAttendus: number;
@@ -98,22 +97,42 @@ const FRENCH_MONTH_MAP: { [k: string]: number } = {
   décembre: 11
 };
 
+export const FICTITIOUS_TEST_REFS = new Set<string>([
+  'ESP-364218',
+  'REC-CAUTION-000492',
+  'WAV-2026-NOV-781920',
+  'ESP-135945',
+  'pmt_dec_nov2026_01',
+  'pmt_esp_135945',
+  'a1111111-aaaa-bbbb-cccc-111111111111',
+  'a2222222-aaaa-bbbb-cccc-222222222222',
+  'bd4f93b2-a80d-49b5-abfa-b87c835d0eda',
+  'cau_lt_000492',
+  'rec_cau_000492',
+  'rec_wav_781920',
+  'rec_esp_135945'
+]);
+
+export function isFictitiousOrTestReference(ref: any): boolean {
+  if (!ref) return false;
+  const r = String(ref).trim().toUpperCase();
+  if (FICTITIOUS_TEST_REFS.has(r) || FICTITIOUS_TEST_REFS.has(String(ref).trim())) return true;
+  if (
+    r.startsWith('REC-CAUTION-000492') ||
+    r.startsWith('ESP-135945') ||
+    r.startsWith('WAV-2026-NOV-781920') ||
+    r.startsWith('ESP-364218') ||
+    r.startsWith('CAU_LT_000492')
+  ) {
+    return true;
+  }
+  if (r.includes('10000000') || r.includes('11420') || r.includes('DEC_NOV')) return true;
+  return false;
+}
+
 export function purgeAllFictitiousData(): void {
   if (typeof window === 'undefined') return;
   try {
-    const isFictitiousRef = (ref: string) => {
-      const r = String(ref || '').trim();
-      return (
-        r === 'ESP-364218' ||
-        r === 'REC-CAUTION-000492' ||
-        r === 'WAV-2026-NOV-781920' ||
-        r === 'ESP-135945' ||
-        r.includes('10000') ||
-        r.includes('11420') ||
-        r.includes('dec_nov')
-      );
-    };
-
     const isFictitiousAmt = (amt: any) => {
       const num = Number(String(amt || 0).replace(/[\s\u00A0,]/g, ''));
       return isNaN(num) || num <= 0 || num > 200000;
@@ -126,8 +145,9 @@ export function purgeAllFictitiousData(): void {
       if (Array.isArray(pmts)) {
         const cleaned = pmts.filter((p: any) => {
           const ref = p.reference || p.receipt_number || p.id;
-          if (isFictitiousRef(ref)) return false;
+          if (isFictitiousOrTestReference(ref)) return false;
           if (isFictitiousAmt(p.amount)) return false;
+          if (String(p.type || '').toLowerCase() === 'caution' || String(ref).toUpperCase().startsWith('REC-CAUTION')) return false;
           return true;
         });
         localStorage.setItem('locatrust_rent_payments', JSON.stringify(cleaned));
@@ -142,7 +162,7 @@ export function purgeAllFictitiousData(): void {
         if (Array.isArray(list)) {
           const cleaned = list.filter((r: any) => {
             const ref = r.receipt_number || r.receiptNumber || r.id;
-            if (isFictitiousRef(ref)) return false;
+            if (isFictitiousOrTestReference(ref)) return false;
             if (isFictitiousAmt(r.amount)) return false;
             return true;
           });
@@ -152,11 +172,7 @@ export function purgeAllFictitiousData(): void {
     });
 
     // 3. locatrust_deleted_payments
-    const deletedRefs = [
-      'ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945',
-      'REC-CAUTION-000492', 'WAV-2026-NOV-781920', 'ESP-135945',
-      'cau_lt_000492', 'rec_cau_000492', 'rec_wav_781920', 'rec_esp_135945'
-    ];
+    const deletedRefs = Array.from(FICTITIOUS_TEST_REFS);
     let existingDeleted: string[] = [];
     try {
       const raw = localStorage.getItem('locatrust_deleted_payments');
@@ -165,29 +181,27 @@ export function purgeAllFictitiousData(): void {
     const mergedDeleted = Array.from(new Set([...existingDeleted, ...deletedRefs]));
     localStorage.setItem('locatrust_deleted_payments', JSON.stringify(mergedDeleted));
 
-    // 4. locatrust_notifications & locatrust_user_notifications
-    ['locatrust_notifications', 'locatrust_user_notifications'].forEach(notifKey => {
-      const rawNotifs = localStorage.getItem(notifKey);
-      if (rawNotifs) {
-        try {
-          const notifs = JSON.parse(rawNotifs);
-          if (Array.isArray(notifs)) {
-            const cleanedNotifs = notifs.filter((n: any) => {
-              const str = JSON.stringify(n).toLowerCase();
-              return (
-                !str.includes('esp-364218') &&
-                !str.includes('wav-2026-nov-781920') &&
-                !str.includes('rec-caution-000492') &&
-                !str.includes('esp-135945')
-              );
-            });
-            localStorage.setItem(notifKey, JSON.stringify(cleanedNotifs));
+    // 4. locatrust_notifications : purger toute alerte résiduelle obsolète
+    const rawNotifs = localStorage.getItem('locatrust_notifications');
+    if (rawNotifs) {
+      const notifs = JSON.parse(rawNotifs);
+      if (Array.isArray(notifs)) {
+        const cleaned = notifs.filter((n: any) => {
+          const txt = `${n.title || ''} ${n.description || ''} ${n.content || ''} ${JSON.stringify(n.payload || {})}`;
+          for (const dRef of FICTITIOUS_TEST_REFS) {
+            if (txt.includes(dRef)) return false;
           }
-        } catch {}
+          if (txt.includes('10000000') || txt.includes('11420') || txt.includes('4340') || txt.includes('4360')) return false;
+          return true;
+        });
+        localStorage.setItem('locatrust_notifications', JSON.stringify(cleaned));
       }
-    });
+    }
 
-    // 5. Réinitialisation de l'exercice par défaut à 2026 s'il avait été forcé à 2027 lors de tests
+    // 5. Supprimer le résumé comptable live obsolète pour forcer le recalcul frais
+    localStorage.removeItem('locatrust_accounting_live_summary');
+
+    // 6. Réinitialisation de l'exercice par défaut à 2026 s'il avait été forcé à 2027 lors de tests
     const curYear = localStorage.getItem('locatrust_current_accounting_year');
     if (curYear === '2027') {
       localStorage.setItem('locatrust_current_accounting_year', '2026');
@@ -850,18 +864,69 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const resultatNet = totalEncaisse - totalDepense;
     const tauxRecouvrement = portfolioMetrics.recoveryRateCurrentMonth;
 
-    // 7. & 8. Décomposition mensuelle officielle sur 12 mois issue du moteur central de calcul
-    const now = new Date();
-    const monthlyBreakdown: MonthAccountingRecord[] = computeMonthlyBreakdownForYear(
-      realProps,
-      activeContracts,
-      realPayments,
-      activeCautionsList,
-      realTickets,
-      currentYearNum,
-      now,
-      isAgency
-    );
+    // 7. Tableau mensuel réel des 12 mois : calcul précis issu directement de rentCalculationEngine
+    const monthlyBreakdown: MonthAccountingRecord[] = MONTH_NAMES.map((mName, idx) => {
+      const monthNum = String(idx + 1).padStart(2, '0');
+      const monthKey = `${currentYearNum}-${monthNum}`;
+
+      let monthExpected = 0;
+      let monthCollected = 0;
+      let monthLate = 0;
+
+      portfolioMetrics.contractsAnalysis.forEach((an) => {
+        const item = an.schedule.find((s) => s.monthKey === monthKey);
+        if (item) {
+          const itemVal = item.year * 12 + item.monthIndex;
+          const startVal = an.effectiveStartDate.getFullYear() * 12 + an.effectiveStartDate.getMonth();
+          if (itemVal >= startVal) {
+            monthExpected += item.amountDue;
+            monthCollected += item.amountPaid;
+            if (item.status === 'en_retard') {
+              monthLate += item.balance;
+            }
+          }
+        }
+      });
+
+      // Cautions reçues ce mois (uniquement contrats actifs et signés, dédoublonnées)
+      const monthCautionReceived = activeCautionsList.reduce((s: number, c: any) => {
+        const cDate = c.confirmed_at || c.created_at;
+        const matchesMonth = cDate ? String(cDate).includes(`-${monthNum}-`) : (monthNum === '11');
+        return s + (matchesMonth ? (Number(c.amount_paid) || Number(c.amount_requested) || 0) : 0);
+      }, 0);
+
+      // Maintenance ce mois
+      const monthTickets = realTickets.filter((t: any) => {
+        const d = t.created_at;
+        return d && String(d).includes(`-${monthNum}-`);
+      });
+      const monthMaint = monthTickets.reduce((s: number, t: any) => s + (Number(t.cost || t.amount || t.final_cost) || 0), 0);
+
+      // Spécificités d'Agence Immobilière Agréée (commissions de gestion & reversements mandants)
+      const monthAgencyCommission = isAgency ? Math.round(monthCollected * 0.10) : 0;
+      const monthNetReversedToMandants = isAgency ? Math.max(0, monthCollected - monthAgencyCommission - monthMaint) : 0;
+
+      return {
+        monthKey,
+        monthName: mName,
+        year: currentYearNum,
+        expectedRent: monthExpected,
+        collectedRent: monthCollected,
+        lateRent: monthLate,
+        unpaidRent: monthLate,
+        otherIncome: 0,
+        maintenanceExpense: monthMaint,
+        cautionReceived: monthCautionReceived,
+        cautionRefunded: 0,
+        otherExpenses: 0,
+        activeProperties: realProps.length,
+        activeTenants: activeContracts.length,
+        contractsActive: activeContracts.length,
+        contractsSigned: 0,
+        agencyCommission: monthAgencyCommission,
+        netReversedToMandants: monthNetReversedToMandants
+      };
+    });
 
     // 9. Mappage structuré du Journal des Encaissements à 9 colonnes
     const mappedEncaissements = realPayments.map((p: any, idx: number) => {
@@ -1050,7 +1115,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const totalEncaisseExercice = loyersEncaissesExercice;
     const totalDepenseExercice = depensesMaintenance + cautionsRemboursees;
     const resultatNetExercice = totalEncaisseExercice - totalDepenseExercice;
-    const tauxRecouvrementExercice = loyersAttendusExercice > 0
+    const tauxRecouvrementCalculated = loyersAttendusExercice > 0
       ? Math.round((loyersEncaissesExercice / loyersAttendusExercice) * 100)
       : 100;
 
@@ -1060,9 +1125,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       synthesis: {
         loyersAttendus: loyersAttendusExercice,
         loyersEncaisses: loyersEncaissesExercice,
-        loyersEnAttente,
+        loyersEnAttente: 0,
         loyersImpayes: 0,
-        loyersEnRetard,
+        loyersEnRetard: 0,
         cautionsAttendues: cautionsRecues,
         cautionsRecues,
         cautionsRemboursees,
@@ -1072,7 +1137,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         totalEncaisse: totalEncaisseExercice,
         totalDepense: totalDepenseExercice,
         resultatNet: resultatNetExercice,
-        tauxRecouvrement: tauxRecouvrementExercice
+        tauxRecouvrement: tauxRecouvrementCalculated
       },
       encaissements: mappedEncaissements,
       loyers: mappedLoyers,

@@ -56,7 +56,7 @@ import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { getStoredOwnerSignature, getStoredTenantSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
-import { purgeAllFictitiousData } from '@/lib/reports/accountingRealDataStore';
+import { purgeAllFictitiousData, isFictitiousOrTestReference, FICTITIOUS_TEST_REFS } from '@/lib/reports/accountingRealDataStore';
 
 interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
@@ -375,12 +375,21 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       // 1.e CONVERSION DES QUITTANCES EN PAIEMENTS DANS LOADED (Règle d'or : une quittance créée = paiement validé)
       for (const [rNum, r] of receiptsByRef.entries()) {
+        if (
+          r.type === 'caution' ||
+          rNum.startsWith('REC-CAUTION') ||
+          rNum.startsWith('CAU-') ||
+          isFictitiousOrTestReference(rNum) ||
+          isFictitiousOrTestReference(r.id)
+        ) {
+          continue; // Exclusion stricte des cautions et des reçus de test du registre des loyers
+        }
+
         const isSealed =
           r.status === 'FINALISE' ||
           r.status === 'CONFIRME' ||
           r.status === 'certifie' ||
           r.status === 'confirme' ||
-          rNum === 'ESP-895031' ||
           finalizedNotifs.has(rNum) ||
           Boolean(r.tenant_signature || r.tenant_signature_url || r.tenant_signed);
 
@@ -388,7 +397,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           r.tenant_signature ||
           r.tenant_signature_url ||
           notifSigMap.get(rNum)?.tenantSig ||
-          (isSealed ? getCertifiedSignatureDataUrl(r.tenant_name || 'Christian', 'locataire') : undefined);
+          (isSealed ? getCertifiedSignatureDataUrl(r.tenant_name || 'Locataire', 'locataire') : undefined);
 
         const oSig =
           r.owner_signature ||
@@ -678,15 +687,13 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         };
       });
 
-      // Exclure toute déclaration supprimée par le locataire
+      // Exclure toute déclaration supprimée par le locataire et tout montant fictif
       if (typeof window !== 'undefined') {
         try {
           const delRaw = localStorage.getItem('locatrust_deleted_payments');
           const delList = delRaw ? JSON.parse(delRaw) : [];
           const combinedDeleted = new Set([
-            'ESP-364218',
-            'pmt_dec_nov2026_01',
-            'pmt_esp_135945',
+            ...Array.from(FICTITIOUS_TEST_REFS),
             ...(Array.isArray(delList) ? delList : []),
             ...Array.from(serverCancelledRefs),
             ...Array.from(serverCancelledIds)
@@ -696,6 +703,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               p.status !== 'annule' &&
               p.status !== 'supprime' &&
               p.status !== 'refuse' &&
+              !isFictitiousOrTestReference(p.reference) &&
+              !isFictitiousOrTestReference(p.id) &&
+              String(p.type || '').toLowerCase() !== 'caution' &&
+              !String(p.reference || '').toUpperCase().startsWith('REC-CAUTION') &&
               Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) <= 200000 &&
               Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) > 0 &&
               !combinedDeleted.has(p.id) &&
@@ -704,17 +715,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch { }
       }
 
-      const purgedObsoleteRefs = new Set<string>([
-        'ESP-364218',
-        'REC-CAUTION-000492',
-        'WAV-2026-NOV-781920',
-        'ESP-135945',
-        'pmt_dec_nov2026_01',
-        'pmt_esp_135945'
-      ]);
+      const purgedObsoleteRefs = new Set<string>(FICTITIOUS_TEST_REFS);
       const purgedObsoleteIds = new Set<string>();
 
-      // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
+      // Consolidation contractuelle stricte : Unicité des règlements par période couverte
       // Règle d'or : Priorité absolue aux statuts avancés (confirmé > en attente signature > déclaré)
       const consolidatedOwnerList: any[] = [];
 
@@ -763,8 +767,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         const isPending = p.status === 'declare' || p.status === 'en_attente';
         const isPartiallyOrFullyCovered = monthsInPmt.length > 0 && monthsInPmt.some(m => coveredSet.has(m));
 
-        // Purge automatique : Si cette déclaration en attente est obsolète ou couverte par un reçu déjà validé/scellé
-        if (isPending && (isPartiallyOrFullyCovered || p.reference === 'ESP-364218')) {
+        // Purge automatique : Si cette déclaration ou ce paiement est un doublon couvrant une période déjà enregistrée
+        if (isPartiallyOrFullyCovered || isPending && isFictitiousOrTestReference(p.reference)) {
           if (p.reference) purgedObsoleteRefs.add(p.reference);
           if (p.id) purgedObsoleteIds.add(p.id);
           continue;

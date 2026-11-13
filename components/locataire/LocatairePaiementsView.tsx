@@ -49,6 +49,7 @@ import { calculateRentPaymentAllocation, extractContractMonthlyRent, RentAllocat
 import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantReceiptReviewAndSignModal';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { getUnifiedReceipts, saveUnifiedReceipts } from '@/lib/receiptsStore';
+import { isFictitiousOrTestReference, FICTITIOUS_TEST_REFS } from '@/lib/reports/accountingRealDataStore';
 
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 3500) => {
   const controller = new AbortController();
@@ -405,10 +406,18 @@ export const LocatairePaiementsView: React.FC = () => {
           const delRaw = localStorage.getItem('locatrust_deleted_payments');
           const delList = delRaw ? JSON.parse(delRaw) : [];
           const delSet = new Set([
+            ...Array.from(FICTITIOUS_TEST_REFS),
             ...(Array.isArray(delList) ? delList : []),
             'ESP-432995', 'ESP-433609', 'ESP-418350', 'ESP-767168', 'ESP-985745'
           ]);
-          rentList = rentList.filter((p: any) => !delSet.has(p.id) && !delSet.has(p.reference));
+          rentList = rentList.filter((p: any) =>
+            !delSet.has(p.id) &&
+            !delSet.has(p.reference) &&
+            !isFictitiousOrTestReference(p.id) &&
+            !isFictitiousOrTestReference(p.reference) &&
+            String(p.type || '').toLowerCase() !== 'caution' &&
+            !String(p.reference || '').toUpperCase().startsWith('REC-CAUTION')
+          );
         } catch {}
       }
 

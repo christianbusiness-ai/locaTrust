@@ -216,9 +216,18 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         const localList: any[] = localRaw ? JSON.parse(localRaw) : [];
         const map = new Map<string, any>();
 
-        // 1. Ajouter les paiements serveur
+        const testRefs = new Set([
+          'esp-364218', 'rec-caution-000492', 'wav-2026-nov-781920', 'esp-135945',
+          'pmt_dec_nov2026_01', 'pmt_esp_135945'
+        ]);
+
+        // 1. Ajouter les paiements serveur valides
         for (const sp of serverPayments) {
           const key = sp.reference || sp.id;
+          const kLower = String(key || '').toLowerCase().trim();
+          if (testRefs.has(kLower) || kLower.startsWith('rec-caution') || sp.type === 'caution') continue;
+          const amt = Number(String(sp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+          if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
           map.set(key, sp);
         }
 
@@ -226,6 +235,10 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         if (Array.isArray(localList)) {
           for (const lp of localList) {
             const key = lp.reference || lp.id;
+            const kLower = String(key || '').toLowerCase().trim();
+            if (testRefs.has(kLower) || kLower.startsWith('rec-caution') || lp.type === 'caution') continue;
+            const amt = Number(String(lp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+            if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
             if (!map.has(key)) {
               map.set(key, lp);
             } else {

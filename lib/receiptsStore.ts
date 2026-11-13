@@ -82,11 +82,14 @@ export function getUnifiedReceipts(userId?: string): UnifiedReceiptRecord[] {
 
   const deletedKeys = new Set<string>([
     'esp-364218',
-    'pmt_dec_nov2026_01',
-    'pmt_esp_135945',
     'rec-caution-000492',
     'wav-2026-nov-781920',
     'esp-135945',
+    'pmt_dec_nov2026_01',
+    'pmt_esp_135945',
+    'a1111111-aaaa-bbbb-cccc-111111111111',
+    'a2222222-aaaa-bbbb-cccc-222222222222',
+    'bd4f93b2-a80d-49b5-abfa-b87c835d0eda',
     'cau_lt_000492',
     'rec_cau_000492',
     'rec_wav_781920',

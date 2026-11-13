@@ -637,7 +637,15 @@ export async function runBackgroundRentScheduleAudit(userId?: string): Promise<R
       if (storedReceipts) {
         const parsed = JSON.parse(storedReceipts);
         if (Array.isArray(parsed)) {
+          const testRefs = new Set([
+            'esp-364218', 'rec-caution-000492', 'wav-2026-nov-781920', 'esp-135945',
+            'pmt_dec_nov2026_01', 'pmt_esp_135945'
+          ]);
           parsed.filter(isMine).forEach((rcp: any) => {
+            const ref = String(rcp.receiptNumber || rcp.receipt_number || rcp.id || '').toLowerCase().trim();
+            if (testRefs.has(ref) || ref.startsWith('rec-caution') || rcp.type === 'caution') return;
+            const amt = Number(String(rcp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+            if (amt <= 0 || amt > 200000 || isNaN(amt)) return;
             payments.push({
               ...rcp,
               status: 'confirme',

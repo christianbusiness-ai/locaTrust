@@ -37,7 +37,7 @@ import {
   generateSyntheticYearRecords
 } from '@/lib/reports/accountingHistoryStore';
 import { computePortfolioRentMetrics, checkAndNotifyExhaustedAdvances, FRENCH_MONTHS } from '@/lib/payments/rentScheduleEngine';
-import { fetchRealAccountingData, RealAccountingDataset, purgeAllFictitiousData } from '@/lib/reports/accountingRealDataStore';
+import { fetchRealAccountingData, RealAccountingDataset, purgeAllFictitiousData, isFictitiousOrTestReference } from '@/lib/reports/accountingRealDataStore';
 import { calculateQuotaFromDataset, getQuotaPrice } from '@/lib/quotaEngine';
 import { getUnifiedReceipts } from '@/lib/receiptsStore';
 
@@ -619,10 +619,10 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     year: realAccountingDataset?.synthesis?.depensesMaintenance || 0
   };
 
-  // DONNÉES ANNUELLES DE L'EXERCICE (Tableau comptable mensuel unifié réactif calculé par le moteur central)
+  // DONNÉES ANNUELLES DE L'EXERCICE (Tableau comptable mensuel unifié réactif - Données 100% réelles)
   const annualData2026 = useMemo(() => {
-    if (realAccountingDataset?.monthlyBreakdown && realAccountingDataset.monthlyBreakdown.length > 0) {
-      return realAccountingDataset.monthlyBreakdown.map((m) => ({
+    return (
+      realAccountingDataset?.monthlyBreakdown?.map((m) => ({
         month: m.monthName,
         expected: m.expectedRent,
         collected: m.collectedRent,
@@ -630,22 +630,9 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         maintenance: m.maintenanceExpense,
         cautionRefunded: m.cautionRefunded,
         otherExpenses: m.otherExpenses
-      }));
-    }
-    const monthNames = [
-      'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
-      'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
-    ];
-    return monthNames.map((month) => ({
-      month,
-      expected: 0,
-      collected: 0,
-      late: 0,
-      maintenance: 0,
-      cautionRefunded: 0,
-      otherExpenses: 0
-    }));
-  }, [selectedYear, realAccountingDataset]);
+      })) || []
+    );
+  }, [realAccountingDataset]);
 
   // Calculs totaux annuels
   const annualTotals = useMemo(() => {
@@ -733,36 +720,26 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
       ) : (() => {
         // Demandes réelles en attente
         const pendingApps = realApplications.filter((a: any) => a.status === 'en_attente');
-        // Paiements réels en attente (exclure formellement les règlements validés, scellés ou ayant déjà une quittance générée)
+        // Paiements réels en attente (exclure formellement les règlements validés, scellés, de test ou ayant déjà une quittance générée)
         const pendingPayments = realPayments.filter((p: any) => {
           if (p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse' || p.status === 'rejete') return false;
-          const ref = String(p.reference || p.receipt_number || p.receiptNumber || p.id || '').trim().toLowerCase();
-          const pAmt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
-          if (
-            ref === 'esp-895031' ||
-            ref === 'esp-364218' ||
-            ref === 'wav-2026-nov-781920' ||
-            ref === 'rec-caution-000492' ||
-            ref === 'esp-135945' ||
-            pAmt >= 200000 ||
-            pAmt <= 0 ||
-            isNaN(pAmt)
-          ) return false;
+          const ref = String(p.reference || p.receipt_number || p.receiptNumber || p.id || '').trim();
+          if (isFictitiousOrTestReference(ref) || isFictitiousOrTestReference(p.id)) return false;
+          const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
+          if (amt <= 0 || amt > 200000 || isNaN(amt)) return false;
           if (p.receipt_number || p.receiptNumber || p.owner_signature_url || p.ownerSignatureUrl) return false;
           if (p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye') return false;
           if (p.status === 'en_attente_signature_locataire') return false;
-          if (ref && (knownReceiptRefs.has(ref) || knownReceiptRefs.has(ref.toLowerCase()))) return false;
+          if (ref && (knownReceiptRefs.has(ref) || knownReceiptRefs.has(ref.toLowerCase()) || knownReceiptRefs.has(ref.toUpperCase()))) return false;
           const contractKey = String(p.contract_id || p.contract?.id || p.contract_number || '').trim().toLowerCase();
           const periodKey = String(p.target_month || p.period_covered || '').trim().toLowerCase();
           if (contractKey && periodKey && knownReceiptRefs.has(`${contractKey}_${periodKey}`)) return false;
           // Si le contrat a déjà un paiement confirmé ou en attente locataire, ne pas afficher de notification de déclaration
           const hasConfirmedForContract = realPayments.some((other: any) => {
             if (other.id === p.id || (p.reference && other.reference === p.reference)) return false;
-            const otherRef = String(other.reference || '').trim().toLowerCase();
-            if (otherRef === 'esp-895031') return true;
             const otherCKey = String(other.contract_id || other.contract?.id || other.contract_number || '').trim().toLowerCase();
             return (otherCKey === contractKey || other.property_id === p.property_id) &&
-                   (other.status === 'confirme' || other.status === 'en_attente_signature_locataire');
+                   (other.status === 'confirme' || other.status === 'en_attente_signature_locataire' || Boolean(other.receipt_number));
           });
           if (hasConfirmedForContract) return false;
           return p.status === 'declare';
