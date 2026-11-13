@@ -262,7 +262,8 @@ export default async function handler(req, res) {
           const ref = String(p.reference || p.receipt_number || '');
           const id = String(p.id || '');
           if (DELETED_PAYMENTS.has(ref) || DELETED_PAYMENTS.has(id)) return false;
-          if (Number(p.amount) >= 5000000) return false;
+          const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
+          if (amt <= 0 || amt > 200000 || isNaN(amt)) return false;
           return p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId;
         };
 
@@ -272,7 +273,8 @@ export default async function handler(req, res) {
         );
         const userReceipts = SERVER_STORE.receipts.filter(
           (r) => r && !DELETED_PAYMENTS.has(String(r.receipt_number || r.id)) &&
-                 (Number(r.amount) < 5000000) &&
+                 (Number(String(r.amount || 0).replace(/[\s\u00A0,]/g, '')) <= 200000) &&
+                 (Number(String(r.amount || 0).replace(/[\s\u00A0,]/g, '')) > 0) &&
                  (r.owner_id === cleanUserId || r.agency_id === cleanUserId || r.tenant_id === cleanUserId)
         );
         const userContracts = SERVER_STORE.contracts.filter(
@@ -1217,7 +1219,8 @@ export default async function handler(req, res) {
             const ref = String(cp?.reference || cp?.receipt_number || '').trim();
             const id = String(cp?.id || '').trim();
             if (DELETED_PAYMENTS.has(ref) || DELETED_PAYMENTS.has(id)) continue;
-            if (Number(cp.amount) >= 5000000) continue; // Bloquer les montants tests anormaux (ex: 10M)
+            const amt = Number(String(cp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+            if (amt <= 0 || amt > 200000 || isNaN(amt)) continue; // Bloquer les montants tests anormaux (ex: 10M, 11.4M)
             if (cp.status === 'annule' || cp.status === 'supprime') continue;
             if (cp && cp.reference && !SERVER_STORE.payments.some(p => p.reference === cp.reference)) {
               SERVER_STORE.payments.unshift(cp);

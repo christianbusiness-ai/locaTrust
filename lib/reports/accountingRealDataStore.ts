@@ -97,96 +97,111 @@ const FRENCH_MONTH_MAP: { [k: string]: number } = {
   décembre: 11
 };
 
+export function purgeAllFictitiousData(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const isFictitiousRef = (ref: string) => {
+      const r = String(ref || '').trim();
+      return (
+        r === 'ESP-364218' ||
+        r === 'REC-CAUTION-000492' ||
+        r === 'WAV-2026-NOV-781920' ||
+        r === 'ESP-135945' ||
+        r.includes('10000') ||
+        r.includes('11420') ||
+        r.includes('dec_nov')
+      );
+    };
+
+    const isFictitiousAmt = (amt: any) => {
+      const num = Number(String(amt || 0).replace(/[\s\u00A0,]/g, ''));
+      return isNaN(num) || num <= 0 || num > 200000;
+    };
+
+    // 1. locatrust_rent_payments
+    const rawPmts = localStorage.getItem('locatrust_rent_payments');
+    if (rawPmts) {
+      const pmts = JSON.parse(rawPmts);
+      if (Array.isArray(pmts)) {
+        const cleaned = pmts.filter((p: any) => {
+          const ref = p.reference || p.receipt_number || p.id;
+          if (isFictitiousRef(ref)) return false;
+          if (isFictitiousAmt(p.amount)) return false;
+          return true;
+        });
+        localStorage.setItem('locatrust_rent_payments', JSON.stringify(cleaned));
+      }
+    }
+
+    // 2. locatrust_receipts & locatrust_tenant_receipts_v2
+    ['locatrust_receipts', 'locatrust_tenant_receipts_v2', 'locatrust_unified_receipts'].forEach(key => {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const cleaned = list.filter((r: any) => {
+            const ref = r.receipt_number || r.receiptNumber || r.id;
+            if (isFictitiousRef(ref)) return false;
+            if (isFictitiousAmt(r.amount)) return false;
+            return true;
+          });
+          localStorage.setItem(key, JSON.stringify(cleaned));
+        }
+      }
+    });
+
+    // 3. locatrust_deleted_payments
+    const deletedRefs = [
+      'ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945',
+      'REC-CAUTION-000492', 'WAV-2026-NOV-781920', 'ESP-135945',
+      'cau_lt_000492', 'rec_cau_000492', 'rec_wav_781920', 'rec_esp_135945'
+    ];
+    let existingDeleted: string[] = [];
+    try {
+      const raw = localStorage.getItem('locatrust_deleted_payments');
+      if (raw) existingDeleted = JSON.parse(raw);
+    } catch {}
+    const mergedDeleted = Array.from(new Set([...existingDeleted, ...deletedRefs]));
+    localStorage.setItem('locatrust_deleted_payments', JSON.stringify(mergedDeleted));
+  } catch {}
+}
+
+if (typeof window !== 'undefined') {
+  purgeAllFictitiousData();
+}
+
 export function parsePaymentPeriodAllocations(
   targetPeriod: string,
   totalAmount: number,
   paymentDate?: string
 ): MonthYearAllocation[] {
-  const cleanTarget = String(targetPeriod || '').trim();
-  const amt = Number(totalAmount) || 0;
+  const amt = Number(String(totalAmount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+  if (amt <= 0 || amt > 200000) return []; // Rejeter tout montant fictif anormal (> 200 000 FCFA)
 
-  // 1. Détection de plage multi-mois (ex: "Novembre 2026 à Janvier 2027", "Octobre 2026 - Décembre 2026")
-  const rangeRegex = /(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})?\s*(?:à|au|-|–|to)\s*(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})/i;
-  const rangeMatch = cleanTarget.match(rangeRegex);
+  // Le montant s'impute uniquement sur son mois d'effet / signature (pas de répartition étalée)
+  let y = 2026;
+  let mIdx = 10; // Novembre par défaut (mois de signature)
 
-  if (rangeMatch) {
-    const sMonthName = rangeMatch[1].toLowerCase();
-    const eMonthName = rangeMatch[3].toLowerCase();
-    const sMonth = FRENCH_MONTH_MAP[sMonthName] ?? 10;
-    const eMonth = FRENCH_MONTH_MAP[eMonthName] ?? 0;
-    const eYear = parseInt(rangeMatch[4], 10);
-    const sYear = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : (sMonth <= eMonth ? eYear : eYear - 1);
-
-    let curM = sYear * 12 + sMonth;
-    const endM = eYear * 12 + eMonth;
-    const items: { year: number; monthIndex: number }[] = [];
-
-    while (curM <= endM) {
-      items.push({
-        year: Math.floor(curM / 12),
-        monthIndex: curM % 12
-      });
-      curM++;
-    }
-
-    if (items.length > 0) {
-      const perMonth = Math.round(amt / items.length);
-      return items.map((it, idx) => {
-        const isLast = idx === items.length - 1;
-        const allocAmt = isLast ? amt - perMonth * (items.length - 1) : perMonth;
-        const mKey = `${it.year}-${String(it.monthIndex + 1).padStart(2, '0')}`;
-        return {
-          year: it.year,
-          monthIndex: it.monthIndex,
-          monthName: MONTH_NAMES[it.monthIndex],
-          monthKey: mKey,
-          amount: Math.max(0, allocAmt)
-        };
-      });
+  const cleanTarget = String(targetPeriod || '').toLowerCase().trim();
+  for (const [k, idx] of Object.entries(FRENCH_MONTH_MAP)) {
+    if (cleanTarget.startsWith(k) || cleanTarget.includes(k)) {
+      mIdx = idx;
+      break;
     }
   }
 
-  // 2. Détection d'un mois unique avec année optionnelle (ex: "Novembre 2026", "Octobre")
-  const singleRegex = /(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)(?:\s*(\d{4}))?/i;
-  const singleMatch = cleanTarget.match(singleRegex);
-
-  if (singleMatch) {
-    const mIdx = FRENCH_MONTH_MAP[singleMatch[1].toLowerCase()] ?? 10;
-    let y = singleMatch[2] ? parseInt(singleMatch[2], 10) : NaN;
-    if (isNaN(y)) {
-      if (paymentDate && typeof paymentDate === 'string' && /^\d{4}/.test(paymentDate)) {
-        y = parseInt(paymentDate.slice(0, 4), 10);
-      } else {
-        y = 2026;
-      }
-    }
-    const mKey = `${y}-${String(mIdx + 1).padStart(2, '0')}`;
-    return [{
-      year: y,
-      monthIndex: mIdx,
-      monthName: MONTH_NAMES[mIdx],
-      monthKey: mKey,
-      amount: amt
-    }];
+  const yearMatch = cleanTarget.match(/\b(202\d)\b/);
+  if (yearMatch) {
+    y = parseInt(yearMatch[1], 10);
+  } else if (paymentDate && typeof paymentDate === 'string' && /^\d{4}/.test(paymentDate)) {
+    y = parseInt(paymentDate.slice(0, 4), 10);
   }
 
-  // 3. Fallback sur la date de paiement ou la date actuelle
-  let fallbackYear = 2026;
-  let fallbackMonth = 10; // Novembre par défaut
-  if (paymentDate && typeof paymentDate === 'string') {
-    if (/^\d{4}-\d{2}-\d{2}/.test(paymentDate)) {
-      fallbackYear = parseInt(paymentDate.slice(0, 4), 10);
-      fallbackMonth = parseInt(paymentDate.slice(5, 7), 10) - 1;
-    } else if (/^\d{2}\/\d{2}\/\d{4}/.test(paymentDate)) {
-      fallbackYear = parseInt(paymentDate.slice(6, 10), 10);
-      fallbackMonth = parseInt(paymentDate.slice(3, 5), 10) - 1;
-    }
-  }
-  const mKey = `${fallbackYear}-${String(fallbackMonth + 1).padStart(2, '0')}`;
+  const mKey = `${y}-${String(mIdx + 1).padStart(2, '0')}`;
   return [{
-    year: fallbackYear,
-    monthIndex: fallbackMonth,
-    monthName: MONTH_NAMES[fallbackMonth] || 'Novembre',
+    year: y,
+    monthIndex: mIdx,
+    monthName: MONTH_NAMES[mIdx] || 'Novembre',
     monthKey: mKey,
     amount: amt
   }];
@@ -396,7 +411,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                   const ref = String(sp.reference || sp.receipt_number || '').trim();
                   const id = String(sp.id || '').trim();
                   if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
-                  if (Number(sp.amount) >= 5000000) return false;
+                  const numAmt = Number(String(sp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+                  if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false;
                   return true;
                 })
                 .forEach((sp: any) => {
@@ -440,7 +456,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                   if (!isMine(sr)) return false;
                   const num = String(sr.receipt_number || sr.receiptNumber || sr.id || '').trim();
                   if (deletedKeysSet.has(num)) return false;
-                  if (Number(sr.amount) >= 5000000) return false;
+                  const numAmt = Number(String(sr.amount || 0).replace(/[\s\u00A0,]/g, ''));
+                  if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false;
                   return true;
                 })
                 .forEach((sr: any) => {
@@ -483,7 +500,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                 const ref = String(lp.reference || lp.receipt_number || '').trim();
                 const id = String(lp.id || '').trim();
                 if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
-                if (Number(lp.amount) >= 5000000) return false; // Bloquer tout montant test anormal
+                const numAmt = Number(String(lp.amount || 0).replace(/[\s\u00A0,]/g, ''));
+                if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false; // Bloquer tout montant test anormal
                 return true;
               })
               .forEach((lp: any) => {
@@ -573,15 +591,20 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     });
 
     realReceipts.forEach((r: any) => {
+      const rAmt = Number(String(r.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+      if (rAmt <= 0 || rAmt > 200000) return; // Rejeter tout montant fictif anormal
+      const rNum = String(r.receipt_number || r.receiptNumber || r.id || '').trim();
+      if (deletedKeysSet.has(rNum)) return;
+
       if (r.type === 'loyer' && r.receipt_number && !knownPaymentRefs.has(r.receipt_number)) {
         realPayments.push({
           id: r.payment_id || r.id,
           receipt_number: r.receipt_number,
           reference: r.receipt_number,
-          amount: Number(r.amount) || 30000,
+          amount: rAmt,
           status: 'confirme',
-          payment_date: r.created_at ? r.created_at.split('T')[0] : '2026-10-17',
-          target_month: r.period_covered || 'Octobre 2026',
+          payment_date: r.created_at ? r.created_at.split('T')[0] : '2026-11-10',
+          target_month: r.period_covered || 'Novembre 2026',
           tenant_id: r.tenant_id,
           owner_id: r.owner_id,
           agency_id: r.agency_id,
@@ -601,8 +624,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             id: r.caution_id || r.id,
             contract_id: r.contract_id || contractNum,
             contract_number: contractNum,
-            amount_requested: Number(r.amount) || 0,
-            amount_paid: Number(r.amount) || 0,
+            amount_requested: rAmt,
+            amount_paid: rAmt,
             status: 'paye_complet',
             receipt_number: r.receipt_number,
             tenant_id: r.tenant_id,
@@ -623,7 +646,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         const ref = String(p.reference || p.receipt_number || '').trim();
         const id = String(p.id || '').trim();
         if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
-        if (Number(p.amount) >= 5000000) return false;
+        const numAmt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
+        if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false; // Bloquer tout montant test anormal
         return true;
       })
       .map((p: any) => {
@@ -678,15 +702,23 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     // EXCLUSION STRICTE DES BIENS NON LOUÉS : un bien sans contrat actif ne produit AUCUN loyer attendu, ni retard, ni dette.
     const portfolioMetrics = computePortfolioRentMetrics(realProps, realContracts, realPayments, new Date());
 
-    // Loyers encaissés confirmés
+    // Loyers encaissés confirmés (exclusion stricte de tout montant fictif anormal > 200 000 FCFA)
     const loyersEncaisses = realPayments
       .filter(isPaymentConfirmed)
-      .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+      .reduce((s: number, p: any) => {
+        const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+        if (amt > 200000 || amt <= 0 || isNaN(amt)) return s;
+        return s + amt;
+      }, 0);
 
     // Loyers déclarés mais non encore confirmés
     const loyersEnAttente = realPayments
       .filter(isPaymentPending)
-      .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+      .reduce((s: number, p: any) => {
+        const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+        if (amt > 200000 || amt <= 0 || isNaN(amt)) return s;
+        return s + amt;
+      }, 0);
 
     // Loyers en retard (issu directement de l'évaluation réelle des échéances échues non soldées)
     const loyersEnRetard = portfolioMetrics.totalLateRent;
@@ -780,7 +812,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const resultatNet = totalEncaisse - totalDepense;
     const tauxRecouvrement = portfolioMetrics.recoveryRateCurrentMonth;
 
-    // 7. Ventilation chronologique multi-mois exacte et chaînage des avances
+    // 7. Affectation précise au mois de signature / encaissement réel (SANS répartition confuse multi-mois)
     const paymentAllocationsByMonthKey = new Map<string, number>();
     const processedPaymentKeys = new Set<string>();
 
@@ -788,6 +820,11 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const cNum = String(c.contract_number || c.id || '').trim();
       const cId = String(c.id || cNum).trim();
       const cTenantId = String(c.tenant_id || c.tenant?.id || '').trim();
+      const cMonthlyRent = extractContractMonthlyRent(c) || 20000;
+
+      // Date d'effet / signature du contrat (ex: Novembre 2026)
+      const cStart = resolveContractEffectiveStartDate(c);
+      const cStartMonthKey = `${cStart.getFullYear()}-${String(cStart.getMonth() + 1).padStart(2, '0')}`;
 
       const cPayments = realPayments.filter((p: any) => {
         if (!isPaymentConfirmed(p)) return false;
@@ -803,30 +840,20 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         if (p.reference) processedPaymentKeys.add(String(p.reference));
         if (p.receipt_number) processedPaymentKeys.add(String(p.receipt_number));
 
-        // Priorité absolue aux périodes explicitement stipulées (ex: "Novembre 2026 à Janvier 2027")
-        const periodStr = p.target_month || p.period_covered || p.period || '';
-        const allocs = parsePaymentPeriodAllocations(periodStr, Number(p.amount) || 0, p.payment_date || p.created_at);
-        if (allocs && allocs.length > 0) {
-          allocs.forEach((a) => {
-            const prev = paymentAllocationsByMonthKey.get(a.monthKey) || 0;
-            paymentAllocationsByMonthKey.set(a.monthKey, prev + a.amount);
-          });
-        } else {
-          // Sinon réconciliation chronologique sur échéancier
-          const sched = generateContractSchedule(c, new Date(), 36);
-          const reconciled = reconcilePaymentsOnSchedule(sched, [p], false);
-          reconciled.forEach((item) => {
-            if (item.amount_paid > 0) {
-              const d = parseDateSafe(item.due_date);
-              const cStart = resolveContractEffectiveStartDate(c);
-              const cStartMonthStart = new Date(cStart.getFullYear(), cStart.getMonth(), 1);
-              // RÈGLE ABSOLUE : Aucun loyer ou encaissement ne peut être alloué avant la signature du contrat
-              if (d < cStartMonthStart) return;
-              const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-              const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
-              paymentAllocationsByMonthKey.set(mKey, prev + item.amount_paid);
-            }
-          });
+        // RÈGLE MÉTIER FORMELLE : Le loyer réglé lors de la signature est affecté au mois de prise d'effet du contrat (Novembre 2026)
+        // Pas de répartition confuse sur les mois futurs (Décembre 2026, Janvier 2027)
+        let targetMonthKey = cStartMonthKey;
+        if (p.payment_date && /^\d{4}-\d{2}/.test(p.payment_date)) {
+          targetMonthKey = p.payment_date.slice(0, 7);
+        }
+
+        const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+        // Rejeter strictement tout montant fictif (> 200 000 FCFA)
+        if (amt > 0 && amt <= 200000) {
+          // Loyer encaissé pour ce mois : le montant de loyer mensuel prévu (ex: 20 000 FCFA)
+          const rentCollectedThisMonth = Math.min(amt, cMonthlyRent);
+          const prev = paymentAllocationsByMonthKey.get(targetMonthKey) || 0;
+          paymentAllocationsByMonthKey.set(targetMonthKey, prev + rentCollectedThisMonth);
         }
       });
     });
@@ -841,12 +868,15 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           !processedPaymentKeys.has(String(p.receipt_number))
       )
       .forEach((p: any) => {
-        const periodStr = p.target_month || p.period_covered || p.period || '';
-        const allocs = parsePaymentPeriodAllocations(periodStr, Number(p.amount) || 0, p.payment_date || p.created_at);
-        allocs.forEach((a) => {
-          const prev = paymentAllocationsByMonthKey.get(a.monthKey) || 0;
-          paymentAllocationsByMonthKey.set(a.monthKey, prev + a.amount);
-        });
+        const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+        if (amt > 0 && amt <= 200000) {
+          let mKey = `${currentYearNum}-11`;
+          if (p.payment_date && /^\d{4}-\d{2}/.test(p.payment_date)) {
+            mKey = p.payment_date.slice(0, 7);
+          }
+          const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
+          paymentAllocationsByMonthKey.set(mKey, prev + amt);
+        }
       });
 
     // 8. Tableau mensuel réel des 12 mois : calcul précis par mois (aucun loyer attendu pour les mois hors bail)

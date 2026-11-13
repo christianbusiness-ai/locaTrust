@@ -5,6 +5,7 @@ import { syncUserData, startLiveBackgroundSync, stopLiveBackgroundSync } from '@
 import { subscribeToLiveSync, unsubscribeFromLiveSync } from '@/lib/supabaseRealtime';
 import { startBackgroundQuotaWorker, stopBackgroundQuotaWorker } from '@/lib/quotaEngine';
 import { setActiveMessagingUser } from '@/lib/messagingStore';
+import { purgeAllFictitiousData } from '@/lib/reports/accountingRealDataStore';
 import {
   clearSecuritySession,
   recordUserActivity,
@@ -100,6 +101,7 @@ export const clearLocatrustUserDataCache = () => {
 const ensureSessionScopedToUser = (userId: string) => {
   if (typeof window === 'undefined' || !userId) return;
   try {
+    purgeAllFictitiousData();
     const lastUserId = localStorage.getItem('locatrust_last_auth_user_id');
     if (lastUserId && lastUserId !== userId) {
       // Un compte différent était connecté sur ce navigateur : purger les données partagées du compte précédent

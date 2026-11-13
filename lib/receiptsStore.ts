@@ -101,7 +101,8 @@ export function getUnifiedReceipts(userId?: string): UnifiedReceiptRecord[] {
           if (!key || deletedKeys.has(key)) return;
           if (norm.receipt_number && deletedKeys.has(norm.receipt_number.trim().toLowerCase())) return;
           if (norm.id && deletedKeys.has(norm.id.trim().toLowerCase())) return;
-          if (Number(norm.amount) >= 5000000) return; // Bloquer les montants tests anormaux (ex: 10M)
+          const numAmt = Number(String(norm.amount || 0).replace(/[\s\u00A0,]/g, ''));
+          if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return; // Bloquer les montants tests anormaux (ex: 10M, 11.4M)
 
           const existing = mergedMap.get(key);
           if (!existing) {

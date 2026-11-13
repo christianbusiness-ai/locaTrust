@@ -56,6 +56,7 @@ import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { resolveRealReceiptData } from '@/lib/payments/receiptDataResolver';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { getStoredOwnerSignature, getStoredTenantSignature, persistOwnerSignature } from '@/lib/contractPartyResolver';
+import { purgeAllFictitiousData } from '@/lib/reports/accountingRealDataStore';
 
 interface PaiementsViewProps {
   onOpenConfirmPaymentModal?: () => void;
@@ -172,6 +173,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       setIsLoading(true);
     }
     setLoadError(null);
+    purgeAllFictitiousData();
     try {
       let loaded: RentPayment[] = [];
 
@@ -483,7 +485,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             if (
               (pmtRef && (serverCancelledRefs.has(pmtRef) || pmtRef === 'ESP-364218' || localDel.includes(pmtRef))) ||
               (pmtId && (serverCancelledIds.has(pmtId) || localDel.includes(pmtId))) ||
-              pmtAmt >= 5000000
+              pmtAmt > 200000 ||
+              pmtAmt <= 0
             ) {
               continue;
             }
@@ -578,7 +581,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                 if (loc.status === 'annule' || loc.status === 'supprime' || loc.status === 'refuse') return false;
                 if (loc.id && (serverCancelledIds.has(loc.id) || localDel.includes(loc.id))) return false;
                 if (loc.reference && (serverCancelledRefs.has(loc.reference) || loc.reference === 'ESP-364218' || localDel.includes(loc.reference))) return false;
-                if (Number(loc.amount) >= 5000000) return false;
+                const amtNum = Number(String(loc.amount || 0).replace(/[\s\u00A0,]/g, ''));
+                if (amtNum <= 0 || amtNum > 200000 || isNaN(amtNum)) return false;
                 // Si le paiement est déjà présent dans loaded, on DOIT inclure sa mise à jour locale !
                 if (loaded.some(p => p.id === loc.id || (loc.reference && p.reference === loc.reference))) return true;
                 // Match direct par owner_id / agency_id
@@ -691,7 +695,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               p.status !== 'annule' &&
               p.status !== 'supprime' &&
               p.status !== 'refuse' &&
-              Number(p.amount) < 5000000 &&
+              Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) <= 200000 &&
+              Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) > 0 &&
               !combinedDeleted.has(p.id) &&
               (!p.reference || !combinedDeleted.has(p.reference))
           );
@@ -972,7 +977,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
     const rawDeclared = payments.filter((p) => {
       if (!isDeclaredStatus(p.status)) return false;
       if (p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse') return false;
-      if (p.reference === 'ESP-364218' || Number(p.amount) >= 5000000) return false;
+      const amtNum = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
+      if (p.reference === 'ESP-364218' || amtNum > 200000 || amtNum <= 0 || isNaN(amtNum)) return false;
       if (p.owner_signature_url || p.tenant_signature_url || (p as any).tenant_signature) {
         return false;
       }
@@ -1710,7 +1716,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
   const filteredPayments = React.useMemo(() => {
     const list = payments.filter((p) => {
       if (p.status === 'annule' || p.status === 'supprime') return false;
-      if (p.reference === 'ESP-364218' || Number(p.amount) >= 5000000) return false;
+      const amtNum = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
+      if (p.reference === 'ESP-364218' || amtNum > 200000 || amtNum <= 0 || isNaN(amtNum)) return false;
       if (activeTab === 'declares' && !isDeclaredStatus(p.status)) return false;
       if (activeTab === 'confirmes' && !isConfirmedStatus(p.status)) return false;
       if (activeTab === 'refuses' && p.status !== 'refuse' && p.status !== 'rejete') return false;

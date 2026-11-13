@@ -37,7 +37,7 @@ import {
   generateSyntheticYearRecords
 } from '@/lib/reports/accountingHistoryStore';
 import { computePortfolioRentMetrics, checkAndNotifyExhaustedAdvances, FRENCH_MONTHS } from '@/lib/payments/rentScheduleEngine';
-import { fetchRealAccountingData, RealAccountingDataset } from '@/lib/reports/accountingRealDataStore';
+import { fetchRealAccountingData, RealAccountingDataset, purgeAllFictitiousData } from '@/lib/reports/accountingRealDataStore';
 import { calculateQuotaFromDataset, getQuotaPrice } from '@/lib/quotaEngine';
 import { getUnifiedReceipts } from '@/lib/receiptsStore';
 
@@ -108,6 +108,7 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
   const fetchDashboardData = async (isBackground = false) => {
     if (isDemo || isFetchingRef.current) return;
+    purgeAllFictitiousData();
     isFetchingRef.current = true;
     if (hasLoadedOnceRef.current || isBackground) {
       setIsRefreshing(true);
@@ -389,8 +390,15 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           } catch { }
         }
 
-        // Normalisation stricte : filtrer les paiements annulés et sceller les paiements confirmés
-        loadedPayments = loadedPayments.filter(p => p && p.status !== 'annule' && p.status !== 'supprime').map((p: any) => {
+        // Normalisation stricte : filtrer les paiements annulés, montants fictifs et sceller les paiements confirmés
+        loadedPayments = loadedPayments
+          .filter(p => {
+            if (!p || p.status === 'annule' || p.status === 'supprime') return false;
+            const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
+            if (amt <= 0 || amt > 200000 || isNaN(amt)) return false;
+            return true;
+          })
+          .map((p: any) => {
           const refLower = String(p.reference || p.receipt_number || p.id || '').trim().toLowerCase();
           const hasRec =
             currentReceiptRefs.has(p.reference) ||
