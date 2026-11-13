@@ -205,8 +205,73 @@ export const LocataireMaintenanceView: React.FC = () => {
         } catch {}
       }
 
-      const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire';
-      const propTitle = chosenContract?.property?.title || chosenContract?.property_title || 'Logement';
+      // Résolution complète et certifiée des données réelles du locataire
+      let realTenantName =
+        chosenContract?.tenant_name ||
+        chosenContract?.tenant?.full_name ||
+        chosenContract?.tenant_signature_name ||
+        user?.user_metadata?.full_name ||
+        (user as any)?.name ||
+        '';
+
+      let realTenantPhone =
+        chosenContract?.tenant_phone ||
+        chosenContract?.tenant?.phone ||
+        user?.phone ||
+        user?.user_metadata?.phone ||
+        '';
+
+      if ((!realTenantName || !realTenantPhone) && user?.id) {
+        try {
+          const { data: profRow } = await supabase
+            .from('profiles')
+            .select('full_name, phone')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (profRow) {
+            if (!realTenantName && profRow.full_name) realTenantName = profRow.full_name;
+            if (!realTenantPhone && profRow.phone) realTenantPhone = profRow.phone;
+          }
+        } catch {}
+      }
+
+      const finalTenantName = realTenantName || 'Locataire';
+      const finalTenantPhone = realTenantPhone || '';
+
+      // Résolution complète des informations réelles du bien
+      let realPropTitle =
+        chosenContract?.property?.title ||
+        chosenContract?.property_title ||
+        chosenContract?.property_name ||
+        '';
+
+      let realPropAddress =
+        [chosenContract?.property?.commune, chosenContract?.property?.city].filter(Boolean).join(', ') ||
+        chosenContract?.property?.address ||
+        chosenContract?.property?.city ||
+        '';
+
+      if ((!realPropTitle || !realPropAddress) && propId && isValidUuid(propId)) {
+        try {
+          const { data: pRow } = await supabase
+            .from('properties')
+            .select('title, address, city, commune')
+            .eq('id', propId)
+            .maybeSingle();
+          if (pRow) {
+            if (!realPropTitle && pRow.title) realPropTitle = pRow.title;
+            if (!realPropAddress) {
+              realPropAddress = [pRow.commune, pRow.city].filter(Boolean).join(', ') || pRow.address || pRow.city || '';
+            }
+          }
+        } catch {}
+      }
+
+      const finalPropTitle = realPropTitle || 'Logement';
+      const finalPropAddress = realPropAddress || 'Côte d’Ivoire';
+
+      const now = new Date();
+      const realCreatedAt = `${now.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
       const generatedTicketUuid = crypto.randomUUID();
 
       // 1. Inscription prioritaire dans Supabase PostgreSQL
@@ -234,15 +299,15 @@ export const LocataireMaintenanceView: React.FC = () => {
         owner_id: ownerId,
         tenant_id: user?.id || '',
         contract_id: chosenContract?.id,
-        tenantName: tenantName,
-        tenantPhone: user?.phone || user?.user_metadata?.phone || '+225 00 00 00 00',
-        propertyTitle: propTitle,
-        propertyAddress: chosenContract?.property?.address || 'Abidjan',
+        tenantName: finalTenantName,
+        tenantPhone: finalTenantPhone,
+        propertyTitle: finalPropTitle,
+        propertyAddress: finalPropAddress,
         category: category,
         priority: 'normale',
         status: 'Nouveau',
-        createdAt: new Date().toLocaleDateString('fr-FR'),
-        created_at: new Date().toISOString(),
+        createdAt: realCreatedAt,
+        created_at: now.toISOString(),
         description: description,
         photos: mediaUrls,
         notes: []
@@ -261,7 +326,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         try {
           await pushGlobalNotification({
             title: '⚠️ Incident de maintenance signalé',
-            description: `${tenantName} a signalé une anomalie (${category}) pour « ${propTitle} » : ${description.slice(0, 70)}...`,
+            description: `${finalTenantName} a signalé une anomalie (${category}) pour « ${finalPropTitle} » : ${description}`,
             category: 'maintenance',
             targetRole: 'proprietaire',
             targetUserId: ownerId,
@@ -269,8 +334,15 @@ export const LocataireMaintenanceView: React.FC = () => {
             payload: {
               ticketId: ticketItem.id,
               propertyId: propId,
+              propertyTitle: finalPropTitle,
+              propertyAddress: finalPropAddress,
               category,
-              tenantName
+              tenantName: finalTenantName,
+              tenantPhone: finalTenantPhone,
+              description: description,
+              photos: mediaUrls,
+              createdAt: realCreatedAt,
+              created_at: now.toISOString()
             }
           });
         } catch {}

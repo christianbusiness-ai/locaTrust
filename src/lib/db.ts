@@ -326,56 +326,118 @@ export async function createRentPayment(payment: any) {
 // =============================================================================
 // REQUÊTES TICKETS DE MAINTENANCE (ART. 428)
 // =============================================================================
+export function extractCleanMaintenanceMessage(text?: string | null): string {
+  if (!text) return '';
+  const trimmed = String(text).trim();
+  const prefixRegex = /^.*?a signalé (?:une anomalie|un problème|un incident|une panne)[^:]*?:\s*(.+)$/is;
+  const match = trimmed.match(prefixRegex);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  return trimmed;
+}
+
 export async function getMaintenanceTickets(userId: string) {
   try {
-    // 1. Récupérer les identifiants des biens du bailleur ou de l'agence pour matcher exhaustivement
-    let propertyIds: string[] = [];
+    let rawTickets: any[] = [];
+
     if (userId) {
+      // 1. Tickets directs où l'utilisateur est propriétaire ou locataire
+      try {
+        const { data: directTickets } = await supabase
+          .from('maintenance_tickets')
+          .select('*, property:properties(*)')
+          .or(`tenant_id.eq.${userId},owner_id.eq.${userId}`)
+          .order('created_at', { ascending: false });
+        if (directTickets && directTickets.length > 0) {
+          rawTickets.push(...directTickets);
+        }
+      } catch (err) {
+        console.warn('Erreur tickets directs:', err);
+      }
+
+      // 2. Tickets rattachés aux biens gérés par ce bailleur / agence
       try {
         const { data: userProps } = await supabase
           .from('properties')
           .select('id')
           .or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+
         if (userProps && userProps.length > 0) {
-          propertyIds = userProps.map((p) => p.id).filter(Boolean);
+          const propIds = userProps.map((p) => p.id).filter(Boolean);
+          if (propIds.length > 0) {
+            const { data: propTickets } = await supabase
+              .from('maintenance_tickets')
+              .select('*, property:properties(*)')
+              .in('property_id', propIds)
+              .order('created_at', { ascending: false });
+
+            if (propTickets && propTickets.length > 0) {
+              propTickets.forEach((pt) => {
+                if (!rawTickets.some((rt) => rt.id === pt.id)) {
+                  rawTickets.push(pt);
+                }
+              });
+            }
+          }
         }
-      } catch {}
-    }
-
-    let query = supabase
-      .from('maintenance_tickets')
-      .select('*, property:properties(*)')
-      .order('created_at', { ascending: false });
-
-    if (userId) {
-      if (propertyIds.length > 0) {
-        query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId},property_id.in.(${propertyIds.join(',')})`);
-      } else {
-        query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      } catch (err) {
+        console.warn('Erreur tickets propriétés:', err);
       }
+    } else {
+      const { data: allT, error } = await supabase
+        .from('maintenance_tickets')
+        .select('*, property:properties(*)')
+        .order('created_at', { ascending: false });
+      if (!error && allT) rawTickets = allT;
     }
 
-    const { data, error } = await query;
-    if (error) {
-      console.warn('Erreur lecture maintenance_tickets:', error.message);
-      return { data: [], error: error.message };
-    }
-
-    const rawTickets = data || [];
     const userIds = Array.from(
       new Set(rawTickets.flatMap((t) => [t.owner_id, t.tenant_id]).filter(Boolean))
     );
+    const contractIds = Array.from(
+      new Set(rawTickets.map((t) => t.contract_id).filter(Boolean))
+    );
+    const propertyIds = Array.from(
+      new Set(rawTickets.map((t) => t.property_id).filter(Boolean))
+    );
+
+    // Profils réels
     const profilesMap = new Map<string, any>();
     if (userIds.length > 0) {
       try {
         const { data: profs } = await supabase
           .from('profiles')
-          .select('id, full_name, phone, avatar_url, account_type')
+          .select('id, full_name, phone, avatar_url, account_type, city, commune')
           .in('id', userIds);
         if (profs) profs.forEach((p) => profilesMap.set(p.id, p));
       } catch (profErr) {
         console.warn('Erreur profils maintenance:', profErr);
       }
+    }
+
+    // Contrats réels
+    const contractsMap = new Map<string, any>();
+    if (contractIds.length > 0) {
+      try {
+        const { data: cnts } = await supabase
+          .from('contracts')
+          .select('id, contract_number, tenant_id, tenant_name, tenant_phone, property_id, properties(*)')
+          .in('id', contractIds);
+        if (cnts) cnts.forEach((c) => contractsMap.set(c.id, c));
+      } catch {}
+    }
+
+    // Propriétés réelles
+    const propsMap = new Map<string, any>();
+    if (propertyIds.length > 0) {
+      try {
+        const { data: props } = await supabase
+          .from('properties')
+          .select('id, title, address, city, commune, quartier')
+          .in('id', propertyIds);
+        if (props) props.forEach((p) => propsMap.set(p.id, p));
+      } catch {}
     }
 
     const formatted = rawTickets.map((t: any) => {
@@ -398,8 +460,49 @@ export async function getMaintenanceTickets(userId: string) {
         } catch {}
       }
 
+      cleanDesc = extractCleanMaintenanceMessage(cleanDesc);
+
       const tenantProf = profilesMap.get(t.tenant_id);
-      const ownerProf = profilesMap.get(t.owner_id);
+      const contract = contractsMap.get(t.contract_id);
+      const prop = t.property || propsMap.get(t.property_id) || contract?.properties;
+
+      // Détection du nom réel du locataire
+      const realTenantName =
+        tenantProf?.full_name ||
+        contract?.tenant_name ||
+        t.tenant_name ||
+        t.tenantName ||
+        'Locataire';
+
+      // Détection du vrai téléphone
+      const realTenantPhone =
+        tenantProf?.phone ||
+        contract?.tenant_phone ||
+        t.tenant_phone ||
+        t.tenantPhone ||
+        '';
+
+      // Détection du bien réel
+      const realPropertyTitle =
+        prop?.title ||
+        t.property_title ||
+        t.propertyTitle ||
+        'Logement';
+
+      // Détection de la ville/commune réelle du bien
+      const realPropertyAddress =
+        [prop?.commune, prop?.city].filter(Boolean).join(', ') ||
+        prop?.address ||
+        prop?.city ||
+        t.property_address ||
+        t.propertyAddress ||
+        'Côte d’Ivoire';
+
+      // Date et heure réelle du signalement
+      const dateObj = t.created_at ? new Date(t.created_at) : (t.createdAt ? new Date(t.createdAt) : new Date());
+      const realDateFormatted = !isNaN(dateObj.getTime())
+        ? `${dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+        : 'Date récente';
 
       // Normalisation rigoureuse des statuts
       let normalizedStatus = 'Nouveau';
@@ -415,14 +518,14 @@ export async function getMaintenanceTickets(userId: string) {
       return {
         ...t,
         ticketNumber: `TCK-2026-${(t.id || '999').slice(0, 4).toUpperCase()}`,
-        tenantName: tenantProf?.full_name || t.tenant_name || 'Locataire',
-        tenantPhone: tenantProf?.phone || t.tenant_phone || '+225 00 00 00 00',
-        propertyTitle: t.property?.title || t.property_title || 'Logement LocaTrust',
-        propertyAddress: t.property?.address || t.property_address || 'Abidjan',
+        tenantName: realTenantName,
+        tenantPhone: realTenantPhone,
+        propertyTitle: realPropertyTitle,
+        propertyAddress: realPropertyAddress,
         category: parsedCategory,
         priority: t.priority || 'normale',
         status: normalizedStatus,
-        createdAt: new Date(t.created_at || Date.now()).toLocaleDateString('fr-FR'),
+        createdAt: realDateFormatted,
         created_at: t.created_at || new Date().toISOString(),
         description: cleanDesc,
         cost: parsedCost,

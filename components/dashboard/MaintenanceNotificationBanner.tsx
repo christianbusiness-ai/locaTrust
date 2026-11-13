@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Wrench, AlertTriangle, ArrowRight, X, Clock, Camera } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
-import { getMaintenanceTickets } from '@/src/lib/db';
+import { getMaintenanceTickets, extractCleanMaintenanceMessage } from '@/src/lib/db';
 
 interface MaintenanceNotificationBannerProps {
   currentUserId?: string;
@@ -133,8 +133,19 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
     <div className="flex flex-col gap-3 mb-6 w-full animate-fadeIn font-sans">
       {visibleTickets.map((ticket) => {
         const photosCount = Array.isArray(ticket.photos) ? ticket.photos.length : 0;
-        const tenantName = ticket.tenantName || ticket.tenant?.full_name || 'Locataire';
-        const propertyTitle = ticket.propertyTitle || ticket.property?.title || 'Logement';
+        let tName = ticket.tenantName || ticket.tenant?.full_name;
+        let pTitle = ticket.propertyTitle || ticket.property?.title;
+
+        if (typeof ticket.description === 'string') {
+          const nameMatch = ticket.description.match(/^([A-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]+?)\s+a signalé/);
+          if (nameMatch && (!tName || tName === 'Locataire')) tName = nameMatch[1].trim();
+          const propMatch = ticket.description.match(/pour «\s*(.*?)\s*»/);
+          if (propMatch && (!pTitle || pTitle === 'Logement')) pTitle = propMatch[1].trim();
+        }
+
+        const tenantName = tName || 'Locataire';
+        const propertyTitle = pTitle || 'Logement';
+        const cleanDesc = extractCleanMaintenanceMessage(ticket.description);
         const dateStr = ticket.createdAt || (ticket.created_at ? new Date(ticket.created_at).toLocaleDateString('fr-FR') : 'Aujourd’hui');
         const categoryLabel = ticket.category ? String(ticket.category).toUpperCase() : 'PANNE';
 
@@ -179,7 +190,7 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
                   </h4>
 
                   <p className="text-xs text-slate-700 dark:text-slate-300 font-medium line-clamp-2 mt-0.5 leading-relaxed">
-                    « {ticket.description || 'Problème de maintenance signalé par le preneur.'} »
+                    « {cleanDesc || 'Problème de maintenance signalé par le preneur.'} »
                   </p>
                 </div>
               </div>

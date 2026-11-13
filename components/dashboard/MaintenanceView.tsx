@@ -22,12 +22,14 @@ import {
   XCircle,
   HelpCircle,
   StickyNote,
-  DollarSign
+  DollarSign,
+  Video,
+  Phone
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
-import { getMaintenanceTickets } from '@/src/lib/db';
+import { getMaintenanceTickets, extractCleanMaintenanceMessage } from '@/src/lib/db';
 
 export type MaintenanceStatus =
   | 'Nouveau'
@@ -160,19 +162,24 @@ export const MaintenanceView: React.FC = () => {
   const loadTickets = async () => {
     let list: MaintenanceItem[] = [];
     const userPropIds = new Set<string>();
+    const propertiesMap = new Map<string, any>();
 
     if (user?.id) {
       try {
         const { data: userProps } = await supabase
           .from('properties')
-          .select('id, title, address')
+          .select('id, title, address, city, commune, owner_id, agency_id')
           .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
         if (userProps) {
-          userProps.forEach((p: any) => userPropIds.add(p.id));
+          userProps.forEach((p: any) => {
+            userPropIds.add(p.id);
+            propertiesMap.set(p.id, p);
+          });
         }
       } catch {}
     }
 
+    // 1. Récupération prioritaire depuis Supabase
     try {
       const { data: dbTickets, error } = await getMaintenanceTickets(user?.id || '');
       if (!error && dbTickets && dbTickets.length > 0) {
@@ -180,7 +187,7 @@ export const MaintenanceView: React.FC = () => {
       }
     } catch {}
 
-    // Récupération de sécurité via les notifications de maintenance Supabase si liste vide
+    // 2. Récupération de sécurité via les notifications de maintenance Supabase si liste vide
     if (list.length === 0 && user?.id) {
       try {
         const { data: notifs } = await supabase
@@ -199,23 +206,44 @@ export const MaintenanceView: React.FC = () => {
               meta = n.metadata;
             } else if (n.payload) {
               meta = n.payload;
+            } else if (n.data) {
+              meta = typeof n.data === 'string' ? JSON.parse(n.data) : n.data;
             }
 
+            const rawText = meta.description || n.message || n.description || '';
             const ticketId = meta.ticketId || meta.ticket_id || n.id;
+
+            // Extraction intelligente si sauvegardé avec préfixe
+            const nameMatch = rawText.match(/^([A-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]+?)\s+a signalé/);
+            const propMatch = rawText.match(/pour «\s*(.*?)\s*»/);
+
+            const resolvedTenant = meta.tenantName && meta.tenantName !== 'Locataire'
+              ? meta.tenantName
+              : (nameMatch ? nameMatch[1].trim() : 'Locataire');
+
+            const resolvedPropTitle = meta.propertyTitle && meta.propertyTitle !== 'Logement'
+              ? meta.propertyTitle
+              : (propMatch ? propMatch[1].trim() : 'Logement');
+
+            const resolvedDateObj = n.created_at ? new Date(n.created_at) : new Date();
+            const resolvedDateStr = !isNaN(resolvedDateObj.getTime())
+              ? `${resolvedDateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${resolvedDateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+              : 'Date récente';
+
             if (!list.some(l => l.id === ticketId)) {
               list.push({
                 id: ticketId,
                 ticketNumber: `TCK-2026-${ticketId.slice(0, 4).toUpperCase()}`,
-                tenantName: meta.tenantName || 'Locataire',
-                tenantPhone: meta.tenantPhone || '+225 00 00 00 00',
-                propertyTitle: meta.propertyTitle || 'Logement',
-                propertyAddress: 'Abidjan',
+                tenantName: resolvedTenant,
+                tenantPhone: meta.tenantPhone || '',
+                propertyTitle: resolvedPropTitle,
+                propertyAddress: meta.propertyAddress || 'Côte d’Ivoire',
                 category: meta.category || 'Général',
                 priority: 'normale',
                 status: 'Nouveau',
-                createdAt: new Date(n.created_at || Date.now()).toLocaleDateString('fr-FR'),
+                createdAt: resolvedDateStr,
                 created_at: n.created_at || new Date().toISOString(),
-                description: n.message || n.description || 'Signalement de maintenance',
+                description: extractCleanMaintenanceMessage(rawText),
                 photos: meta.photos || [],
                 notes: []
               });
@@ -225,6 +253,7 @@ export const MaintenanceView: React.FC = () => {
       } catch {}
     }
 
+    // 3. Cache local réactif de secours
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
@@ -248,7 +277,95 @@ export const MaintenanceView: React.FC = () => {
       } catch {}
     }
 
-    setTickets(list);
+    // 4. Enrichissement et guérison globale certifiée de tous les tickets
+    // Recherche des contrats réels pour injecter les vraies informations locataire et bien
+    let contractsMap = new Map<string, any>();
+    try {
+      const { data: dbCnts } = await supabase
+        .from('contracts')
+        .select('id, contract_number, property_id, tenant_id, tenant_name, tenant_phone, properties(id, title, address, city, commune)');
+      if (dbCnts) {
+        dbCnts.forEach((c: any) => {
+          contractsMap.set(c.id, c);
+          if (c.property_id) contractsMap.set(`prop_${c.property_id}`, c);
+          if (c.tenant_id) contractsMap.set(`tenant_${c.tenant_id}`, c);
+        });
+      }
+    } catch {}
+
+    const enrichedList = list.map((t: any) => {
+      let tName = t.tenantName;
+      let tPhone = t.tenantPhone;
+      let pTitle = t.propertyTitle;
+      let pAddress = t.propertyAddress;
+      let desc = extractCleanMaintenanceMessage(t.description);
+
+      // Si le descriptif brut contenait le préfixe avec le nom et le bien, les récupérer
+      if (typeof t.description === 'string') {
+        const nameMatch = t.description.match(/^([A-ZÀ-ÿ][a-zA-ZÀ-ÿ\s]+?)\s+a signalé/);
+        if (nameMatch && (tName === 'Locataire' || !tName)) {
+          tName = nameMatch[1].trim();
+        }
+        const propMatch = t.description.match(/pour «\s*(.*?)\s*»/);
+        if (propMatch && (pTitle === 'Logement' || !pTitle)) {
+          pTitle = propMatch[1].trim();
+        }
+      }
+
+      // Recherche par contrat associé
+      const matchedContract =
+        (t.contract_id && contractsMap.get(t.contract_id)) ||
+        (t.property_id && contractsMap.get(`prop_${t.property_id}`)) ||
+        (t.tenant_id && contractsMap.get(`tenant_${t.tenant_id}`));
+
+      if (matchedContract) {
+        if (!tName || tName === 'Locataire') tName = matchedContract.tenant_name;
+        if (!tPhone || tPhone === '+225 00 00 00 00') tPhone = matchedContract.tenant_phone;
+        if ((!pTitle || pTitle === 'Logement') && matchedContract.properties?.title) {
+          pTitle = matchedContract.properties.title;
+        }
+        if ((!pAddress || pAddress === 'Abidjan') && matchedContract.properties) {
+          pAddress = [matchedContract.properties.commune, matchedContract.properties.city].filter(Boolean).join(', ') || matchedContract.properties.address || matchedContract.properties.city;
+        }
+      }
+
+      // Recherche par propriété connue du propriétaire
+      if (t.property_id && propertiesMap.has(t.property_id)) {
+        const propRow = propertiesMap.get(t.property_id);
+        if (!pTitle || pTitle === 'Logement') pTitle = propRow.title;
+        if (!pAddress || pAddress === 'Abidjan') {
+          pAddress = [propRow.commune, propRow.city].filter(Boolean).join(', ') || propRow.address || propRow.city;
+        }
+      }
+
+      // Formater la date et l'heure réelles
+      let dateFormatted = t.createdAt;
+      if (t.created_at) {
+        const dObj = new Date(t.created_at);
+        if (!isNaN(dObj.getTime())) {
+          dateFormatted = `${dObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${dObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+        }
+      }
+
+      return {
+        ...t,
+        tenantName: tName || 'Locataire',
+        tenantPhone: tPhone && tPhone !== '+225 00 00 00 00' ? tPhone : '',
+        propertyTitle: pTitle || 'Logement',
+        propertyAddress: pAddress || 'Côte d’Ivoire',
+        createdAt: dateFormatted || t.createdAt,
+        description: desc
+      };
+    });
+
+    setTickets(enrichedList);
+
+    // Mettre à jour le cache local avec les données réelles guéries
+    if (typeof window !== 'undefined' && enrichedList.length > 0) {
+      try {
+        localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(enrichedList));
+      } catch {}
+    }
   };
 
   useEffect(() => {
@@ -616,10 +733,19 @@ export const MaintenanceView: React.FC = () => {
                       </span>
                     </div>
                     <span className="text-xs text-slate-600 font-medium">
-                      {selectedTicket.propertyTitle} &bull; {selectedTicket.propertyAddress}
+                      {selectedTicket.propertyTitle} {selectedTicket.propertyAddress ? `• ${selectedTicket.propertyAddress}` : ''}
                     </span>
-                    <span className="text-[11px] text-slate-400 mt-0.5">
-                      Tel: {selectedTicket.tenantPhone} &bull; Signalé le {selectedTicket.createdAt}
+                    <span className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      {selectedTicket.tenantPhone && selectedTicket.tenantPhone !== '+225 00 00 00 00' && (
+                        <>
+                          <span className="flex items-center gap-1 font-semibold text-slate-600">
+                            <Phone className="w-3 h-3 text-slate-400" />
+                            {selectedTicket.tenantPhone}
+                          </span>
+                          <span>&bull;</span>
+                        </>
+                      )}
+                      <span>Signalé le {selectedTicket.createdAt}</span>
                     </span>
                   </div>
                 </div>
@@ -666,41 +792,94 @@ export const MaintenanceView: React.FC = () => {
               {/* Body Content */}
               <div className="p-6 flex-1 flex flex-col gap-5 overflow-y-auto">
                 {/* Description Box */}
-                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="text-xs font-black text-slate-800 uppercase tracking-wider block mb-1.5">
-                    Problème signalé par le locataire
-                  </span>
-                  <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line font-medium">
-                    {selectedTicket.description}
-                  </p>
+                {(() => {
+                  const isVideoMedia = (url: string) => {
+                    if (!url) return false;
+                    const clean = String(url).toLowerCase();
+                    return (
+                      clean.startsWith('data:video') ||
+                      clean.endsWith('.mp4') ||
+                      clean.endsWith('.mov') ||
+                      clean.endsWith('.webm') ||
+                      clean.endsWith('.m4v') ||
+                      clean.endsWith('.ogg') ||
+                      clean.includes('video/') ||
+                      clean.includes('/video')
+                    );
+                  };
 
-                  {/* Photos / Videos Attached */}
-                  {selectedTicket.photos && selectedTicket.photos.length > 0 && (
-                    <div className="mt-4 pt-3 border-t border-slate-200">
-                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                        Photos & Justificatifs fournis ({selectedTicket.photos.length})
-                      </span>
-                      <div className="flex items-center gap-3">
-                        {selectedTicket.photos.map((photo, idx) => (
-                          <div
-                            key={idx}
-                            onClick={() => setPreviewPhoto(photo)}
-                            className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-300 cursor-pointer group hover:ring-2 hover:ring-blue-600 transition-all bg-slate-900"
-                          >
-                            {photo.startsWith('data:video') || photo.endsWith('.mp4') || photo.includes('video') ? (
-                              <video src={photo} className="w-full h-full object-cover" />
-                            ) : (
-                              <img src={photo} alt="Avarie" className="w-full h-full object-cover group-hover:scale-105 transition-all" />
-                            )}
-                            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-all flex items-center justify-center">
-                              <Eye className="w-4 h-4 text-white drop-shadow opacity-0 group-hover:opacity-100" />
-                            </div>
-                          </div>
-                        ))}
+                  const ticketVideos = (selectedTicket.photos || []).filter(isVideoMedia);
+                  const ticketImages = (selectedTicket.photos || []).filter(url => !isVideoMedia(url));
+
+                  return (
+                    <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 shadow-xs flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                          Problème signalé par le locataire
+                        </span>
+                        <span className="text-[11px] font-bold text-slate-400">
+                          Message complet
+                        </span>
                       </div>
+
+                      <div className="p-3.5 rounded-xl bg-white border border-slate-200/90 shadow-2xs">
+                        <p className="text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap font-medium">
+                          {extractCleanMaintenanceMessage(selectedTicket.description)}
+                        </p>
+                      </div>
+
+                      {/* VIDÉOS ATTACHÉES — Lecteur direct haute visibilité */}
+                      {ticketVideos.length > 0 && (
+                        <div className="pt-3 border-t border-slate-200 flex flex-col gap-2.5">
+                          <div className="flex items-center gap-1.5 text-xs font-black text-blue-900">
+                            <Video className="w-4 h-4 text-blue-600" />
+                            <span>Vidéo(s) justificative(s) transmise(s) ({ticketVideos.length})</span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {ticketVideos.map((videoUrl, idx) => (
+                              <div
+                                key={idx}
+                                className="relative rounded-2xl overflow-hidden border-2 border-blue-500/30 bg-slate-950 shadow-md group"
+                              >
+                                <video
+                                  src={videoUrl}
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  className="w-full max-h-72 object-contain bg-black rounded-xl"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* PHOTOS ATTACHÉES */}
+                      {ticketImages.length > 0 && (
+                        <div className="pt-3 border-t border-slate-200 flex flex-col gap-2">
+                          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                            Photos fournies ({ticketImages.length})
+                          </span>
+                          <div className="flex flex-wrap items-center gap-3">
+                            {ticketImages.map((photo, idx) => (
+                              <div
+                                key={idx}
+                                onClick={() => setPreviewPhoto(photo)}
+                                className="relative w-24 h-24 rounded-xl overflow-hidden border border-slate-300 cursor-pointer group hover:ring-2 hover:ring-blue-600 transition-all bg-slate-900 shadow-xs"
+                              >
+                                <img src={photo} alt="Photo incident" className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-all flex items-center justify-center">
+                                  <Eye className="w-5 h-5 text-white drop-shadow opacity-0 group-hover:opacity-100" />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })()}
 
                 {/* TENANT OUT-OF-POCKET EXPENSE & RENT DEDUCTION REQUEST */}
                 {selectedTicket.rentDeductionRequest?.hasRequestedDeduction && (
