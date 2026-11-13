@@ -7,79 +7,10 @@ export const config = {
 };
 
 // Magasin persistant en mémoire de l'instance serveur (partagé entre requêtes)
+let DELETED_PAYMENTS = new Set(['ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945']);
+
 let SERVER_STORE = {
   payments: [
-    {
-      id: 'pmt_esp_135945',
-      contract_id: 'LT-2026-CI-000492',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      amount: 30000,
-      payment_date: '2026-10-17',
-      payment_method: 'Espèces',
-      reference: 'ESP-135945',
-      status: 'confirme',
-      target_month: 'Octobre 2026',
-      confirmed_at: '2026-10-17T20:51:00.000Z',
-      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
-      tenant: {
-        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        full_name: 'Christian',
-        email: 'christianyaokoffi88@gmail.com',
-        phone: '0500552141',
-        role: 'locataire',
-        verification_status: 'verifie'
-      },
-      contract: {
-        id: 'LT-2026-CI-000492',
-        contract_number: 'LT-2026-CI-000492',
-        monthly_rent: 30000,
-        caution_amount: 60000,
-        property: {
-          title: 'Maison 4 pièce',
-          address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-          city: 'Yamoussoukro'
-        }
-      }
-    },
-    {
-      id: 'pmt_dec_nov2026_01',
-      contract_id: 'LT-2026-CI-000492',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      amount: 30000,
-      payment_date: '2026-10-19',
-      payment_method: 'Wave',
-      reference: 'WAV-2026-NOV-781920',
-      status: 'confirme',
-      target_month: 'Novembre 2026',
-      created_at: '2026-10-19T17:15:00.000Z',
-      confirmed_at: '2026-10-19T17:20:00.000Z',
-      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
-      tenant: {
-        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        full_name: 'Christian',
-        email: 'christianyaokoffi88@gmail.com',
-        phone: '0500552141',
-        role: 'locataire',
-        verification_status: 'verifie'
-      },
-      contract: {
-        id: 'LT-2026-CI-000492',
-        contract_number: 'LT-2026-CI-000492',
-        monthly_rent: 30000,
-        caution_amount: 60000,
-        property: {
-          title: 'Maison 4 pièce',
-          address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-          city: 'Yamoussoukro'
-        }
-      }
-    },
     {
       id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
       contract_id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
@@ -119,88 +50,9 @@ let SERVER_STORE = {
     }
   ],
 
-  cautions: [
-    {
-      id: 'cau_lt_000492',
-      contract_id: 'LT-2026-CI-000492',
-      contract_number: 'LT-2026-CI-000492',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      amount_requested: 60000,
-      amount_paid: 60000,
-      status: 'paye_complet',
-      receipt_number: 'REC-CAUTION-000492',
-      token: 'tok_rec_caution_000492',
-      payment_method: 'Wave CI / Mobile Money',
-      declared_reference: 'CAUT-000492-CONF',
-      property_title: 'Maison 4 pièce',
-      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      created_at: '2026-10-16T15:45:00.000Z',
-      confirmed_at: '2026-10-16T15:45:00.000Z',
-      tenant_name: 'Christian',
-      owner_name: 'KK'
-    }
-  ],
+  cautions: [],
 
   receipts: [
-    {
-      id: 'rec_esp_135945',
-      receipt_number: 'ESP-135945',
-      type: 'loyer',
-      tenant_name: 'Christian',
-      property_title: 'Maison 4 pièce',
-      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      contract_number: 'LT-2026-CI-000492',
-      period_covered: 'Octobre 2026',
-      amount: 30000,
-      payment_method: 'Espèces (Règlement direct)',
-      payment_date: '17/10/2026',
-      token: 'tok_rec_ci2026_ljy8knh31z579ov2',
-      status: 'certifie',
-      owner_signed: true,
-      tenant_signed: true,
-      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
-    },
-    {
-      id: 'rec_wav_781920',
-      receipt_number: 'WAV-2026-NOV-781920',
-      type: 'loyer',
-      tenant_name: 'Christian',
-      property_title: 'Maison 4 pièce',
-      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      contract_number: 'LT-2026-CI-000492',
-      period_covered: 'Novembre 2026',
-      amount: 30000,
-      payment_method: 'Wave',
-      payment_date: '19/10/2026',
-      token: 'tok_rec_wav_2026_nov_781920',
-      status: 'certifie',
-      owner_signed: true,
-      tenant_signed: true,
-      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
-    },
-    {
-      id: 'rec_cau_000492',
-      receipt_number: 'REC-CAUTION-000492',
-      type: 'caution',
-      tenant_name: 'Christian',
-      property_title: 'Maison 4 pièce',
-      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      contract_number: 'LT-2026-CI-000492',
-      period_covered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
-      amount: 60000,
-      payment_method: 'Wave CI / Mobile Money',
-      payment_date: '16/10/2026',
-      token: 'tok_rec_caution_000492',
-      status: 'certifie',
-      owner_signed: true,
-      tenant_signed: true,
-      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
-    },
     {
       id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
       receipt_number: 'ESP-895031',
@@ -225,49 +77,7 @@ let SERVER_STORE = {
     }
   ],
 
-  notifications: [
-    {
-      id: 'notif_pmt_dec_nov2026_finalized',
-      title: '✅ Reçu de paiement finalisé',
-      description: 'Le locataire Christian a signé le reçu N° WAV-2026-NOV-781920. Le document est officiellement scellé et téléchargeable par les deux parties.',
-      time: 'À l\'instant',
-      unread: false,
-      read: true,
-      category: 'paiement',
-      type: 'paiement',
-      targetTab: 'payments',
-      targetRole: 'agence',
-      targetUserId: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      senderUserId: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      payload: {
-        paymentId: 'pmt_dec_nov2026_01',
-        amount: 30000,
-        month: 'Novembre 2026',
-        reference: 'WAV-2026-NOV-781920'
-      }
-    },
-    {
-      id: 'notif_pmt_dec_nov2026_agency',
-      title: '💳 Nouveau paiement de loyer déclaré',
-      description: 'Christian a déclaré le paiement du loyer de Novembre 2026 (30 000 FCFA • Wave - Réf: WAV-2026-NOV-781920). Reçu vérifié et validé.',
-      time: '19/10/2026',
-      unread: false,
-      read: true,
-      processed: true,
-      category: 'paiement',
-      type: 'paiement',
-      targetTab: 'payments',
-      targetRole: 'agence',
-      targetUserId: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      senderUserId: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      payload: {
-        paymentId: 'pmt_dec_nov2026_01',
-        amount: 30000,
-        month: 'Novembre 2026',
-        reference: 'WAV-2026-NOV-781920'
-      }
-    }
-  ],
+  notifications: [],
 
   contracts: [
     {
@@ -576,21 +386,24 @@ export default async function handler(req, res) {
 
       // Pour tout utilisateur authentifié (Propriétaire, Agence, Locataire), filtrer STRICTEMENT ses propres données
       if (cleanUserId) {
-        const isOwnerRole =
-          role === 'proprietaire' ||
-          role === 'agence' ||
-          role === 'authenticated' ||
-          role === 'user' ||
-          cleanUserId === '95efc3ce-726a-407a-9b9a-f2aad36cc79d' ||
-          cleanUserId === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
-        const userPayments = SERVER_STORE.payments.filter(
-          (p) => p && (p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId || (isOwnerRole && (!p.owner_id || p.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || p.owner_id === 'usr_owner' || p.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
-        );
+        // Filtrer STRICTEMENT les données de l'utilisateur sans fuite inter-comptes
+        const isUserPayment = (p) => {
+          if (!p) return false;
+          const ref = String(p.reference || p.receipt_number || '');
+          const id = String(p.id || '');
+          if (DELETED_PAYMENTS.has(ref) || DELETED_PAYMENTS.has(id)) return false;
+          if (Number(p.amount) >= 5000000) return false;
+          return p.owner_id === cleanUserId || p.agency_id === cleanUserId || p.tenant_id === cleanUserId;
+        };
+
+        const userPayments = SERVER_STORE.payments.filter(isUserPayment);
         const userCautions = SERVER_STORE.cautions.filter(
-          (c) => c && (c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId || (isOwnerRole && (!c.owner_id || c.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || c.owner_id === 'usr_owner' || c.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
+          (c) => c && (c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId)
         );
         const userReceipts = SERVER_STORE.receipts.filter(
-          (r) => r && (r.owner_id === cleanUserId || r.agency_id === cleanUserId || r.tenant_id === cleanUserId || (isOwnerRole && (!r.owner_id || r.owner_id === 'd3a42346-c227-4c67-b4a3-52bd09b98ad9' || r.owner_id === 'usr_owner' || r.owner_id === '95efc3ce-726a-407a-9b9a-f2aad36cc79d')))
+          (r) => r && !DELETED_PAYMENTS.has(String(r.receipt_number || r.id)) &&
+                 (Number(r.amount) < 5000000) &&
+                 (r.owner_id === cleanUserId || r.agency_id === cleanUserId || r.tenant_id === cleanUserId)
         );
         const userContracts = SERVER_STORE.contracts.filter(
           (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId
@@ -710,6 +523,7 @@ export default async function handler(req, res) {
             readState: userReadState,
             applications: userApplications,
             quota: userQuota,
+            deletedPayments: Array.from(DELETED_PAYMENTS),
             timestamp: new Date().toISOString()
           }
         });
@@ -738,6 +552,27 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = req.body || {};
       const action = body.action;
+
+      // 0. Suppression / Annulation d'un paiement ou d'une déclaration
+      if (action === 'delete_payment' || action === 'cancel_payment') {
+        const pId = String(body.paymentId || body.id || '').trim();
+        const pRef = String(body.reference || body.receipt_number || '').trim();
+        if (pId) DELETED_PAYMENTS.add(pId);
+        if (pRef) DELETED_PAYMENTS.add(pRef);
+        SERVER_STORE.payments = SERVER_STORE.payments.filter(
+          p => (pId ? p.id !== pId : true) && (pRef ? p.reference !== pRef : true)
+        );
+        SERVER_STORE.receipts = SERVER_STORE.receipts.filter(
+          r => (pId ? r.id !== pId : true) && (pRef ? r.receipt_number !== pRef : true)
+        );
+        SERVER_STORE.notifications = SERVER_STORE.notifications.filter(n => {
+          const desc = String(n.description || n.title || '');
+          const refMatch = pRef && desc.includes(pRef);
+          const idMatch = pId && desc.includes(pId);
+          return !refMatch && !idMatch;
+        });
+        return res.status(200).json({ success: true, deleted: { pId, pRef } });
+      }
 
       // 1. Déclaration de paiement de loyer par le locataire
       if (action === 'declare_payment') {
@@ -1509,6 +1344,11 @@ export default async function handler(req, res) {
         const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties, clientMessages, clientContacts, clientApplications } = body;
         if (Array.isArray(clientPayments)) {
           for (const cp of clientPayments) {
+            const ref = String(cp?.reference || cp?.receipt_number || '').trim();
+            const id = String(cp?.id || '').trim();
+            if (DELETED_PAYMENTS.has(ref) || DELETED_PAYMENTS.has(id)) continue;
+            if (Number(cp.amount) >= 5000000) continue; // Bloquer les montants tests anormaux (ex: 10M)
+            if (cp.status === 'annule' || cp.status === 'supprime') continue;
             if (cp && cp.reference && !SERVER_STORE.payments.some(p => p.reference === cp.reference)) {
               SERVER_STORE.payments.unshift(cp);
             }

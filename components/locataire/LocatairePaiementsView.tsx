@@ -1253,8 +1253,19 @@ export const LocatairePaiementsView: React.FC = () => {
       // 4. Mettre à jour l'état local du locataire immédiatement
       setPayments((prev) => prev.filter((p) => p.id !== pmt.id && p.reference !== pmt.reference));
 
-      // 5. Mettre à jour Supabase : marquer annule (permis par RLS) et tenter delete
+      // 5. Mettre à jour Supabase et /api/sync : marquer annule et purger définitivement du serveur
       try {
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'delete_payment',
+            paymentId: pmt.id,
+            reference: pmt.reference,
+            userId: user?.id
+          })
+        }).catch(() => {});
+
         if (pmt.id && isValidUuid(pmt.id)) {
           await supabase.from('rent_payments').update({ status: 'annule' }).eq('id', pmt.id);
           await supabase.from('rent_payments').delete().eq('id', pmt.id);

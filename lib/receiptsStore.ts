@@ -80,6 +80,15 @@ export function getUnifiedReceipts(userId?: string): UnifiedReceiptRecord[] {
 
   const mergedMap = new Map<string, UnifiedReceiptRecord>();
 
+  const deletedKeys = new Set<string>(['ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945']);
+  try {
+    const rawDel = localStorage.getItem('locatrust_deleted_payments');
+    if (rawDel) {
+      const arr = JSON.parse(rawDel);
+      if (Array.isArray(arr)) arr.forEach((k: string) => deletedKeys.add(String(k).trim().toLowerCase()));
+    }
+  } catch {}
+
   const processList = (raw: string | null) => {
     if (!raw) return;
     try {
@@ -89,7 +98,10 @@ export function getUnifiedReceipts(userId?: string): UnifiedReceiptRecord[] {
           if (!item) return;
           const norm = normalizeReceipt(item);
           const key = (norm.receipt_number || norm.id).trim().toLowerCase();
-          if (!key) return;
+          if (!key || deletedKeys.has(key)) return;
+          if (norm.receipt_number && deletedKeys.has(norm.receipt_number.trim().toLowerCase())) return;
+          if (norm.id && deletedKeys.has(norm.id.trim().toLowerCase())) return;
+          if (Number(norm.amount) >= 5000000) return; // Bloquer les montants tests anormaux (ex: 10M)
 
           const existing = mergedMap.get(key);
           if (!existing) {

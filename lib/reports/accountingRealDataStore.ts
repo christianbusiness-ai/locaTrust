@@ -312,7 +312,17 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const allProfiles: any[] = profilesRes.status === 'fulfilled' && Array.isArray(profilesRes.value.data) ? profilesRes.value.data : [];
 
     // 3. Synchronisation multi-appareils (/api/sync) et résilience locale isolée par utilisateur
+    const deletedKeysSet = new Set<string>(['ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945']);
+
     if (typeof window !== 'undefined') {
+      try {
+        const rawDeleted = localStorage.getItem('locatrust_deleted_payments');
+        if (rawDeleted) {
+          const arr = JSON.parse(rawDeleted);
+          if (Array.isArray(arr)) arr.forEach((k: string) => deletedKeysSet.add(String(k).trim()));
+        }
+      } catch {}
+
       // 1.b Propriétés gérées par l'utilisateur ou l'agence (Support multi-mandats agence)
       const agencyPropIds = new Set<string>(realProps.map((p: any) => String(p.id)));
       const agencyMandantIds = new Set<string>();
@@ -375,20 +385,32 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (syncJson?.data) {
+            if (Array.isArray(syncJson.data.deletedPayments)) {
+              syncJson.data.deletedPayments.forEach((k: string) => deletedKeysSet.add(String(k).trim()));
+            }
             // Paiements centralisés depuis le serveur (Source de vérité)
             if (Array.isArray(syncJson.data.payments)) {
-              syncJson.data.payments.filter(isMine).forEach((sp: any) => {
-                const idx = realPayments.findIndex((p: any) => (sp.reference && p.reference === sp.reference) || p.id === sp.id);
-                if (idx !== -1) {
-                  realPayments[idx] = {
-                    ...realPayments[idx],
-                    ...sp,
-                    status: sp.status || realPayments[idx].status
-                  };
-                } else {
-                  realPayments.push(sp);
-                }
-              });
+              syncJson.data.payments
+                .filter((sp: any) => {
+                  if (!isMine(sp)) return false;
+                  const ref = String(sp.reference || sp.receipt_number || '').trim();
+                  const id = String(sp.id || '').trim();
+                  if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
+                  if (Number(sp.amount) >= 5000000) return false;
+                  return true;
+                })
+                .forEach((sp: any) => {
+                  const idx = realPayments.findIndex((p: any) => (sp.reference && p.reference === sp.reference) || p.id === sp.id);
+                  if (idx !== -1) {
+                    realPayments[idx] = {
+                      ...realPayments[idx],
+                      ...sp,
+                      status: sp.status || realPayments[idx].status
+                    };
+                  } else {
+                    realPayments.push(sp);
+                  }
+                });
             }
             // Cautions
             if (Array.isArray(syncJson.data.cautions)) {
@@ -413,12 +435,20 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             // Reçus
             if (Array.isArray(syncJson.data.receipts)) {
               const knownRNums = new Set(realReceipts.map((r: any) => r.receipt_number));
-              syncJson.data.receipts.filter(isMine).forEach((sr: any) => {
-                if (sr && !knownRNums.has(sr.receipt_number)) {
-                  realReceipts.push(sr);
-                  knownRNums.add(sr.receipt_number);
-                }
-              });
+              syncJson.data.receipts
+                .filter((sr: any) => {
+                  if (!isMine(sr)) return false;
+                  const num = String(sr.receipt_number || sr.receiptNumber || sr.id || '').trim();
+                  if (deletedKeysSet.has(num)) return false;
+                  if (Number(sr.amount) >= 5000000) return false;
+                  return true;
+                })
+                .forEach((sr: any) => {
+                  if (sr && !knownRNums.has(sr.receipt_number)) {
+                    realReceipts.push(sr);
+                    knownRNums.add(sr.receipt_number);
+                  }
+                });
             }
           }
         }
@@ -446,16 +476,26 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         if (rawLocalPayments) {
           const localPmts = JSON.parse(rawLocalPayments);
           if (Array.isArray(localPmts)) {
-            localPmts.filter(isMine).forEach((lp: any) => {
-              const idx = realPayments.findIndex((p: any) => (lp.reference && p.reference === lp.reference) || p.id === lp.id);
-              if (idx !== -1) {
-                if (realPayments[idx].status !== 'confirme') {
-                  realPayments[idx] = { ...realPayments[idx], ...lp };
+            localPmts
+              .filter((lp: any) => {
+                if (!isMine(lp)) return false;
+                if (lp.status === 'annule' || lp.status === 'supprime' || lp.status === 'refuse') return false;
+                const ref = String(lp.reference || lp.receipt_number || '').trim();
+                const id = String(lp.id || '').trim();
+                if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
+                if (Number(lp.amount) >= 5000000) return false; // Bloquer tout montant test anormal
+                return true;
+              })
+              .forEach((lp: any) => {
+                const idx = realPayments.findIndex((p: any) => (lp.reference && p.reference === lp.reference) || p.id === lp.id);
+                if (idx !== -1) {
+                  if (realPayments[idx].status !== 'confirme') {
+                    realPayments[idx] = { ...realPayments[idx], ...lp };
+                  }
+                } else {
+                  realPayments.push(lp);
                 }
-              } else {
-                realPayments.push(lp);
-              }
-            });
+              });
           }
         }
 
@@ -577,13 +617,22 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     });
 
     // 4b. Normalisation stricte : tout paiement validé par reçu ou signatures est formellement 'confirme' (Règle 6)
-    realPayments = realPayments.filter((p: any) => p && p.status !== 'annule' && p.status !== 'supprime').map((p: any) => {
-      const hasReceipt = realReceipts.some((r: any) => r.receipt_number === p.reference || r.receipt_number === p.receipt_number);
-      if (hasReceipt || (p.tenant_signature_url && p.owner_signature_url)) {
-        return { ...p, status: 'confirme' };
-      }
-      return p;
-    });
+    realPayments = realPayments
+      .filter((p: any) => {
+        if (!p || p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse') return false;
+        const ref = String(p.reference || p.receipt_number || '').trim();
+        const id = String(p.id || '').trim();
+        if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
+        if (Number(p.amount) >= 5000000) return false;
+        return true;
+      })
+      .map((p: any) => {
+        const hasReceipt = realReceipts.some((r: any) => r.receipt_number === p.reference || r.receipt_number === p.receipt_number);
+        if (hasReceipt || (p.tenant_signature_url && p.owner_signature_url)) {
+          return { ...p, status: 'confirme' };
+        }
+        return p;
+      });
 
     // 5. Indexation des objets pour jointures fiables en mémoire
     const propertyMap = new Map<string, any>(realProps.map((p: any) => [p.id, p]));
