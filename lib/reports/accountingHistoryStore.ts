@@ -233,7 +233,7 @@ const REF_YEAR_KEY = 'locatrust_accounting_reference_year';
 const ARCHIVED_YEARS_KEY = 'locatrust_accounting_archived_years';
 
 const DEFAULT_CURRENT_YEAR = '2026';
-const DEFAULT_ARCHIVED_YEARS = ['2027'];
+const DEFAULT_ARCHIVED_YEARS = ['2025'];
 
 // In-memory temporary viewing year (resets automatically on reload / new session) (Point 4 & 5 du prompt)
 let inMemoryViewingYear: string | null = null;
@@ -244,7 +244,7 @@ export function getArchivedYears(): string[] {
     const raw = localStorage.getItem(ARCHIVED_YEARS_KEY);
     if (!raw) return DEFAULT_ARCHIVED_YEARS;
     const parsed = JSON.parse(raw);
-    const valid = Array.isArray(parsed) ? parsed.filter((y: string) => Number(y) >= 2026) : [];
+    const valid = Array.isArray(parsed) ? parsed.filter((y: string) => Number(y) >= 2025) : [];
     return valid.length > 0 ? valid : DEFAULT_ARCHIVED_YEARS;
   } catch {
     return DEFAULT_ARCHIVED_YEARS;
@@ -254,7 +254,7 @@ export function getArchivedYears(): string[] {
 export function saveArchivedYears(years: string[]): void {
   if (typeof window === 'undefined') return;
   try {
-    const filtered = (years || []).filter((y) => Number(y) >= 2026);
+    const filtered = (years || []).filter((y) => Number(y) >= 2025);
     localStorage.setItem(ARCHIVED_YEARS_KEY, JSON.stringify(filtered));
   } catch (e) {
     console.error('Failed to save archived years:', e);
@@ -262,17 +262,19 @@ export function saveArchivedYears(years: string[]): void {
 }
 
 export function getCurrentAccountingYear(userId?: string): string {
-  if (typeof window === 'undefined') return DEFAULT_CURRENT_YEAR;
+  const realNowYear = String(new Date().getFullYear()); // '2026'
+  if (typeof window === 'undefined') return realNowYear;
   try {
     if (userId) {
       const userStored = localStorage.getItem(`locatrust_${userId}_accounting_year`);
-      if (userStored && Number(userStored) >= 2026) return userStored;
+      if (userStored && Number(userStored) === Number(realNowYear)) return userStored;
     }
     const stored = localStorage.getItem(CURRENT_ACCOUNTING_YEAR_KEY) || localStorage.getItem(REF_YEAR_KEY);
-    if (stored && Number(stored) >= 2026) return stored;
-    return DEFAULT_CURRENT_YEAR;
+    // Ne jamais forcer une année future (ex: 2027) par défaut à l'ouverture si nous sommes en 2026
+    if (stored && Number(stored) === Number(realNowYear)) return stored;
+    return realNowYear;
   } catch {
-    return DEFAULT_CURRENT_YEAR;
+    return realNowYear;
   }
 }
 
@@ -372,9 +374,9 @@ export function setActiveReferenceYear(year: string): { success: boolean; active
 export function getAvailableYears(): string[] {
   const current = getCurrentAccountingYear();
   const archived = getArchivedYears();
-  const set = new Set([current, ...archived, '2027', '2026']);
+  const set = new Set([current, ...archived, '2027', '2026', '2025']);
   return Array.from(set)
-    .filter((y) => Number(y) >= 2026)
+    .filter((y) => Number(y) >= 2025)
     .sort((a, b) => Number(b) - Number(a));
 }
 

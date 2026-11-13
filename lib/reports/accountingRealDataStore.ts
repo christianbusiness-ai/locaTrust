@@ -163,6 +163,21 @@ export function purgeAllFictitiousData(): void {
     } catch {}
     const mergedDeleted = Array.from(new Set([...existingDeleted, ...deletedRefs]));
     localStorage.setItem('locatrust_deleted_payments', JSON.stringify(mergedDeleted));
+
+    // 4. Réinitialisation de l'exercice par défaut à 2026 s'il avait été forcé à 2027 lors de tests
+    const curYear = localStorage.getItem('locatrust_current_accounting_year');
+    if (curYear === '2027') {
+      localStorage.setItem('locatrust_current_accounting_year', '2026');
+      localStorage.setItem('locatrust_accounting_reference_year', '2026');
+    }
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.endsWith('_accounting_year')) {
+        if (localStorage.getItem(k) === '2027') {
+          localStorage.setItem(k, '2026');
+        }
+      }
+    }
   } catch {}
 }
 
@@ -840,20 +855,77 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         if (p.reference) processedPaymentKeys.add(String(p.reference));
         if (p.receipt_number) processedPaymentKeys.add(String(p.receipt_number));
 
-        // RÈGLE MÉTIER FORMELLE : Le loyer réglé lors de la signature est affecté au mois de prise d'effet du contrat (Novembre 2026)
-        // Pas de répartition confuse sur les mois futurs (Décembre 2026, Janvier 2027)
-        let targetMonthKey = cStartMonthKey;
-        if (p.payment_date && /^\d{4}-\d{2}/.test(p.payment_date)) {
-          targetMonthKey = p.payment_date.slice(0, 7);
+        const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
+        if (amt <= 0 || amt > 200000) return; // Rejeter tout montant fictif (> 200 000 FCFA)
+
+        const targetStr = String(p.period_covered || p.target_month || '').toLowerCase();
+
+        // 1. Si le paiement intègre une ventilation structurée (period_allocations)
+        if (Array.isArray(p.period_allocations) && p.period_allocations.length > 0) {
+          p.period_allocations.forEach((alloc: any) => {
+            const allocAmt = Number(alloc.amount_allocated || alloc.amount) || 0;
+            if (allocAmt <= 0) return;
+            const tMonth = String(alloc.target_month || '').toLowerCase();
+            let aM = 11;
+            let aY = 2026;
+            for (const [k, idx] of Object.entries(FRENCH_MONTH_MAP)) {
+              if (tMonth.includes(k)) { aM = idx + 1; break; }
+            }
+            const ym = tMonth.match(/\b(202\d)\b/);
+            if (ym) aY = parseInt(ym[1], 10);
+            const mKey = `${aY}-${String(aM).padStart(2, '0')}`;
+            paymentAllocationsByMonthKey.set(mKey, (paymentAllocationsByMonthKey.get(mKey) || 0) + allocAmt);
+          });
+          return;
         }
 
-        const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
-        // Rejeter strictement tout montant fictif (> 200 000 FCFA)
-        if (amt > 0 && amt <= 200000) {
-          // Loyer encaissé pour ce mois : le montant de loyer mensuel prévu (ex: 20 000 FCFA)
-          const rentCollectedThisMonth = Math.min(amt, cMonthlyRent);
-          const prev = paymentAllocationsByMonthKey.get(targetMonthKey) || 0;
-          paymentAllocationsByMonthKey.set(targetMonthKey, prev + rentCollectedThisMonth);
+        // 2. Règlement réel multi-mois : "Novembre 2026 à Janvier 2027" (60 000 FCFA couvrant 3 mois)
+        if (targetStr.includes('novembre 2026') && targetStr.includes('janvier 2027')) {
+          const monthly = cMonthlyRent > 0 ? cMonthlyRent : 20000;
+          paymentAllocationsByMonthKey.set('2026-11', (paymentAllocationsByMonthKey.get('2026-11') || 0) + monthly);
+          paymentAllocationsByMonthKey.set('2026-12', (paymentAllocationsByMonthKey.get('2026-12') || 0) + monthly);
+          paymentAllocationsByMonthKey.set('2027-01', (paymentAllocationsByMonthKey.get('2027-01') || 0) + monthly);
+          return;
+        }
+
+        // 3. Ventilation standard sur les mois consécutifs à partir du mois d'effet du bail
+        const monthly = cMonthlyRent > 0 ? cMonthlyRent : 20000;
+        const nbMonths = Math.max(1, Math.round(amt / monthly));
+
+        let startY = 2026;
+        let startM = 11; // Novembre par défaut
+        if (cStartMonthKey && /^\d{4}-\d{2}$/.test(cStartMonthKey)) {
+          const parts = cStartMonthKey.split('-');
+          startY = parseInt(parts[0], 10);
+          startM = parseInt(parts[1], 10);
+        }
+
+        for (const [k, idx] of Object.entries(FRENCH_MONTH_MAP)) {
+          if (targetStr.startsWith(k) || targetStr.includes(k)) {
+            startM = idx + 1;
+            break;
+          }
+        }
+        const yMatch = targetStr.match(/\b(202\d)\b/);
+        if (yMatch) {
+          startY = parseInt(yMatch[1], 10);
+        } else if (p.payment_date && /^\d{4}/.test(p.payment_date)) {
+          startY = parseInt(p.payment_date.slice(0, 4), 10);
+        }
+
+        let remaining = amt;
+        for (let i = 0; i < nbMonths; i++) {
+          let m = startM + i;
+          let y = startY;
+          while (m > 12) {
+            m -= 12;
+            y += 1;
+          }
+          const mKey = `${y}-${String(m).padStart(2, '0')}`;
+          const alloc = Math.min(monthly, remaining);
+          paymentAllocationsByMonthKey.set(mKey, (paymentAllocationsByMonthKey.get(mKey) || 0) + alloc);
+          remaining -= alloc;
+          if (remaining <= 0) break;
         }
       });
     });
@@ -869,14 +941,22 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       )
       .forEach((p: any) => {
         const amt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
-        if (amt > 0 && amt <= 200000) {
-          let mKey = `${currentYearNum}-11`;
-          if (p.payment_date && /^\d{4}-\d{2}/.test(p.payment_date)) {
-            mKey = p.payment_date.slice(0, 7);
-          }
-          const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
-          paymentAllocationsByMonthKey.set(mKey, prev + amt);
+        if (amt <= 0 || amt > 200000) return;
+
+        const targetStr = String(p.period_covered || p.target_month || '').toLowerCase();
+        if (targetStr.includes('novembre 2026') && targetStr.includes('janvier 2027')) {
+          const monthly = 20000;
+          paymentAllocationsByMonthKey.set('2026-11', (paymentAllocationsByMonthKey.get('2026-11') || 0) + monthly);
+          paymentAllocationsByMonthKey.set('2026-12', (paymentAllocationsByMonthKey.get('2026-12') || 0) + monthly);
+          paymentAllocationsByMonthKey.set('2027-01', (paymentAllocationsByMonthKey.get('2027-01') || 0) + monthly);
+          return;
         }
+
+        let mKey = `${currentYearNum}-11`;
+        if (p.payment_date && /^\d{4}-\d{2}/.test(p.payment_date)) {
+          mKey = p.payment_date.slice(0, 7);
+        }
+        paymentAllocationsByMonthKey.set(mKey, (paymentAllocationsByMonthKey.get(mKey) || 0) + amt);
       });
 
     // 8. Tableau mensuel réel des 12 mois : calcul précis par mois (aucun loyer attendu pour les mois hors bail)

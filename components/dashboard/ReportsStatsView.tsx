@@ -45,7 +45,10 @@ export const ReportsStatsView: React.FC = () => {
   const { user } = useAuth();
   const [period, setPeriod] = useState<ReportPeriod>('ce_mois');
   const [selectedYear, setSelectedYearState] = useState<string>('2026');
-  const [selectedHistoricalMonth, setSelectedHistoricalMonth] = useState<string>('2026-10');
+  const [selectedHistoricalMonth, setSelectedHistoricalMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [selectedQuarter, setSelectedQuarter] = useState<'T1' | 'T2' | 'T3' | 'T4'>('T4');
   const [realDataset, setRealDataset] = useState<RealAccountingDataset | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);

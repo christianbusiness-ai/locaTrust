@@ -298,25 +298,32 @@ export const AccountingExportView: React.FC = () => {
     }
 
     const getValidMonthNums = (periodId: string): string[] => {
-      if (periodId === 'mois_en_cours') return ['10']; // Mois en cours d'exercice
-      if (periodId === 'mois_precedent') return ['09'];
+      const now = new Date();
+      const currentMonthNum = String(now.getMonth() + 1).padStart(2, '0');
+      const prevMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+      const prevMonthNum = String(prevMonth).padStart(2, '0');
+
+      if (periodId === 'mois_en_cours') return [currentMonthNum];
+      if (periodId === 'mois_precedent') return [prevMonthNum];
       if (periodId.startsWith('t1')) return ['01', '02', '03'];
       if (periodId.startsWith('t2')) return ['04', '05', '06'];
       if (periodId.startsWith('t3')) return ['07', '08', '09'];
       if (periodId.startsWith('t4')) return ['10', '11', '12'];
       if (periodId === 'semestre_1') return ['01', '02', '03', '04', '05', '06'];
       if (periodId === 'semestre_2') return ['07', '08', '09', '10', '11', '12'];
-      return ['10'];
+      return [currentMonthNum];
     };
 
     const validMonths = getValidMonthNums(selectedPeriod);
+    const MONTH_NAMES_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
     const isDateInPeriod = (dateStr?: string, periodText?: string): boolean => {
       if (periodText) {
         const pt = String(periodText).toLowerCase();
-        if (validMonths.includes('10') && pt.includes('octobre')) return true;
-        if (validMonths.includes('11') && pt.includes('novembre')) return true;
-        if (validMonths.includes('12') && pt.includes('décembre')) return true;
-        if (validMonths.includes('09') && pt.includes('septembre')) return true;
+        for (const vm of validMonths) {
+          const mIdx = parseInt(vm, 10) - 1;
+          const mName = MONTH_NAMES_FR[mIdx];
+          if (mName && pt.includes(mName)) return true;
+        }
       }
       if (dateStr) {
         for (const vm of validMonths) {
