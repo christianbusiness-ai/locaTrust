@@ -767,7 +767,7 @@ export default async function handler(req, res) {
         const notif = {
           id: `notif_maint_${Date.now()}`,
           title: '⚠️ Incident de maintenance signalé',
-          description: `${newTicket.tenantName || 'Le locataire'} a signalé un problème (${newTicket.category || 'Général'}) pour « ${newTicket.propertyTitle || 'le bien'} » : ${(newTicket.description || '').slice(0, 50)}...`,
+          description: `${newTicket.tenantName || 'Le locataire'} a signalé un problème (${newTicket.category || 'Général'}) pour « ${newTicket.propertyTitle || 'le bien'} » : ${newTicket.description || ''}`,
           time: "À l'instant",
           unread: true,
           read: false,
@@ -775,7 +775,17 @@ export default async function handler(req, res) {
           type: 'maintenance',
           targetTab: 'maintenance',
           targetRole: 'proprietaire',
-          targetUserId: newTicket.ownerId || ''
+          targetUserId: newTicket.ownerId || '',
+          payload: {
+            ticketId: tid,
+            tenantName: newTicket.tenantName,
+            tenantPhone: newTicket.tenantPhone,
+            propertyTitle: newTicket.propertyTitle,
+            propertyAddress: newTicket.propertyAddress,
+            category: newTicket.category,
+            description: newTicket.description,
+            photos: newTicket.photos
+          }
         };
         SERVER_STORE.notifications = [
           notif,

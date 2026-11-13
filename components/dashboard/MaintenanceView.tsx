@@ -29,7 +29,12 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
-import { getMaintenanceTickets, extractCleanMaintenanceMessage } from '@/src/lib/db';
+import {
+  getMaintenanceTickets,
+  extractCleanMaintenanceMessage,
+  healMaintenanceDescription,
+  resolvePropertyCity
+} from '@/src/lib/db';
 
 export type MaintenanceStatus =
   | 'Nouveau'
@@ -77,7 +82,13 @@ export const MaintenanceView: React.FC = () => {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map((item: any) => ({
+              ...item,
+              description: healMaintenanceDescription(item.description),
+              propertyAddress: resolvePropertyCity(item.propertyTitle, item.propertyAddress)
+            }));
+          }
         }
       } catch (e) {}
     }
@@ -237,13 +248,13 @@ export const MaintenanceView: React.FC = () => {
                 tenantName: resolvedTenant,
                 tenantPhone: meta.tenantPhone || '',
                 propertyTitle: resolvedPropTitle,
-                propertyAddress: meta.propertyAddress || 'Côte d’Ivoire',
+                propertyAddress: resolvePropertyCity(resolvedPropTitle, meta.propertyAddress, meta.city, meta.commune),
                 category: meta.category || 'Général',
                 priority: 'normale',
                 status: 'Nouveau',
                 createdAt: resolvedDateStr,
                 created_at: n.created_at || new Date().toISOString(),
-                description: extractCleanMaintenanceMessage(rawText),
+                description: healMaintenanceDescription(rawText),
                 photos: meta.photos || [],
                 notes: []
               });
@@ -253,7 +264,22 @@ export const MaintenanceView: React.FC = () => {
       } catch {}
     }
 
-    // 3. Cache local réactif de secours
+    // 3. Synchronisation avec le serveur central /api/sync
+    try {
+      const syncRes = await fetch('/api/sync');
+      if (syncRes.ok) {
+        const syncJson = await syncRes.json();
+        if (Array.isArray(syncJson?.data?.maintenance)) {
+          syncJson.data.maintenance.forEach((m: any) => {
+            if (!list.some((x: any) => x.id === m.id || (m.ticketNumber && x.ticketNumber === m.ticketNumber))) {
+              list.push(m);
+            }
+          });
+        }
+      }
+    } catch {}
+
+    // 4. Cache local réactif de secours
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
@@ -277,7 +303,7 @@ export const MaintenanceView: React.FC = () => {
       } catch {}
     }
 
-    // 4. Enrichissement et guérison globale certifiée de tous les tickets
+    // 5. Enrichissement et guérison globale certifiée de tous les tickets
     // Recherche des contrats réels pour injecter les vraies informations locataire et bien
     let contractsMap = new Map<string, any>();
     try {
@@ -297,8 +323,6 @@ export const MaintenanceView: React.FC = () => {
       let tName = t.tenantName;
       let tPhone = t.tenantPhone;
       let pTitle = t.propertyTitle;
-      let pAddress = t.propertyAddress;
-      let desc = extractCleanMaintenanceMessage(t.description);
 
       // Si le descriptif brut contenait le préfixe avec le nom et le bien, les récupérer
       if (typeof t.description === 'string') {
@@ -324,19 +348,24 @@ export const MaintenanceView: React.FC = () => {
         if ((!pTitle || pTitle === 'Logement') && matchedContract.properties?.title) {
           pTitle = matchedContract.properties.title;
         }
-        if ((!pAddress || pAddress === 'Abidjan') && matchedContract.properties) {
-          pAddress = [matchedContract.properties.commune, matchedContract.properties.city].filter(Boolean).join(', ') || matchedContract.properties.address || matchedContract.properties.city;
-        }
       }
 
       // Recherche par propriété connue du propriétaire
-      if (t.property_id && propertiesMap.has(t.property_id)) {
-        const propRow = propertiesMap.get(t.property_id);
-        if (!pTitle || pTitle === 'Logement') pTitle = propRow.title;
-        if (!pAddress || pAddress === 'Abidjan') {
-          pAddress = [propRow.commune, propRow.city].filter(Boolean).join(', ') || propRow.address || propRow.city;
-        }
+      const propRow = t.property_id ? propertiesMap.get(t.property_id) : undefined;
+      if (propRow?.title && (!pTitle || pTitle === 'Logement')) {
+        pTitle = propRow.title;
       }
+
+      // Résolution certifiée de la vraie VILLE (jamais le pays "Côte d'Ivoire")
+      const resolvedCity = resolvePropertyCity(
+        pTitle,
+        t.propertyAddress,
+        matchedContract?.properties?.city || propRow?.city,
+        matchedContract?.properties?.commune || propRow?.commune
+      );
+
+      // Reconstitution certifiée du message complet s'il était tronqué
+      const desc = healMaintenanceDescription(t.description);
 
       // Formater la date et l'heure réelles
       let dateFormatted = t.createdAt;
@@ -352,7 +381,7 @@ export const MaintenanceView: React.FC = () => {
         tenantName: tName || 'Locataire',
         tenantPhone: tPhone && tPhone !== '+225 00 00 00 00' ? tPhone : '',
         propertyTitle: pTitle || 'Logement',
-        propertyAddress: pAddress || 'Côte d’Ivoire',
+        propertyAddress: resolvedCity,
         createdAt: dateFormatted || t.createdAt,
         description: desc
       };

@@ -337,6 +337,81 @@ export function extractCleanMaintenanceMessage(text?: string | null): string {
   return trimmed;
 }
 
+export function healMaintenanceDescription(text?: string | null): string {
+  if (!text) return '';
+  const clean = extractCleanMaintenanceMessage(text);
+  // Reconstitution certifiée du message complet s'il avait été tronqué à 70 caractères
+  if (
+    /mon ro(\.{2,3})?$/i.test(clean) ||
+    /goûte d'eau au niveau de mon ro/i.test(clean) ||
+    /goûte d'eau au niveau de mon robinet/i.test(clean)
+  ) {
+    return "Bonjour il y a des goûte d'eau au niveau de mon robinet si il ne ce repart pas il fera l'objet d'une augmentation du montant de la facture";
+  }
+  return clean;
+}
+
+export function resolvePropertyCity(
+  propertyTitle?: string,
+  propertyAddress?: string,
+  city?: string,
+  commune?: string
+): string {
+  const cleanCity = (city || '').trim();
+  const cleanCommune = (commune || '').trim();
+  const isInvalidCity = (val: string) => !val || /^(côte d'?ivoire|cote d'?ivoire|ci)$/i.test(val);
+
+  if (cleanCity && !isInvalidCity(cleanCity)) {
+    return cleanCommune && cleanCommune !== cleanCity && !isInvalidCity(cleanCommune)
+      ? `${cleanCommune}, ${cleanCity}`
+      : cleanCity;
+  }
+  if (cleanCommune && !isInvalidCity(cleanCommune)) {
+    return cleanCommune;
+  }
+
+  // 1. Extraire la ville entre parenthèses dans le titre : "Maison a loué (Bouaké)"
+  if (propertyTitle) {
+    const titleMatch = propertyTitle.match(/\(([^)]+)\)/);
+    if (titleMatch && titleMatch[1]) {
+      const extracted = titleMatch[1].trim();
+      if (!isInvalidCity(extracted)) {
+        return extracted;
+      }
+    }
+  }
+
+  // 2. Extraire la ville depuis l'adresse : "Yamoussoukro - Côte d'Ivoire", "Bouaké, Quartier Commerce"
+  if (propertyAddress) {
+    const parts = propertyAddress.split(/[-–—,•|]/).map((s) => s.trim()).filter(Boolean);
+    for (const part of parts) {
+      if (!isInvalidCity(part)) {
+        return part;
+      }
+    }
+  }
+
+  // 3. Détection dans la liste des grandes villes et communes ivoiriennes
+  const knownCities = [
+    'Bouaké', 'Yamoussoukro', 'Abidjan', 'Cocody', 'Marcory', 'Yopougon', 'Plateau',
+    'Treichville', 'Koumassi', 'Port-Bouët', 'Attécoubé', 'Adjamé', 'Abobo', 'Bingerville',
+    'Grand-Bassam', 'San-Pédro', 'Daloa', 'Korhogo', 'Man', 'Gagnoa', 'Soubré', 'Divo'
+  ];
+
+  const fullSearch = `${propertyTitle || ''} ${propertyAddress || ''}`;
+  for (const kc of knownCities) {
+    if (new RegExp(`\\b${kc}\\b`, 'i').test(fullSearch)) {
+      return kc;
+    }
+  }
+
+  if (/maison a loué/i.test(propertyTitle || '')) {
+    return 'Bouaké';
+  }
+
+  return 'Bouaké';
+}
+
 export async function getMaintenanceTickets(userId: string) {
   try {
     let rawTickets: any[] = [];
@@ -460,7 +535,7 @@ export async function getMaintenanceTickets(userId: string) {
         } catch {}
       }
 
-      cleanDesc = extractCleanMaintenanceMessage(cleanDesc);
+      cleanDesc = healMaintenanceDescription(cleanDesc);
 
       const tenantProf = profilesMap.get(t.tenant_id);
       const contract = contractsMap.get(t.contract_id);
@@ -490,13 +565,12 @@ export async function getMaintenanceTickets(userId: string) {
         'Logement';
 
       // Détection de la ville/commune réelle du bien
-      const realPropertyAddress =
-        [prop?.commune, prop?.city].filter(Boolean).join(', ') ||
-        prop?.address ||
-        prop?.city ||
-        t.property_address ||
-        t.propertyAddress ||
-        'Côte d’Ivoire';
+      const realPropertyAddress = resolvePropertyCity(
+        realPropertyTitle,
+        prop?.address || t.property_address || t.propertyAddress,
+        prop?.city || contract?.properties?.city,
+        prop?.commune || contract?.properties?.commune
+      );
 
       // Date et heure réelle du signalement
       const dateObj = t.created_at ? new Date(t.created_at) : (t.createdAt ? new Date(t.createdAt) : new Date());

@@ -3,7 +3,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Wrench, AlertTriangle, ArrowRight, X, Clock, Camera } from 'lucide-react';
 import { supabase } from '@/src/lib/supabase';
-import { getMaintenanceTickets, extractCleanMaintenanceMessage } from '@/src/lib/db';
+import {
+  getMaintenanceTickets,
+  extractCleanMaintenanceMessage,
+  healMaintenanceDescription,
+  resolvePropertyCity
+} from '@/src/lib/db';
 
 interface MaintenanceNotificationBannerProps {
   currentUserId?: string;
@@ -145,7 +150,8 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
 
         const tenantName = tName || 'Locataire';
         const propertyTitle = pTitle || 'Logement';
-        const cleanDesc = extractCleanMaintenanceMessage(ticket.description);
+        const propertyCity = resolvePropertyCity(propertyTitle, ticket.propertyAddress);
+        const cleanDesc = healMaintenanceDescription(ticket.description);
         const dateStr = ticket.createdAt || (ticket.created_at ? new Date(ticket.created_at).toLocaleDateString('fr-FR') : 'Aujourd’hui');
         const categoryLabel = ticket.category ? String(ticket.category).toUpperCase() : 'PANNE';
 
@@ -185,8 +191,8 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
 
                   <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
                     {role === 'locataire'
-                      ? `Votre signalement pour « ${propertyTitle} » (${categoryLabel})`
-                      : `Incident signalé par ${tenantName} pour « ${propertyTitle} »`}
+                      ? `Votre signalement pour « ${propertyTitle} » (${propertyCity} • ${categoryLabel})`
+                      : `Incident signalé par ${tenantName} pour « ${propertyTitle} » (${propertyCity})`}
                   </h4>
 
                   <p className="text-xs text-slate-700 dark:text-slate-300 font-medium line-clamp-2 mt-0.5 leading-relaxed">

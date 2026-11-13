@@ -13,7 +13,7 @@ import {
   MessageSquare
 } from 'lucide-react';
 import { MaintenanceTicket } from '@/types/database.types';
-import { getMaintenanceTickets, createMaintenanceTicket, getContracts } from '@/src/lib/db';
+import { getMaintenanceTickets, createMaintenanceTicket, getContracts, resolvePropertyCity } from '@/src/lib/db';
 import { useAuth } from '@/src/context/AuthContext';
 import { TicketsListSkeleton } from '@/components/common/SkeletonLoader';
 import { TopProgressBar } from '@/components/common/TopProgressBar';
@@ -268,7 +268,12 @@ export const LocataireMaintenanceView: React.FC = () => {
       }
 
       const finalPropTitle = realPropTitle || 'Logement';
-      const finalPropAddress = realPropAddress || 'Côte d’Ivoire';
+      const finalPropAddress = resolvePropertyCity(
+        finalPropTitle,
+        realPropAddress,
+        chosenContract?.property?.city,
+        chosenContract?.property?.commune
+      );
 
       const now = new Date();
       const realCreatedAt = `${now.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
@@ -348,7 +353,19 @@ export const LocataireMaintenanceView: React.FC = () => {
         } catch {}
       }
 
-      // 4. Diffusion WebSocket temps réel multi-écrans (Desktop bailleur ↔ Mobile locataire)
+      // 4. Synchronisation avec le serveur central /api/sync
+      try {
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'create_maintenance_ticket',
+            ticket: ticketItem
+          })
+        });
+      } catch {}
+
+      // 5. Diffusion WebSocket temps réel multi-écrans (Desktop bailleur ↔ Mobile locataire)
       try {
         await broadcastLiveEvent('MAINTENANCE_TICKET_CREATED', {
           actorId: user?.id,
@@ -358,7 +375,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         });
       } catch {}
 
-      // 5. Événement local pour synchronisation multi-onglets
+      // 6. Événement local pour synchronisation multi-onglets
       window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: ticketItem }));
 
       setTickets((prev) => [ticketItem, ...prev]);
