@@ -364,9 +364,23 @@ export const LocatairePaiementsView: React.FC = () => {
               return false;
             });
             userLocalPmts.forEach(lp => {
-              const existingIdx = rentList.findIndex(r => (r.reference && r.reference === lp.reference) || (r.id && r.id === lp.id));
+              const lpRef = String(lp.reference || lp.receipt_number || '').toLowerCase().trim();
+              const lpId = String(lp.id || '').toLowerCase().trim();
+              const existingIdx = rentList.findIndex(r => {
+                const rRef = String(r.reference || r.receipt_number || '').toLowerCase().trim();
+                const rId = String(r.id || '').toLowerCase().trim();
+                return (lpRef && rRef && lpRef === rRef) || (lpId && rId && lpId === rId);
+              });
+
               if (existingIdx === -1) {
-                rentList.push(lp);
+                if (rentList.length === 0) {
+                  // Mode hors ligne uniquement
+                  rentList.push(lp);
+                } else if (lp.status === 'declare') {
+                  // Déclaration locale fraîche non encore synchronisée
+                  const isDup = rentList.some(r => Number(r.amount) === Number(lp.amount) && r.target_month === lp.target_month);
+                  if (!isDup) rentList.unshift(lp);
+                }
               } else {
                 const existing = rentList[existingIdx];
                 const localIsMoreAdvanced =

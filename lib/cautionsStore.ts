@@ -1319,7 +1319,10 @@ export function restituteCaution(params: {
         status: 'confirme',
         confirmed_at: now
       };
-      const updatedRentPayments = [newRentPayment, ...(Array.isArray(currentRentPayments) ? currentRentPayments : [])];
+      const updatedRentPayments = [
+        newRentPayment,
+        ...(Array.isArray(currentRentPayments) ? currentRentPayments.filter((p: any) => p.reference !== receiptNumber && p.receipt_number !== receiptNumber) : [])
+      ];
       localStorage.setItem('locatrust_rent_payments', JSON.stringify(updatedRentPayments));
       window.dispatchEvent(new CustomEvent('locatrust:payments-updated', { detail: newRentPayment }));
 
