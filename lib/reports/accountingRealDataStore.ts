@@ -1322,6 +1322,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
   }
 }
 
+// Re-export canonique du moteur centralisé de calcul des loyers LocaTrust
+export * from '@/lib/financial/rentCalculationEngine';
+
+
 // ============================================================================
 // RAPPORT COMPTABLE DES REVENUS PAR PROPRIÉTAIRE MANDANT (AGENCE IMMOBILIÈRE)
 // ============================================================================
@@ -1615,3 +1619,7 @@ export async function fetchAgencyMandantsAccountingReport(
     };
   }
 }
+
+// Re-export canonique du moteur centralisé de calcul des loyers LocaTrust
+export * from '@/lib/financial/rentCalculationEngine';
+

@@ -1293,3 +1293,7 @@ export function checkAndNotifyExhaustedAdvances(
   return results;
 }
 
+// Re-export canonique du moteur centralisé de calcul des loyers LocaTrust
+export * from '@/lib/financial/rentCalculationEngine';
+
+
