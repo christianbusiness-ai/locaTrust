@@ -377,7 +377,7 @@ export const AccountingExportView: React.FC = () => {
           .filter((e: any) => e.status === 'Validé' || e.status === 'confirme' || e.status === 'certifie')
           .reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
 
-    const monthlyExpected = (baseDataset.contrats || []).reduce((s: number, c: any) => s + (Number(c.rent) || 0), 0) || 20000;
+    const monthlyExpected = (baseDataset.contrats || []).reduce((s: number, c: any) => s + (Number(c.rent) || 0), 0);
     const periodExpectedRent = periodMonthlyRecords.length > 0
       ? periodMonthlyRecords.reduce((s: number, m: any) => s + (m.expectedRent || 0), 0)
       : (monthlyExpected * validMonths.length);

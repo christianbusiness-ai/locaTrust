@@ -72,10 +72,7 @@ const isValidUuid = (id?: string | null): boolean => {
 const canonicalContractKey = (item: any): string => {
   const num = String(item?.contract_number || item?.contract?.contract_number || '').trim();
   if (num && num !== 'LT-CONTRAT' && num !== 'Bail en cours') return num;
-  const id = String(item?.contract_id || item?.contract?.id || item?.property_id || '').trim();
-  if (id === '0a712408-7819-4711-8e05-bfa1be4a1ed0' || id === '59cc106e-d787-448d-9513-5c9e2aa2e184') {
-    return 'LT-2026-CI-39210687';
-  }
+  const id = String(item?.contract_id || item?.contract?.id || '').trim();
   return id || num || 'default_contract';
 };
 

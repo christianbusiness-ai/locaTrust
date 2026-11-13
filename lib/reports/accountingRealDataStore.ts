@@ -139,7 +139,7 @@ export function purgeAllFictitiousData(): void {
   try {
     const isFictitiousAmt = (amt: any) => {
       const num = Number(String(amt || 0).replace(/[\s\u00A0,]/g, ''));
-      return isNaN(num) || num <= 0 || num > 200000;
+      return isNaN(num) || num <= 0;
     };
 
     // 1. locatrust_rent_payments
@@ -232,7 +232,7 @@ export function parsePaymentPeriodAllocations(
   paymentDate?: string
 ): MonthYearAllocation[] {
   const amt = Number(String(totalAmount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
-  if (amt <= 0 || amt > 200000) return []; // Rejeter tout montant fictif anormal (> 200 000 FCFA)
+  if (amt <= 0) return [];
 
   // Le montant s'impute uniquement sur son mois d'effet / signature (pas de répartition étalée)
   let y = 2026;
@@ -470,7 +470,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                   const id = String(sp.id || '').trim();
                   if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
                   const numAmt = Number(String(sp.amount || 0).replace(/[\s\u00A0,]/g, ''));
-                  if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false;
+                  if (numAmt <= 0 || isNaN(numAmt)) return false;
                   return true;
                 })
                 .forEach((sp: any) => {
@@ -515,7 +515,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                   const num = String(sr.receipt_number || sr.receiptNumber || sr.id || '').trim();
                   if (deletedKeysSet.has(num)) return false;
                   const numAmt = Number(String(sr.amount || 0).replace(/[\s\u00A0,]/g, ''));
-                  if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false;
+                  if (numAmt <= 0 || isNaN(numAmt)) return false;
                   return true;
                 })
                 .forEach((sr: any) => {
@@ -561,22 +561,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
               if (seenCleanLocalKeys.has(ref)) return;
               seenCleanLocalKeys.add(ref);
 
-              // Si c'est ESP-895031, normaliser avec sa période certifiée
-              if (ref === 'ESP-895031' || lp.reference === 'ESP-895031' || lp.receipt_number === 'ESP-895031') {
-                cleanLocalPmts.push({
-                  ...lp,
-                  reference: 'ESP-895031',
-                  receipt_number: 'ESP-895031',
-                  amount: 60000,
-                  target_month: 'Novembre 2026 à Janvier 2027',
-                  period_covered: 'Novembre 2026 à Janvier 2027',
-                  payment_method: 'Espèces',
-                  payment_date: '2026-11-10',
-                  status: 'confirme'
-                });
-              } else {
-                cleanLocalPmts.push(lp);
-              }
+              cleanLocalPmts.push(lp);
             });
 
             try {
@@ -591,7 +576,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                 const id = String(lp.id || '').trim();
                 if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
                 const numAmt = Number(String(lp.amount || 0).replace(/[\s\u00A0,]/g, ''));
-                if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false;
+                if (numAmt <= 0 || isNaN(numAmt)) return false;
                 return true;
               });
 
@@ -699,7 +684,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
     realReceipts.forEach((r: any) => {
       const rAmt = Number(String(r.amount || 0).replace(/[\s\u00A0,]/g, '')) || 0;
-      if (rAmt <= 0 || rAmt > 200000) return; // Rejeter tout montant fictif anormal
+      if (rAmt <= 0) return;
       const rNum = String(r.receipt_number || r.receiptNumber || r.id || '').trim();
       if (deletedKeysSet.has(rNum)) return;
 
@@ -716,14 +701,14 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             reference: r.receipt_number,
             amount: rAmt,
             status: 'confirme',
-            payment_date: r.created_at ? r.created_at.split('T')[0] : '2026-11-10',
-            target_month: r.period_covered || 'Novembre 2026 à Janvier 2027',
-            period_covered: r.period_covered || 'Novembre 2026 à Janvier 2027',
-            tenant_id: r.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+            payment_date: r.created_at ? r.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+            target_month: r.period_covered || r.target_month || '',
+            period_covered: r.period_covered || r.target_month || '',
+            tenant_id: r.tenant_id || '',
             owner_id: r.owner_id || userId,
-            agency_id: r.agency_id,
-            contract_id: r.contract_id || '0a712408-7819-4711-8e05-bfa1be4a1ed0',
-            property_id: r.property_id || realProps[0]?.id || '59cc106e-d787-448d-9513-5c9e2aa2e184'
+            agency_id: r.agency_id || undefined,
+            contract_id: r.contract_id || '',
+            property_id: r.property_id || (realProps[0]?.id || '')
           });
           knownPaymentRefs.add(r.receipt_number);
           if (r.payment_id) knownPaymentRefs.add(r.payment_id);
@@ -782,7 +767,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         const id = String(p.id || '').trim();
         if (deletedKeysSet.has(ref) || deletedKeysSet.has(id)) return false;
         const numAmt = Number(String(p.amount || 0).replace(/[\s\u00A0,]/g, ''));
-        if (numAmt <= 0 || numAmt > 200000 || isNaN(numAmt)) return false; // Bloquer tout montant test anormal
+        if (numAmt <= 0 || isNaN(numAmt)) return false;
         return true;
       })
       .map((p: any) => {
@@ -806,22 +791,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
       const existingKey = (pRef && pmtRefToKey.get(pRef)) || (pId && pmtRefToKey.get(pId));
       if (!existingKey || !deduplicatedPaymentsMap.has(existingKey)) {
-        if (primaryKey === 'ESP-895031' || pRef === 'ESP-895031') {
-          const norm = {
-            ...p,
-            reference: 'ESP-895031',
-            receipt_number: 'ESP-895031',
-            amount: 60000,
-            target_month: 'Novembre 2026 à Janvier 2027',
-            period_covered: 'Novembre 2026 à Janvier 2027',
-            payment_method: 'Espèces',
-            payment_date: '2026-11-10',
-            status: 'confirme'
-          };
-          deduplicatedPaymentsMap.set(primaryKey, norm);
-        } else {
-          deduplicatedPaymentsMap.set(primaryKey, p);
-        }
+        deduplicatedPaymentsMap.set(primaryKey, p);
         if (pRef) pmtRefToKey.set(pRef, primaryKey);
         if (pId) pmtRefToKey.set(pId, primaryKey);
       } else {
@@ -835,8 +805,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           status: (isExistingConfirmed || isPConfirmed) ? 'confirme' : (p.status || existing.status),
           tenant_signature_url: p.tenant_signature_url || existing.tenant_signature_url,
           owner_signature_url: p.owner_signature_url || existing.owner_signature_url,
-          period_covered: existing.period_covered?.includes('Janvier 2027') ? existing.period_covered : (p.period_covered || existing.period_covered),
-          target_month: existing.target_month?.includes('Janvier 2027') ? existing.target_month : (p.target_month || existing.target_month)
+          period_covered: p.period_covered || existing.period_covered,
+          target_month: p.target_month || existing.target_month
         };
         deduplicatedPaymentsMap.set(existingKey, merged);
         if (pRef) pmtRefToKey.set(pRef, existingKey);
@@ -844,35 +814,6 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       }
     });
     realPayments = Array.from(deduplicatedPaymentsMap.values());
-
-    // 4c. Garantie absolue de présence des données réelles fondamentales
-    if (realProps.length === 0) {
-      realProps.push({
-        id: '59cc106e-d787-448d-9513-5c9e2aa2e184',
-        title: 'Maison a loué',
-        rent: 20000,
-        caution: 40000,
-        status: 'loue',
-        owner_id: userId || '95efc3ce-726a-407a-9b9a-f2aad36cc79d'
-      });
-    }
-
-    if (realPayments.length === 0) {
-      realPayments.push({
-        id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
-        receipt_number: 'ESP-895031',
-        reference: 'ESP-895031',
-        amount: 60000,
-        status: 'confirme',
-        payment_date: '2026-11-10',
-        target_month: 'Novembre 2026 à Janvier 2027',
-        period_covered: 'Novembre 2026 à Janvier 2027',
-        tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        owner_id: userId || '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-        contract_id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
-        property_id: realProps[0]?.id || '59cc106e-d787-448d-9513-5c9e2aa2e184'
-      });
-    }
 
     // 5. Indexation des objets pour jointures fiables en mémoire
     const propertyMap = new Map<string, any>(realProps.map((p: any) => [p.id, p]));
@@ -940,40 +881,6 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       activeContracts.push(c);
     });
 
-    // RECONSTITUTION GARANTIE DU BAIL ACTIF RÉEL :
-    // Si la liste activeContracts est vide mais qu'un bien est loué ou qu'un paiement réel existe :
-    if (activeContracts.length === 0) {
-      const rentedProp = realProps.find((p: any) => p.status === 'loue') || realProps[0];
-      if (rentedProp) {
-        const rentAmount = Number(rentedProp.rent || 20000);
-        const matchingReceipt = realReceipts.find((r: any) => r.type === 'loyer' && r.contract_id);
-        const resolvedContractId = matchingReceipt?.contract_id || '0a712408-7819-4711-8e05-bfa1be4a1ed0';
-        const resolvedTenantId = matchingReceipt?.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
-        const resolvedContractNum = 'LT-2026-CI-39210687';
-
-        activeContracts.push({
-          id: resolvedContractId,
-          contract_id: resolvedContractId,
-          contract_number: resolvedContractNum,
-          contractNumber: resolvedContractNum,
-          property_id: rentedProp.id,
-          property: rentedProp,
-          property_title: rentedProp.title || 'Maison a loué',
-          tenant_id: resolvedTenantId,
-          tenant_name: 'Christian',
-          owner_id: userId || rentedProp.owner_id || '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-          monthly_rent: rentAmount,
-          caution_amount: rentAmount * 2,
-          status: 'actif',
-          start_date: '2026-11-17',
-          signed_date: '2026-11-17',
-          signed_at: '2026-11-17',
-          tenant_signed: true,
-          owner_signed: true
-        });
-      }
-    }
-
     // Cautions (dépôts de garantie sous séquestre)
     const activeContractKeys = new Set<string>();
     activeContracts.forEach((ac: any) => {
@@ -1002,26 +909,6 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         }
       }
     });
-
-    // RECONSTITUTION GARANTIE DE LA CAUTION SOUS SÉQUESTRE DU BAIL ACTIF :
-    if (activeCautionsMap.size === 0 && activeContracts.length > 0) {
-      activeContracts.forEach((ac: any) => {
-        const contractKey = String(ac.contract_number || ac.id);
-        const cautionAmt = Number(ac.caution_amount) || (Number(ac.monthly_rent || 20000) * 2);
-        activeCautionsMap.set(contractKey, {
-          id: `cau_${ac.id}`,
-          contract_id: ac.id,
-          contract_number: ac.contract_number,
-          property_id: ac.property_id,
-          property_title: ac.property_title || ac.property?.title || 'Maison a loué',
-          tenant_name: ac.tenant_name || 'Christian',
-          amount_requested: cautionAmt,
-          amount_paid: cautionAmt,
-          status: 'paye_complet',
-          created_at: ac.signed_date || '2026-11-17'
-        });
-      });
-    }
 
     const activeCautionsList = Array.from(activeCautionsMap.values());
     const cautionsRecues = activeContracts.length > 0
@@ -1154,15 +1041,15 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       return {
         date: dateFormatted,
         receiptNo: p.receipt_number || p.reference || `REC-${currentYearNum}-${String(idx + 1).padStart(6, '0')}`,
-        contractNo: matchedContract?.contract_number || p.contract_id || 'LT-2026-CI-39210687',
-        tenant: tn?.full_name || p.tenant_name || p.tenant?.full_name || 'Christian',
-        property: pr?.title || 'Maison a loué',
-        period: p.target_month || p.period || 'Novembre 2026 à Janvier 2027 (3 mois)',
-        method: p.payment_method || 'Espèces',
-        ref: p.reference || `ESP-895031`,
-        amount: Number(p.amount) || 60000,
+        contractNo: matchedContract?.contract_number || p.contract_id || 'Bail',
+        tenant: tn?.full_name || p.tenant_name || p.tenant?.full_name || 'Locataire',
+        property: pr?.title || 'Bien immobilier',
+        period: p.target_month || p.period || 'Loyer',
+        method: p.payment_method || 'Virement',
+        ref: p.reference || p.receipt_number || `REF-${idx + 1}`,
+        amount: Number(p.amount) || 0,
         status: statusLabel,
-        validatedAt: p.confirmed_at || p.validated_at ? new Date(p.confirmed_at || p.validated_at).toLocaleDateString('fr-FR') : '10/11/2026'
+        validatedAt: p.confirmed_at || p.validated_at ? new Date(p.confirmed_at || p.validated_at).toLocaleDateString('fr-FR') : dateFormatted
       };
     });
 
@@ -1183,46 +1070,29 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       return true;
     });
 
-    if (mappedEncaissements.length === 0) {
-      const ac = activeContracts[0];
-      mappedEncaissements.push({
-        date: '10/11/2026',
-        receiptNo: 'ESP-895031',
-        contractNo: ac?.contract_number || 'LT-2026-CI-39210687',
-        tenant: 'Christian',
-        property: ac?.property_title || 'Maison a loué',
-        period: 'Novembre 2026 à Janvier 2027 (3 mois)',
-        method: 'Espèces',
-        ref: 'ESP-895031',
-        amount: 60000,
-        status: 'Validé',
-        validatedAt: '10/11/2026'
-      });
-    }
-
     // 10. Mappage structuré de l'État des Loyers
     const contractsForLoyers = activeContracts.length > 0 ? activeContracts : realContracts;
     const mappedLoyers = contractsForLoyers.map((c: any) => {
       const pr = propertyMap.get(c.property_id) || c.property;
       const tn = profileMap.get(c.tenant_id) || c.tenant;
-      const monthlyRent = Number(c.monthly_rent ?? c.rent ?? pr?.rent ?? 20000);
+      const monthlyRent = Number(c.monthly_rent ?? c.rent ?? pr?.rent ?? 0);
 
       const contractPaid = realPayments
         .filter((p: any) => (p.contract_id === c.id || p.contract_id === c.contract_number) && isPaymentConfirmed(p))
         .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
 
-      const isUpToDate = contractPaid > 0 || realPayments.length > 0;
+      const isUpToDate = contractPaid >= monthlyRent && monthlyRent > 0;
 
       return {
-        tenant: tn?.full_name || c.tenant_name || 'Christian',
-        property: pr?.title || c.property_title || 'Maison a loué',
+        tenant: tn?.full_name || c.tenant_name || 'Locataire',
+        property: pr?.title || c.property_title || 'Bien immobilier',
         monthlyRent,
-        month: 'Novembre 2026',
+        month: c.start_date ? new Date(c.start_date).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : '—',
         expected: monthlyRent,
-        paid: isUpToDate ? monthlyRent : 0,
-        balance: isUpToDate ? 0 : monthlyRent,
-        paymentDate: isUpToDate ? '10/11/2026' : '—',
-        status: isUpToDate ? 'À jour' : 'En attente'
+        paid: Math.min(contractPaid, monthlyRent),
+        balance: Math.max(0, monthlyRent - contractPaid),
+        paymentDate: contractPaid > 0 ? (c.start_date || '—') : '—',
+        status: isUpToDate ? 'À jour' : (contractPaid > 0 ? 'Partiel' : 'En attente')
       };
     });
 
@@ -1233,9 +1103,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const pr = propertyMap.get(cau.property_id) || propertyMap.get(matchedContract?.property_id) || cau.property || matchedContract?.property;
       const tn = profileMap.get(cau.tenant_id) || profileMap.get(matchedContract?.tenant_id) || cau.tenant || matchedContract?.tenant;
 
-      const planned = Number(cau.amount_requested || matchedContract?.caution_amount || 40000);
+      const planned = Number(cau.amount_requested || matchedContract?.caution_amount || 0);
       const isConfirmed = cau.status === 'paye_complet' || cau.status === 'confirme' || cau.status === 'certifie';
-      const deposited = Number(cau.amount_paid || (isConfirmed ? planned : planned));
+      const deposited = Number(cau.amount_paid || (isConfirmed ? planned : 0));
       const refunded = Number(cau.amount_restituted || cau.refunded_amount || 0);
       const retained = Number(cau.deduction_amount || cau.deductions_amount || 0);
       const balanceRemaining = Math.max(0, deposited - refunded - retained);
@@ -1250,9 +1120,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       }
 
       return {
-        tenant: tn?.full_name || cau.tenant_name || matchedContract?.tenant_name || 'Christian',
-        property: pr?.title || cau.property_title || matchedContract?.property_title || 'Maison a loué',
-        contractNo: cau.contract_number || matchedContract?.contract_number || cau.contract_id || 'LT-2026-CI-39210687',
+        tenant: tn?.full_name || cau.tenant_name || matchedContract?.tenant_name || 'Locataire',
+        property: pr?.title || cau.property_title || matchedContract?.property_title || 'Bien immobilier',
+        contractNo: cau.contract_number || matchedContract?.contract_number || cau.contract_id || '—',
         planned,
         deposited,
         refunded,
@@ -1285,26 +1155,26 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       const isActif = c.status === 'actif' || c.status === 'contrat_actif' || c.status === 'signe';
 
       return {
-        contractNo: c.contract_number || c.id || 'LT-2026-CI-39210687',
-        tenant: tn?.full_name || c.tenant_name || 'Christian',
-        property: pr?.title || c.property_title || 'Maison a loué',
-        startDate: c.start_date ? new Date(c.start_date).toLocaleDateString('fr-FR') : '17/11/2026',
-        endDate: c.end_date ? new Date(c.end_date).toLocaleDateString('fr-FR') : '16/11/2027',
-        rent: Number(c.monthly_rent ?? c.rent ?? pr?.rent ?? 20000),
-        caution: Number(c.caution_amount ?? c.caution ?? pr?.caution ?? 40000),
-        status: 'Actif',
-        signaturesDate: '17/11/2026 (Signé & Scellé)'
+        contractNo: c.contract_number || c.id || 'Bail',
+        tenant: tn?.full_name || c.tenant_name || 'Locataire',
+        property: pr?.title || c.property_title || 'Bien immobilier',
+        startDate: c.start_date ? new Date(c.start_date).toLocaleDateString('fr-FR') : '-',
+        endDate: c.end_date ? new Date(c.end_date).toLocaleDateString('fr-FR') : '-',
+        rent: Number(c.monthly_rent ?? c.rent ?? pr?.rent ?? 0),
+        caution: Number(c.caution_amount ?? c.caution ?? pr?.caution ?? 0),
+        status: isActif ? 'Actif' : (c.status === 'termine' ? 'Terminé' : (c.status || 'Actif')),
+        signaturesDate: c.signed_at ? `${new Date(c.signed_at).toLocaleDateString('fr-FR')} (Signé)` : '-'
       };
     });
 
     // 14. Informations officielles du Titulaire / Bailleur / Agence
-    const ownerName = userProfile?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Mon Compte');
+    const ownerName = userProfile?.full_name || (isAgency ? 'Agence Immobilière Agréée' : 'Bailleur');
     const owner = {
       name: ownerName,
-      id: userProfile?.id ? `LT-${userProfile.id.slice(0, 8).toUpperCase()}` : 'LT-PRO-001',
-      phone: userProfile?.phone || '+225 05 00 55 21 41',
-      email: userProfile?.email || 'contact@locatrust.ci',
-      address: userProfile?.address || (isAgency ? 'Abidjan, Côte d\'Ivoire (Agence Agréée)' : 'Abidjan, Côte d\'Ivoire')
+      id: userProfile?.id ? `LT-${userProfile.id.slice(0, 8).toUpperCase()}` : 'LT-PRO',
+      phone: userProfile?.phone || '-',
+      email: userProfile?.email || '-',
+      address: userProfile?.address || (isAgency ? 'Abidjan, Côte d\'Ivoire (Agence Agréée)' : 'Côte d\'Ivoire')
     };
 
     // 15. Statistiques complémentaires

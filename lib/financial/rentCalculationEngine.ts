@@ -111,6 +111,10 @@ export interface OwnerFinancialMetrics {
   activePropertiesCount: number;
   activeTenantsCount: number;
   contractsAnalysis: ContractSituationAnalysis[];
+  // RÈGLE 14 : Séparation stricte des anciens contrats terminés
+  terminatedDebtsAmount?: number;
+  terminatedContractsCount?: number;
+  terminatedContractsAnalysis?: ContractSituationAnalysis[];
 }
 
 export interface MandantFinancialRecord {
@@ -233,7 +237,7 @@ export function extractContractMonthlyRent(contract: any): number {
     cleanAmount(contract.monthly_rent) ||
     cleanAmount(contract.rent) ||
     cleanAmount(contract.property?.rent) ||
-    20000
+    0
   );
 }
 
@@ -294,11 +298,17 @@ export function analyzeContractSituation(
   payments: any[] = [],
   referenceDate: Date = new Date()
 ): ContractSituationAnalysis {
-  const contractId = String(contract?.id || contract?.contract_number || 'LT-CONTRAT');
-  const contractNumber = String(contract?.contract_number || contract?.id || 'LT-CONTRAT');
-  const tenantName = contract?.tenant?.full_name || contract?.tenant_name || 'Christian';
+  const contractId = String(contract?.id || contract?.contract_number || '');
+  const contractNumber = String(contract?.contract_number || contract?.id || '');
+  const tenantName = contract?.tenant?.full_name || contract?.tenant_name || 'Locataire';
   const propertyTitle = contract?.property?.title || 'Logement';
   const monthlyRent = extractContractMonthlyRent(contract);
+
+  // Détection du statut du contrat et des dates limites (RÈGLE 14)
+  const contractStatus = String(contract?.status || '').toLowerCase().trim();
+  const isTerminated = contractStatus === 'termine' || contractStatus === 'cloture' || contractStatus === 'resilie' || contractStatus === 'archive';
+  const rawEndDate = contract?.end_date || contract?.terminated_at || contract?.lease_end_date;
+  const contractEndDate = rawEndDate ? parseDateSafe(rawEndDate) : null;
 
   // 1. Date de signature
   const signatureDate = parseDateSafe(contract?.signed_at || contract?.created_at || contract?.start_date);
@@ -323,33 +333,49 @@ export function analyzeContractSituation(
     const pPropId = String(p.property_id || p.property?.id || '').trim();
     const pTenantId = String(p.tenant_id || '').trim();
 
+    // RÈGLE 14 — SÉPARATION FINANCIÈRE DES CONTRATS SUCCESSIFS D'UN MÊME BIEN
+    // Les calculs financiers doivent être rattachés à l'identifiant du contrat (contract_id) et non uniquement au property_id.
     let matches = false;
-    // 1. Correspondance directe par ID ou référence de contrat
-    if (pContractId && (
-      pContractId === contractId ||
-      pContractId === contractNumber ||
-      contractNumber.includes(pContractId) ||
-      pContractId.includes(contractNumber) ||
-      pContractId.includes(contractId) ||
-      contractId.includes(pContractId)
-    )) {
-      matches = true;
-    }
-    // 2. Correspondance par bien immobilier
-    else if (contract?.property_id && pPropId && pPropId === String(contract.property_id)) {
-      matches = true;
-    }
-    // 3. Correspondance par locataire
-    else if (contract?.tenant_id && pTenantId && pTenantId === String(contract.tenant_id)) {
-      matches = true;
-    }
-    // 4. Si le paiement ou reçu correspond au même bailleur
-    else if (contract?.owner_id && p.owner_id && String(contract.owner_id) === String(p.owner_id)) {
-      matches = true;
-    }
-    // 5. Règle de résilience : s'il n'y a pas d'ambiguïté (contrat unique actif ou paiement unique)
-    else if (!pContractId || pContractId === 'undefined' || pContractId === 'null' || payments.length === 1) {
-      matches = true;
+
+    if (pContractId) {
+      // 1. Correspondance explicite et stricte par identifiant ou numéro de contrat
+      if (
+        pContractId === contractId ||
+        pContractId === contractNumber ||
+        (contractNumber && pContractId.toLowerCase() === contractNumber.toLowerCase()) ||
+        (contractId && pContractId.toLowerCase() === contractId.toLowerCase())
+      ) {
+        matches = true;
+      }
+      // RÈGLE CRITIQUE : Si pContractId est renseigné mais ne correspond pas à ce contrat,
+      // ce paiement appartient obligatoirement à un autre contrat (ex: ancien locataire ou autre bail).
+      // Il est formellement INTERDIT de l'attribuer à ce contrat !
+    } else {
+      // 2. Uniquement si pContractId est totalement absent (données historiques non migrées) :
+      // On exige la correspondance SIMULTANÉE du locataire ET du bien,
+      // ET la stricte concordance temporelle avec la période de validité du contrat.
+      const matchesTenant = Boolean(contract?.tenant_id && pTenantId && pTenantId === String(contract.tenant_id));
+      const matchesProperty = Boolean(contract?.property_id && pPropId && pPropId === String(contract.property_id));
+
+      if (matchesTenant && matchesProperty) {
+        const pDate = parseDateSafe(p.payment_date || p.created_at);
+        const pMonthVal = pDate.getFullYear() * 12 + pDate.getMonth();
+        const startMonthVal = effectiveStartDate.getFullYear() * 12 + effectiveStartDate.getMonth();
+
+        if (pMonthVal >= startMonthVal) {
+          if (contractEndDate) {
+            const endMonthVal = contractEndDate.getFullYear() * 12 + contractEndDate.getMonth();
+            if (pMonthVal <= endMonthVal) {
+              matches = true;
+            }
+          } else {
+            matches = true;
+          }
+        }
+      } else if (!pPropId && !pTenantId) {
+        // Cas des tests unitaires isolés où aucun identifiant n'est spécifié
+        matches = true;
+      }
     }
 
     if (matches) {
@@ -377,11 +403,19 @@ export function analyzeContractSituation(
   // Jour d'échéance contractuel (par défaut 5 ou 10 du mois)
   const dueDay = Number(contract?.payment_due_day) || 5;
 
-  // Construire l'échéancier des mois à partir du mois de départ (au moins 12 à 24 mois)
-  const totalMonthsToProject = 24;
-  const schedule: ScheduledMonthRecord[] = [];
+  // Construire l'échéancier des mois à partir du mois de départ
+  // RÈGLE 14 (Point 2) : Lorsqu'un contrat est terminé, aucun nouveau calcul de loyer ne doit être ajouté après sa clôture.
   const startYear = effectiveStartDate.getFullYear();
   const startMonthIdx = effectiveStartDate.getMonth();
+  let totalMonthsToProject = 24;
+
+  if (isTerminated && contractEndDate) {
+    const endMonthVal = contractEndDate.getFullYear() * 12 + contractEndDate.getMonth();
+    const startMonthVal = startYear * 12 + startMonthIdx;
+    totalMonthsToProject = Math.max(1, endMonthVal - startMonthVal + 1);
+  }
+
+  const schedule: ScheduledMonthRecord[] = [];
 
   for (let i = 0; i < totalMonthsToProject; i++) {
     const curMonthIdx = (startMonthIdx + i) % 12;
@@ -632,14 +666,21 @@ export function computeOwnerFinancialMetrics(
   cautions: any[] = [],
   referenceDate: Date = new Date()
 ): OwnerFinancialMetrics {
-  // 1. Contrats actifs signés
-  const activeContracts = contracts.filter((c: any) => {
+  // 1. Séparation stricte des contrats actifs et des anciens contrats terminés (RÈGLE 14)
+  const activeContracts: any[] = [];
+  const terminatedContracts: any[] = [];
+
+  contracts.forEach((c: any) => {
     if (!c) return false;
     const st = String(c.status || '').toLowerCase().trim();
-    return (st === 'actif' || st === 'contrat_actif' || st === 'signe') && st !== 'termine' && st !== 'cloture' && st !== 'resilie';
+    if (st === 'termine' || st === 'cloture' || st === 'resilie' || st === 'archive') {
+      terminatedContracts.push(c);
+    } else if (st === 'actif' || st === 'contrat_actif' || st === 'signe') {
+      activeContracts.push(c);
+    }
   });
 
-  // Dédoublonnage par logement (1 seul contrat actif par bien)
+  // Dédoublonnage par logement pour les contrats actifs (1 seul contrat actif à la fois par bien)
   const dedupedContracts: any[] = [];
   const seenPropertyIds = new Set<string>();
   activeContracts.forEach((c: any) => {
@@ -649,10 +690,17 @@ export function computeOwnerFinancialMetrics(
     dedupedContracts.push(c);
   });
 
-  // 2. Analyser chaque contrat actif
+  // 2. Analyser chaque contrat actif (situation financière strictement indépendante)
   const contractsAnalysis: ContractSituationAnalysis[] = dedupedContracts.map((c) =>
     analyzeContractSituation(c, payments, referenceDate)
   );
+
+  // RÈGLE 14 (Point 4) : Les dettes des anciens contrats restent enregistrées dans les anciens contrats
+  // et consultables comme créances liées aux anciens locataires, JAMAIS mélangées avec le contrat actuel !
+  const terminatedContractsAnalysis: ContractSituationAnalysis[] = terminatedContracts.map((c) =>
+    analyzeContractSituation(c, payments, referenceDate)
+  );
+  const terminatedDebtsAmount = terminatedContractsAnalysis.reduce((sum, an) => sum + an.lateAmount, 0);
 
   let expectedRentCurrentMonth = 0;
   let collectedRentCurrentMonth = 0;
@@ -720,7 +768,10 @@ export function computeOwnerFinancialMetrics(
     activeContractsCount: dedupedContracts.length,
     activePropertiesCount: properties.filter((p) => !p.deleted_at).length,
     activeTenantsCount: new Set(dedupedContracts.map((c) => c.tenant_id).filter(Boolean)).size,
-    contractsAnalysis
+    contractsAnalysis,
+    terminatedDebtsAmount,
+    terminatedContractsCount: terminatedContracts.length,
+    terminatedContractsAnalysis
   };
 }
 
@@ -821,13 +872,13 @@ export function computeAgencyFinancialMetrics(
  */
 export function formatReceiptPeriodBreakdown(
   payment: any,
-  monthlyRent: number = 20000,
+  monthlyRent: number = 0,
   contractStartDate?: Date
 ): MonthAllocationDetail[] {
   const amt = cleanAmount(payment?.amount);
   if (amt <= 0) return [];
 
-  const rent = monthlyRent > 0 ? monthlyRent : 20000;
+  const rent = monthlyRent > 0 ? monthlyRent : (cleanAmount(payment?.contract?.monthly_rent) || amt);
   const targetStr = String(payment?.period_covered || payment?.target_month || '').toLowerCase();
 
   // Si le paiement comporte déjà des allocations structurées
@@ -1065,6 +1116,64 @@ export function runRentCalculationTestSuite(): { allPassed: boolean; results: { 
     const mRec = agencyMetrics.mandantsRecords[0];
     const passed = Boolean(mRec && mRec.collectedRent === 20000 && mRec.agencyCommissionAmount === 2000 && mRec.netRevenueToMandant === 18000);
     results.push({ test: 'Test 12 : Agence mandant -> 20k encaissé, 2k com (10%), 18k reversé', passed, details: { mRec } });
+  }
+
+  // TEST 13 : RÈGLE 14 — Séparation financière stricte de 2 contrats successifs sur le même bien
+  {
+    // Bien P100 loué d'abord au locataire A (contrat terminé avec 1 mois impayé)
+    const oldContract = {
+      id: 'cnt_old',
+      property_id: 'p100',
+      tenant_id: 'tenant_A',
+      status: 'termine',
+      signed_at: '2026-09-01',
+      end_date: '2026-10-31',
+      monthly_rent: 50000
+    };
+    // Nouveau locataire B sur le même bien P100 (contrat actif signé en novembre 2026)
+    const newContract = {
+      id: 'cnt_new',
+      property_id: 'p100',
+      tenant_id: 'tenant_B',
+      status: 'actif',
+      signed_at: '2026-11-01',
+      monthly_rent: 50000
+    };
+    // Le nouveau locataire B paie son loyer de 50 000 FCFA pour son contrat
+    const payments = [
+      { id: 'p_new', contract_id: 'cnt_new', property_id: 'p100', tenant_id: 'tenant_B', amount: 50000, status: 'confirme', payment_date: '2026-11-05' }
+    ];
+
+    const refDate = new Date(2026, 10, 15); // 15 novembre 2026
+    const oldAnalysis = analyzeContractSituation(oldContract, payments, refDate);
+    const newAnalysis = analyzeContractSituation(newContract, payments, refDate);
+    const metrics = computeOwnerFinancialMetrics([{ id: 'p100' }], [oldContract, newContract], payments, [], refDate);
+
+    // Vérifications RÈGLE 14 :
+    // 1. Le paiement du nouveau locataire N'A PAS été imputé à l'ancien contrat (oldAnalysis.totalCollected === 0)
+    // 2. Le nouveau contrat a 0 dette et est à jour (newAnalysis.lateAmount === 0, newAnalysis.currentMonthPaid === 50000)
+    // 3. Les métriques du propriétaire affichent le loyer encaissé du mois = 50 000 FCFA, 0 retard pour le contrat actif,
+    //    et la dette de l'ancien contrat reste isolée dans terminatedDebtsAmount = 100 000 FCFA (sept+oct impayés)
+    const passed =
+      oldAnalysis.totalCollected === 0 &&
+      newAnalysis.totalCollected === 50000 &&
+      newAnalysis.lateAmount === 0 &&
+      newAnalysis.currentMonthPaid === 50000 &&
+      metrics.collectedRentCurrentMonth === 50000 &&
+      metrics.lateRentAmount === 0 &&
+      (metrics.terminatedDebtsAmount || 0) === 100000;
+
+    results.push({
+      test: 'Test 13 : Règle 14 — Séparation absolue contrats successifs sur même bien',
+      passed,
+      details: {
+        oldCollected: oldAnalysis.totalCollected,
+        newCollected: newAnalysis.totalCollected,
+        newLate: newAnalysis.lateAmount,
+        activeLateRent: metrics.lateRentAmount,
+        terminatedDebts: metrics.terminatedDebtsAmount
+      }
+    });
   }
 
   const allPassed = results.every((r) => r.passed);

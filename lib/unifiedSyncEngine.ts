@@ -232,7 +232,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
           const kLower = primaryKey.toLowerCase();
           if (testRefs.has(kLower) || kLower.startsWith('rec-caution') || sp.type === 'caution') continue;
           const amt = Number(String(sp.amount || 0).replace(/[\s\u00A0,]/g, ''));
-          if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
+          if (amt <= 0 || isNaN(amt)) continue;
 
           map.set(primaryKey, sp);
           if (spRef) refToKeyMap.set(spRef, primaryKey);
@@ -250,7 +250,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
             const kLower = primaryKey.toLowerCase();
             if (testRefs.has(kLower) || kLower.startsWith('rec-caution') || lp.type === 'caution') continue;
             const amt = Number(String(lp.amount || 0).replace(/[\s\u00A0,]/g, ''));
-            if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
+            if (amt <= 0 || isNaN(amt)) continue;
 
             const existingKey = (lpRef && refToKeyMap.get(lpRef)) || (lpId && refToKeyMap.get(lpId));
             
