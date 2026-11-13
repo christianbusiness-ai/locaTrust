@@ -1300,16 +1300,35 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         console.warn('Notice Supabase insert notification:', notifErr);
       }
 
-      // Persister dans locatrust_rent_payments
+      // Persister dans locatrust_rent_payments avec dédoublonnage strict par référence
       try {
         const cached = localStorage.getItem('locatrust_rent_payments');
         let list = cached ? JSON.parse(cached) : [];
         if (Array.isArray(list)) {
-          list = list.map((p: any) => (p.id === validatingPayment.id || p.reference === validatingPayment.reference ? confirmedPmt : p));
-          if (!list.some((p: any) => p.id === confirmedPmt.id)) {
+          const targetRef = String(confirmedPmt.reference || confirmedPmt.receipt_number || validatingPayment.reference || validatingPayment.receipt_number || '').trim();
+          let replaced = false;
+          list = list.map((p: any) => {
+            const pRef = String(p.reference || p.receipt_number || '').trim();
+            if (p.id === validatingPayment.id || p.id === confirmedPmt.id || (targetRef && pRef && targetRef === pRef)) {
+              replaced = true;
+              return confirmedPmt;
+            }
+            return p;
+          });
+          if (!replaced) {
             list.unshift(confirmedPmt);
           }
-          localStorage.setItem('locatrust_rent_payments', JSON.stringify(list));
+          // Dédoublonnage canonique absolu
+          const seenRefKeys = new Set<string>();
+          const dedupedList: any[] = [];
+          list.forEach((item: any) => {
+            const k = String(item.reference || item.receipt_number || item.id || '').trim();
+            if (k && !seenRefKeys.has(k)) {
+              seenRefKeys.add(k);
+              dedupedList.push(item);
+            }
+          });
+          localStorage.setItem('locatrust_rent_payments', JSON.stringify(dedupedList));
         }
       } catch { }
 

@@ -310,16 +310,20 @@ export function analyzeContractSituation(
   // 4. Mois actuellement en cours
   const currentMonthKey = toMonthKey(referenceDate);
 
-  // 5. Filtrer les paiements confirmés appartenant à ce contrat (en excluant la caution !)
-  const rentPayments = payments.filter((p: any) => {
-    if (!p) return false;
-    if (isCautionPayment(p)) return false; // RÈGLE 3 : Exclure impérativement la caution
-    if (!isConfirmedPayment(p)) return false;
+  // 5. Filtrer et dédoublonner les paiements confirmés appartenant à ce contrat (en excluant la caution !)
+  const seenPaymentKeys = new Set<string>();
+  const rentPayments: any[] = [];
+
+  payments.forEach((p: any) => {
+    if (!p) return;
+    if (isCautionPayment(p)) return; // RÈGLE 3 : Exclure impérativement la caution
+    if (!isConfirmedPayment(p)) return;
 
     const pContractId = String(p.contract_id || p.contract?.id || p.contract?.contract_number || '').trim();
     const pPropId = String(p.property_id || p.property?.id || '').trim();
     const pTenantId = String(p.tenant_id || '').trim();
 
+    let matches = false;
     // 1. Correspondance directe par ID ou référence de contrat
     if (pContractId && (
       pContractId === contractId ||
@@ -328,21 +332,35 @@ export function analyzeContractSituation(
       pContractId.includes(contractNumber) ||
       pContractId.includes(contractId) ||
       contractId.includes(pContractId)
-    )) return true;
-
+    )) {
+      matches = true;
+    }
     // 2. Correspondance par bien immobilier
-    if (contract?.property_id && pPropId && pPropId === String(contract.property_id)) return true;
-
+    else if (contract?.property_id && pPropId && pPropId === String(contract.property_id)) {
+      matches = true;
+    }
     // 3. Correspondance par locataire
-    if (contract?.tenant_id && pTenantId && pTenantId === String(contract.tenant_id)) return true;
-
+    else if (contract?.tenant_id && pTenantId && pTenantId === String(contract.tenant_id)) {
+      matches = true;
+    }
     // 4. Si le paiement ou reçu correspond au même bailleur
-    if (contract?.owner_id && p.owner_id && String(contract.owner_id) === String(p.owner_id)) return true;
-
+    else if (contract?.owner_id && p.owner_id && String(contract.owner_id) === String(p.owner_id)) {
+      matches = true;
+    }
     // 5. Règle de résilience : s'il n'y a pas d'ambiguïté (contrat unique actif ou paiement unique)
-    if (!pContractId || pContractId === 'undefined' || pContractId === 'null' || payments.length === 1) return true;
+    else if (!pContractId || pContractId === 'undefined' || pContractId === 'null' || payments.length === 1) {
+      matches = true;
+    }
 
-    return false;
+    if (matches) {
+      // Dédoublonnage strict par numéro de quittance ou référence de transaction
+      const canonicalKey = String(p.receipt_number || p.reference || p.id || '').trim();
+      if (canonicalKey) {
+        if (seenPaymentKeys.has(canonicalKey)) return;
+        seenPaymentKeys.add(canonicalKey);
+      }
+      rentPayments.push(p);
+    }
   });
 
   // Jour d'échéance contractuel (par défaut 5 ou 10 du mois)

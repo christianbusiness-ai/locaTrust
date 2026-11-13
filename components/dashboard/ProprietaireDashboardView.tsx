@@ -418,6 +418,24 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           }
           return p;
         });
+
+        // Dédoublonnage canonique absolu de loadedPayments
+        const dedupPaymentsMap = new Map<string, any>();
+        loadedPayments.forEach(p => {
+          const k = String(p.receipt_number || p.reference || p.id || '').trim();
+          if (!k) return;
+          if (!dedupPaymentsMap.has(k)) {
+            dedupPaymentsMap.set(k, p);
+          } else {
+            const existing = dedupPaymentsMap.get(k);
+            dedupPaymentsMap.set(k, {
+              ...existing,
+              ...p,
+              status: (existing.status === 'confirme' || p.status === 'confirme') ? 'confirme' : (p.status || existing.status)
+            });
+          }
+        });
+        loadedPayments = Array.from(dedupPaymentsMap.values());
       }
       setRealPayments(loadedPayments);
 

@@ -233,7 +233,20 @@ export const AccountingExportView: React.FC = () => {
   const activeDataset = React.useMemo(() => {
     if (!accountingData) return null;
 
-    let baseDataset = accountingData;
+    // Dédoublonnage canonique de sécurité des encaissements
+    const seenEncKeys = new Set<string>();
+    const cleanEncaissements = (accountingData.encaissements || []).filter((e: any) => {
+      const k = String(e.receiptNo || e.ref || '').trim();
+      if (!k) return true;
+      if (seenEncKeys.has(k)) return false;
+      seenEncKeys.add(k);
+      return true;
+    });
+
+    let baseDataset = {
+      ...accountingData,
+      encaissements: cleanEncaissements
+    };
 
     // 1. Filtrage optionnel par propriétaire mandant pour les agences
     if (selectedMandant !== 'all') {
