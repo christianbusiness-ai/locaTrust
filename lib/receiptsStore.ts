@@ -80,7 +80,18 @@ export function getUnifiedReceipts(userId?: string): UnifiedReceiptRecord[] {
 
   const mergedMap = new Map<string, UnifiedReceiptRecord>();
 
-  const deletedKeys = new Set<string>(['ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945']);
+  const deletedKeys = new Set<string>([
+    'esp-364218',
+    'pmt_dec_nov2026_01',
+    'pmt_esp_135945',
+    'rec-caution-000492',
+    'wav-2026-nov-781920',
+    'esp-135945',
+    'cau_lt_000492',
+    'rec_cau_000492',
+    'rec_wav_781920',
+    'rec_esp_135945'
+  ]);
   try {
     const rawDel = localStorage.getItem('locatrust_deleted_payments');
     if (rawDel) {

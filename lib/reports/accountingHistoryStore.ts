@@ -386,8 +386,7 @@ export function generateSyntheticYearRecords(targetYear: number): MonthAccountin
     'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
     'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
   ];
-  const factor = targetYear === 2024 ? 0.9 : targetYear === 2023 ? 0.82 : targetYear >= 2027 ? 1.08 : 1.0;
-  const baseRent = Math.round(2800000 * factor);
+  const baseRent = 0;
 
   return monthNames.map((name, idx) => {
     const mNum = (idx + 1).toString().padStart(2, '0');
@@ -395,19 +394,19 @@ export function generateSyntheticYearRecords(targetYear: number): MonthAccountin
       monthKey: `${targetYear}-${mNum}`,
       monthName: name,
       year: targetYear,
-      expectedRent: baseRent,
-      collectedRent: baseRent,
+      expectedRent: 0,
+      collectedRent: 0,
       lateRent: 0,
       unpaidRent: 0,
       otherIncome: 0,
-      maintenanceExpense: idx % 3 === 0 ? 35000 : 0,
-      cautionReceived: idx === 0 ? 500000 : 0,
-      cautionRefunded: idx === 11 ? 500000 : 0,
+      maintenanceExpense: 0,
+      cautionReceived: 0,
+      cautionRefunded: 0,
       otherExpenses: 0,
-      activeProperties: Math.max(5, Math.round(10 * factor)),
-      activeTenants: Math.max(4, Math.round(7 * factor)),
-      contractsActive: Math.max(4, Math.round(7 * factor)),
-      contractsSigned: idx === 0 ? 1 : 0
+      activeProperties: 0,
+      activeTenants: 0,
+      contractsActive: 0,
+      contractsSigned: 0
     };
   });
 }

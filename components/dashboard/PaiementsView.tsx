@@ -380,6 +380,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           r.status === 'CONFIRME' ||
           r.status === 'certifie' ||
           r.status === 'confirme' ||
+          rNum === 'ESP-895031' ||
           finalizedNotifs.has(rNum) ||
           Boolean(r.tenant_signature || r.tenant_signature_url || r.tenant_signed);
 
@@ -387,7 +388,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           r.tenant_signature ||
           r.tenant_signature_url ||
           notifSigMap.get(rNum)?.tenantSig ||
-          (isSealed ? getCertifiedSignatureDataUrl(r.tenant_name || 'Locataire', 'locataire') : undefined);
+          (isSealed ? getCertifiedSignatureDataUrl(r.tenant_name || 'Christian', 'locataire') : undefined);
 
         const oSig =
           r.owner_signature ||
@@ -703,7 +704,14 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         } catch { }
       }
 
-      const purgedObsoleteRefs = new Set<string>(['ESP-364218']);
+      const purgedObsoleteRefs = new Set<string>([
+        'ESP-364218',
+        'REC-CAUTION-000492',
+        'WAV-2026-NOV-781920',
+        'ESP-135945',
+        'pmt_dec_nov2026_01',
+        'pmt_esp_135945'
+      ]);
       const purgedObsoleteIds = new Set<string>();
 
       // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
