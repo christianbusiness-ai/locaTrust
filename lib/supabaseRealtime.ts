@@ -31,7 +31,9 @@ export type LiveEventType =
   | 'CALL_ANSWER'
   | 'CALL_ICE_CANDIDATE'
   | 'CALL_REJECTED'
-  | 'CALL_ENDED';
+  | 'CALL_ENDED'
+  | 'MAINTENANCE_TICKET_CREATED'
+  | 'MAINTENANCE_TICKET_UPDATED';
 
 interface BroadcastPayload {
   event: LiveEventType;
@@ -1141,6 +1143,28 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'CALL_ENDED':
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('locatrust:call_event', { detail: payload }));
+        }
+        break;
+
+      case 'MAINTENANCE_TICKET_CREATED':
+      case 'MAINTENANCE_TICKET_UPDATED':
+        if (typeof window !== 'undefined') {
+          const tckObj = payload?.data?.ticket || payload?.data;
+          if (tckObj) {
+            try {
+              const curTcksRaw = localStorage.getItem('locatrust_maintenance_tickets');
+              const curTcks = curTcksRaw ? JSON.parse(curTcksRaw) : [];
+              const exists = curTcks.some((t: any) => t.id === tckObj.id || (tckObj.ticketNumber && t.ticketNumber === tckObj.ticketNumber));
+              let updatedTcks = curTcks;
+              if (!exists) {
+                updatedTcks = [tckObj, ...curTcks];
+              } else {
+                updatedTcks = curTcks.map((t: any) => (t.id === tckObj.id ? { ...t, ...tckObj } : t));
+              }
+              localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(updatedTcks));
+            } catch {}
+          }
+          window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: payload }));
         }
         break;
     }

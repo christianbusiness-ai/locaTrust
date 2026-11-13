@@ -328,13 +328,31 @@ export async function createRentPayment(payment: any) {
 // =============================================================================
 export async function getMaintenanceTickets(userId: string) {
   try {
+    // 1. Récupérer les identifiants des biens du bailleur ou de l'agence pour matcher exhaustivement
+    let propertyIds: string[] = [];
+    if (userId) {
+      try {
+        const { data: userProps } = await supabase
+          .from('properties')
+          .select('id')
+          .or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+        if (userProps && userProps.length > 0) {
+          propertyIds = userProps.map((p) => p.id).filter(Boolean);
+        }
+      } catch {}
+    }
+
     let query = supabase
       .from('maintenance_tickets')
       .select('*, property:properties(*)')
       .order('created_at', { ascending: false });
 
     if (userId) {
-      query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      if (propertyIds.length > 0) {
+        query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId},property_id.in.(${propertyIds.join(',')})`);
+      } else {
+        query = query.or(`tenant_id.eq.${userId},owner_id.eq.${userId}`);
+      }
     }
 
     const { data, error } = await query;
@@ -366,6 +384,7 @@ export async function getMaintenanceTickets(userId: string) {
       let parsedCost = Number(t.final_cost || t.estimated_cost || 0);
       let parsedSchedule = t.scheduled_date || '';
       let cleanDesc = t.description || '';
+      let parsedPhotos: string[] = Array.isArray(t.photos) ? t.photos : (t.media_url ? [t.media_url] : []);
 
       if (typeof cleanDesc === 'string' && cleanDesc.trim().startsWith('{')) {
         try {
@@ -374,12 +393,24 @@ export async function getMaintenanceTickets(userId: string) {
           if (meta.notes && Array.isArray(meta.notes)) parsedNotes = meta.notes;
           if (meta.cost) parsedCost = Number(meta.cost);
           if (meta.scheduledDate) parsedSchedule = meta.scheduledDate;
+          if (meta.photos && Array.isArray(meta.photos)) parsedPhotos = meta.photos;
           if (meta.description) cleanDesc = meta.description;
         } catch {}
       }
 
       const tenantProf = profilesMap.get(t.tenant_id);
       const ownerProf = profilesMap.get(t.owner_id);
+
+      // Normalisation rigoureuse des statuts
+      let normalizedStatus = 'Nouveau';
+      const rawSt = String(t.status || '').toLowerCase().trim();
+      if (rawSt === 'resolu' || rawSt === 'résolu' || rawSt === 'ferme' || rawSt === 'fermé') {
+        normalizedStatus = 'Résolu';
+      } else if (rawSt === 'en_cours' || rawSt === 'en cours' || rawSt === 'intervention programmée') {
+        normalizedStatus = 'En cours';
+      } else {
+        normalizedStatus = 'Nouveau';
+      }
 
       return {
         ...t,
@@ -390,13 +421,14 @@ export async function getMaintenanceTickets(userId: string) {
         propertyAddress: t.property?.address || t.property_address || 'Abidjan',
         category: parsedCategory,
         priority: t.priority || 'normale',
-        status: t.status === 'ouvert' ? 'Nouveau' : t.status === 'resolu' ? 'Résolu' : (t.status === 'en_cours' ? 'En cours' : t.status),
+        status: normalizedStatus,
         createdAt: new Date(t.created_at || Date.now()).toLocaleDateString('fr-FR'),
+        created_at: t.created_at || new Date().toISOString(),
         description: cleanDesc,
         cost: parsedCost,
         scheduledDate: parsedSchedule,
         notes: parsedNotes,
-        photos: Array.isArray(t.photos) ? t.photos : (t.media_url ? [t.media_url] : [])
+        photos: parsedPhotos
       };
     });
 
@@ -408,12 +440,17 @@ export async function getMaintenanceTickets(userId: string) {
 
 export async function createMaintenanceTicket(ticket: any) {
   try {
+    const photosList = Array.isArray(ticket.photos)
+      ? ticket.photos
+      : (ticket.mediaUrl || ticket.media_url ? [ticket.mediaUrl || ticket.media_url] : []);
+
     const richDescription = JSON.stringify({
       description: ticket.description || '',
       category: ticket.category || 'Général',
       cost: Number(ticket.cost || 0),
       scheduledDate: ticket.scheduledDate || ticket.scheduled_date || '',
-      notes: Array.isArray(ticket.notes) ? ticket.notes : []
+      notes: Array.isArray(ticket.notes) ? ticket.notes : [],
+      photos: photosList
     });
 
     const payload: any = {
@@ -423,21 +460,35 @@ export async function createMaintenanceTicket(ticket: any) {
       title: ticket.title || `Incident ${ticket.category || 'Général'}`,
       description: richDescription,
       priority: (ticket.priority || 'normale').toLowerCase(),
-      status: 'ouvert',
-      photos: Array.isArray(ticket.photos) ? ticket.photos : (ticket.mediaUrl ? [ticket.mediaUrl] : [])
+      status: 'ouvert'
     };
+
+    if (ticket.contract_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ticket.contract_id)) {
+      payload.contract_id = ticket.contract_id;
+    }
 
     if (ticket.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ticket.id)) {
       payload.id = ticket.id;
     }
 
+    // Essai 1 : insertion directe
     const { data, error } = await supabase
       .from('maintenance_tickets')
       .insert(payload)
       .select()
       .single();
 
-    if (error) return { data: null, error: error.message };
+    if (error) {
+      console.warn('createMaintenanceTicket error:', error.message);
+      // Si l'erreur provient de contract_id, réessayer sans ce champ
+      if (payload.contract_id) {
+        delete payload.contract_id;
+        const retry = await supabase.from('maintenance_tickets').insert(payload).select().single();
+        if (!retry.error) return { data: retry.data, error: null };
+      }
+      return { data: null, error: error.message };
+    }
+
     return { data, error: null };
   } catch (err: any) {
     return { data: null, error: err?.message };

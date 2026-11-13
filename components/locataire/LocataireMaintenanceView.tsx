@@ -19,6 +19,7 @@ import { TicketsListSkeleton } from '@/components/common/SkeletonLoader';
 import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { supabase } from '@/src/lib/supabase';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 
 export const LocataireMaintenanceView: React.FC = () => {
   const { user } = useAuth();
@@ -36,7 +37,54 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [selectedContractId, setSelectedContractId] = useState('');
   const [category, setCategory] = useState('plomberie');
   const [description, setDescription] = useState('');
-  const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+  const [isUploadingMedia, setIsUploadingMedia] = useState<boolean>(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploadingMedia(true);
+    const newUrls: string[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        // Essai upload Supabase Storage
+        const ext = file.name.split('.').pop() || 'jpg';
+        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const filePath = `maintenance/${fileName}`;
+
+        const { data: uploadData, error: uploadErr } = await supabase.storage
+          .from('documents')
+          .upload(filePath, file, { contentType: file.type, upsert: true });
+
+        if (!uploadErr && uploadData?.path) {
+          const { data: publicUrlData } = supabase.storage.from('documents').getPublicUrl(uploadData.path);
+          if (publicUrlData?.publicUrl) {
+            newUrls.push(publicUrlData.publicUrl);
+            continue;
+          }
+        }
+
+        // Fallback Data URL pour prévisualisation et résilience totale
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => resolve('');
+          reader.readAsDataURL(file);
+        });
+        const base64 = await base64Promise;
+        if (base64) newUrls.push(base64);
+      } catch (err) {
+        console.warn('Erreur lecture média:', err);
+      }
+    }
+
+    setMediaUrls((prev) => [...prev, ...newUrls]);
+    setIsUploadingMedia(false);
+  };
 
   const fetchTickets = async (isBackground = false) => {
     if (!user) {
@@ -141,17 +189,24 @@ export const LocataireMaintenanceView: React.FC = () => {
         Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
       let propId = chosenContract?.property_id || chosenContract?.property?.id;
-      let ownerId = chosenContract?.owner_id || chosenContract?.owner?.id;
+      let ownerId = chosenContract?.owner_id || chosenContract?.property?.owner_id || chosenContract?.owner?.id || chosenContract?.agency_id;
 
-      if (!isValidUuid(ownerId)) {
-        ownerId = chosenContract?.owner_id || '';
-      }
-      if (!isValidUuid(propId)) {
-        propId = chosenContract?.property_id || '';
+      // Résolution de sécurité du propriétaire si non présent sur l'objet contrat
+      if ((!ownerId || !isValidUuid(ownerId)) && propId && isValidUuid(propId)) {
+        try {
+          const { data: propRow } = await supabase
+            .from('properties')
+            .select('owner_id, agency_id, title')
+            .eq('id', propId)
+            .maybeSingle();
+          if (propRow) {
+            ownerId = propRow.owner_id || propRow.agency_id;
+          }
+        } catch {}
       }
 
       const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire';
-      const propTitle = chosenContract?.property?.title || chosenContract?.property_title || 'Logement LocaTrust';
+      const propTitle = chosenContract?.property?.title || chosenContract?.property_title || 'Logement';
       const generatedTicketUuid = crypto.randomUUID();
 
       // 1. Inscription prioritaire dans Supabase PostgreSQL
@@ -160,11 +215,12 @@ export const LocataireMaintenanceView: React.FC = () => {
         property_id: propId,
         owner_id: ownerId,
         tenant_id: user?.id || '',
+        contract_id: chosenContract?.id,
         title: `Panne ${category.toUpperCase()} - ${description.slice(0, 35)}`,
         description: description,
         category: category,
         priority: 'normale',
-        photos: mediaUrl ? [mediaUrl] : []
+        photos: mediaUrls
       });
 
       if (dbErr) {
@@ -174,16 +230,21 @@ export const LocataireMaintenanceView: React.FC = () => {
       const ticketItem = {
         id: dbTicketRes?.id || generatedTicketUuid,
         ticketNumber: `TCK-2026-${generatedTicketUuid.slice(0, 4).toUpperCase()}`,
+        property_id: propId,
+        owner_id: ownerId,
+        tenant_id: user?.id || '',
+        contract_id: chosenContract?.id,
         tenantName: tenantName,
-        tenantPhone: user?.phone || '+225 07 00 00 00 00',
+        tenantPhone: user?.phone || user?.user_metadata?.phone || '+225 00 00 00 00',
         propertyTitle: propTitle,
         propertyAddress: chosenContract?.property?.address || 'Abidjan',
         category: category,
         priority: 'normale',
         status: 'Nouveau',
         createdAt: new Date().toLocaleDateString('fr-FR'),
+        created_at: new Date().toISOString(),
         description: description,
-        photos: mediaUrl ? [mediaUrl] : [],
+        photos: mediaUrls,
         notes: []
       };
 
@@ -195,37 +256,46 @@ export const LocataireMaintenanceView: React.FC = () => {
         localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(updatedTickets));
       } catch {}
 
-      // 3. Notification temps réel dans Supabase pour le bailleur
+      // 3. Notification officielle temps réel dans Supabase pour le bailleur
+      if (ownerId && isValidUuid(ownerId)) {
+        try {
+          await pushGlobalNotification({
+            title: '⚠️ Incident de maintenance signalé',
+            description: `${tenantName} a signalé une anomalie (${category}) pour « ${propTitle} » : ${description.slice(0, 70)}...`,
+            category: 'maintenance',
+            targetRole: 'proprietaire',
+            targetUserId: ownerId,
+            targetTab: 'maintenance',
+            payload: {
+              ticketId: ticketItem.id,
+              propertyId: propId,
+              category,
+              tenantName
+            }
+          });
+        } catch {}
+      }
+
+      // 4. Diffusion WebSocket temps réel multi-écrans (Desktop bailleur ↔ Mobile locataire)
       try {
-        await pushGlobalNotification({
-          title: '⚠️ Incident de maintenance signalé',
-          description: `${tenantName} a signalé une anomalie (${category}) pour « ${propTitle} » : ${description.slice(0, 50)}...`,
-          category: 'maintenance',
-          targetRole: 'proprietaire',
-          targetUserId: ownerId || undefined,
-          targetTab: 'maintenance'
+        await broadcastLiveEvent('MAINTENANCE_TICKET_CREATED', {
+          actorId: user?.id,
+          targetUserId: ownerId,
+          propertyId: propId,
+          data: { ticket: ticketItem }
         });
       } catch {}
 
-      // 4. Synchronisation immédiate avec le serveur central /api/sync
-      try {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'create_maintenance_ticket', ticket: ticketItem })
-        }).catch(() => {});
-      } catch {}
-
-      // 5. Événement temps réel pour synchronisation multi-onglets
+      // 5. Événement local pour synchronisation multi-onglets
       window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: ticketItem }));
 
       setTickets((prev) => [ticketItem, ...prev]);
       setShowNewTicketModal(false);
       setDescription('');
-      setMediaUrl('');
+      setMediaUrls([]);
       setSuccessModalMessage({
         title: 'Incident transmis avec succès !',
-        desc: 'Votre signalement de maintenance a été persisté dans Supabase et notifié à votre bailleur.'
+        desc: 'Votre signalement de maintenance a été transmis au bailleur et enregistré.'
       });
     } catch (err: any) {
       console.error('Erreur déclaration ticket:', err);
@@ -315,27 +385,72 @@ export const LocataireMaintenanceView: React.FC = () => {
                     <Wrench className="w-5 h-5" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-xs font-black text-slate-900">Signalement du {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString('fr-FR') : 'Date récente'}</span>
-                    <span className="text-[11px] text-slate-500">Logement : {ticket.property?.title || 'Mon logement'}</span>
+                    <span className="text-xs font-black text-slate-900">
+                      Signalement du {ticket.created_at ? new Date(ticket.created_at).toLocaleDateString('fr-FR') : (ticket.createdAt || new Date().toLocaleDateString('fr-FR'))}
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-bold">
+                      Logement : {ticket.propertyTitle || ticket.property?.title || 'Logement'}
+                    </span>
                   </div>
                 </div>
 
-                {ticket.status === 'ouvert' ? (
-                  <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-extrabold flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5" />
-                    Pris en charge (Ticket Ouvert)
-                  </span>
-                ) : (
-                  <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-extrabold flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Résolu
-                  </span>
-                )}
+                {(() => {
+                  const st = String(ticket.status || '').toLowerCase().trim();
+                  if (st === 'resolu' || st === 'résolu' || st === 'ferme' || st === 'fermé') {
+                    return (
+                      <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Résolu
+                      </span>
+                    );
+                  }
+                  if (st === 'en_cours' || st === 'en cours' || st === 'intervention programmée') {
+                    return (
+                      <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-900 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
+                        <Clock className="w-3.5 h-3.5" />
+                        En cours de traitement
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
+                      <Clock className="w-3.5 h-3.5" />
+                      En attente de prise en charge
+                    </span>
+                  );
+                })()}
               </div>
 
               <p className="text-xs text-slate-800 font-medium leading-relaxed bg-slate-50 p-4 rounded-2xl border">
                 {ticket.description}
               </p>
+
+              {/* Photos / Médias joints au ticket */}
+              {Array.isArray(ticket.photos) && ticket.photos.length > 0 && (
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <span className="text-[11px] font-bold text-slate-500">Photos & Vidéos transmises ({ticket.photos.length}) :</span>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {ticket.photos.map((pUrl: string, pIdx: number) => {
+                      const isVid = pUrl.startsWith('data:video') || pUrl.endsWith('.mp4') || pUrl.includes('video');
+                      return (
+                        <a
+                          key={pIdx}
+                          href={pUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="relative rounded-xl overflow-hidden border border-slate-200 aspect-video bg-slate-900 block group shadow-sm hover:opacity-90 transition-opacity"
+                        >
+                          {isVid ? (
+                            <video src={pUrl} className="w-full h-full object-cover" />
+                          ) : (
+                            <img src={pUrl} alt={`Photo incident ${pIdx + 1}`} className="w-full h-full object-cover" />
+                          )}
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Owner Responses Thread */}
               {ticket.responses && ticket.responses.length > 0 && (
@@ -417,14 +532,79 @@ export const LocataireMaintenanceView: React.FC = () => {
               </div>
 
               <div>
-                <label className="font-extrabold text-slate-800 block mb-1">Photos / Vidéos justificatives (URL ou fichier)</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-extrabold text-slate-800 block text-xs">
+                    Photos / Vidéos justificatives
+                  </label>
+                  <span className="text-[11px] text-slate-500 font-semibold">
+                    {mediaUrls.length > 0 ? `${mediaUrls.length} média(s) sélectionné(s)` : 'Optionnel'}
+                  </span>
+                </div>
+
+                {/* Input fichier réel caché */}
                 <input
-                  type="text"
-                  value={mediaUrl}
-                  onChange={(e) => setMediaUrl(e.target.value)}
-                  placeholder="Ajouter des médias de l'incident..."
-                  className="w-full p-2.5 rounded-xl border text-xs font-medium"
+                  type="file"
+                  ref={fileInputRef}
+                  accept="image/*,video/*"
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
                 />
+
+                {/* Zone cliquable qui ouvre l'explorateur de fichiers / appareil photo */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => fileInputRef.current?.click()}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
+                  className="w-full p-4 rounded-2xl border-2 border-dashed border-amber-300 hover:border-amber-500 bg-amber-50/50 hover:bg-amber-50 transition-all cursor-pointer flex flex-col items-center justify-center gap-2 group text-center"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-9 h-9 rounded-xl bg-amber-100 group-hover:bg-amber-200 text-amber-700 flex items-center justify-center transition-colors shadow-sm">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <div className="w-9 h-9 rounded-xl bg-blue-100 group-hover:bg-blue-200 text-blue-700 flex items-center justify-center transition-colors shadow-sm">
+                      <Video className="w-5 h-5" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-black text-slate-900 group-hover:text-amber-800 transition-colors">
+                      {isUploadingMedia ? 'Chargement des médias...' : 'Cliquez pour ouvrir l’explorateur et choisir vos photos / vidéos'}
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-medium mt-0.5">
+                      Caméra, galerie ou explorateur de fichiers
+                    </span>
+                  </div>
+                </div>
+
+                {/* Prévisualisation des médias sélectionnés */}
+                {mediaUrls.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    {mediaUrls.map((url, i) => {
+                      const isVid = url.startsWith('data:video') || url.endsWith('.mp4') || url.includes('video');
+                      return (
+                        <div key={i} className="relative group rounded-xl overflow-hidden border border-slate-200 aspect-video bg-slate-900 flex items-center justify-center">
+                          {isVid ? (
+                            <video src={url} className="w-full h-full object-cover" />
+                          ) : (
+                            <img src={url} alt={`Media incident ${i + 1}`} className="w-full h-full object-cover" />
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMediaUrls(prev => prev.filter((_, idx) => idx !== i));
+                            }}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-slate-900/80 hover:bg-rose-600 text-white text-[11px] font-black flex items-center justify-center transition-colors shadow"
+                            title="Supprimer ce média"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
 

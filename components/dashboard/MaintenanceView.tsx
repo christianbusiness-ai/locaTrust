@@ -151,6 +151,20 @@ export const MaintenanceView: React.FC = () => {
 
   const loadTickets = async () => {
     let list: MaintenanceItem[] = [];
+    const userPropIds = new Set<string>();
+
+    if (user?.id) {
+      try {
+        const { data: userProps } = await supabase
+          .from('properties')
+          .select('id, title, address')
+          .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        if (userProps) {
+          userProps.forEach((p: any) => userPropIds.add(p.id));
+        }
+      } catch {}
+    }
+
     try {
       const { data: dbTickets, error } = await getMaintenanceTickets(user?.id || '');
       if (!error && dbTickets && dbTickets.length > 0) {
@@ -158,32 +172,69 @@ export const MaintenanceView: React.FC = () => {
       }
     } catch {}
 
+    // Récupération de sécurité via les notifications de maintenance Supabase si liste vide
+    if (list.length === 0 && user?.id) {
+      try {
+        const { data: notifs } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('category', 'maintenance')
+          .order('created_at', { ascending: false });
+
+        if (notifs && notifs.length > 0) {
+          notifs.forEach((n: any) => {
+            let meta: any = {};
+            if (typeof n.metadata === 'string') {
+              try { meta = JSON.parse(n.metadata); } catch {}
+            } else if (n.metadata) {
+              meta = n.metadata;
+            } else if (n.payload) {
+              meta = n.payload;
+            }
+
+            const ticketId = meta.ticketId || meta.ticket_id || n.id;
+            if (!list.some(l => l.id === ticketId)) {
+              list.push({
+                id: ticketId,
+                ticketNumber: `TCK-2026-${ticketId.slice(0, 4).toUpperCase()}`,
+                tenantName: meta.tenantName || 'Locataire',
+                tenantPhone: meta.tenantPhone || '+225 00 00 00 00',
+                propertyTitle: meta.propertyTitle || 'Logement',
+                propertyAddress: 'Abidjan',
+                category: meta.category || 'Général',
+                priority: 'normale',
+                status: 'Nouveau',
+                createdAt: new Date(n.created_at || Date.now()).toLocaleDateString('fr-FR'),
+                created_at: n.created_at || new Date().toISOString(),
+                description: n.message || n.description || 'Signalement de maintenance',
+                photos: meta.photos || [],
+                notes: []
+              });
+            }
+          });
+        }
+      } catch {}
+    }
+
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
-            if (list.length === 0) {
-              // Mode hors ligne : afficher le cache local
-              parsed.forEach((pt: any) => {
-                const isMine = !user?.id || pt.owner_id === user.id || pt.agency_id === user.id || pt.tenant_id === user.id;
-                if (isMine && !list.some(l => l.id === pt.id || l.ticketNumber === pt.ticketNumber)) {
-                  list.push(pt);
-                }
-              });
-            } else {
-              // Le serveur Supabase est la source de vérité : enrichir sans dupliquer
-              parsed.forEach((pt: any) => {
-                const idx = list.findIndex(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber));
-                if (idx !== -1) {
-                  list[idx] = {
-                    ...list[idx],
-                    notes: pt.notes && pt.notes.length > (list[idx].notes?.length || 0) ? pt.notes : list[idx].notes
-                  };
-                }
-              });
-            }
+            parsed.forEach((pt: any) => {
+              const isMine =
+                !user?.id ||
+                pt.owner_id === user.id ||
+                pt.agency_id === user.id ||
+                pt.tenant_id === user.id ||
+                (pt.property_id && userPropIds.has(pt.property_id));
+
+              if (isMine && !list.some(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber))) {
+                list.push(pt);
+              }
+            });
           }
         }
       } catch {}
@@ -626,9 +677,13 @@ export const MaintenanceView: React.FC = () => {
                           <div
                             key={idx}
                             onClick={() => setPreviewPhoto(photo)}
-                            className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-300 cursor-pointer group hover:ring-2 hover:ring-blue-600 transition-all"
+                            className="relative w-20 h-20 rounded-xl overflow-hidden border border-slate-300 cursor-pointer group hover:ring-2 hover:ring-blue-600 transition-all bg-slate-900"
                           >
-                            <img src={photo} alt="Avarie" className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                            {photo.startsWith('data:video') || photo.endsWith('.mp4') || photo.includes('video') ? (
+                              <video src={photo} className="w-full h-full object-cover" />
+                            ) : (
+                              <img src={photo} alt="Avarie" className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                            )}
                             <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-all flex items-center justify-center">
                               <Eye className="w-4 h-4 text-white drop-shadow opacity-0 group-hover:opacity-100" />
                             </div>
@@ -935,8 +990,12 @@ export const MaintenanceView: React.FC = () => {
           onClick={() => setPreviewPhoto(null)}
           className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-pointer"
         >
-          <div className="relative max-w-2xl max-h-[85vh] overflow-hidden rounded-2xl">
-            <img src={previewPhoto} alt="Aperçu photo" className="w-full h-full object-contain" />
+          <div className="relative max-w-2xl max-h-[85vh] overflow-hidden rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            {previewPhoto.startsWith('data:video') || previewPhoto.endsWith('.mp4') || previewPhoto.includes('video') ? (
+              <video src={previewPhoto} controls autoPlay className="w-full h-full max-h-[85vh] rounded-2xl" />
+            ) : (
+              <img src={previewPhoto} alt="Aperçu photo" className="w-full h-full object-contain" />
+            )}
           </div>
         </div>
       )}
