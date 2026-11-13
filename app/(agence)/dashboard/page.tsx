@@ -30,6 +30,7 @@ import { VisitesView } from '@/components/dashboard/VisitesView';
 import { ReportsStatsView } from '@/components/dashboard/ReportsStatsView';
 import { AccountingExportView } from '@/components/dashboard/AccountingExportView';
 import { SettingsView } from '@/components/dashboard/SettingsView';
+import { MaintenanceNotificationBanner } from '@/components/dashboard/MaintenanceNotificationBanner';
 import { PaymentAccountsView } from '@/components/dashboard/PaymentAccountsView';
 import { DocumentsView } from '@/components/dashboard/DocumentsView';
 import { ReceiptsQuittancesView } from '@/components/dashboard/ReceiptsQuittancesView';
@@ -198,6 +199,18 @@ export default function AgencyDashboardPage({
               )}
             </div>
           )}
+
+          {/* Bannière d'alerte haute visibilité pour les signalements de maintenance */}
+          <MaintenanceNotificationBanner
+            currentUserId={currentUser?.id}
+            role="agence"
+            onNavigateToMaintenance={(ticketId) => {
+              if (ticketId && typeof window !== 'undefined') {
+                localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+              }
+              setActiveTab('maintenance');
+            }}
+          />
 
           {/* TAB 1: Dashboard Overview (Identique au Propriétaire pour fonctionnement 100% unifié) */}
           {activeTab === 'overview' && !selectedContractId && (

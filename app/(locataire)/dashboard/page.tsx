@@ -27,6 +27,7 @@ import { SupportModal } from '@/components/modals/InteractiveModals';
 import { ShieldCheck, ArrowRight } from 'lucide-react';
 import { initAccentTheme } from '@/lib/themeHelper';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { MaintenanceNotificationBanner } from '@/components/dashboard/MaintenanceNotificationBanner';
 
 interface TenantDashboardPageProps {
   currentRole?: UserRole;
@@ -152,6 +153,13 @@ export default function TenantDashboardPage({
               )}
             </div>
           )}
+
+          {/* BANNIÈRE D'ALERTE MAINTENANCE */}
+          <MaintenanceNotificationBanner
+            currentUserId={user?.id}
+            role="locataire"
+            onNavigateToMaintenance={() => setActiveTab('maintenance')}
+          />
 
           {/* TAB 1: Fil d'actualité */}
           {(activeTab === 'feed' || activeTab === 'overview') && (

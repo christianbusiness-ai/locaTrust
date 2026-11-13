@@ -23,6 +23,7 @@ import { PaymentAccountsView } from '@/components/dashboard/PaymentAccountsView'
 import { ReportsStatsView } from '@/components/dashboard/ReportsStatsView';
 import { AccountingExportView } from '@/components/dashboard/AccountingExportView';
 import { SettingsView } from '@/components/dashboard/SettingsView';
+import { MaintenanceNotificationBanner } from '@/components/dashboard/MaintenanceNotificationBanner';
 import { ContractListView } from '@/components/contracts/ContractListView';
 import { ContractDetailView } from '@/components/contracts/ContractDetailView';
 import { LocataireSupportView } from '@/components/locataire/LocataireSupportView';
@@ -238,6 +239,18 @@ export default function ProprietaireDashboardPage({
               )}
             </div>
           )}
+
+          {/* Bannière d'alerte haute visibilité pour les signalements de maintenance */}
+          <MaintenanceNotificationBanner
+            currentUserId={currentUser?.id}
+            role="proprietaire"
+            onNavigateToMaintenance={(ticketId) => {
+              if (ticketId && typeof window !== 'undefined') {
+                localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+              }
+              handleSelectTab('maintenance');
+            }}
+          />
 
           {/* TAB 1: Overview (Tableau de bord) */}
           {activeTab === 'overview' && !selectedContractId && (

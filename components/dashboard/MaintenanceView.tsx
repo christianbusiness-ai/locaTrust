@@ -82,7 +82,15 @@ export const MaintenanceView: React.FC = () => {
     return [];
   });
   const { user } = useAuth();
-  const [selectedTicketId, setSelectedTicketId] = useState<string>('');
+  const [selectedTicketId, setSelectedTicketId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_selected_maintenance_ticket');
+        if (stored) return stored;
+      } catch {}
+    }
+    return '';
+  });
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [replyMessage, setReplyMessage] = useState<string>('');
   const [internalNoteMessage, setInternalNoteMessage] = useState<string>('');
