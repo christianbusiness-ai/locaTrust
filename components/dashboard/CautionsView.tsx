@@ -364,8 +364,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         await broadcastLiveEvent('CAUTION_RECEIPT_TRANSMITTED', {
           depositId: deposit.id,
           receiptNumber: cleanReceiptNum,
-          targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-          actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          targetUserId: updatedDeposit.tenant_id || '',
+          actorId: user?.id || '',
           contractId: deposit.contract_id,
           data: {
             amount: confirmedAmount,
@@ -376,8 +376,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         });
         await broadcastLiveEvent('CAUTION_CONFIRMED', {
           depositId: deposit.id,
-          targetUserId: updatedDeposit.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-          actorId: user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          targetUserId: updatedDeposit.tenant_id || '',
+          actorId: user?.id || '',
           contractId: deposit.contract_id,
           data: {
             amount: confirmedAmount,
@@ -1260,8 +1260,8 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
         await broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
           depositId: dep.id,
           receiptNumber: (dep as any).receipt_number || formatCautionReceiptNumber(dep.id),
-          actorId: user?.id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-          targetUserId: dep.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          actorId: user?.id || '',
+          targetUserId: dep.owner_id || '',
           contractId: dep.contract_id,
           data: {
             deposit: updatedWithSig,

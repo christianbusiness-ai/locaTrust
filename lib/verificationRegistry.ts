@@ -601,7 +601,7 @@ export async function verifyDocumentToken(
 
               const rcpNum =
                 matchedDep.receipt_number ||
-                (contractNum === 'LT-2026-CI-000492' ? 'REC-CAUTION-000492' : `REC-CAUT-${(matchedDep.id || '').replace(/[^A-Z0-9]/g, '').slice(0, 8).toUpperCase()}`);
+                `REC-CAUT-${(matchedDep.id || '').replace(/[^A-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
 
               return buildReceiptVerificationResult(token, {
                 receiptNumber: rcpNum,
@@ -1155,7 +1155,7 @@ export async function verifyDocumentToken(
             'Côte d\'Ivoire';
 
           return buildContractVerificationResult(token, {
-            contractNumber: token.startsWith('tok_cnt_') ? 'LT-2026-CI-000492' : token.toUpperCase(),
+            contractNumber: token.startsWith('tok_cnt_') ? (token.replace('tok_cnt_', '').toUpperCase() || 'CONTRAT') : token.toUpperCase(),
             status: 'valide',
             createdAt: matchedProp.updated_at
               ? new Date(matchedProp.updated_at).toLocaleDateString('fr-FR')

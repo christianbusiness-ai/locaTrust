@@ -242,8 +242,7 @@ export function isContractCurrentlyActive(contract: any, referenceDate: Date = n
   const hasRealTenantSig = Boolean(
     (contract.tenant_signature && String(contract.tenant_signature).length > 15) ||
     (contract.tenant_signature_url && String(contract.tenant_signature_url).length > 15) ||
-    (contract.documents?.tenant_signature_url && String(contract.documents.tenant_signature_url).length > 15) ||
-    cNum === 'LT-2026-CI-000492'
+    (contract.documents?.tenant_signature_url && String(contract.documents.tenant_signature_url).length > 15)
   );
   if (!hasRealTenantSig) {
     return false;

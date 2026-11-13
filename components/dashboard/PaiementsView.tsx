@@ -240,7 +240,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       }
 
       // Exécution parallèle concurrente avec timeout strict de 3.5s pour éviter tout blocage réseau
-      const syncUrl = `/api/sync?role=${effectiveRole}&userId=${user?.id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'}`;
+      const syncUrl = user?.id ? `/api/sync?role=${effectiveRole}&userId=${user.id}` : `/api/sync?role=${effectiveRole}`;
       const [pRes, rRes, syncRes, cancelRes, notifRes] = await Promise.allSettled([
         pQuery,
         rQuery,
@@ -1165,13 +1165,15 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
 
       const now = new Date().toISOString();
       const pmtUuid = isValidUuid(validatingPayment.id) ? validatingPayment.id : null;
-      const ownerIdToSave = user?.id && isValidUuid(user.id) ? user.id : 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
+      const ownerIdToSave = user?.id && isValidUuid(user.id)
+        ? user.id
+        : (validatingPayment.owner_id && isValidUuid(validatingPayment.owner_id) ? validatingPayment.owner_id : (user?.id || ''));
       const tenantIdToSave = validatingPayment.tenant_id && isValidUuid(validatingPayment.tenant_id)
         ? validatingPayment.tenant_id
-        : (validatingPayment.tenant?.id && isValidUuid(validatingPayment.tenant.id) ? validatingPayment.tenant.id : 'a939eff5-c93d-4e6e-9f1f-b61c39986a46');
+        : (validatingPayment.tenant?.id && isValidUuid(validatingPayment.tenant.id) ? validatingPayment.tenant.id : (validatingPayment.tenant_id || ''));
       const contractIdToSave = validatingPayment.contract_id && isValidUuid(validatingPayment.contract_id)
         ? validatingPayment.contract_id
-        : 'c2222222-3333-4444-5555-666666666666';
+        : (resolvedContract?.id && isValidUuid(resolvedContract.id) ? resolvedContract.id : (validatingPayment.contract_id || null));
       const verificationToken = `tok_rec_${extractedOcrData.reference.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
 
       // 1. Mise à jour DIRECTE dans Supabase (Source de vérité)

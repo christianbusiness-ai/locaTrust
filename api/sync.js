@@ -7,7 +7,23 @@ export const config = {
 };
 
 // Magasin persistant en mémoire de l'instance serveur (partagé entre requêtes)
-let DELETED_PAYMENTS = new Set(['ESP-364218', 'pmt_dec_nov2026_01', 'pmt_esp_135945']);
+let DELETED_PAYMENTS = new Set([
+  'ESP-364218',
+  'pmt_dec_nov2026_01',
+  'pmt_esp_135945',
+  'REC-CAUTION-000492',
+  'WAV-2026-NOV-781920',
+  'ESP-135945',
+  'cau_lt_000492',
+  'rec_cau_000492',
+  'rec_wav_781920',
+  'rec_esp_135945',
+  'LT-2026-CI-000492',
+  'app_christian_maison_daloa',
+  'app_christian_agence_kk',
+  'tck_2026_maint_01',
+  '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53'
+]);
 
 let SERVER_STORE = {
   payments: [
@@ -81,49 +97,6 @@ let SERVER_STORE = {
 
   contracts: [
     {
-      id: 'LT-2026-CI-000492',
-      contract_number: 'LT-2026-CI-000492',
-      contractNumber: 'LT-2026-CI-000492',
-      property_id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      rent: 30000,
-      monthly_rent: 30000,
-      caution: 60000,
-      caution_amount: 60000,
-      charges: 10000,
-      charges_amount: 10000,
-      duration_months: 12,
-      start_date: '2026-10-15',
-      end_date: '2027-10-14',
-      status: 'actif',
-      owner_signed: true,
-      tenant_signed: true,
-      owner_signature_url: 'SIG_AGENCE_KK_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
-      owner: {
-        id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-        full_name: 'kk',
-        phone: '0584269885',
-        email: 'ny8667496@gmail.com',
-        account_type: 'agence'
-      },
-      tenant: {
-        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        full_name: 'Christian',
-        phone: '0500552141',
-        email: 'christianyaokoffi88@gmail.com',
-        account_type: 'locataire'
-      },
-      property: {
-        id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
-        title: 'Maison 4 pièce',
-        address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-        city: 'Yamoussoukro'
-      }
-    },
-    {
       id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
       contract_number: 'LT-2026-CI-39210687',
       contractNumber: 'LT-2026-CI-39210687',
@@ -169,116 +142,13 @@ let SERVER_STORE = {
     }
   ],
 
-  maintenance: [
-    {
-      id: 'tck_2026_maint_01',
-      ticketNumber: 'TCK-2026-PLMB',
-      tenantId: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      ownerId: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      tenantName: 'Christian',
-      tenantPhone: '0500552141',
-      propertyTitle: 'Maison 4 pièce',
-      propertyAddress: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      category: 'Plomberie',
-      priority: 'normale',
-      status: 'En cours',
-      createdAt: '18/10/2026',
-      scheduledDate: '24/10/2026',
-      cost: 15000,
-      description: 'Fuite robinet salle de bain et contrôle pression arrivée d\'eau.',
-      photos: [],
-      notes: [
-        {
-          id: 'note_1',
-          author: 'Agence KK',
-          content: 'Plombier contacté. Intervention calée pour le 24 octobre à 10h.',
-          date: '18/10/2026 14:30',
-          isInternal: false
-        }
-      ]
-    }
-  ],
-
-  properties: [
-    {
-      id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
-      title: 'Maison 4 pièce',
-      type: 'villa',
-      address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      city: 'Yamoussoukro',
-      commune: 'Centre',
-      quartier: '100 villard',
-      rent: 30000,
-      caution: 60000,
-      charges: 10000,
-      status: 'loue',
-      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      owner_name: 'KK',
-      created_at: '2026-10-15T10:00:00.000Z'
-    }
-  ],
+  maintenance: [],
+  properties: [],
   messages: [],
   conversations: [],
   contacts: {},
   readState: {},
-  applications: [
-    {
-      id: 'app_christian_maison_daloa',
-      property_id: '8c6bb0dd-d482-4878-96ff-8ba245c4f9af',
-      property_title: 'Maison à louer',
-      property_address: 'Daloa, Daloa',
-      rent_amount: 250000,
-      caution_amount: 500000,
-      date_received: '2026-10-29',
-      status: 'en_attente',
-      dossier_status: 'complet',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      tenant_name: 'christian',
-      tenant_email: 'christianyaokoffi88@gmail.com',
-      tenant_phone: '+225 07 00 00 00 00',
-      owner_id: 'c26c548a-4a86-4f0f-a6b5-6eb38127021d',
-      owner_name: 'Romaric koffi',
-      comment: 'Bonjour, je souhaite réserver ce bien et planifier la constitution du dossier de location.',
-      documents: {
-        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
-      },
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'app_christian_agence_kk',
-      property_id: '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53',
-      property_title: 'Maison 4 pièce',
-      property_address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
-      rent_amount: 30000,
-      caution_amount: 60000,
-      date_received: '2026-10-15',
-      status: 'contrat_actif',
-      dossier_status: 'complet',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      tenant_name: 'christian',
-      tenant_email: 'christianyaokoffi88@gmail.com',
-      tenant_phone: '0500552141',
-      owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-      agency_name: 'kk',
-      owner_name: 'kk',
-      is_agency: true,
-      tenant_signed: true,
-      owner_signed: true,
-      contract_finalized: true,
-      contract_number: 'LT-2026-CI-000492',
-      comment: 'Dossier de location validé et contrat scellé avec l\'agence kk.',
-      documents: {
-        cni_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&w=800&q=80',
-        quittances_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80',
-        attestation_url: 'https://images.unsplash.com/photo-1450133064473-71024230f91b?auto=format&fit=crop&w=800&q=80'
-      },
-      created_at: '2026-10-15T10:00:00.000Z'
-    }
-  ]
+  applications: []
 };
 
 // ============================================================================
@@ -614,7 +484,7 @@ export default async function handler(req, res) {
           type: 'paiement',
           targetTab: 'payments',
           targetRole: 'agence',
-          targetUserId: payment.owner_id || payment.agency_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          targetUserId: payment.owner_id || payment.agency_id || '',
           senderUserId: payment.tenant_id,
           payload: {
             paymentId: newId,
@@ -675,12 +545,12 @@ export default async function handler(req, res) {
             id: `rec_${Date.now()}`,
             receipt_number: recRef,
             type: 'loyer',
-            tenant_name: targetPayment.tenant?.full_name || targetPayment.tenant_name || 'Christian',
-            property_title: targetPayment.contract?.property?.title || targetPayment.property_title || 'Maison 4 pièce',
-            property_address: targetPayment.contract?.property?.address || targetPayment.property_address || '100 villard, Yamoussoukro - Côte d\'Ivoire',
-            contract_number: targetPayment.contract?.contract_number || targetPayment.contract_id || 'LT-2026-CI-000492',
+            tenant_name: targetPayment.tenant?.full_name || targetPayment.tenant_name || 'Locataire',
+            property_title: targetPayment.contract?.property?.title || targetPayment.property_title || 'Bien immobilier',
+            property_address: targetPayment.contract?.property?.address || targetPayment.property_address || '',
+            contract_number: targetPayment.contract?.contract_number || targetPayment.contract_id || '',
             period_covered: targetPayment.target_month || 'Mois en cours',
-            amount: Number(targetPayment.amount) || 30000,
+            amount: Number(targetPayment.amount) || 0,
             payment_method: targetPayment.payment_method || 'Mobile Money',
             payment_date: new Date().toLocaleDateString('fr-FR'),
             token: recToken,
@@ -744,8 +614,8 @@ export default async function handler(req, res) {
             id: paymentId || `pmt_${Date.now()}`,
             contract_id: 'LT-2026-CI-39210687',
             tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-            owner_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-            agency_id: 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+            owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+            agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
             amount: 60000,
             payment_date: new Date().toISOString().split('T')[0],
             payment_method: 'Espèces',
@@ -753,7 +623,7 @@ export default async function handler(req, res) {
             status: 'confirme',
             target_month: 'Novembre 2026 à Janvier 2027',
             confirmed_at: new Date().toISOString(),
-            owner_signature_url: ownerSignatureUrl || 'SIG_AGENCE_KK_CERTIFIED',
+            owner_signature_url: ownerSignatureUrl || 'SIG_OWNER_CERTIFIED',
             tenant_signature_url: tenantSignatureUrl,
             tenant: {
               id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
@@ -838,7 +708,7 @@ export default async function handler(req, res) {
           type: 'paiement',
           targetTab: 'receipts',
           targetRole: 'agence',
-          targetUserId: targetPayment.owner_id || targetPayment.agency_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+          targetUserId: targetPayment.owner_id || targetPayment.agency_id || '',
           payload: {
             paymentId: targetPayment.id,
             receiptNumber: recRef
@@ -903,7 +773,7 @@ export default async function handler(req, res) {
           type: 'maintenance',
           targetTab: 'maintenance',
           targetRole: 'proprietaire',
-          targetUserId: newTicket.ownerId || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'
+          targetUserId: newTicket.ownerId || ''
         };
         SERVER_STORE.notifications = [
           notif,

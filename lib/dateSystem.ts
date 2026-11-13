@@ -201,7 +201,7 @@ export function calculateContractDueDetails(
   const contractNumber =
     contract.contract_number ||
     contract.id ||
-    'LT-2026-CI-000492';
+    '';
 
   const propertyTitle =
     contract.property?.title ||
@@ -371,7 +371,7 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
                 const parsedSigned = parseAnyDate(effectiveSigned);
                 contracts.push({
                   id: a.id,
-                  contract_number: a.contract_number || `LT-2026-CI-000492`,
+                  contract_number: a.contract_number || a.id || '',
                   property_title: a.property_title,
                   property_address: a.property_address,
                   rent: Number(a.rent_amount || a.property?.rent || a.rent || 0),

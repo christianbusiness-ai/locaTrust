@@ -3036,8 +3036,8 @@ export const LocatairePaiementsView: React.FC = () => {
               await broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
                 depositId: myDeposit.id,
                 receiptNumber: (myDeposit as any).receipt_number || `REC-CAUT-${myDeposit.id.toUpperCase()}`,
-                actorId: user?.id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-                targetUserId: myDeposit.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+                actorId: user?.id || '',
+                targetUserId: myDeposit.owner_id || '',
                 contractId: myDeposit.contract_id,
                 data: {
                   deposit: updatedWithSig,

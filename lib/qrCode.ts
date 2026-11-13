@@ -256,7 +256,7 @@ export function getAbsoluteVerificationUrl(contractOrUrl?: string, defaultType: 
       ? window.location.origin
       : 'https://locatrust.site';
 
-  if (!contractOrUrl) return `${origin}/verify/${defaultType}/LT-2026-CI-000492`;
+  if (!contractOrUrl) return origin;
   const trimmed = contractOrUrl.trim();
 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {

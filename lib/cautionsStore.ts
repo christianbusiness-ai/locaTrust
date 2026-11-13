@@ -35,11 +35,10 @@ export function getStoredDeposits(): Deposit[] {
 /**
  * Formate un numéro de reçu de caution court, officiel et élégant (ex: REC-CAUT-05E76242)
  */
-export function formatCautionReceiptNumber(id: string | null | undefined, contractNumber?: string): string {
+export function formatCautionReceiptNumber(id: string | null | undefined, _contractNumber?: string): string {
   if (!id) return 'REC-CAUT-2026';
   if (id.startsWith('REC-CAUT-') && id.length <= 20) return id;
   if (id.startsWith('CAUT-') && id.length <= 16) return id;
-  if (contractNumber === 'LT-2026-CI-000492') return 'REC-CAUTION-000492';
   const clean = id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase();
   return `REC-CAUT-${clean || '2026'}`;
 }
@@ -638,8 +637,8 @@ export function signCautionReceipt(
       broadcastLiveEvent('CAUTION_SIGNED_BY_TENANT', {
         depositId: target.id,
         receiptNumber: cleanNum,
-        actorId: target.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        targetUserId: target.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
+        actorId: target.tenant_id || '',
+        targetUserId: target.owner_id || '',
         contractId: target.contract_id,
         data: {
           deposit: updatedDeposit,
@@ -792,7 +791,7 @@ export function resolveDepositContractDetails(dep: Deposit) {
     matchedContract?.contract_number ||
     matchedContract?.contractNumber ||
     matchedReceipt?.contractNumber ||
-    (rawContractId.startsWith('LT-') ? rawContractId : (/^[0-9a-f]{8}/i.test(rawContractId) ? `LT-2026-CI-${rawContractId.slice(0, 8).toUpperCase()}` : 'LT-2026-CI-000492'));
+    (rawContractId.startsWith('LT-') ? rawContractId : (/^[0-9a-f]{8}/i.test(rawContractId) ? `LT-2026-CI-${rawContractId.slice(0, 8).toUpperCase()}` : ''));
 
   const propertyTitle =
     matchedContract?.property_title ||
@@ -800,7 +799,7 @@ export function resolveDepositContractDetails(dep: Deposit) {
     matchedReceipt?.propertyTitle ||
     matchedProperty?.title ||
     dep.property?.title ||
-    'appartement';
+    'Logement';
 
   let propertyAddress =
     matchedContract?.property_address ||
@@ -869,13 +868,13 @@ export function resolveDepositContractDetails(dep: Deposit) {
     matchedContract?.agency_name ||
     matchedReceipt?.ownerName ||
     dep.confirmed_by ||
-    'kk';
+    'Bailleur';
 
-  // Si c'est un UUID brut ou un identifiant système (ex: d3a42346-c227-4c67-b4a3-52bd09b98ad9 ou usr_owner)
+  // Si c'est un UUID brut ou un identifiant système (ex: usr_owner)
   if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawOwnerCandidate) || rawOwnerCandidate.startsWith('usr_')) {
     try {
       if (typeof window !== 'undefined') {
-        const contactRaw = localStorage.getItem(`locatrust_contact_${rawOwnerCandidate}`) || localStorage.getItem('locatrust_contact_d3a42346-c227-4c67-b4a3-52bd09b98ad9');
+        const contactRaw = localStorage.getItem(`locatrust_contact_${rawOwnerCandidate}`);
         if (contactRaw) {
           const contact = JSON.parse(contactRaw);
           if (contact.name && !/^[0-9a-f]{8}-/i.test(contact.name)) {
@@ -944,8 +943,8 @@ export function resolveDepositContractDetails(dep: Deposit) {
     tenantName,
     tenantCni,
     tenantPhone,
-    ownerId: matchedContract?.owner_id || matchedContract?.agency_id || dep.owner_id || 'd3a42346-c227-4c67-b4a3-52bd09b98ad9',
-    tenantId: matchedContract?.tenant_id || dep.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46'
+    ownerId: matchedContract?.owner_id || matchedContract?.agency_id || dep.owner_id || '',
+    tenantId: matchedContract?.tenant_id || dep.tenant_id || ''
   };
 }
 
@@ -1007,16 +1006,6 @@ export function sendCautionReceiptToTenant(
 
   // Résolution stricte vers KK / Agence
   const actorLower = (finalActorName || resolved.ownerName || '').toLowerCase();
-  if (
-    actorLower.includes('kk') ||
-    senderId.includes('kk') ||
-    senderId.includes('agency') ||
-    senderId === 'usr_owner' ||
-    senderId === 'usr_agency'
-  ) {
-    senderId = 'd3a42346-c227-4c67-b4a3-52bd09b98ad9';
-  }
-
   const quittance: ChatQuittanceAttachment = {
     receiptNumber: cleanReceiptNum,
     receiptType: 'caution',

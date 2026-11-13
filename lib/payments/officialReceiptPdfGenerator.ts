@@ -79,15 +79,11 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     const bgLight = [248, 250, 252]; // #F8FAFC
     const borderSlate = [226, 232, 240]; // #E2E8F0
 
-    // Sanitize any raw UUID, Nat Yao or placeholder that might have leaked into ownerName
-    let safeOwnerName = data.ownerName || 'KK';
-    if (safeOwnerName === 'Nat Yao' || safeOwnerName.toLowerCase() === 'kk') {
-      safeOwnerName = 'KK';
-    }
+    let safeOwnerName = data.ownerName || 'Bailleur';
     if (/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(safeOwnerName) || safeOwnerName.startsWith('usr_')) {
       try {
         if (typeof window !== 'undefined') {
-          const contact = localStorage.getItem(`locatrust_contact_${safeOwnerName}`) || localStorage.getItem('locatrust_contact_d3a42346-c227-4c67-b4a3-52bd09b98ad9');
+          const contact = localStorage.getItem(`locatrust_contact_${safeOwnerName}`);
           if (contact) {
             const parsed = JSON.parse(contact);
             if (parsed.name && !/^[0-9a-f]{8}-/i.test(parsed.name)) {

@@ -144,10 +144,10 @@ export const LocataireMaintenanceView: React.FC = () => {
       let ownerId = chosenContract?.owner_id || chosenContract?.owner?.id;
 
       if (!isValidUuid(ownerId)) {
-        ownerId = 'd3a42346-c227-4c67-b4a3-52bd09b98ad9'; // KK (Agence/Propriétaire)
+        ownerId = chosenContract?.owner_id || '';
       }
       if (!isValidUuid(propId)) {
-        propId = '1b0e4bb4-66e0-432f-b8b7-f415ea36ae53'; // Maison 4 pièce
+        propId = chosenContract?.property_id || '';
       }
 
       const tenantName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire';
@@ -159,7 +159,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         id: generatedTicketUuid,
         property_id: propId,
         owner_id: ownerId,
-        tenant_id: user?.id && isValidUuid(user.id) ? user.id : 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        tenant_id: user?.id || '',
         title: `Panne ${category.toUpperCase()} - ${description.slice(0, 35)}`,
         description: description,
         category: category,

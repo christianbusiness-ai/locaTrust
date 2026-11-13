@@ -153,7 +153,7 @@ export async function collectProofDossierData(contractOrId: any): Promise<ProofD
     } catch {}
   }
 
-  const contractNumber = rawContract?.contract_number || rawContract?.id || contractId || 'LT-2026-CI-000492';
+  const contractNumber = rawContract?.contract_number || rawContract?.id || contractId || '';
 
   // Parties
   const resolvedParties = await resolveContractParties({
