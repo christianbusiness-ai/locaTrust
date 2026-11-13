@@ -363,7 +363,59 @@ export function reconcilePaymentsOnSchedule(
   });
 
   for (const payment of validPayments) {
-    // 1. Si le paiement possède des allocations explicites
+    // 1. Si le paiement cible une plage textuelle multi-mois explicite (ex: "Novembre 2026 à Janvier 2027"),
+    // la plage textuelle prime rigoureusement pour éviter toute désynchronisation d'allocations
+    const target = String(payment.target_month || payment.month || '').trim();
+    const rangeRegex = /(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})?\s*(?:à|au|-|–|to)\s*(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})/i;
+    const rangeMatch = target.match(rangeRegex);
+
+    if (rangeMatch) {
+      const FRENCH_MONTH_MAP: { [k: string]: number } = {
+        janvier: 0, fevrier: 1, février: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+        juillet: 6, aout: 7, août: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11, décembre: 11
+      };
+      const sM = FRENCH_MONTH_MAP[rangeMatch[1].toLowerCase()] ?? 10;
+      const eM = FRENCH_MONTH_MAP[rangeMatch[3].toLowerCase()] ?? 0;
+      const eY = parseInt(rangeMatch[4], 10);
+      const sY = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : (sM <= eM ? eY : eY - 1);
+      const startIdx = sY * 12 + sM;
+      const endIdx = eY * 12 + eM;
+
+      const rangeItems = updatedSchedule.filter(item => {
+        const d = parseDateSafe(item.due_date);
+        const idx = d.getFullYear() * 12 + d.getMonth();
+        return idx >= startIdx && idx <= endIdx;
+      });
+
+      if (rangeItems.length > 0) {
+        let money = Number(payment.amount || 0);
+        for (const item of rangeItems) {
+          const needed = item.amount_due - item.amount_paid;
+          if (needed > 0 && money > 0) {
+            const alloc = Math.min(money, needed);
+            item.amount_paid += alloc;
+            money -= alloc;
+          }
+        }
+
+        if (money > 0) {
+          const lastRangeIdx = updatedSchedule.indexOf(rangeItems[rangeItems.length - 1]);
+          for (let i = lastRangeIdx + 1; i < updatedSchedule.length; i++) {
+            if (money <= 0) break;
+            const nextItem = updatedSchedule[i];
+            const needed = nextItem.amount_due - nextItem.amount_paid;
+            if (needed > 0) {
+              const alloc = Math.min(money, needed);
+              nextItem.amount_paid += alloc;
+              money -= alloc;
+            }
+          }
+        }
+        continue;
+      }
+    }
+
+    // 1b. Si le paiement possède des allocations explicites conformes
     if (Array.isArray(payment.allocations) && payment.allocations.length > 0) {
       for (const alloc of payment.allocations) {
         const item = updatedSchedule.find((s) => s.target_month.toLowerCase() === (alloc.target_month || '').toLowerCase());
@@ -374,8 +426,7 @@ export function reconcilePaymentsOnSchedule(
       continue;
     }
 
-    // 2. Si le paiement cible un mois ou une plage textuelle
-    const target = String(payment.target_month || payment.month || '').trim();
+    // 2. Si le paiement cible un mois direct ou contient des mois
     if (target) {
       // Chercher si un mois exact correspond
       const directItem = updatedSchedule.find((s) => s.target_month.toLowerCase() === target.toLowerCase());
@@ -403,56 +454,7 @@ export function reconcilePaymentsOnSchedule(
         }
       }
 
-      // 2b. Si le texte définit une plage multi-mois (ex: "Novembre 2026 à Janvier 2027", "Octobre 2026 - Décembre 2026")
-      const rangeRegex = /(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})?\s*(?:à|au|-|–|to)\s*(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s*(\d{4})/i;
-      const rangeMatch = target.match(rangeRegex);
-      if (rangeMatch) {
-        const FRENCH_MONTH_MAP: { [k: string]: number } = {
-          janvier: 0, fevrier: 1, février: 1, mars: 2, avril: 3, mai: 4, juin: 5,
-          juillet: 6, aout: 7, août: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11, décembre: 11
-        };
-        const sM = FRENCH_MONTH_MAP[rangeMatch[1].toLowerCase()] ?? 10;
-        const eM = FRENCH_MONTH_MAP[rangeMatch[3].toLowerCase()] ?? 0;
-        const eY = parseInt(rangeMatch[4], 10);
-        const sY = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : (sM <= eM ? eY : eY - 1);
-        const startIdx = sY * 12 + sM;
-        const endIdx = eY * 12 + eM;
 
-        const rangeItems = updatedSchedule.filter(item => {
-          const d = parseDateSafe(item.due_date);
-          const idx = d.getFullYear() * 12 + d.getMonth();
-          return idx >= startIdx && idx <= endIdx;
-        });
-
-        if (rangeItems.length > 0) {
-          let money = Number(payment.amount || 0);
-          for (const item of rangeItems) {
-            const needed = item.amount_due - item.amount_paid;
-            if (needed > 0 && money > 0) {
-              const alloc = Math.min(money, needed);
-              item.amount_paid += alloc;
-              money -= alloc;
-            }
-          }
-
-          // Si un reliquat subsiste (ex: paiement supérieur à la plage, ou mois déjà soldés par une avance précédente),
-          // affecter immédiatement le solde chronologiquement sur les mois futurs suivants (chaînage d'avances)
-          if (money > 0) {
-            const lastRangeIdx = updatedSchedule.indexOf(rangeItems[rangeItems.length - 1]);
-            for (let i = lastRangeIdx + 1; i < updatedSchedule.length; i++) {
-              if (money <= 0) break;
-              const nextItem = updatedSchedule[i];
-              const needed = nextItem.amount_due - nextItem.amount_paid;
-              if (needed > 0) {
-                const alloc = Math.min(money, needed);
-                nextItem.amount_paid += alloc;
-                money -= alloc;
-              }
-            }
-          }
-          continue;
-        }
-      }
 
       // Si le texte contient plusieurs mois par inclusion directe (ex: "Octobre 2027 – Novembre 2027")
       let matchedCount = 0;

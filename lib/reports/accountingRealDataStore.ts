@@ -400,6 +400,16 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                 }
               });
             }
+            // Contrats centralisés depuis le serveur (Source de vérité)
+            if (Array.isArray(syncJson.data.contracts)) {
+              const knownCNums = new Set(realContracts.map((c: any) => c.contract_number || c.id));
+              syncJson.data.contracts.filter(isMine).forEach((sc: any) => {
+                if (sc && !knownCNums.has(sc.contract_number) && !knownCNums.has(sc.id)) {
+                  realContracts.push(sc);
+                  knownCNums.add(sc.contract_number || sc.id);
+                }
+              });
+            }
             // Reçus
             if (Array.isArray(syncJson.data.receipts)) {
               const knownRNums = new Set(realReceipts.map((r: any) => r.receipt_number));
@@ -463,14 +473,17 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           }
         }
 
-        // Intégration des contrats actifs depuis locatrust_rental_applications
+        // Intégration des contrats actifs depuis locatrust_rental_applications (avec dédoublonnage strict par logement)
         const rawApps = localStorage.getItem('locatrust_rental_applications');
         if (rawApps) {
           const apps = JSON.parse(rawApps);
           if (Array.isArray(apps)) {
             const knownCNums = new Set(realContracts.map((c: any) => c.contract_number || c.id));
+            const knownPropIds = new Set(realContracts.map((c: any) => c.property_id).filter(Boolean));
             apps.filter((a: any) => isMine(a) && (a.status === 'contrat_actif' || a.documents?.contract_status === 'contrat_actif')).forEach((a: any) => {
               const cNum = a.contract_number || a.id;
+              const pId = a.property_id;
+              if (pId && knownPropIds.has(pId)) return; // Logement déjà représenté par un contrat dans realContracts
               if (cNum && !knownCNums.has(cNum) && !knownCNums.has(a.id)) {
                 realContracts.push({
                   id: a.id,
@@ -486,6 +499,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                   tenant_signed: true
                 });
                 knownCNums.add(cNum);
+                if (pId) knownPropIds.add(pId);
               }
             });
           }
@@ -630,7 +644,7 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const loyersImpayes = portfolioMetrics.totalLateRent;
 
     // Contrats actifs (Exclusion stricte des contrats terminés/clos)
-    const activeContracts = realContracts.filter((c: any) => {
+    const rawActiveContracts = realContracts.filter((c: any) => {
       const st = String(c?.status || '').toLowerCase().trim();
       return (
         (st === 'actif' || st === 'signe' || st === 'contrat_actif') &&
@@ -638,6 +652,21 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         st !== 'cloture' &&
         st !== 'resilie'
       );
+    });
+
+    // Dédoublonnage strict des contrats actifs : 1 seul contrat actif par logement (évite la duplication du loyer attendu à 40 000 FCFA)
+    const activeContracts: any[] = [];
+    const seenActivePropertyIds = new Set<string>();
+    const seenActiveContractNumbers = new Set<string>();
+
+    rawActiveContracts.forEach((c: any) => {
+      const pId = String(c.property_id || c.property?.id || '').trim();
+      const cNum = String(c.contract_number || c.contractNumber || c.id || '').trim();
+      if (cNum && seenActiveContractNumbers.has(cNum)) return;
+      if (pId && seenActivePropertyIds.has(pId)) return;
+      if (pId) seenActivePropertyIds.add(pId);
+      if (cNum) seenActiveContractNumbers.add(cNum);
+      activeContracts.push(c);
     });
 
     // Loyer mensuel attendu (cumul des baux actifs uniquement : 0 si aucun contrat actif)
@@ -724,21 +753,31 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         if (p.id) processedPaymentKeys.add(String(p.id));
         if (p.reference) processedPaymentKeys.add(String(p.reference));
         if (p.receipt_number) processedPaymentKeys.add(String(p.receipt_number));
-      });
 
-      const sched = generateContractSchedule(c, new Date(), 36);
-      const reconciled = reconcilePaymentsOnSchedule(sched, cPayments, false);
-
-      reconciled.forEach((item) => {
-        if (item.amount_paid > 0) {
-          const d = parseDateSafe(item.due_date);
-          const cStart = resolveContractEffectiveStartDate(c);
-          const cStartMonthStart = new Date(cStart.getFullYear(), cStart.getMonth(), 1);
-          // RÈGLE ABSOLUE : Aucun loyer ou encaissement ne peut être alloué avant la signature du contrat
-          if (d < cStartMonthStart) return;
-          const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-          const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
-          paymentAllocationsByMonthKey.set(mKey, prev + item.amount_paid);
+        // Priorité absolue aux périodes explicitement stipulées (ex: "Novembre 2026 à Janvier 2027")
+        const periodStr = p.target_month || p.period_covered || p.period || '';
+        const allocs = parsePaymentPeriodAllocations(periodStr, Number(p.amount) || 0, p.payment_date || p.created_at);
+        if (allocs && allocs.length > 0) {
+          allocs.forEach((a) => {
+            const prev = paymentAllocationsByMonthKey.get(a.monthKey) || 0;
+            paymentAllocationsByMonthKey.set(a.monthKey, prev + a.amount);
+          });
+        } else {
+          // Sinon réconciliation chronologique sur échéancier
+          const sched = generateContractSchedule(c, new Date(), 36);
+          const reconciled = reconcilePaymentsOnSchedule(sched, [p], false);
+          reconciled.forEach((item) => {
+            if (item.amount_paid > 0) {
+              const d = parseDateSafe(item.due_date);
+              const cStart = resolveContractEffectiveStartDate(c);
+              const cStartMonthStart = new Date(cStart.getFullYear(), cStart.getMonth(), 1);
+              // RÈGLE ABSOLUE : Aucun loyer ou encaissement ne peut être alloué avant la signature du contrat
+              if (d < cStartMonthStart) return;
+              const mKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+              const prev = paymentAllocationsByMonthKey.get(mKey) || 0;
+              paymentAllocationsByMonthKey.set(mKey, prev + item.amount_paid);
+            }
+          });
         }
       });
     });
@@ -772,7 +811,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       // Contrats réellement actifs durant CE mois spécifique (calculs partant de la signature)
       const contractsActiveThisMonth = activeContracts.filter((c: any) => {
         const cStart = resolveContractEffectiveStartDate(c);
-        if (cStart > monthEnd) return false;
+        const cStartMonthStart = new Date(cStart.getFullYear(), cStart.getMonth(), 1);
+        // RÈGLE ABSOLUE : Un bail ne produit de loyer attendu qu'à partir de sa date d'effet / signature
+        if (cStartMonthStart > monthEnd) return false;
         if (c.end_date) {
           const cEnd = parseDateSafe(c.end_date);
           if (cEnd < monthStart) return false;

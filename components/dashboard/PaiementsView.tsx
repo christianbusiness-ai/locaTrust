@@ -613,7 +613,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       // 3. Normalisation canonique : respecter les données authentiques de chaque profil
       loaded = loaded.map((p) => {
         const hasTenantSig = Boolean(p.tenant_signature_url || (p as any).tenant_signature);
-        const receiptExists = p.reference ? receiptsByRef.get(p.reference) : null;
+        const pRef = String(p.reference || p.receipt_number || '').trim();
+        const receiptExists = pRef ? (receiptsByRef.get(pRef) || receiptsByRef.get(pRef.toUpperCase()) || receiptsByRef.get(pRef.toLowerCase())) : null;
         const isSealedReceipt = receiptExists && (
           receiptExists.status === 'FINALISE' ||
           receiptExists.status === 'CONFIRME' ||
@@ -621,7 +622,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           receiptExists.status === 'confirme' ||
           receiptExists.tenant_signed === true ||
           Boolean(receiptExists.tenant_signature_url) ||
-          (p.reference && finalizedNotifs.has(p.reference))
+          (pRef && finalizedNotifs.has(pRef))
         );
 
         // Si le reçu existe et est certifié/scellé ou signé par le locataire, le paiement est CONFIRMÉ
@@ -629,6 +630,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           p.status === 'confirme' ||
           p.status === 'certifie' ||
           p.status === 'valide' ||
+          p.tenant_signed === true ||
           hasTenantSig ||
           isSealedReceipt;
 

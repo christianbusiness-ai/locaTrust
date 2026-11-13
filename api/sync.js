@@ -312,6 +312,50 @@ let SERVER_STORE = {
         address: '100 villard, Yamoussoukro - Côte d\'Ivoire',
         city: 'Yamoussoukro'
       }
+    },
+    {
+      id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
+      contract_number: 'LT-2026-CI-39210687',
+      contractNumber: 'LT-2026-CI-39210687',
+      property_id: '59cc106e-d787-448d-9513-5c9e2aa2e184',
+      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+      owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+      agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+      rent: 20000,
+      monthly_rent: 20000,
+      caution: 40000,
+      caution_amount: 40000,
+      charges: 0,
+      charges_amount: 0,
+      duration_months: 12,
+      start_date: '2026-11-01',
+      signed_date: '2026-11-10',
+      end_date: '2027-10-31',
+      status: 'actif',
+      owner_signed: true,
+      tenant_signed: true,
+      owner_signature_url: 'SIG_OWNER_CERTIFIED',
+      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
+      owner: {
+        id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+        full_name: 'locatrust',
+        phone: '0584269885',
+        email: 'locatrust@locatrust.ci',
+        account_type: 'proprietaire'
+      },
+      tenant: {
+        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+        full_name: 'Christian',
+        phone: '0500552141',
+        email: 'christianyaokoffi88@gmail.com',
+        account_type: 'locataire'
+      },
+      property: {
+        id: '59cc106e-d787-448d-9513-5c9e2aa2e184',
+        title: 'Maison a loué',
+        address: 'Yamoussoukro - Côte d\'Ivoire',
+        city: 'Yamoussoukro'
+      }
     }
   ],
 

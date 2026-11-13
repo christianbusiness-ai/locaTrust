@@ -81,19 +81,22 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
   const isFetchingRef = React.useRef(false);
 
   const knownReceiptRefs = useMemo(() => {
-    const refs = new Set<string>(dbReceiptRefs);
+    const refs = new Set<string>();
+    dbReceiptRefs.forEach(r => {
+      if (r) refs.add(String(r).trim().toLowerCase());
+    });
     if (typeof window !== 'undefined') {
       try {
         const unifiedRcps = getUnifiedReceipts(user?.id);
         unifiedRcps.forEach((r: any) => {
-          if (r.receipt_number) refs.add(r.receipt_number);
-          if (r.receiptNumber) refs.add(r.receiptNumber);
-          if (r.payment_id) refs.add(r.payment_id);
-          if (r.id) refs.add(r.id);
-          if (r.reference) refs.add(r.reference);
-          if (r.token) refs.add(r.token);
-          const cKey = String(r.contract_id || r.contract_number || '').trim();
-          const pKey = String(r.period_covered || r.target_month || '').trim();
+          if (r.receipt_number) refs.add(String(r.receipt_number).trim().toLowerCase());
+          if (r.receiptNumber) refs.add(String(r.receiptNumber).trim().toLowerCase());
+          if (r.payment_id) refs.add(String(r.payment_id).trim().toLowerCase());
+          if (r.id) refs.add(String(r.id).trim().toLowerCase());
+          if (r.reference) refs.add(String(r.reference).trim().toLowerCase());
+          if (r.token) refs.add(String(r.token).trim().toLowerCase());
+          const cKey = String(r.contract_id || r.contract_number || '').trim().toLowerCase();
+          const pKey = String(r.period_covered || r.target_month || '').trim().toLowerCase();
           if (cKey && pKey) refs.add(`${cKey}_${pKey}`);
         });
       } catch { }
@@ -311,6 +314,51 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
           }
         } catch { }
 
+        // Synchronisation avec /api/sync (Source de vérité centrale multi-appareils)
+        try {
+          const syncRes = await fetch(`/api/sync?userId=${encodeURIComponent(currentUserId)}`);
+          if (syncRes.ok) {
+            const syncJson = await syncRes.json();
+            const sData = syncJson?.data || syncJson;
+            if (Array.isArray(sData?.payments)) {
+              sData.payments.forEach((sp: any) => {
+                const isMinePmt = sp.owner_id === currentUserId || sp.agency_id === currentUserId || (!sp.owner_id && isMine(sp));
+                if (isMinePmt) {
+                  const idx = loadedPayments.findIndex(p => p.id === sp.id || (sp.reference && p.reference === sp.reference));
+                  if (idx === -1) {
+                    loadedPayments.push(sp);
+                  } else {
+                    const existing = loadedPayments[idx];
+                    const spIsAdvanced =
+                      (sp.status === 'confirme' || sp.status === 'en_attente_signature_locataire') ||
+                      Boolean(sp.owner_signature_url || sp.tenant_signature_url);
+                    loadedPayments[idx] = {
+                      ...existing,
+                      ...sp,
+                      status: spIsAdvanced ? (sp.status || existing.status) : existing.status,
+                      owner_signature_url: sp.owner_signature_url || existing.owner_signature_url,
+                      tenant_signature_url: sp.tenant_signature_url || existing.tenant_signature_url
+                    };
+                  }
+                }
+              });
+            }
+            if (Array.isArray(sData?.receipts)) {
+              sData.receipts.forEach((sr: any) => {
+                const rNum = sr.receipt_number || sr.receiptNumber;
+                if (rNum) {
+                  currentReceiptRefs.add(rNum);
+                  serverRefs.push(rNum);
+                }
+              });
+            }
+          }
+        } catch { }
+
+        if (serverRefs.length > 0) {
+          setDbReceiptRefs(Array.from(new Set(serverRefs)));
+        }
+
         if (typeof window !== 'undefined') {
           try {
             const rawPmts = localStorage.getItem('locatrust_rent_payments');
@@ -343,11 +391,22 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
         // Normalisation stricte : filtrer les paiements annulés et sceller les paiements confirmés
         loadedPayments = loadedPayments.filter(p => p && p.status !== 'annule' && p.status !== 'supprime').map((p: any) => {
-          const hasRec = currentReceiptRefs.has(p.reference) || currentReceiptRefs.has(p.receipt_number) || currentReceiptRefs.has(p.id);
-          const isBothSigned = Boolean(p.owner_signature_url && p.tenant_signature_url);
+          const refLower = String(p.reference || p.receipt_number || p.id || '').trim().toLowerCase();
+          const hasRec =
+            currentReceiptRefs.has(p.reference) ||
+            currentReceiptRefs.has(p.receipt_number) ||
+            currentReceiptRefs.has(p.id) ||
+            (refLower && knownReceiptRefs.has(refLower));
+          const isBothSigned = Boolean(
+            (p.owner_signature_url || p.ownerSignatureUrl) &&
+            (p.tenant_signature_url || p.tenantSignatureUrl)
+          );
           const isConfirmedStatus = p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie';
           if (hasRec || isBothSigned || isConfirmedStatus) {
             return { ...p, status: 'confirme', is_confirmed: true };
+          }
+          if (p.owner_signature_url || p.ownerSignatureUrl) {
+            return { ...p, status: 'en_attente_signature_locataire' };
           }
           return p;
         });
@@ -684,13 +743,13 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
         // Paiements réels en attente (exclure formellement les règlements validés, scellés ou ayant déjà une quittance générée)
         const pendingPayments = realPayments.filter((p: any) => {
           if (p.status === 'annule' || p.status === 'supprime' || p.status === 'refuse' || p.status === 'rejete') return false;
-          if (p.receipt_number || p.owner_signature_url) return false;
+          if (p.receipt_number || p.receiptNumber || p.owner_signature_url || p.ownerSignatureUrl) return false;
           if (p.status === 'confirme' || p.status === 'valide' || p.status === 'certifie' || p.status === 'paye') return false;
           if (p.status === 'en_attente_signature_locataire') return false;
-          const ref = String(p.reference || p.receipt_number || p.id || '').trim();
-          if (ref && knownReceiptRefs.has(ref)) return false;
-          const contractKey = String(p.contract_id || p.contract?.id || p.contract_number || '').trim();
-          const periodKey = String(p.target_month || p.period_covered || '').trim();
+          const ref = String(p.reference || p.receipt_number || p.receiptNumber || p.id || '').trim().toLowerCase();
+          if (ref && (knownReceiptRefs.has(ref) || knownReceiptRefs.has(ref.toLowerCase()))) return false;
+          const contractKey = String(p.contract_id || p.contract?.id || p.contract_number || '').trim().toLowerCase();
+          const periodKey = String(p.target_month || p.period_covered || '').trim().toLowerCase();
           if (contractKey && periodKey && knownReceiptRefs.has(`${contractKey}_${periodKey}`)) return false;
           return p.status === 'declare';
         });

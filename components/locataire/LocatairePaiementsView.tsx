@@ -1497,6 +1497,19 @@ export const LocatairePaiementsView: React.FC = () => {
           confirmed_at: pmt.confirmed_at || now
         };
 
+        // Exécution atomique via la RPC officielle Supabase (contourne la restriction RLS pour locataire)
+        try {
+          const rcpIdentifier = pmt.reference || pmt.id;
+          if (rcpIdentifier) {
+            await supabase.rpc('tenant_sign_receipt', {
+              p_receipt_id: rcpIdentifier,
+              p_signature: signatureData
+            });
+          }
+        } catch (rpcErr) {
+          console.warn('RPC tenant_sign_receipt notice:', rpcErr);
+        }
+
         // Mise à jour robuste par ID ET par référence
         let updatedById = false;
         if (isValidUuid(pmt.id)) {
