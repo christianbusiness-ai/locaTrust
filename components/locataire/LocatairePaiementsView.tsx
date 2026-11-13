@@ -421,27 +421,37 @@ export const LocatairePaiementsView: React.FC = () => {
         } catch {}
       }
 
-      // Déduplication stricte par référence ou identifiant pour éviter les doublons d'affichage
+      // Déduplication stricte par référence canonique ou identifiant pour bloquer TOUT doublon
       const seenRefMap = new Map<string, any>();
       for (const p of rentList) {
-        const key = p.reference || p.id;
-        if (!seenRefMap.has(key)) {
-          seenRefMap.set(key, p);
+        if (!p) continue;
+        const refKey = String(p.receipt_number || p.reference || '').trim();
+        const idKey = String(p.id || '').trim();
+        const primaryKey = refKey || idKey;
+        if (!primaryKey) continue;
+
+        const existingKey = (refKey && seenRefMap.has(refKey)) ? refKey : (idKey && seenRefMap.has(idKey) ? idKey : null);
+        if (!existingKey) {
+          if (refKey) seenRefMap.set(refKey, p);
+          if (idKey) seenRefMap.set(idKey, p);
         } else {
-          // Fusionner l'élément le plus récent/complet
-          const current = seenRefMap.get(key);
-          if (p.tenant_signature_url && !current.tenant_signature_url) {
-            seenRefMap.set(key, { ...current, ...p });
-          }
+          const current = seenRefMap.get(existingKey);
+          const isMoreAdvanced =
+            (p.status === 'confirme' && current.status !== 'confirme') ||
+            (p.tenant_signature_url && !current.tenant_signature_url);
+          const merged = isMoreAdvanced ? { ...current, ...p } : { ...p, ...current };
+          if (refKey) seenRefMap.set(refKey, merged);
+          if (idKey) seenRefMap.set(idKey, merged);
         }
       }
-      rentList = Array.from(seenRefMap.values());
+      rentList = Array.from(new Set(seenRefMap.values()));
 
       // Consolidation contractuelle stricte : Unicité des déclarations en attente par période
       // 1. Si une déclaration groupée (ex: 60 000 FCFA couvrant Nov-Jan) est en attente ou active,
       //    toutes les anciennes déclarations non confirmées couvrant ces mêmes mois sont caduques et écartées.
       // 2. Pour tout mois donné sur un même contrat, il ne peut JAMAIS y avoir plusieurs déclarations en attente.
       const consolidatedRentList: any[] = [];
+      const seenCanonicalKeys = new Set<string>();
       const sortedByRecency = [...rentList].sort((a, b) => {
         const dateA = new Date(a.confirmed_at || a.created_at || a.payment_date || 0).getTime();
         const dateB = new Date(b.confirmed_at || b.created_at || b.payment_date || 0).getTime();
@@ -451,6 +461,12 @@ export const LocatairePaiementsView: React.FC = () => {
       const coveredMonthsByContract = new Map<string, Set<string>>();
 
       for (const p of sortedByRecency) {
+        const canonicalKey = String(p.receipt_number || p.reference || p.id || '').trim();
+        if (canonicalKey) {
+          if (seenCanonicalKeys.has(canonicalKey)) continue;
+          seenCanonicalKeys.add(canonicalKey);
+        }
+
         const cNum = String(p.contract_number || p.contract_id || 'default');
         if (!coveredMonthsByContract.has(cNum)) {
           coveredMonthsByContract.set(cNum, new Set<string>());
@@ -1103,7 +1119,19 @@ export const LocatairePaiementsView: React.FC = () => {
           try {
             const { data, error } = await createRentPayment(newPaymentData);
             if (!error && data?.id) {
+              const oldId = savedPayment.id;
               savedPayment.id = data.id;
+              try {
+                const storedNow = JSON.parse(localStorage.getItem('locatrust_rent_payments') || '[]');
+                if (Array.isArray(storedNow)) {
+                  const updatedStored = storedNow.map((p: any) =>
+                    p.id === oldId || p.reference === savedPayment.reference
+                      ? { ...p, id: data.id }
+                      : p
+                  );
+                  localStorage.setItem('locatrust_rent_payments', JSON.stringify(updatedStored));
+                }
+              } catch {}
             }
           } catch (sbErr) {
             console.warn('Supabase createRentPayment notice:', sbErr);

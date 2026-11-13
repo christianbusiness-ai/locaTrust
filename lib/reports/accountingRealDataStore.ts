@@ -754,17 +754,21 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         return p;
       });
 
-    // 4b-bis. Dédoublonnage absolu et canonique de realPayments
+    // 4b-bis. Dédoublonnage absolu et canonique de realPayments (par référence, numéro de quittance ou identifiant)
     const deduplicatedPaymentsMap = new Map<string, any>();
-    realPayments.forEach((p: any) => {
-      const canonicalKey = String(p.receipt_number || p.reference || p.id || '').trim();
-      if (!canonicalKey) return;
-      if (deletedKeysSet.has(canonicalKey)) return;
+    const pmtRefToKey = new Map<string, string>();
 
-      const existing = deduplicatedPaymentsMap.get(canonicalKey);
-      if (!existing) {
-        if (canonicalKey === 'ESP-895031' || p.reference === 'ESP-895031' || p.receipt_number === 'ESP-895031') {
-          deduplicatedPaymentsMap.set(canonicalKey, {
+    realPayments.forEach((p: any) => {
+      const pRef = String(p.receipt_number || p.reference || '').trim();
+      const pId = String(p.id || '').trim();
+      const primaryKey = pRef || pId;
+      if (!primaryKey) return;
+      if (deletedKeysSet.has(primaryKey) || (pRef && deletedKeysSet.has(pRef)) || (pId && deletedKeysSet.has(pId))) return;
+
+      const existingKey = (pRef && pmtRefToKey.get(pRef)) || (pId && pmtRefToKey.get(pId));
+      if (!existingKey || !deduplicatedPaymentsMap.has(existingKey)) {
+        if (primaryKey === 'ESP-895031' || pRef === 'ESP-895031') {
+          const norm = {
             ...p,
             reference: 'ESP-895031',
             receipt_number: 'ESP-895031',
@@ -774,14 +778,18 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             payment_method: 'Espèces',
             payment_date: '2026-11-10',
             status: 'confirme'
-          });
+          };
+          deduplicatedPaymentsMap.set(primaryKey, norm);
         } else {
-          deduplicatedPaymentsMap.set(canonicalKey, p);
+          deduplicatedPaymentsMap.set(primaryKey, p);
         }
+        if (pRef) pmtRefToKey.set(pRef, primaryKey);
+        if (pId) pmtRefToKey.set(pId, primaryKey);
       } else {
+        const existing = deduplicatedPaymentsMap.get(existingKey);
         const isExistingConfirmed = existing.status === 'confirme';
         const isPConfirmed = p.status === 'confirme';
-        deduplicatedPaymentsMap.set(canonicalKey, {
+        const merged = {
           ...existing,
           ...p,
           amount: Math.max(Number(existing.amount) || 0, Number(p.amount) || 0),
@@ -790,7 +798,10 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
           owner_signature_url: p.owner_signature_url || existing.owner_signature_url,
           period_covered: existing.period_covered?.includes('Janvier 2027') ? existing.period_covered : (p.period_covered || existing.period_covered),
           target_month: existing.target_month?.includes('Janvier 2027') ? existing.target_month : (p.target_month || existing.target_month)
-        });
+        };
+        deduplicatedPaymentsMap.set(existingKey, merged);
+        if (pRef) pmtRefToKey.set(pRef, existingKey);
+        if (pId) pmtRefToKey.set(pId, existingKey);
       }
     });
     realPayments = Array.from(deduplicatedPaymentsMap.values());

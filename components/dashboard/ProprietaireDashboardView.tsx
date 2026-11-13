@@ -421,18 +421,30 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
 
         // Dédoublonnage canonique absolu de loadedPayments
         const dedupPaymentsMap = new Map<string, any>();
+        const pmtRefToKey = new Map<string, string>();
         loadedPayments.forEach(p => {
-          const k = String(p.receipt_number || p.reference || p.id || '').trim();
-          if (!k) return;
-          if (!dedupPaymentsMap.has(k)) {
-            dedupPaymentsMap.set(k, p);
+          const pRef = String(p.receipt_number || p.reference || '').trim();
+          const pId = String(p.id || '').trim();
+          const primaryKey = pRef || pId;
+          if (!primaryKey) return;
+
+          const existingKey = (pRef && pmtRefToKey.get(pRef)) || (pId && pmtRefToKey.get(pId));
+          if (!existingKey || !dedupPaymentsMap.has(existingKey)) {
+            dedupPaymentsMap.set(primaryKey, p);
+            if (pRef) pmtRefToKey.set(pRef, primaryKey);
+            if (pId) pmtRefToKey.set(pId, primaryKey);
           } else {
-            const existing = dedupPaymentsMap.get(k);
-            dedupPaymentsMap.set(k, {
+            const existing = dedupPaymentsMap.get(existingKey);
+            const isConfirmed = existing.status === 'confirme' || p.status === 'confirme';
+            dedupPaymentsMap.set(existingKey, {
               ...existing,
               ...p,
-              status: (existing.status === 'confirme' || p.status === 'confirme') ? 'confirme' : (p.status || existing.status)
+              status: isConfirmed ? 'confirme' : (p.status || existing.status),
+              owner_signature_url: p.owner_signature_url || existing.owner_signature_url,
+              tenant_signature_url: p.tenant_signature_url || existing.tenant_signature_url
             });
+            if (pRef) pmtRefToKey.set(pRef, existingKey);
+            if (pId) pmtRefToKey.set(pId, existingKey);
           }
         });
         loadedPayments = Array.from(dedupPaymentsMap.values());

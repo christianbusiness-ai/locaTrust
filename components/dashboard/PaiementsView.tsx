@@ -606,7 +606,11 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
               });
 
               for (const loc of myLocalList) {
-                const idx = loaded.findIndex(p => p.id === loc.id || (loc.reference && p.reference === loc.reference));
+                const locRef = String(loc.receipt_number || loc.reference || '').trim();
+                const idx = loaded.findIndex(p => {
+                  const pRef = String(p.receipt_number || p.reference || '').trim();
+                  return (locRef && pRef && locRef === pRef) || p.id === loc.id;
+                });
                 if (idx === -1) {
                   loaded.unshift(loc);
                 } else {
@@ -737,8 +741,19 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       });
 
       const coveredMonthsByContractOwner = new Map<string, Set<string>>();
+      const seenPaymentRefKeys = new Set<string>();
 
       for (const p of sortedByRecencyOwner) {
+        const canonicalKey = String(p.receipt_number || p.reference || p.id || '').trim();
+        if (canonicalKey) {
+          if (seenPaymentRefKeys.has(canonicalKey)) {
+            if (p.reference) purgedObsoleteRefs.add(p.reference);
+            if (p.id) purgedObsoleteIds.add(p.id);
+            continue;
+          }
+          seenPaymentRefKeys.add(canonicalKey);
+        }
+
         const cNum = canonicalContractKey(p);
         if (!coveredMonthsByContractOwner.has(cNum)) {
           coveredMonthsByContractOwner.set(cNum, new Set<string>());

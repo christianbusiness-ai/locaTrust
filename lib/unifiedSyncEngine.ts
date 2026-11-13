@@ -215,34 +215,50 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         const localRaw = localStorage.getItem('locatrust_rent_payments');
         const localList: any[] = localRaw ? JSON.parse(localRaw) : [];
         const map = new Map<string, any>();
+        const refToKeyMap = new Map<string, string>();
 
         const testRefs = new Set([
           'esp-364218', 'rec-caution-000492', 'wav-2026-nov-781920', 'esp-135945',
           'pmt_dec_nov2026_01', 'pmt_esp_135945'
         ]);
 
-        // 1. Ajouter les paiements serveur valides
+        // 1. Ajouter les paiements serveur valides avec indexation canonique
         for (const sp of serverPayments) {
-          const key = sp.reference || sp.id;
-          const kLower = String(key || '').toLowerCase().trim();
+          const spRef = String(sp.receipt_number || sp.reference || '').trim();
+          const spId = String(sp.id || '').trim();
+          const primaryKey = spRef || spId;
+          if (!primaryKey) continue;
+
+          const kLower = primaryKey.toLowerCase();
           if (testRefs.has(kLower) || kLower.startsWith('rec-caution') || sp.type === 'caution') continue;
           const amt = Number(String(sp.amount || 0).replace(/[\s\u00A0,]/g, ''));
           if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
-          map.set(key, sp);
+
+          map.set(primaryKey, sp);
+          if (spRef) refToKeyMap.set(spRef, primaryKey);
+          if (spId) refToKeyMap.set(spId, primaryKey);
         }
 
         // 2. Fusionner intelligemment avec le cache local (Règle d'or : ne JAMAIS rétrograder un paiement validé/signé à 'declare')
         if (Array.isArray(localList)) {
           for (const lp of localList) {
-            const key = lp.reference || lp.id;
-            const kLower = String(key || '').toLowerCase().trim();
+            const lpRef = String(lp.receipt_number || lp.reference || '').trim();
+            const lpId = String(lp.id || '').trim();
+            const primaryKey = lpRef || lpId;
+            if (!primaryKey) continue;
+
+            const kLower = primaryKey.toLowerCase();
             if (testRefs.has(kLower) || kLower.startsWith('rec-caution') || lp.type === 'caution') continue;
             const amt = Number(String(lp.amount || 0).replace(/[\s\u00A0,]/g, ''));
             if (amt <= 0 || amt > 200000 || isNaN(amt)) continue;
-            if (!map.has(key)) {
-              map.set(key, lp);
+
+            const existingKey = (lpRef && refToKeyMap.get(lpRef)) || (lpId && refToKeyMap.get(lpId));
+            if (!existingKey || !map.has(existingKey)) {
+              map.set(primaryKey, lp);
+              if (lpRef) refToKeyMap.set(lpRef, primaryKey);
+              if (lpId) refToKeyMap.set(lpId, primaryKey);
             } else {
-              const current = map.get(key);
+              const current = map.get(existingKey);
               const localIsMoreAdvanced =
                 (lp.status === 'confirme' && current.status !== 'confirme') ||
                 (lp.status === 'en_attente_signature_locataire' && (current.status === 'declare' || current.status === 'en_attente')) ||
@@ -250,7 +266,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                 (lp.tenant_signature_url && !current.tenant_signature_url);
 
               if (localIsMoreAdvanced) {
-                map.set(key, {
+                map.set(existingKey, {
                   ...current,
                   ...lp,
                   status: lp.status || current.status,
@@ -260,7 +276,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                   target_month: lp.target_month || current.target_month
                 });
               } else {
-                map.set(key, {
+                map.set(existingKey, {
                   ...current,
                   owner_signature_url: current.owner_signature_url || lp.owner_signature_url,
                   tenant_signature_url: current.tenant_signature_url || lp.tenant_signature_url,
@@ -648,11 +664,12 @@ async function pushPendingLocalDataToServer(userId: string) {
             const isMyPmt = p && (p.owner_id === userId || p.agency_id === userId || p.tenant_id === userId);
             if (!isMyPmt) continue;
 
-            if (p.reference) {
+            const pRef = String(p.receipt_number || p.reference || '').trim();
+            if (pRef) {
               const { data: existing } = await supabase
                 .from('rent_payments')
                 .select('id')
-                .eq('reference', p.reference)
+                .or(`reference.eq.${pRef},receipt_number.eq.${pRef}`)
                 .maybeSingle();
 
               if (!existing) {

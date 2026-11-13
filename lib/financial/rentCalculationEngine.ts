@@ -354,11 +354,12 @@ export function analyzeContractSituation(
 
     if (matches) {
       // Dédoublonnage strict par numéro de quittance ou référence de transaction
-      const canonicalKey = String(p.receipt_number || p.reference || p.id || '').trim();
-      if (canonicalKey) {
-        if (seenPaymentKeys.has(canonicalKey)) return;
-        seenPaymentKeys.add(canonicalKey);
-      }
+      const pRef = String(p.receipt_number || p.reference || '').trim();
+      const pId = String(p.id || '').trim();
+      if (pRef && seenPaymentKeys.has(pRef)) return;
+      if (pId && seenPaymentKeys.has(pId)) return;
+      if (pRef) seenPaymentKeys.add(pRef);
+      if (pId) seenPaymentKeys.add(pId);
       rentPayments.push(p);
     }
   });

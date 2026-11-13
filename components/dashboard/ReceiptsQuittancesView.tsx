@@ -168,10 +168,12 @@ export const ReceiptsQuittancesView: React.FC = () => {
         if (!p) return;
         const ref = p.reference || p.receipt_number || p.id;
         if (!ref) return;
-        const existing = paymentsMap.get(ref);
+        const existing = paymentsMap.get(ref) || (p.reference && paymentsMap.get(p.reference)) || (p.receipt_number && paymentsMap.get(p.receipt_number)) || (p.id && paymentsMap.get(p.id));
         if (!existing) {
           paymentsMap.set(ref, p);
           if (p.id) paymentsMap.set(p.id, p);
+          if (p.reference) paymentsMap.set(p.reference, p);
+          if (p.receipt_number) paymentsMap.set(p.receipt_number, p);
         } else {
           const existingIsMoreAdvanced =
             (existing.status === 'confirme' && p.status !== 'confirme') ||
@@ -180,6 +182,8 @@ export const ReceiptsQuittancesView: React.FC = () => {
             const merged = { ...existing, ...p };
             paymentsMap.set(ref, merged);
             if (p.id) paymentsMap.set(p.id, merged);
+            if (p.reference) paymentsMap.set(p.reference, merged);
+            if (p.receipt_number) paymentsMap.set(p.receipt_number, merged);
           }
         }
       };
