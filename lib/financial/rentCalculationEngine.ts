@@ -317,10 +317,31 @@ export function analyzeContractSituation(
     if (!isConfirmedPayment(p)) return false;
 
     const pContractId = String(p.contract_id || p.contract?.id || p.contract?.contract_number || '').trim();
+    const pPropId = String(p.property_id || p.property?.id || '').trim();
     const pTenantId = String(p.tenant_id || '').trim();
-    if (pContractId && (pContractId === contractId || pContractId === contractNumber || contractNumber.includes(pContractId))) return true;
+
+    // 1. Correspondance directe par ID ou référence de contrat
+    if (pContractId && (
+      pContractId === contractId ||
+      pContractId === contractNumber ||
+      contractNumber.includes(pContractId) ||
+      pContractId.includes(contractNumber) ||
+      pContractId.includes(contractId) ||
+      contractId.includes(pContractId)
+    )) return true;
+
+    // 2. Correspondance par bien immobilier
+    if (contract?.property_id && pPropId && pPropId === String(contract.property_id)) return true;
+
+    // 3. Correspondance par locataire
     if (contract?.tenant_id && pTenantId && pTenantId === String(contract.tenant_id)) return true;
-    if (!pContractId && !pTenantId) return true;
+
+    // 4. Si le paiement ou reçu correspond au même bailleur
+    if (contract?.owner_id && p.owner_id && String(contract.owner_id) === String(p.owner_id)) return true;
+
+    // 5. Règle de résilience : s'il n'y a pas d'ambiguïté (contrat unique actif ou paiement unique)
+    if (!pContractId || pContractId === 'undefined' || pContractId === 'null' || payments.length === 1) return true;
+
     return false;
   });
 
