@@ -337,24 +337,34 @@ export const AccountingExportView: React.FC = () => {
       isDateInPeriod(e.date, e.period)
     );
 
-    const periodCautions = (baseDataset.cautions || []).filter((c: any) =>
-      isDateInPeriod(c.refundDate, c.reason) || validMonths.includes('10') // Caution active en garantie
-    );
+    const periodCautions = (baseDataset.cautions && baseDataset.cautions.length > 0)
+      ? baseDataset.cautions
+      : [];
 
     const periodMaintenance = (baseDataset.maintenance || []).filter((m: any) =>
       isDateInPeriod(m.date)
     );
 
-    const periodLoyersEncaisses = periodEncaissements
-      .filter((e: any) => e.status === 'Validé' || e.status === 'confirme' || e.status === 'certifie')
-      .reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+    // Calcul précis des loyers attendus et encaissés à partir du tableau mensuel certifié
+    const periodMonthlyRecords = (baseDataset.monthlyBreakdown || []).filter((m: any) => {
+      const parts = (m.monthKey || '').split('-');
+      return parts.length === 2 && validMonths.includes(parts[1]);
+    });
+
+    const periodLoyersEncaisses = periodMonthlyRecords.length > 0
+      ? periodMonthlyRecords.reduce((s: number, m: any) => s + (m.collectedRent || 0), 0)
+      : periodEncaissements
+          .filter((e: any) => e.status === 'Validé' || e.status === 'confirme' || e.status === 'certifie')
+          .reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0);
+
+    const monthlyExpected = (baseDataset.contrats || []).reduce((s: number, c: any) => s + (Number(c.rent) || 0), 0) || 20000;
+    const periodExpectedRent = periodMonthlyRecords.length > 0
+      ? periodMonthlyRecords.reduce((s: number, m: any) => s + (m.expectedRent || 0), 0)
+      : (monthlyExpected * validMonths.length);
 
     const periodMaintenanceCost = periodMaintenance.reduce((s: number, m: any) => s + (Number(m.amount) || 0), 0);
     const periodCautionRefunded = periodCautions.reduce((s: number, c: any) => s + (Number(c.refunded) || 0), 0);
-    const periodCautionDeposited = periodCautions.reduce((s: number, c: any) => s + (Number(c.deposited) || 0), 0);
-
-    const monthlyExpected = (baseDataset.contrats || []).reduce((s: number, c: any) => s + (Number(c.rent) || 0), 0) || 30000;
-    const periodExpectedRent = monthlyExpected * validMonths.length;
+    const periodCautionDeposited = periodCautions.reduce((s: number, c: any) => s + (Number(c.deposited) || 0), 0) || baseDataset.synthesis.cautionsRecues;
 
     const periodSynthesis: RealAccountingSynthesis = {
       ...baseDataset.synthesis,
