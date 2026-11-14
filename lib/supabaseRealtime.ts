@@ -1094,7 +1094,8 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
           const readerId = payload?.data?.readerId || payload?.actorId;
           const contactId = payload?.data?.contactId;
           const messageIds: string[] = Array.isArray(payload?.data?.messageIds) ? payload.data.messageIds : [];
-          if (readerId && (!currentActiveUserId || readerId === currentActiveUserId)) {
+          // Sécurité anti-boucle : Répercuter seulement si l'événement provient d'un autre client/session
+          if (readerId && currentActiveUserId && readerId !== currentActiveUserId) {
             import('@/lib/messagingStore')
               .then((m) => {
                 if (contactId === '__all__') {
@@ -1119,7 +1120,8 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
       case 'NOTIFICATION_READ':
         if (typeof window !== 'undefined') {
           const actorId = payload?.actorId || payload?.targetUserId;
-          if (!currentActiveUserId || actorId === currentActiveUserId) {
+          // Sécurité anti-boucle : Répercuter seulement si l'événement provient d'un autre client/session
+          if (actorId && currentActiveUserId && actorId !== currentActiveUserId) {
             import('@/lib/waitingListNotifications')
               .then((w) => {
                 if (payload?.data?.all) {
@@ -1343,10 +1345,13 @@ export async function broadcastLiveEvent(
   };
 
   // 1. Déclencher immédiatement l'événement local sur la fenêtre active sans attendre le réseau
-  try {
-    dispatchDomEventForType(event, fullPayload);
-  } catch (localErr) {
-    console.warn('Local DOM event dispatch error:', localErr);
+  // (Exclure NOTIFICATION_READ et MESSAGES_READ pour éviter toute récursion avec le déclencheur local)
+  if (event !== 'NOTIFICATION_READ' && event !== 'MESSAGES_READ') {
+    try {
+      dispatchDomEventForType(event, fullPayload);
+    } catch (localErr) {
+      console.warn('Local DOM event dispatch error:', localErr);
+    }
   }
 
   // 2. Diffuser sur le WebSocket Supabase avec timeout strict de 1.5s pour éviter tout blocage réseau

@@ -259,107 +259,119 @@ export function deduplicateAndNormalizeNotifications(list: any[], userId?: strin
   return result;
 }
 
+let isMarkingNotificationRead = false;
 export function markNotificationAsRead(notifOrId: any, userId?: string) {
-  if (typeof window === 'undefined' || !notifOrId) return;
-  const nowIso = new Date().toISOString();
-  const targetId = typeof notifOrId === 'string' ? notifOrId : String(notifOrId.id || '');
-  const targetFp = typeof notifOrId === 'object' ? getNotificationFingerprint(notifOrId) : '';
-
-  addReadNotificationIds([notifOrId]);
-
+  if (typeof window === 'undefined' || !notifOrId || isMarkingNotificationRead) return;
+  isMarkingNotificationRead = true;
   try {
-    const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
-    if (raw) {
-      const list = JSON.parse(raw);
-      if (Array.isArray(list)) {
-        const matchedItems: any[] = [];
-        const updated = list.map((n: any) => {
-          if (!n) return n;
-          const nFp = getNotificationFingerprint(n);
-          if (String(n.id) === targetId || (targetFp && nFp === targetFp)) {
-            matchedItems.push(n);
-            return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
-          }
-          return n;
-        });
-        addReadNotificationIds(matchedItems);
-        localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
-        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+    const nowIso = new Date().toISOString();
+    const targetId = typeof notifOrId === 'string' ? notifOrId : String(notifOrId.id || '');
+    const targetFp = typeof notifOrId === 'object' ? getNotificationFingerprint(notifOrId) : '';
+
+    addReadNotificationIds([notifOrId]);
+
+    try {
+      const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const matchedItems: any[] = [];
+          const updated = list.map((n: any) => {
+            if (!n) return n;
+            const nFp = getNotificationFingerprint(n);
+            if (String(n.id) === targetId || (targetFp && nFp === targetFp)) {
+              matchedItems.push(n);
+              return { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso };
+            }
+            return n;
+          });
+          addReadNotificationIds(matchedItems);
+          localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+        }
       }
-    }
-  } catch {}
+    } catch {}
 
-  try {
-    const tRaw = localStorage.getItem('locatrust_tenant_notifications');
-    if (tRaw) {
-      const tList = JSON.parse(tRaw);
-      if (Array.isArray(tList)) {
-        const updatedT = tList.map((n: any) =>
-          n && (String(n.id) === targetId || (targetFp && getNotificationFingerprint(n) === targetFp))
-            ? { ...n, read: true, is_read: true, unread: false }
-            : n
-        );
-        localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(updatedT));
+    try {
+      const tRaw = localStorage.getItem('locatrust_tenant_notifications');
+      if (tRaw) {
+        const tList = JSON.parse(tRaw);
+        if (Array.isArray(tList)) {
+          const updatedT = tList.map((n: any) =>
+            n && (String(n.id) === targetId || (targetFp && getNotificationFingerprint(n) === targetFp))
+              ? { ...n, read: true, is_read: true, unread: false }
+              : n
+          );
+          localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(updatedT));
+        }
       }
-    }
-  } catch {}
+    } catch {}
 
-  safeUpdateSupabaseNotificationRead(userId, targetId);
+    safeUpdateSupabaseNotificationRead(userId, targetId);
 
-  try {
-    broadcastLiveEvent('NOTIFICATION_READ' as any, {
-      actorId: userId,
-      targetUserId: userId,
-      data: { notificationId: targetId, fingerprint: targetFp }
-    });
-  } catch {}
+    try {
+      broadcastLiveEvent('NOTIFICATION_READ' as any, {
+        actorId: userId,
+        targetUserId: userId,
+        data: { notificationId: targetId, fingerprint: targetFp }
+      });
+    } catch {}
+  } finally {
+    isMarkingNotificationRead = false;
+  }
 }
 
+let isMarkingAllNotificationsRead = false;
 export function markAllNotificationsAsRead(userId?: string) {
-  if (typeof window === 'undefined') return;
-  const nowIso = new Date().toISOString();
-  const nowMs = Date.now();
-
-  setConvLastReadAt(userId, '__notifs_all__', nowMs);
-
-  const allIds: string[] = [];
+  if (typeof window === 'undefined' || isMarkingAllNotificationsRead) return;
+  isMarkingAllNotificationsRead = true;
   try {
-    const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
-    if (raw) {
-      const list = JSON.parse(raw);
-      if (Array.isArray(list)) {
-        addReadNotificationIds(list);
-        const updated = list.map((n: any) => {
-          if (n?.id) allIds.push(String(n.id));
-          return n ? { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso } : n;
-        });
-        localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
-        window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+
+    setConvLastReadAt(userId, '__notifs_all__', nowMs);
+
+    const allIds: string[] = [];
+    try {
+      const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          addReadNotificationIds(list);
+          const updated = list.map((n: any) => {
+            if (n?.id) allIds.push(String(n.id));
+            return n ? { ...n, read: true, is_read: true, unread: false, read_at: n.read_at || nowIso } : n;
+          });
+          localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: updated } }));
+        }
       }
-    }
-  } catch {}
+    } catch {}
 
-  try {
-    const tRaw = localStorage.getItem('locatrust_tenant_notifications');
-    if (tRaw) {
-      const tList = JSON.parse(tRaw);
-      if (Array.isArray(tList)) {
-        addReadNotificationIds(tList);
-        const updatedT = tList.map((n: any) => (n ? { ...n, read: true, is_read: true, unread: false } : n));
-        localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(updatedT));
+    try {
+      const tRaw = localStorage.getItem('locatrust_tenant_notifications');
+      if (tRaw) {
+        const tList = JSON.parse(tRaw);
+        if (Array.isArray(tList)) {
+          addReadNotificationIds(tList);
+          const updatedT = tList.map((n: any) => (n ? { ...n, read: true, is_read: true, unread: false } : n));
+          localStorage.setItem('locatrust_tenant_notifications', JSON.stringify(updatedT));
+        }
       }
-    }
-  } catch {}
+    } catch {}
 
-  safeUpdateSupabaseNotificationRead(userId);
+    safeUpdateSupabaseNotificationRead(userId);
 
-  try {
-    broadcastLiveEvent('NOTIFICATION_READ' as any, {
-      actorId: userId,
-      targetUserId: userId,
-      data: { all: true, notificationIds: allIds }
-    });
-  } catch {}
+    try {
+      broadcastLiveEvent('NOTIFICATION_READ' as any, {
+        actorId: userId,
+        targetUserId: userId,
+        data: { all: true, notificationIds: allIds }
+      });
+    } catch {}
+  } finally {
+    isMarkingAllNotificationsRead = false;
+  }
 }
 
 /**

@@ -585,11 +585,9 @@ export const MaintenanceView: React.FC = () => {
     loadTickets();
     const handleMaintenanceUpdate = () => loadTickets();
     window.addEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
-    window.addEventListener('locatrust:notifications-updated', handleMaintenanceUpdate);
     window.addEventListener('storage', handleMaintenanceUpdate);
     return () => {
       window.removeEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
-      window.removeEventListener('locatrust:notifications-updated', handleMaintenanceUpdate);
       window.removeEventListener('storage', handleMaintenanceUpdate);
     };
   }, [user]);

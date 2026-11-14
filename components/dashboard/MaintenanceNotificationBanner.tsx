@@ -96,12 +96,10 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
     };
 
     window.addEventListener('locatrust:maintenance-updated', handleUpdate);
-    window.addEventListener('locatrust:notifications-updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
 
     return () => {
       window.removeEventListener('locatrust:maintenance-updated', handleUpdate);
-      window.removeEventListener('locatrust:notifications-updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
     };
   }, [loadUnresolvedTickets]);

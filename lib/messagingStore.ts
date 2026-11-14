@@ -1289,12 +1289,18 @@ export async function sendRealChatMessage(
   return msg;
 }
 
+let isMarkingMessagesRead = false;
+let isMarkingAllMessagesRead = false;
+
 export function markMessagesAsRead(
   contactId: string,
   currentUserId?: string,
   extraMessageIds?: string[]
 ): boolean {
   if (typeof window === 'undefined' || !contactId) return false;
+  if (isMarkingMessagesRead) return false;
+  isMarkingMessagesRead = true;
+  try {
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
 
@@ -1417,10 +1423,16 @@ export function markMessagesAsRead(
     return true;
   }
   return false;
+  } finally {
+    isMarkingMessagesRead = false;
+  }
 }
 
 export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   if (typeof window === 'undefined') return false;
+  if (isMarkingAllMessagesRead) return false;
+  isMarkingAllMessagesRead = true;
+  try {
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
 
@@ -1515,6 +1527,9 @@ export function markAllMessagesAsReadForUser(currentUserId?: string): boolean {
   window.dispatchEvent(new CustomEvent('locatrust:messages-updated', { detail: { fromLocalSave: true } }));
   window.dispatchEvent(new CustomEvent('locatrust:notifications-updated'));
   return true;
+  } finally {
+    isMarkingAllMessagesRead = false;
+  }
 }
 
 const FICTIONAL_OR_GENERIC_IDS = new Set([

@@ -629,14 +629,40 @@ export const Header: React.FC<HeaderProps> = ({
   const handleNotificationClick = (item: any) => {
     if (!item) return;
     try {
+      setShowNotifications(false);
       markNotificationAsRead(item, currentUser?.id);
       setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n)));
-      setShowNotifications(false);
 
       const titleLower = String(item.title || '').toLowerCase();
       const catLower = String(item.category || '').toLowerCase();
       const typeLower = String(item.type || '').toLowerCase();
       const rawTargetTab = String(item.targetTab || item.data?.targetTab || item.payload?.targetTab || '').toLowerCase();
+
+      // 0. Notification invitant à finaliser un contrat après signature locataire
+      if (
+        titleLower.includes('finaliser') ||
+        titleLower.includes('a signé le contrat de bail') ||
+        titleLower.includes('signature certifiée sur le contrat')
+      ) {
+        const targetAppId =
+          item.payload?.applicationId ||
+          item.data?.applicationId ||
+          item.payload?.rental_request_id ||
+          item.data?.rental_request_id ||
+          item.payload?.id;
+
+        if (targetAppId && typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_selected_application_id', String(targetAppId));
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('locatrust:open_application', { detail: { applicationId: targetAppId } }));
+          }, 100);
+        }
+
+        if (onNavigateTab) {
+          onNavigateTab('applications');
+        }
+        return;
+      }
 
       // 1. Signature de quittance requise
       if (item.type === 'quittance_signature_requise' || item.payload?.action === 'sign_receipt') {

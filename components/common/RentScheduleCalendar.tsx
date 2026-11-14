@@ -58,13 +58,11 @@ export const RentScheduleCalendar: React.FC<RentScheduleCalendarProps> = ({
     const handleUpdate = () => refreshSchedule();
     window.addEventListener('locatrust:payments-updated', handleUpdate);
     window.addEventListener('locatrust:contracts-updated', handleUpdate);
-    window.addEventListener('locatrust:notifications-updated', handleUpdate);
 
     return () => {
       clearInterval(timer);
       window.removeEventListener('locatrust:payments-updated', handleUpdate);
       window.removeEventListener('locatrust:contracts-updated', handleUpdate);
-      window.removeEventListener('locatrust:notifications-updated', handleUpdate);
     };
   }, []);
 
