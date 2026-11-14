@@ -122,6 +122,34 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
           });
         }
 
+        // Fusion de sécurité avec les notifications Supabase de maintenance
+        try {
+          const { data: maintNotifs } = await supabase
+            .from('notifications')
+            .select('payload, metadata')
+            .eq('user_id', userId)
+            .eq('category', 'maintenance')
+            .limit(10);
+          if (maintNotifs && maintNotifs.length > 0) {
+            maintNotifs.forEach((n: any) => {
+              const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata) : (n.metadata || n.payload || {});
+              const tId = meta.ticketId || meta.ticket_id;
+              const tNum = meta.ticketNumber;
+              const incomingNotes = Array.isArray(meta.notes) ? meta.notes : [];
+              if ((tId || tNum) && incomingNotes.length > 0) {
+                const idx = mergedList.findIndex((st: any) => (tId && st.id === tId) || (tNum && st.ticketNumber === tNum));
+                if (idx !== -1) {
+                  const existingNotes = Array.isArray(mergedList[idx].notes) ? mergedList[idx].notes : [];
+                  const nMap = new Map<string, any>();
+                  existingNotes.forEach(x => nMap.set(String(x.id || x.content), x));
+                  incomingNotes.forEach(x => nMap.set(String(x.id || x.content), x));
+                  mergedList[idx].notes = Array.from(nMap.values());
+                }
+              }
+            });
+          }
+        } catch {}
+
         localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(mergedList));
         window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: { tickets: mergedList } }));
       }

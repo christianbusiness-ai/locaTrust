@@ -122,9 +122,9 @@ export const LocataireMaintenanceView: React.FC = () => {
         };
       };
 
-      // Synchronisation depuis le serveur central /api/sync
+      // 2. Synchronisation depuis le serveur central /api/sync
       try {
-        const syncRes = await fetch('/api/sync');
+        const syncRes = await fetch(`/api/sync?userId=${user.id}`);
         if (syncRes.ok) {
           const syncJson = await syncRes.json();
           if (Array.isArray(syncJson?.data?.maintenance)) {
@@ -140,7 +140,57 @@ export const LocataireMaintenanceView: React.FC = () => {
         }
       } catch {}
 
-      // Cache local réactif de secours
+      // 3. Récupération & fusion directe depuis les notifications Supabase de maintenance
+      try {
+        const { data: maintNotifs } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('category', 'maintenance')
+          .order('created_at', { ascending: false });
+
+        if (maintNotifs && maintNotifs.length > 0) {
+          maintNotifs.forEach((n: any) => {
+            let meta: any = {};
+            if (typeof n.metadata === 'string') {
+              try { meta = JSON.parse(n.metadata); } catch {}
+            } else if (n.metadata) {
+              meta = n.metadata;
+            } else if (n.payload) {
+              meta = n.payload;
+            }
+            const tId = meta.ticketId || meta.ticket_id || n.id;
+            const tNum = meta.ticketNumber;
+            const existingIdx = list.findIndex((x: any) => (tId && x.id === tId) || (tNum && x.ticketNumber === tNum));
+            const incomingNotes = Array.isArray(meta.notes) ? meta.notes : [];
+
+            if (existingIdx !== -1) {
+              list[existingIdx] = mergeTicket(list[existingIdx], {
+                status: meta.status,
+                scheduledDate: meta.scheduledDate,
+                notes: incomingNotes
+              });
+            } else if (tId) {
+              list.push({
+                id: tId,
+                ticketNumber: tNum || `TCK-2026-${String(tId).slice(0, 4).toUpperCase()}`,
+                propertyTitle: meta.propertyTitle || 'Logement',
+                propertyAddress: meta.propertyAddress || '',
+                category: meta.category || 'Général',
+                status: meta.status || 'Nouveau',
+                description: meta.description || n.description || '',
+                notes: incomingNotes,
+                photos: Array.isArray(meta.photos) ? meta.photos : [],
+                scheduledDate: meta.scheduledDate || '',
+                createdAt: n.created_at ? new Date(n.created_at).toLocaleDateString('fr-FR') : 'Date récente',
+                created_at: n.created_at || new Date().toISOString()
+              });
+            }
+          });
+        }
+      } catch {}
+
+      // 4. Cache local réactif de secours
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_maintenance_tickets');
@@ -267,10 +317,39 @@ export const LocataireMaintenanceView: React.FC = () => {
           })
           .eq('id', ticket.id);
       }
+
+      // Mettre à jour la notification du locataire dans Supabase
+      if (user?.id) {
+        const { data: locNotifs } = await supabase
+          .from('notifications')
+          .select('id, metadata, payload')
+          .eq('user_id', user.id)
+          .eq('category', 'maintenance');
+
+        if (locNotifs && locNotifs.length > 0) {
+          for (const on of locNotifs) {
+            const meta = typeof on.metadata === 'string' ? JSON.parse(on.metadata) : (on.metadata || on.payload || {});
+            if (meta.ticketId === ticket.id || meta.ticket_id === ticket.id || on.id === ticket.id) {
+              const nextMeta = { ...meta, notes: updatedNotes };
+              await supabase
+                .from('notifications')
+                .update({
+                  metadata: JSON.stringify(nextMeta),
+                  payload: nextMeta
+                })
+                .eq('id', on.id);
+            }
+          }
+        }
+      }
     } catch {}
 
     // 4. Notification officielle pour le bailleur
-    const targetOwnerId = ticket.owner_id || ticket.ownerId;
+    let targetOwnerId = ticket.owner_id || ticket.ownerId;
+    if (!targetOwnerId) {
+      const matchCnt = userContracts.find(c => c.id === ticket.contract_id || c.property_id === ticket.property_id);
+      targetOwnerId = matchCnt?.owner_id || matchCnt?.property?.owner_id || matchCnt?.agency_id;
+    }
     if (targetOwnerId) {
       try {
         await pushGlobalNotification({
@@ -314,7 +393,9 @@ export const LocataireMaintenanceView: React.FC = () => {
           description: ticket.description,
           rentDeductionRequest: ticket.rentDeductionRequest,
           notificationTitle: '💬 Réponse du locataire concernant un incident',
-          notificationDescription: `${tenantAuthorName} : "${text}"`
+          notificationDescription: `${tenantAuthorName} : "${text}"`,
+          ownerId: targetOwnerId,
+          tenantId: user?.id
         })
       });
     } catch {}
