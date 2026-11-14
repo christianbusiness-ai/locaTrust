@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Wrench,
   Plus,
@@ -168,10 +168,21 @@ export const LocataireMaintenanceView: React.FC = () => {
               meta = n.metadata;
             } else if (n.payload) {
               meta = n.payload;
+            } else if (n.data) {
+              meta = typeof n.data === 'string' ? JSON.parse(n.data) : n.data;
             }
             const tId = meta.ticketId || meta.ticket_id;
             const tNum = meta.ticketNumber || (n.description || n.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
-            const existingIdx = list.findIndex((x: any) => (tId && (x.id === tId || x.ticketNumber === tId)) || (tNum && x.ticketNumber === tNum));
+            let existingIdx = list.findIndex((x: any) =>
+              (tId && (x.id === tId || x.ticketNumber === tId || (x.id && x.id.includes(tId)))) ||
+              (tNum && (x.ticketNumber === tNum || (x.id && x.id.includes(tNum.slice(-4)))))
+            );
+
+            // Si un seul ticket existe pour ce locataire et qu'il n'a pas été apparié par ID
+            if (existingIdx === -1 && list.length === 1) {
+              existingIdx = 0;
+            }
+
             const incomingNotes = Array.isArray(meta.notes) ? meta.notes : [];
 
             if (existingIdx !== -1) {
@@ -181,11 +192,16 @@ export const LocataireMaintenanceView: React.FC = () => {
                 notes: incomingNotes
               });
 
-              // Si la notification signale un accord de réparation avec déduction de loyer
-              const isDeductionNotif = (n.title || '').includes('déduction de loyer') || (n.description || '').includes('déductibles du loyer') || meta.scenario === 'C';
+              // Si la notification signale un accord de réparation avec déduction de loyer (Scénario C)
+              const isDeductionNotif =
+                (n.title || '').includes('déduction de loyer') ||
+                (n.description || '').includes('déductibles du loyer') ||
+                (n.message || '').includes('déductibles du loyer') ||
+                meta.scenario === 'C';
+
               if (isDeductionNotif) {
                 list[existingIdx].status = 'En cours';
-                const notifAmtMatch = (n.description || '').match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+                const notifAmtMatch = (n.description || n.message || '').match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
                 const notifAmount = Number(meta.amount) || (notifAmtMatch ? Number(notifAmtMatch) : 0);
                 if (notifAmount > 0) {
                   list[existingIdx].rentDeductionRequest = {
@@ -200,7 +216,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         }
       } catch {}
 
-      // 4. Cache local réactif de secours
+      // 4. Cache local réactif de secours (Uniquement pour fusionner les notes, le serveur est la seule source de vérité)
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_maintenance_tickets');
@@ -209,9 +225,7 @@ export const LocataireMaintenanceView: React.FC = () => {
             if (Array.isArray(parsed)) {
               parsed.forEach((p: any) => {
                 const existingIdx = list.findIndex((x: any) => x.id === p.id || (p.ticketNumber && x.ticketNumber === p.ticketNumber));
-                if (existingIdx === -1) {
-                  list.push(p);
-                } else {
+                if (existingIdx !== -1) {
                   list[existingIdx] = mergeTicket(list[existingIdx], p);
                 }
               });
@@ -307,14 +321,18 @@ export const LocataireMaintenanceView: React.FC = () => {
       const deduplicatedMap = new Map<string, any>();
       list.forEach((t: any) => {
         if (!t) return;
+        const descClean = (t.description || '').trim();
+        // Éliminer impérativement tout ticket vide, fantôme ou générique
+        if (!descClean || descClean.length < 5 || descClean === 'Signalement de maintenance') {
+          return;
+        }
         const tIdStr = String(t.id || '');
-        // Supprimer les tickets créés par d'anciennes notifications fantômes
-        const isPhantom = (tIdStr.startsWith('notif_') || tIdStr.startsWith('notif-')) &&
-          (!t.description || t.description === 'Signalement de maintenance' || t.propertyTitle === 'Logement');
-        if (isPhantom) return;
+        if ((tIdStr.startsWith('notif_') || tIdStr.startsWith('notif-')) && (!t.propertyTitle || t.propertyTitle === 'Logement')) {
+          return;
+        }
 
         const tNum = t.ticketNumber || (t.title || t.description || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
-        const descKey = (t.description || '').trim().toLowerCase().slice(0, 35);
+        const descKey = descClean.toLowerCase().slice(0, 35);
         const uniqueKey = tNum ? tNum.toUpperCase() : (tIdStr && !tIdStr.startsWith('notif') ? tIdStr : descKey);
 
         if (!uniqueKey) return;
@@ -372,6 +390,47 @@ export const LocataireMaintenanceView: React.FC = () => {
     }
   };
 
+  const pendingTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('locatrust_selected_maintenance_ticket');
+      if (stored) pendingTargetRef.current = stored;
+    }
+  }, []);
+
+  // Dès que tickets est chargé ou mis à jour, si un ticket est ciblé (ex: clic bannière), scroller dessus et l'animer
+  useEffect(() => {
+    const rawTarget = pendingTargetRef.current || highlightedTicketId;
+    if (!rawTarget || tickets.length === 0) return;
+
+    const targetQueryStr = String(rawTarget).trim().toLowerCase();
+    const matched = tickets.find((t: any) => {
+      if (!t) return false;
+      if (String(t.id).toLowerCase() === targetQueryStr) return true;
+      if (t.ticketNumber && String(t.ticketNumber).toLowerCase() === targetQueryStr) return true;
+      if (t.ticketNumber && targetQueryStr.includes(String(t.ticketNumber).toLowerCase())) return true;
+      if (String(t.id).toLowerCase().includes(targetQueryStr) || targetQueryStr.includes(String(t.id).toLowerCase())) return true;
+      return false;
+    }) || tickets[0];
+
+    if (matched) {
+      setHighlightedTicketId(matched.id);
+      setTimeout(() => {
+        const el = document.getElementById(`tenant-ticket-${matched.id}`) ||
+                   (matched?.ticketNumber ? document.getElementById(`tenant-ticket-${matched.ticketNumber}`) : null);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+      pendingTargetRef.current = null;
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('locatrust_selected_maintenance_ticket');
+      }
+      setTimeout(() => setHighlightedTicketId(null), 6000);
+    }
+  }, [tickets]);
+
   useEffect(() => {
     fetchTickets();
     const handleUpdate = () => fetchTickets(true);
@@ -379,41 +438,34 @@ export const LocataireMaintenanceView: React.FC = () => {
     window.addEventListener('storage', handleUpdate);
 
     const handleOpenTicket = (e: any) => {
-      const rawTarget = e?.detail?.ticketId || (e?.detail?.ticket && e.detail.ticket.id);
+      const rawTarget = e?.detail?.ticketId || (e?.detail?.ticket && (e.detail.ticket.id || e.detail.ticket.ticketNumber));
       if (!rawTarget) return;
-      const targetQueryStr = String(rawTarget).trim().toLowerCase();
+      pendingTargetRef.current = String(rawTarget);
+      setHighlightedTicketId(String(rawTarget));
 
-      // Rechercher le ticket correspondant par id, ticketNumber ou description
-      const matched = tickets.find((t: any) => {
-        if (!t) return false;
-        if (String(t.id).toLowerCase() === targetQueryStr) return true;
-        if (t.ticketNumber && String(t.ticketNumber).toLowerCase() === targetQueryStr) return true;
-        if (t.ticketNumber && targetQueryStr.includes(String(t.ticketNumber).toLowerCase())) return true;
-        if (String(t.id).toLowerCase().includes(targetQueryStr)) return true;
-        return false;
-      });
+      if (tickets.length > 0) {
+        const targetQueryStr = String(rawTarget).trim().toLowerCase();
+        const matched = tickets.find((t: any) => {
+          if (!t) return false;
+          if (String(t.id).toLowerCase() === targetQueryStr) return true;
+          if (t.ticketNumber && String(t.ticketNumber).toLowerCase() === targetQueryStr) return true;
+          if (t.ticketNumber && targetQueryStr.includes(String(t.ticketNumber).toLowerCase())) return true;
+          if (String(t.id).toLowerCase().includes(targetQueryStr)) return true;
+          return false;
+        }) || tickets[0];
 
-      const matchedId = matched ? matched.id : rawTarget;
-      setHighlightedTicketId(matchedId);
-
-      setTimeout(() => {
-        const el = document.getElementById(`tenant-ticket-${matchedId}`) ||
-                   (matched?.ticketNumber ? document.getElementById(`tenant-ticket-${matched.ticketNumber}`) : null);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (matched) {
+          setTimeout(() => {
+            const el = document.getElementById(`tenant-ticket-${matched.id}`) ||
+                       (matched?.ticketNumber ? document.getElementById(`tenant-ticket-${matched.ticketNumber}`) : null);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          }, 150);
         }
-      }, 150);
-      setTimeout(() => setHighlightedTicketId(null), 6000);
+      }
     };
     window.addEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
-
-    // Si un ticket a été ciblé récemment (ex: clic sur la bannière)
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('locatrust_selected_maintenance_ticket');
-      if (stored) {
-        setTimeout(() => handleOpenTicket({ detail: { ticketId: stored } }), 200);
-      }
-    }
 
     return () => {
       window.removeEventListener('locatrust:maintenance-updated', handleUpdate);
@@ -546,6 +598,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         body: JSON.stringify({
           action: 'update_maintenance_ticket',
           ticketId: ticket.id,
+          ticketNumber: ticket.ticketNumber,
           status: ticket.status,
           notes: updatedNotes,
           scheduledDate: ticket.scheduledDate,

@@ -256,18 +256,20 @@ export default function ProprietaireDashboardPage({
             </div>
           )}
 
-          {/* Bannière d'alerte haute visibilité pour les signalements de maintenance */}
-          <MaintenanceNotificationBanner
-            currentUserId={currentUser?.id}
-            role="proprietaire"
-            onNavigateToMaintenance={(ticketId) => {
-              if (ticketId && typeof window !== 'undefined') {
-                localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
-                window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
-              }
-              handleSelectTab('maintenance');
-            }}
-          />
+          {/* Bannière d'alerte haute visibilité pour les signalements de maintenance (hors onglet maintenance) */}
+          {activeTab !== 'maintenance' && (
+            <MaintenanceNotificationBanner
+              currentUserId={currentUser?.id}
+              role="proprietaire"
+              onNavigateToMaintenance={(ticketId) => {
+                if (ticketId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
+                }
+                handleSelectTab('maintenance');
+              }}
+            />
+          )}
 
           {/* TAB 1: Overview (Tableau de bord) */}
           {activeTab === 'overview' && !selectedContractId && (

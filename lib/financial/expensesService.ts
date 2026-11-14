@@ -193,23 +193,35 @@ export async function getPropertyExpenses(
       expenses = data as PropertyExpense[];
     }
 
-    // Secours réactif / Offline-First synchronisé
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('locatrust_property_expenses');
-        if (stored) {
-          const localList: PropertyExpense[] = JSON.parse(stored);
-          localList.forEach((localItem) => {
+    // 2. Synchronisation depuis le serveur central /api/sync (Source de vérité unifiée)
+    try {
+      const syncRes = await fetch(`/api/sync?userId=${userId}`);
+      if (syncRes.ok) {
+        const syncJson = await syncRes.json();
+        if (Array.isArray(syncJson?.data?.expenses)) {
+          syncJson.data.expenses.forEach((se: any) => {
             const isMine =
               role === 'locataire'
-                ? localItem.tenant_id === userId
-                : localItem.owner_id === userId || localItem.agency_id === userId;
+                ? se.tenant_id === userId
+                : se.owner_id === userId || se.agency_id === userId;
 
-            if (isMine && !expenses.some((e) => e.id === localItem.id || e.expense_number === localItem.expense_number)) {
-              expenses.push(localItem);
+            if (isMine) {
+              const existingIdx = expenses.findIndex((e) => e.id === se.id || (se.expense_number && e.expense_number === se.expense_number));
+              if (existingIdx === -1) {
+                expenses.push(se);
+              } else {
+                expenses[existingIdx] = { ...expenses[existingIdx], ...se };
+              }
             }
           });
         }
+      }
+    } catch {}
+
+    // 3. Mise à jour du cache d'affichage local (le serveur écrase systématiquement le local)
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('locatrust_property_expenses', JSON.stringify(expenses));
       } catch {}
     }
 
@@ -427,24 +439,52 @@ export async function syncExpenseDecisionToMaintenanceTicket(expense: PropertyEx
   if (typeof window === 'undefined' || !expense) return;
 
   try {
-    const rawTickets = localStorage.getItem('locatrust_maintenance_tickets');
     let ticketsList: any[] = [];
-    if (rawTickets) {
-      try {
-        const parsed = JSON.parse(rawTickets);
-        if (Array.isArray(parsed)) ticketsList = parsed;
-      } catch {}
+    try {
+      const syncRes = await fetch(`/api/sync?userId=${expense.owner_id || ''}`);
+      if (syncRes.ok) {
+        const syncJson = await syncRes.json();
+        if (Array.isArray(syncJson?.data?.maintenance)) {
+          ticketsList = syncJson.data.maintenance;
+        }
+      }
+    } catch {}
+
+    if (ticketsList.length === 0) {
+      const rawTickets = localStorage.getItem('locatrust_maintenance_tickets');
+      if (rawTickets) {
+        try {
+          const parsed = JSON.parse(rawTickets);
+          if (Array.isArray(parsed)) ticketsList = parsed;
+        } catch {}
+      }
     }
 
     // Extraction du numéro de ticket (ex: TCK-2026-413B) depuis ticket_id ou le titre
     const numMatch = (expense.title || '').match(/TCK-[A-Z0-9-]+/i);
-    const targetTicketNum = numMatch ? numMatch[0] : '';
+    const targetTicketNum = numMatch ? numMatch[0] : (expense.ticket_id && String(expense.ticket_id).startsWith('TCK-') ? expense.ticket_id : '');
 
     let matchedTicket = ticketsList.find(
       (t) =>
         (expense.ticket_id && (t.id === expense.ticket_id || t.ticketNumber === expense.ticket_id)) ||
         (targetTicketNum && (t.ticketNumber === targetTicketNum || t.id === targetTicketNum || (t.id && t.id.includes(targetTicketNum))))
     );
+
+    // Recherche de sécurité dans Supabase directement si non trouvé en mémoire
+    if (!matchedTicket) {
+      try {
+        const { data: dbTcks } = await supabase
+          .from('maintenance_tickets')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (dbTcks && dbTcks.length > 0) {
+          matchedTicket = dbTcks.find((t: any) =>
+            (expense.ticket_id && (t.id === expense.ticket_id || (t.id && t.id.includes(expense.ticket_id)))) ||
+            (targetTicketNum && ((t.id && t.id.slice(0, 4).toUpperCase() === targetTicketNum.slice(-4).toUpperCase()) || (t.title && t.title.includes(targetTicketNum))))
+          );
+        }
+      } catch {}
+    }
 
     let targetTenantId = expense.tenant_id || matchedTicket?.tenant_id || matchedTicket?.tenantId;
     if (!targetTenantId) {
@@ -559,6 +599,7 @@ export async function syncExpenseDecisionToMaintenanceTicket(expense: PropertyEx
           body: JSON.stringify({
             action: 'update_maintenance_ticket',
             ticketId: matchedTicket.id,
+            ticketNumber: targetTicketNum || matchedTicket.ticketNumber,
             status: 'En cours',
             notes: updatedNotes,
             rentDeductionRequest: updatedTicket.rentDeductionRequest,

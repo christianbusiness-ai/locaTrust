@@ -45,22 +45,23 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
       }
     } catch {}
 
-    // 2. Récupérer aussi depuis le cache local réactif
-    if (typeof window !== 'undefined') {
-      try {
-        const raw = localStorage.getItem('locatrust_maintenance_tickets');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            parsed.forEach((pt: any) => {
-              if (!ticketsList.some((t: any) => t.id === pt.id || (pt.ticketNumber && t.ticketNumber === pt.ticketNumber))) {
-                ticketsList.push(pt);
-              }
-            });
-          }
+    // 2. Synchronisation depuis le serveur central /api/sync (Source de vérité unifiée)
+    try {
+      const syncRes = await fetch(`/api/sync?userId=${currentUserId || ''}`);
+      if (syncRes.ok) {
+        const syncJson = await syncRes.json();
+        if (Array.isArray(syncJson?.data?.maintenance)) {
+          syncJson.data.maintenance.forEach((m: any) => {
+            const existingIdx = ticketsList.findIndex((t: any) => t.id === m.id || (m.ticketNumber && t.ticketNumber === m.ticketNumber));
+            if (existingIdx === -1) {
+              ticketsList.push(m);
+            } else {
+              ticketsList[existingIdx] = { ...ticketsList[existingIdx], ...m };
+            }
+          });
         }
-      } catch {}
-    }
+      }
+    } catch {}
 
     // 3. Filtrer les tickets pertinents et non résolus
     const pending = ticketsList.filter((t: any) => {
@@ -92,12 +93,17 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
         st === 'en cours' ||
         st === 'en_cours' ||
         st === 'resolu' ||
-        st === 'cloture';
+        st === 'cloture' ||
+        (Array.isArray(t.notes) && t.notes.some((n: any) => n.author?.includes('Propriétaire') || n.author?.includes('Bailleur')));
 
       if (isHandledByOwner) return false;
 
       const isPending = st === 'nouveau' || st === 'ouvert' || st === 'en_attente';
       if (!isPending) return false;
+
+      // Filtrer les faux tickets ou tickets vides
+      const cleanD = (t.description || '').trim();
+      if (!cleanD || cleanD.length < 5 || cleanD === 'Signalement de maintenance') return false;
 
       if (!currentUserId) return true;
       const matchesOwner = t.owner_id === currentUserId || t.agency_id === currentUserId || t.ownerId === currentUserId || t.agencyId === currentUserId;
@@ -151,17 +157,18 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
 
   const handleActionClick = (ticket: any) => {
     const ticketId = ticket.id;
+    const ticketTarget = ticket.ticketNumber || ticketId;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
-      window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId, ticket } }));
+      localStorage.setItem('locatrust_selected_maintenance_ticket', ticketTarget);
+      window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId, ticketNumber: ticket.ticketNumber, ticket } }));
     }
     if (onNavigateToMaintenance) {
-      onNavigateToMaintenance(ticketId);
+      onNavigateToMaintenance(ticketTarget);
     }
   };
 
   // Filtrer les tickets non encore masqués par l'utilisateur
-  const visibleTickets = activeTickets.filter((t) => !dismissedIds.has(t.id));
+  const visibleTickets = activeTickets.filter((t) => !dismissedIds.has(t.id) && (!t.ticketNumber || !dismissedIds.has(t.ticketNumber)));
 
   if (visibleTickets.length === 0) return null;
 

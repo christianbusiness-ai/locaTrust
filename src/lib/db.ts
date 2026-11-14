@@ -537,6 +537,7 @@ export async function getMaintenanceTickets(userId: string) {
       let parsedSchedule = t.scheduled_date || '';
       let cleanDesc = t.description || '';
       let parsedPhotos: string[] = Array.isArray(t.photos) ? t.photos : (t.media_url ? [t.media_url] : []);
+      let parsedRentDeduction = t.rent_deduction_request || t.rentDeductionRequest || null;
 
       if (Array.isArray(t.notes) && t.notes.length > 0) {
         parsedNotes = t.notes;
@@ -550,6 +551,7 @@ export async function getMaintenanceTickets(userId: string) {
           if (meta.cost) parsedCost = Number(meta.cost);
           if (meta.scheduledDate) parsedSchedule = meta.scheduledDate;
           if (meta.photos && Array.isArray(meta.photos)) parsedPhotos = meta.photos;
+          if (meta.rentDeductionRequest) parsedRentDeduction = meta.rentDeductionRequest;
           if (meta.description) cleanDesc = meta.description;
         } catch {}
       }
@@ -602,7 +604,7 @@ export async function getMaintenanceTickets(userId: string) {
       const rawSt = String(t.status || '').toLowerCase().trim();
       if (rawSt === 'resolu' || rawSt === 'résolu' || rawSt === 'ferme' || rawSt === 'fermé') {
         normalizedStatus = 'Résolu';
-      } else if (rawSt === 'en_cours' || rawSt === 'en cours' || rawSt === 'intervention programmée') {
+      } else if (rawSt === 'en_cours' || rawSt === 'en cours' || rawSt === 'intervention programmée' || parsedRentDeduction?.status === 'approuve') {
         normalizedStatus = 'En cours';
       } else {
         normalizedStatus = 'Nouveau';
@@ -624,7 +626,8 @@ export async function getMaintenanceTickets(userId: string) {
         cost: parsedCost,
         scheduledDate: parsedSchedule,
         notes: parsedNotes,
-        photos: parsedPhotos
+        photos: parsedPhotos,
+        rentDeductionRequest: parsedRentDeduction
       };
     });
 

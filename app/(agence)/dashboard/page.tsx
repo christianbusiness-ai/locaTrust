@@ -216,18 +216,20 @@ export default function AgencyDashboardPage({
             </div>
           )}
 
-          {/* Bannière d'alerte haute visibilité pour les signalements de maintenance */}
-          <MaintenanceNotificationBanner
-            currentUserId={currentUser?.id}
-            role="agence"
-            onNavigateToMaintenance={(ticketId) => {
-              if (ticketId && typeof window !== 'undefined') {
-                localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
-                window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
-              }
-              setActiveTab('maintenance');
-            }}
-          />
+          {/* Bannière d'alerte haute visibilité pour les signalements de maintenance (hors onglet maintenance) */}
+          {activeTab !== 'maintenance' && (
+            <MaintenanceNotificationBanner
+              currentUserId={currentUser?.id}
+              role="agence"
+              onNavigateToMaintenance={(ticketId) => {
+                if (ticketId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
+                }
+                setActiveTab('maintenance');
+              }}
+            />
+          )}
 
           {/* TAB 1: Dashboard Overview (Identique au Propriétaire pour fonctionnement 100% unifié) */}
           {activeTab === 'overview' && !selectedContractId && (

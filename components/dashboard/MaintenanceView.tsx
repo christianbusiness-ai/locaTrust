@@ -185,21 +185,38 @@ export const MaintenanceView: React.FC = () => {
         } catch {}
       }
 
-      // 1. Supabase PostgreSQL avec upsert de sécurité
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updatedTicket.id)) {
-        const { error: updErr, count } = await supabase
+      // 1. Supabase PostgreSQL avec résolution robuste de l'UUID
+      let targetDbId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updatedTicket.id)
+        ? updatedTicket.id
+        : null;
+
+      if (!targetDbId) {
+        try {
+          const tckClean = (updatedTicket.id || updatedTicket.ticketNumber || '').replace(/^TCK-2026-/i, '');
+          const { data: foundT } = await supabase
+            .from('maintenance_tickets')
+            .select('id')
+            .or(`id.ilike.%${tckClean}%,title.ilike.%${updatedTicket.category}%`)
+            .limit(1)
+            .maybeSingle();
+          if (foundT?.id) targetDbId = foundT.id;
+        } catch {}
+      }
+
+      if (targetDbId) {
+        const { error: updErr } = await supabase
           .from('maintenance_tickets')
           .update({
             status: dbStatus,
             description: richDescription,
             updated_at: new Date().toISOString()
           })
-          .eq('id', updatedTicket.id);
+          .eq('id', targetDbId);
 
-        if (updErr || count === 0) {
+        if (updErr) {
           try {
             await supabase.from('maintenance_tickets').upsert({
-              id: updatedTicket.id,
+              id: targetDbId,
               property_id: (updatedTicket as any).property_id || undefined,
               owner_id: user?.id,
               tenant_id: targetTenantId || undefined,
@@ -308,6 +325,7 @@ export const MaintenanceView: React.FC = () => {
           body: JSON.stringify({
             action: 'update_maintenance_ticket',
             ticketId: updatedTicket.id,
+            ticketNumber: updatedTicket.ticketNumber,
             status: updatedTicket.status,
             notes: updatedTicket.notes,
             scheduledDate: updatedTicket.scheduledDate,
@@ -449,7 +467,7 @@ export const MaintenanceView: React.FC = () => {
       }
     } catch {}
 
-    // 4. Cache local réactif de secours
+    // 4. Cache local réactif de secours (Uniquement pour fusionner les notes, le serveur est la seule source de vérité)
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
@@ -460,17 +478,6 @@ export const MaintenanceView: React.FC = () => {
               const existingIdx = list.findIndex(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber));
               if (existingIdx !== -1) {
                 list[existingIdx] = mergeTicket(list[existingIdx], pt);
-              } else {
-                const isMine =
-                  !user?.id ||
-                  pt.owner_id === user.id ||
-                  pt.agency_id === user.id ||
-                  pt.tenant_id === user.id ||
-                  (pt.property_id && userPropIds.has(pt.property_id));
-
-                if (isMine) {
-                  list.push(pt);
-                }
               }
             });
           }
@@ -598,17 +605,19 @@ export const MaintenanceView: React.FC = () => {
     window.addEventListener('storage', handleMaintenanceUpdate);
 
     const handleOpenTicket = (e: any) => {
-      const tId = e?.detail?.ticketId || (e?.detail?.ticket && e.detail.ticket.id);
-      if (tId) {
-        setStatusFilter('all');
-        setSelectedTicketId(tId);
-        setTimeout(() => {
-          const el = document.getElementById(`ticket-${tId}`) || document.getElementById('maintenance-detail-panel');
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-        }, 100);
-      }
+      const rawTarget = e?.detail?.ticketId || (e?.detail?.ticket && (e.detail.ticket.id || e.detail.ticket.ticketNumber));
+      if (!rawTarget) return;
+      const tIdStr = String(rawTarget).trim();
+      setStatusFilter('all');
+      setSelectedTicketId(tIdStr);
+      setTimeout(() => {
+        const el = document.getElementById(`ticket-${tIdStr}`) ||
+                   document.getElementById(`ticket-${tIdStr.toUpperCase()}`) ||
+                   document.getElementById('maintenance-detail-panel');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 150);
     };
     window.addEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
 
@@ -619,7 +628,11 @@ export const MaintenanceView: React.FC = () => {
     };
   }, [user]);
 
-  const selectedTicket = tickets.find((t) => t.id === selectedTicketId) || tickets[0];
+  const selectedTicket = tickets.find((t) =>
+    t.id === selectedTicketId ||
+    (t.ticketNumber && selectedTicketId && (t.ticketNumber === selectedTicketId || t.ticketNumber.endsWith(selectedTicketId.slice(-4)))) ||
+    (t.id && selectedTicketId && (t.id.toLowerCase().includes(selectedTicketId.toLowerCase()) || selectedTicketId.toLowerCase().includes(t.id.toLowerCase())))
+  ) || tickets[0];
 
   // Filtering
   const filteredTickets = tickets.filter((ticket) => {

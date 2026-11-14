@@ -95,32 +95,42 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
       if (!tckErr && typeof window !== 'undefined' && Array.isArray(serverTickets)) {
         const curLocalRaw = localStorage.getItem('locatrust_maintenance_tickets');
         const curLocal = curLocalRaw ? JSON.parse(curLocalRaw) : [];
-        const mergedList: any[] = [...serverTickets];
 
+        // Le serveur est la seule source de vérité : on part des tickets certifiés du serveur
+        const dedupMap = new Map<string, any>();
+        serverTickets.forEach((st: any) => {
+          if (!st) return;
+          const k = st.ticketNumber || st.id;
+          if (k) dedupMap.set(k, st);
+        });
+
+        // Ne fusionner avec le local que pour les tickets existant sur le serveur (notes récentes)
         if (Array.isArray(curLocal)) {
           curLocal.forEach((locT: any) => {
-            const idx = mergedList.findIndex((st: any) => st.id === locT.id || (st.ticketNumber && locT.ticketNumber && st.ticketNumber === locT.ticketNumber));
-            if (idx === -1) {
-              mergedList.push(locT);
-            } else {
-              // Fusion intelligente des notes pour ne JAMAIS perdre les réponses du bailleur ou du locataire
-              const stNotes = Array.isArray(mergedList[idx].notes) ? mergedList[idx].notes : [];
+            if (!locT) return;
+            const k = locT.ticketNumber || locT.id;
+            if (k && dedupMap.has(k)) {
+              const existing = dedupMap.get(k);
+              const stNotes = Array.isArray(existing.notes) ? existing.notes : [];
               const locNotes = Array.isArray(locT.notes) ? locT.notes : [];
               const notesMap = new Map<string, any>();
               stNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
               locNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
               const combinedNotes = Array.from(notesMap.values());
 
-              mergedList[idx] = {
-                ...mergedList[idx],
-                ...locT,
-                status: locT.status || mergedList[idx].status,
-                scheduledDate: locT.scheduledDate || mergedList[idx].scheduledDate,
-                notes: combinedNotes.length > 0 ? combinedNotes : (locNotes.length > 0 ? locNotes : stNotes)
-              };
+              dedupMap.set(k, {
+                ...existing,
+                status: locT.status || existing.status,
+                scheduledDate: locT.scheduledDate || existing.scheduledDate,
+                notes: combinedNotes.length > 0 ? combinedNotes : stNotes,
+                rentDeductionRequest: locT.rentDeductionRequest || existing.rentDeductionRequest
+              });
             }
+            // Strictement AUCUN ajout d'élément local inconnu du serveur (Interdiction absolue de ressusciter des doublons/fantômes)
           });
         }
+
+        const mergedList: any[] = Array.from(dedupMap.values());
 
         // Fusion de sécurité avec les notifications Supabase de maintenance
         try {
@@ -819,7 +829,7 @@ async function pushPendingLocalDataToServer(userId: string) {
         if (Array.isArray(localTickets)) {
           const { createMaintenanceTicket } = await import('@/src/lib/db');
           for (const t of localTickets) {
-            if (t.id && isValidUuid(t.id)) {
+            if (t.id && isValidUuid(t.id) && t.description && t.description.length > 5 && !String(t.id).startsWith('notif')) {
               const { data: existing } = await supabase
                 .from('maintenance_tickets')
                 .select('id, description')

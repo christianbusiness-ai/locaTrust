@@ -171,6 +171,73 @@ export default async function handler(req, res) {
         const userContracts = SERVER_STORE.contracts.filter(
           (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId
         );
+        // Déduplication stricte et élimination des faux tickets côté serveur (Le serveur est la seule source de vérité)
+        const dedupMaintMap = new Map();
+        (SERVER_STORE.maintenance || []).forEach(m => {
+          if (!m) return;
+          // Éliminer tout ticket fantôme avec description vide ou générique
+          const descClean = (m.description || '').trim();
+          if (!descClean || descClean.length < 5 || descClean === 'Signalement de maintenance') {
+            return;
+          }
+          const tIdStr = String(m.id || '');
+          if ((tIdStr.startsWith('notif_') || tIdStr.startsWith('notif-')) && (!m.propertyTitle || m.propertyTitle === 'Logement')) {
+            return;
+          }
+
+          const k = m.ticketNumber ? m.ticketNumber.toUpperCase() : (tIdStr || descClean.slice(0, 35));
+          if (k) {
+            if (dedupMaintMap.has(k)) {
+              const existing = dedupMaintMap.get(k);
+              const existingNotes = Array.isArray(existing.notes) ? existing.notes : [];
+              const incomingNotes = Array.isArray(m.notes) ? m.notes : [];
+              const notesMap = new Map();
+              existingNotes.forEach(n => notesMap.set(String(n.id || n.content), n));
+              incomingNotes.forEach(n => notesMap.set(String(n.id || n.content), n));
+
+              const mergedNotes = Array.from(notesMap.values());
+              const bestStatus = (m.status === 'En cours' || existing.status === 'En cours') ? 'En cours'
+                : (m.status === 'Résolu' || existing.status === 'Résolu') ? 'Résolu'
+                : (m.status || existing.status || 'Nouveau');
+
+              const bestProp = (existing.propertyTitle && existing.propertyTitle !== 'Logement')
+                ? existing.propertyTitle
+                : (m.propertyTitle || 'Logement');
+
+              const bestDesc = (existing.description && existing.description.length >= descClean.length)
+                ? existing.description
+                : descClean;
+
+              dedupMaintMap.set(k, {
+                ...existing,
+                ...m,
+                description: bestDesc,
+                propertyTitle: bestProp,
+                status: bestStatus,
+                notes: mergedNotes,
+                rentDeductionRequest: m.rentDeductionRequest || existing.rentDeductionRequest
+              });
+            } else {
+              dedupMaintMap.set(k, m);
+            }
+          }
+        });
+        SERVER_STORE.maintenance = Array.from(dedupMaintMap.values());
+
+        const dedupExpMap = new Map();
+        (SERVER_STORE.expenses || []).forEach(e => {
+          if (!e) return;
+          const k = e.expense_number || e.id;
+          if (k) {
+            if (dedupExpMap.has(k)) {
+              dedupExpMap.set(k, { ...dedupExpMap.get(k), ...e });
+            } else {
+              dedupExpMap.set(k, e);
+            }
+          }
+        });
+        SERVER_STORE.expenses = Array.from(dedupExpMap.values());
+
         const userMaintenance = SERVER_STORE.maintenance.filter((m) => {
           if (!m) return false;
           if (
@@ -697,7 +764,7 @@ export default async function handler(req, res) {
         };
         SERVER_STORE.maintenance = [
           newTicket,
-          ...SERVER_STORE.maintenance.filter(t => t.id !== tid)
+          ...SERVER_STORE.maintenance.filter(t => t.id !== tid && (t.ticketNumber !== newTicket.ticketNumber || !t.ticketNumber))
         ];
         // Notifier le propriétaire et l'agence
         const notif = {
@@ -739,39 +806,37 @@ export default async function handler(req, res) {
       // 5. Mise à jour d'un ticket de maintenance (statut, devis/coût, programmation, notes)
       if (action === 'update_maintenance_ticket') {
         const { ticketId, status, notes, scheduledDate, cost, description, rentDeductionRequest, notificationTitle, notificationDescription, tenantId, ownerId } = body;
-        let target = SERVER_STORE.maintenance.find(t => 
-          t.id === ticketId || 
-          (ticketId && t.ticketNumber && String(t.ticketNumber).toLowerCase().includes(String(ticketId).slice(0, 4).toLowerCase())) ||
-          (ticketId && t.id && String(ticketId).toLowerCase().includes(String(t.id).slice(0, 4).toLowerCase()))
-        );
-
         const cleanTenantId = tenantId || body.tenant_id;
         const cleanOwnerId = ownerId || body.owner_id;
 
-        if (!target) {
-          target = {
-            id: ticketId || `tck_${Date.now()}`,
-            ticketNumber: `TCK-2026-${String(ticketId || Date.now()).slice(0, 4).toUpperCase()}`,
-            status: status || 'Nouveau',
-            notes: Array.isArray(notes) ? notes : [],
-            scheduledDate: scheduledDate || '',
-            cost: cost || 0,
-            description: description || '',
-            rentDeductionRequest: rentDeductionRequest,
-            category: 'Général',
-            propertyTitle: 'Logement',
-            tenantId: cleanTenantId,
-            tenant_id: cleanTenantId,
-            ownerId: cleanOwnerId,
-            owner_id: cleanOwnerId
-          };
-          SERVER_STORE.maintenance.unshift(target);
-        } else {
+        const tNumPassed = body.ticketNumber || (ticketId && String(ticketId).startsWith('TCK-') ? ticketId : '');
+        let target = SERVER_STORE.maintenance.find(t => 
+          (ticketId && t.id === ticketId) || 
+          (tNumPassed && t.ticketNumber === tNumPassed) ||
+          (ticketId && t.ticketNumber === ticketId) ||
+          (ticketId && t.ticketNumber && String(t.ticketNumber).toUpperCase().endsWith(String(ticketId).slice(-4).toUpperCase())) ||
+          (ticketId && t.id && (String(ticketId).toLowerCase().includes(String(t.id).toLowerCase()) || String(t.id).toLowerCase().includes(String(ticketId).toLowerCase())))
+        );
+
+        if (!target && cleanTenantId) {
+          target = SERVER_STORE.maintenance.find(t =>
+            (t.tenantId === cleanTenantId || t.tenant_id === cleanTenantId) &&
+            (!body.category || t.category === body.category)
+          );
+        }
+
+        if (target) {
           if (status) target.status = status;
-          if (notes) target.notes = notes;
+          if (notes && Array.isArray(notes)) {
+            const existingNotes = Array.isArray(target.notes) ? target.notes : [];
+            const notesMap = new Map();
+            existingNotes.forEach(n => notesMap.set(String(n.id || n.content), n));
+            notes.forEach(n => notesMap.set(String(n.id || n.content), n));
+            target.notes = Array.from(notesMap.values());
+          }
           if (scheduledDate !== undefined) target.scheduledDate = scheduledDate;
           if (cost !== undefined) target.cost = cost;
-          if (description) target.description = description;
+          if (description && description.trim().length > 5) target.description = description;
           if (rentDeductionRequest) target.rentDeductionRequest = rentDeductionRequest;
           if (cleanTenantId) {
             target.tenantId = cleanTenantId;
@@ -919,30 +984,12 @@ export default async function handler(req, res) {
                  (targetTckNum && (t.ticketNumber === targetTckNum || t.id === targetTckNum || (t.id && t.id.includes(targetTckNum))))
           );
 
-          if (!targetTicket && (targetTckNum || expense.ticket_id)) {
-            const relContract = SERVER_STORE.contracts.find(
-              c => (expense.property_id && c.property_id === expense.property_id) || (expense.contract_id && c.id === expense.contract_id)
+          if (!targetTicket && (targetTckNum || expense.ticket_id || expense.tenant_id)) {
+            // Rechercher un ticket existant pour ce locataire sans JAMAIS créer de ticket fantôme vide
+            targetTicket = SERVER_STORE.maintenance.find(t => 
+              (expense.tenant_id && (t.tenantId === expense.tenant_id || t.tenant_id === expense.tenant_id)) ||
+              (expense.property_id && (t.propertyId === expense.property_id || t.property_id === expense.property_id))
             );
-            const dynamicTenantId = expense.tenant_id || relContract?.tenant_id || '';
-            const dynamicTenantName = expense.tenant_name || relContract?.tenant_name || relContract?.tenant?.full_name || 'Locataire';
-            const dynamicOwnerId = expense.owner_id || relContract?.owner_id || '';
-            const dynamicPropertyTitle = expense.property_title || relContract?.property_title || relContract?.property?.title || 'Logement';
-
-            targetTicket = {
-              id: expense.ticket_id || targetTckNum,
-              ticketNumber: targetTckNum || expense.ticket_id,
-              propertyTitle: dynamicPropertyTitle,
-              tenantName: dynamicTenantName,
-              tenantId: dynamicTenantId,
-              ownerId: dynamicOwnerId,
-              category: expense.category || 'Général',
-              status: 'En cours',
-              description: expense.description || 'Signalement de maintenance',
-              notes: [],
-              createdAt: new Date().toLocaleDateString('fr-FR'),
-              created_at: new Date().toISOString()
-            };
-            SERVER_STORE.maintenance.unshift(targetTicket);
           }
 
           if (targetTicket) {
