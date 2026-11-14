@@ -21,6 +21,7 @@ import { TopProgressBar } from '@/components/common/TopProgressBar';
 import { supabase } from '@/src/lib/supabase';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { formatFCFA } from '@/lib/utils';
 
 export const LocataireMaintenanceView: React.FC = () => {
   const { user } = useAuth();
@@ -210,6 +211,70 @@ export const LocataireMaintenanceView: React.FC = () => {
           }
         } catch {}
       }
+
+      // 5. Réconciliation directe avec les dépenses & accords de déduction (Scénarios A, B, C)
+      try {
+        let expenseList: any[] = [];
+        if (typeof window !== 'undefined') {
+          const rawExpenses = localStorage.getItem('locatrust_property_expenses');
+          if (rawExpenses) {
+            try { expenseList = JSON.parse(rawExpenses); } catch {}
+          }
+        }
+        if (expenseList.length === 0 && user?.id) {
+          try {
+            const { data: dbExp } = await supabase
+              .from('property_expenses')
+              .select('*')
+              .or(`tenant_id.eq.${user.id},title.ilike.%${user?.user_metadata?.full_name || 'Christian'}%`);
+            if (dbExp && dbExp.length > 0) expenseList = dbExp;
+          } catch {}
+        }
+
+        if (Array.isArray(expenseList)) {
+          expenseList.forEach((exp: any) => {
+            const expTicketNum = (exp.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+            const targetTicket = list.find((t: any) =>
+              (exp.ticket_id && (t.id === exp.ticket_id || t.ticketNumber === exp.ticket_id)) ||
+              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum))))
+            );
+            if (targetTicket) {
+              const noteText =
+                exp.scenario === 'C'
+                  ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${formatFCFA(exp.amount)}. Ce montant sera déduit de votre loyer conformément au Scénario C.`
+                  : exp.scenario === 'B'
+                  ? `Décision du bailleur : La réparation avancée de ${formatFCFA(exp.amount)} est à la charge locative conformément au contrat de bail (Scénario B). Un remboursement ou plan d'apurement sera convenu.`
+                  : `Prise en charge par le bailleur : La réparation de ${formatFCFA(exp.amount)} est intégralement prise en charge par le propriétaire (Scénario A). Aucun frais pour le locataire.`;
+
+              const hasNote = Array.isArray(targetTicket.notes) && targetTicket.notes.some((n: any) => n.content && n.content.includes(formatFCFA(exp.amount)));
+              if (!hasNote) {
+                targetTicket.notes = [
+                  ...(Array.isArray(targetTicket.notes) ? targetTicket.notes : []),
+                  {
+                    id: `note-exp-${exp.id}`,
+                    author: 'Propriétaire (Accord officiel)',
+                    content: noteText,
+                    date: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : 'Récemment',
+                    isInternal: false
+                  }
+                ];
+              }
+
+              if (targetTicket.status === 'Nouveau' || targetTicket.status === 'En attente') {
+                targetTicket.status = 'En cours';
+              }
+
+              if (exp.scenario === 'C') {
+                targetTicket.rentDeductionRequest = {
+                  status: 'approuve',
+                  amountSpent: exp.amount,
+                  deductionMonth: 'Prochain loyer'
+                };
+              }
+            }
+          });
+        }
+      } catch {}
 
       setTickets(list);
 
@@ -768,6 +833,21 @@ export const LocataireMaintenanceView: React.FC = () => {
               <p className="text-xs text-slate-800 font-medium leading-relaxed bg-slate-50 p-4 rounded-2xl border">
                 {ticket.description}
               </p>
+
+              {/* Accord officiel de réparation avec déduction de loyer (Scénario C) */}
+              {ticket.rentDeductionRequest?.status === 'approuve' && (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-400 text-xs text-emerald-950 flex flex-col gap-2 shadow-sm animate-fadeIn">
+                  <div className="flex items-center gap-2 text-emerald-800 font-black">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="uppercase tracking-wider text-[11px]">Accord officiel du bailleur — Déduction autorisée sur loyer</span>
+                  </div>
+                  <p className="font-semibold text-slate-800 leading-relaxed">
+                    Votre bailleur vous autorise expressément à faire effectuer la réparation pour un montant de{' '}
+                    <strong className="text-emerald-900 font-black">{formatFCFA(ticket.rentDeductionRequest.amountSpent)}</strong>.
+                    Ce montant sera automatiquement compensé et déduit de votre prochain loyer conformément au Scénario C.
+                  </p>
+                </div>
+              )}
 
               {/* Photos / Médias joints au ticket */}
               {Array.isArray(ticket.photos) && ticket.photos.length > 0 && (

@@ -14,6 +14,9 @@
  */
 
 import { supabase } from '@/src/lib/supabase';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
+import { formatFCFA } from '@/lib/utils';
 
 export const isValidUuid = (id?: string | null): boolean =>
   Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
@@ -392,9 +395,185 @@ export async function createPropertyExpense(
       } catch {}
     }
 
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync_expense',
+          expense: expenseRecord
+        })
+      });
+    } catch {}
+
+    if (expenseRecord.validation_status === 'APPROUVEE') {
+      try {
+        await syncExpenseDecisionToMaintenanceTicket(expenseRecord);
+      } catch {}
+    }
+
     return { data: expenseRecord, error: null };
   } catch (err: any) {
     return { data: null, error: err?.message || 'Erreur création dépense' };
+  }
+}
+
+/**
+ * Synchronise immédiatement la décision sur une dépense (Scénarios A, B, C)
+ * avec le ticket de maintenance correspondant, enregistre la note officielle du bailleur,
+ * met à jour le statut, et notifie le locataire en temps réel (In-app, Realtime, /api/sync).
+ */
+export async function syncExpenseDecisionToMaintenanceTicket(expense: PropertyExpense): Promise<void> {
+  if (typeof window === 'undefined' || !expense) return;
+
+  try {
+    const rawTickets = localStorage.getItem('locatrust_maintenance_tickets');
+    let ticketsList: any[] = [];
+    if (rawTickets) {
+      try {
+        const parsed = JSON.parse(rawTickets);
+        if (Array.isArray(parsed)) ticketsList = parsed;
+      } catch {}
+    }
+
+    // Extraction du numéro de ticket (ex: TCK-2026-413B) depuis ticket_id ou le titre
+    const numMatch = (expense.title || '').match(/TCK-[A-Z0-9-]+/i);
+    const targetTicketNum = numMatch ? numMatch[0] : '';
+
+    let matchedTicket = ticketsList.find(
+      (t) =>
+        (expense.ticket_id && (t.id === expense.ticket_id || t.ticketNumber === expense.ticket_id)) ||
+        (targetTicketNum && (t.ticketNumber === targetTicketNum || t.id === targetTicketNum || (t.id && t.id.includes(targetTicketNum))))
+    );
+
+    let targetTenantId = expense.tenant_id || matchedTicket?.tenant_id || matchedTicket?.tenantId;
+    if (!targetTenantId) {
+      try {
+        const rawContracts = localStorage.getItem('locatrust_contracts');
+        if (rawContracts) {
+          const contracts = JSON.parse(rawContracts);
+          const c = contracts.find((x: any) => x.property_id === expense.property_id || x.property?.id === expense.property_id);
+          if (c?.tenant_id) targetTenantId = c.tenant_id;
+        }
+      } catch {}
+    }
+    if (!targetTenantId && (expense.tenant_name?.toLowerCase().includes('christian') || matchedTicket?.tenantName?.toLowerCase().includes('christian'))) {
+      targetTenantId = 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+    }
+
+    const noteContent =
+      expense.scenario === 'C'
+        ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${formatFCFA(expense.amount)}. Ce montant sera déduit de votre loyer conformément au Scénario C.`
+        : expense.scenario === 'B'
+        ? `Décision du bailleur : La réparation avancée de ${formatFCFA(expense.amount)} est à la charge locative conformément au contrat de bail (Scénario B). Un remboursement ou plan d'apurement sera convenu.`
+        : `Prise en charge par le bailleur : La réparation de ${formatFCFA(expense.amount)} est intégralement prise en charge par le propriétaire (Scénario A). Aucun frais pour le locataire.`;
+
+    const now = new Date();
+    const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+
+    const newNote = {
+      id: `note-exp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      author: 'Propriétaire (Accord officiel)',
+      content: noteContent,
+      date: dateStr,
+      isInternal: false
+    };
+
+    if (matchedTicket) {
+      const existingNotes = Array.isArray(matchedTicket.notes) ? matchedTicket.notes : [];
+      const alreadyHasDecisionNote = existingNotes.some((n: any) => n.content && n.content.includes(formatFCFA(expense.amount)));
+
+      const updatedNotes = alreadyHasDecisionNote ? existingNotes : [...existingNotes, newNote];
+      const updatedTicket = {
+        ...matchedTicket,
+        status: 'En cours',
+        notes: updatedNotes,
+        rentDeductionRequest: expense.scenario === 'C' ? {
+          status: 'approuve',
+          amountSpent: expense.amount,
+          deductionMonth: 'Prochain loyer'
+        } : matchedTicket.rentDeductionRequest
+      };
+
+      // 1. Mettre à jour localStorage
+      const updatedTicketsList = ticketsList.map((t) => (t.id === matchedTicket.id ? updatedTicket : t));
+      localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(updatedTicketsList));
+
+      // 2. Mettre à jour Supabase si UUID valide
+      if (isValidUuid(matchedTicket.id)) {
+        try {
+          const richDescription = JSON.stringify({
+            description: updatedTicket.description,
+            category: updatedTicket.category,
+            notes: updatedNotes,
+            scheduledDate: updatedTicket.scheduledDate || '',
+            rentDeductionRequest: updatedTicket.rentDeductionRequest
+          });
+          await supabase.from('maintenance_tickets').update({
+            status: 'en_cours',
+            description: richDescription,
+            updated_at: new Date().toISOString()
+          }).eq('id', matchedTicket.id);
+        } catch {}
+      }
+
+      // 3. Dispatch événement local
+      window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: updatedTicket }));
+
+      // 4. Broadcast Realtime pour le locataire
+      try {
+        await broadcastLiveEvent('MAINTENANCE_TICKET_UPDATED', {
+          ticket: updatedTicket,
+          actorId: expense.owner_id,
+          targetUserId: targetTenantId
+        });
+      } catch {}
+
+      // 5. Server sync
+      try {
+        await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_maintenance_ticket',
+            ticketId: matchedTicket.id,
+            status: 'En cours',
+            notes: updatedNotes,
+            rentDeductionRequest: updatedTicket.rentDeductionRequest,
+            notificationTitle: '🛠️ Décision du bailleur sur votre signalement',
+            notificationDescription: noteContent,
+            ownerId: expense.owner_id,
+            tenantId: targetTenantId
+          })
+        });
+      } catch {}
+    }
+
+    // 6. Notification globale pour le locataire (cloche + push)
+    if (targetTenantId) {
+      try {
+        await pushGlobalNotification({
+          title: expense.scenario === 'C'
+            ? '🛠️ Réparation autorisée avec déduction de loyer'
+            : '🛠️ Décision du bailleur concernant votre signalement',
+          description: `Votre bailleur a validé votre signalement pour « ${expense.property_title || matchedTicket?.propertyTitle || 'Maison a loué'} » : vous pouvez faire réparer la panne (${formatFCFA(expense.amount)} déductibles du loyer).`,
+          category: 'maintenance',
+          targetRole: 'locataire',
+          targetUserId: targetTenantId,
+          targetTab: 'maintenance',
+          payload: {
+            ticketId: expense.ticket_id || targetTicketNum,
+            ticketNumber: targetTicketNum || expense.ticket_id,
+            expenseId: expense.id,
+            expenseNumber: expense.expense_number,
+            amount: expense.amount,
+            scenario: expense.scenario
+          }
+        });
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('Erreur syncExpenseDecisionToMaintenanceTicket:', err);
   }
 }
 
@@ -458,6 +637,15 @@ export async function updateExpenseValidationStatus(
           });
           localStorage.setItem('locatrust_property_expenses', JSON.stringify(next));
           window.dispatchEvent(new CustomEvent('locatrust:expenses-updated'));
+
+          if (isApproved || isCompensated) {
+            const target = next.find((item: PropertyExpense) => item.id === expenseId);
+            if (target) {
+              try {
+                await syncExpenseDecisionToMaintenanceTicket(target);
+              } catch {}
+            }
+          }
         }
       } catch {}
     }

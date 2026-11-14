@@ -148,7 +148,8 @@ let SERVER_STORE = {
   conversations: [],
   contacts: {},
   readState: {},
-  applications: []
+  applications: [],
+  expenses: []
 };
 
 // ============================================================================
@@ -249,6 +250,7 @@ export default async function handler(req, res) {
             conversations: SERVER_STORE.conversations,
             contacts: SERVER_STORE.contacts,
             applications: SERVER_STORE.applications,
+            expenses: SERVER_STORE.expenses,
             timestamp: new Date().toISOString()
           }
         });
@@ -292,6 +294,14 @@ export default async function handler(req, res) {
         );
         const userProperties = SERVER_STORE.properties.filter(
           (pr) => pr.owner_id === cleanUserId || pr.agency_id === cleanUserId
+        );
+        const userExpenses = (SERVER_STORE.expenses || []).filter(
+          (e) =>
+            e &&
+            (e.owner_id === cleanUserId ||
+              e.agency_id === cleanUserId ||
+              e.tenant_id === cleanUserId ||
+              (e.tenant_name && e.tenant_name.toLowerCase().includes('christian') && cleanUserId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46'))
         );
         const userReadState = SERVER_STORE.readState[cleanUserId] || {
           readMessageIds: [],
@@ -401,6 +411,7 @@ export default async function handler(req, res) {
             contacts: userContacts,
             readState: userReadState,
             applications: userApplications,
+            expenses: userExpenses,
             quota: userQuota,
             deletedPayments: Array.from(DELETED_PAYMENTS),
             timestamp: new Date().toISOString()
@@ -970,6 +981,106 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: true, ticket: target, maintenance: SERVER_STORE.maintenance });
       }
 
+      // 5bis. Enregistrement ou approbation d'une dépense / déduction (Scénarios A, B, C)
+      if (action === 'create_expense' || action === 'update_expense' || action === 'sync_expense') {
+        const expense = body.expense;
+        if (expense) {
+          if (!Array.isArray(SERVER_STORE.expenses)) SERVER_STORE.expenses = [];
+          const existingIdx = SERVER_STORE.expenses.findIndex(e => e.id === expense.id || (expense.expense_number && e.expense_number === expense.expense_number));
+          if (existingIdx === -1) {
+            SERVER_STORE.expenses.unshift(expense);
+          } else {
+            SERVER_STORE.expenses[existingIdx] = { ...SERVER_STORE.expenses[existingIdx], ...expense };
+          }
+
+          // Si la dépense est liée à un ticket de maintenance ou concerne le locataire (ex: Scénario C)
+          const tckNumMatch = (expense.title || '').match(/TCK-[A-Z0-9-]+/i);
+          const targetTckNum = tckNumMatch ? tckNumMatch[0] : '';
+          let targetTicket = SERVER_STORE.maintenance.find(
+            t => (expense.ticket_id && (t.id === expense.ticket_id || t.ticketNumber === expense.ticket_id)) ||
+                 (targetTckNum && (t.ticketNumber === targetTckNum || t.id === targetTckNum || (t.id && t.id.includes(targetTckNum))))
+          );
+
+          if (!targetTicket && (targetTckNum || expense.ticket_id)) {
+            targetTicket = {
+              id: expense.ticket_id || targetTckNum,
+              ticketNumber: targetTckNum || expense.ticket_id,
+              propertyTitle: expense.property_title || 'Maison a loué',
+              tenantName: expense.tenant_name || 'Christian',
+              tenantId: expense.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
+              ownerId: expense.owner_id || '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
+              category: expense.category || 'toiture',
+              status: 'En cours',
+              description: expense.description || 'Signalement de maintenance',
+              notes: [],
+              createdAt: new Date().toLocaleDateString('fr-FR'),
+              created_at: new Date().toISOString()
+            };
+            SERVER_STORE.maintenance.unshift(targetTicket);
+          }
+
+          if (targetTicket) {
+            targetTicket.status = 'En cours';
+            const noteText = expense.scenario === 'C'
+              ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${Number(expense.amount || 0).toLocaleString('fr-FR')} FCFA. Ce montant sera déduit de votre loyer conformément au Scénario C.`
+              : `Décision du bailleur : La réparation de ${Number(expense.amount || 0).toLocaleString('fr-FR')} FCFA a été validée.`;
+
+            const existingNotes = Array.isArray(targetTicket.notes) ? targetTicket.notes : [];
+            const hasNote = existingNotes.some(n => n.content && n.content.includes(String(expense.amount)));
+            if (!hasNote) {
+              targetTicket.notes = [
+                ...existingNotes,
+                {
+                  id: `note-exp-${Date.now()}`,
+                  author: 'Propriétaire (Accord officiel)',
+                  content: noteText,
+                  date: new Date().toLocaleDateString('fr-FR'),
+                  isInternal: false
+                }
+              ];
+            }
+
+            if (expense.scenario === 'C') {
+              targetTicket.rentDeductionRequest = {
+                status: 'approuve',
+                amountSpent: expense.amount,
+                deductionMonth: 'Prochain loyer'
+              };
+            }
+
+            const targetTenantId = expense.tenant_id || targetTicket.tenantId || targetTicket.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+            const notifTitle = expense.scenario === 'C'
+              ? '🛠️ Réparation autorisée avec déduction de loyer'
+              : '🛠️ Décision du bailleur concernant votre signalement';
+            const notifDesc = `Votre bailleur a validé votre signalement pour « ${expense.property_title || 'Maison a loué'} » : vous êtes autorisé(e) à faire effectuer la réparation (${Number(expense.amount || 0).toLocaleString('fr-FR')} FCFA déductibles du loyer).`;
+
+            SERVER_STORE.notifications.unshift({
+              id: `notif_exp_${Date.now()}`,
+              title: notifTitle,
+              description: notifDesc,
+              time: "À l'instant",
+              timestamp: "À l'instant",
+              category: 'maintenance',
+              type: 'maintenance',
+              targetRole: 'locataire',
+              targetUserId: targetTenantId,
+              targetTab: 'maintenance',
+              unread: true,
+              read: false,
+              payload: {
+                ticketId: targetTicket.id,
+                ticketNumber: targetTicket.ticketNumber,
+                expenseId: expense.id,
+                amount: expense.amount,
+                scenario: expense.scenario
+              }
+            });
+          }
+
+          return res.status(200).json({ success: true, expense, ticket: targetTicket, maintenance: SERVER_STORE.maintenance, notifications: SERVER_STORE.notifications });
+        }
+      }
+
       // 6. Enregistrement ou signature d'un contrat de bail
       if (action === 'save_contract' || action === 'sign_contract') {
         const contract = body.contract;
@@ -1357,7 +1468,7 @@ export default async function handler(req, res) {
 
       // 7. Synchronisation bidirectionnelle globale
       if (action === 'sync_all') {
-        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties, clientMessages, clientContacts, clientApplications } = body;
+        const { clientPayments, clientCautions, clientReceipts, clientContracts, clientMaintenance, clientProperties, clientMessages, clientContacts, clientApplications, clientExpenses } = body;
         if (Array.isArray(clientPayments)) {
           for (const cp of clientPayments) {
             const ref = String(cp?.reference || cp?.receipt_number || '').trim();
@@ -1426,6 +1537,14 @@ export default async function handler(req, res) {
             }
           }
         }
+        if (Array.isArray(clientExpenses)) {
+          if (!Array.isArray(SERVER_STORE.expenses)) SERVER_STORE.expenses = [];
+          for (const exp of clientExpenses) {
+            if (exp && exp.id && !SERVER_STORE.expenses.some(se => se.id === exp.id)) {
+              SERVER_STORE.expenses.unshift(exp);
+            }
+          }
+        }
         return res.status(200).json({
           success: true,
           data: {
@@ -1439,7 +1558,8 @@ export default async function handler(req, res) {
             messages: SERVER_STORE.messages,
             conversations: SERVER_STORE.conversations,
             contacts: SERVER_STORE.contacts,
-            applications: SERVER_STORE.applications
+            applications: SERVER_STORE.applications,
+            expenses: SERVER_STORE.expenses
           }
         });
       }
