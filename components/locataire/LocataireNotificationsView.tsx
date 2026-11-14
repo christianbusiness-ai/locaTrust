@@ -24,6 +24,7 @@ import {
   markNotificationAsRead,
   markAllNotificationsAsRead
 } from '@/lib/waitingListNotifications';
+import { normalizeTab } from '@/components/layout/Header';
 
 export interface TenantNotification {
   id: string;
@@ -294,7 +295,7 @@ export const LocataireNotificationsView: React.FC<LocataireNotificationsViewProp
                     onClick={() => {
                       markAsRead(notif.id);
                       if (onNavigateTab && notif.targetTab) {
-                        onNavigateTab(notif.targetTab);
+                        onNavigateTab(normalizeTab(notif.targetTab));
                       }
                     }}
                     className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all active:scale-95"

@@ -453,7 +453,7 @@ export function checkAndTriggerRentDueAlerts(currentUserId?: string): ContractDu
               timestamp: 'À l\'instant',
               category: 'paiement' as const,
               read: false,
-              targetTab: 'paiements',
+              targetTab: 'payments',
               userId: details.tenantId // Visible uniquement pour le locataire
             };
 

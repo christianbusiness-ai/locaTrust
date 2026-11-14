@@ -142,7 +142,22 @@ export default function ProprietaireDashboardPage({
       setActiveTab('overview');
       return;
     }
-    setActiveTab(tabId);
+    const t = (tabId || '').toLowerCase().trim();
+    let resolved = t;
+    if (['paiements', 'paiement', 'loyer', 'loyers'].includes(t)) resolved = 'payments';
+    else if (['contrats', 'contrat', 'baux', 'bail'].includes(t)) resolved = 'contracts';
+    else if (['candidatures', 'candidature', 'demandes', 'demande', 'requests'].includes(t)) resolved = 'applications';
+    else if (['visites', 'visite'].includes(t)) resolved = 'visits';
+    else if (['cautions', 'caution', 'garanties', 'garantie', 'sequestre'].includes(t)) resolved = 'guarantees';
+    else if (['depenses', 'depense'].includes(t)) resolved = 'expenses';
+    else if (['quittances', 'quittance', 'recus', 'recu'].includes(t)) resolved = 'receipts';
+    else if (['biens', 'logements'].includes(t)) resolved = 'properties';
+    else if (['locataires'].includes(t)) resolved = 'tenants';
+    else if (['messages', 'messagerie', 'chat'].includes(t)) resolved = 'messages';
+    else if (['abonnement'].includes(t)) resolved = 'subscription';
+    else if (['parametres', 'settings', 'profil', 'compte'].includes(t)) resolved = 'settings';
+
+    setActiveTab(resolved);
     setSelectedContractId(null);
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -334,14 +349,14 @@ export default function ProprietaireDashboardPage({
             )}
 
             {/* TAB 6: Guarantees (Cautions & Restitution 100%) */}
-            {activeTab === 'guarantees' && (
+            {(activeTab === 'guarantees' || activeTab === 'cautions') && (
               <ErrorBoundary>
                 <CautionsView userRole="proprietaire" />
               </ErrorBoundary>
             )}
 
             {/* TAB 7: Payments (Paiements & Loyers) */}
-            {activeTab === 'payments' && (
+            {(activeTab === 'payments' || activeTab === 'paiements' || activeTab === 'loyers') && (
               <ErrorBoundary>
                 <PaiementsView
                   onOpenConfirmPaymentModal={() => setIsConfirmPaymentOpen(true)}

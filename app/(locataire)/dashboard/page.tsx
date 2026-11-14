@@ -82,6 +82,42 @@ export default function TenantDashboardPage({
   const [activeTab, setActiveTab] = useState<string>('feed');
   const [isSupportOpen, setIsSupportOpen] = useState(false);
 
+  const handleSelectTab = (tab: string) => {
+    if (!tab) return;
+    const t = tab.toLowerCase().trim();
+    if (['paiements', 'paiement', 'loyer', 'loyers'].includes(t)) {
+      setActiveTab('payments');
+    } else if (['contrats', 'contrat', 'baux', 'bail'].includes(t)) {
+      setActiveTab('contracts');
+    } else if (['quittances', 'quittance', 'recus', 'recu'].includes(t)) {
+      setActiveTab('receipts');
+    } else if (['candidatures', 'candidature', 'demandes', 'demande', 'requests'].includes(t)) {
+      setActiveTab('applications');
+    } else if (['visites', 'visite'].includes(t)) {
+      setActiveTab('visits');
+    } else if (['cautions', 'caution', 'garanties', 'garantie', 'sequestre'].includes(t)) {
+      setActiveTab('guarantees');
+    } else if (['depenses', 'depense'].includes(t)) {
+      setActiveTab('expenses');
+    } else if (['maintenance', 'pannes', 'tickets', 'incidents'].includes(t)) {
+      setActiveTab('maintenance');
+    } else if (['messages', 'messagerie', 'chat'].includes(t)) {
+      setActiveTab('messages');
+    } else if (['notifications', 'notifs'].includes(t)) {
+      setActiveTab('notifications');
+    } else if (['profile', 'profil', 'compte', 'account'].includes(t)) {
+      setActiveTab('profile');
+    } else if (['settings', 'parametres'].includes(t)) {
+      setActiveTab('settings');
+    } else if (['support', 'aide'].includes(t)) {
+      setActiveTab('support');
+    } else if (['feed', 'overview', 'accueil'].includes(t)) {
+      setActiveTab('feed');
+    } else {
+      setActiveTab(t);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900">
       
@@ -99,9 +135,9 @@ export default function TenantDashboardPage({
         currentUser={currentUser}
         activeTab={activeTab}
         onSearch={(t) => console.log('Recherche Locataire:', t)}
-        onOpenMessages={() => setActiveTab('messages')}
-        onOpenNotifications={() => setActiveTab('notifications')}
-        onNavigateTab={setActiveTab}
+        onOpenMessages={() => handleSelectTab('messages')}
+        onOpenNotifications={() => handleSelectTab('notifications')}
+        onNavigateTab={handleSelectTab}
         onOpenRegisterModal={onOpenRegisterModal}
         onExitToLanding={onExitToLanding}
         showCreateAccountBtn={false}
@@ -113,8 +149,8 @@ export default function TenantDashboardPage({
         <Sidebar
           currentRole="locataire"
           activeTab={activeTab}
-          onSelectTab={setActiveTab}
-          onOpenSupport={() => setActiveTab('support')}
+          onSelectTab={handleSelectTab}
+          onOpenSupport={() => handleSelectTab('support')}
         />
 
         <ErrorBoundary>
@@ -159,76 +195,90 @@ export default function TenantDashboardPage({
           <MaintenanceNotificationBanner
             currentUserId={user?.id}
             role="locataire"
-            onNavigateToMaintenance={() => setActiveTab('maintenance')}
+            onNavigateToMaintenance={() => handleSelectTab('maintenance')}
           />
 
           {/* TAB 1: Fil d'actualité */}
-          {(activeTab === 'feed' || activeTab === 'overview') && (
+          {(activeTab === 'feed' || activeTab === 'overview' || activeTab === 'accueil') && (
             <LocataireFeedView
               onOpenMessages={(contactId?: string) => {
                 if (contactId && typeof window !== 'undefined') {
                   localStorage.setItem('locatrust_active_chat_contact', contactId);
                   window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
                 }
-                setActiveTab('messages');
+                handleSelectTab('messages');
               }}
-              onNavigateTab={setActiveTab}
+              onNavigateTab={handleSelectTab}
             />
           )}
 
           {/* TAB 2: Search, Favorites, Applications & Visits */}
-          {(activeTab === 'search' || activeTab === 'properties' || activeTab === 'applications' || activeTab === 'visits' || activeTab === 'favorites') && (
-            <LocataireSearchView activeTab={activeTab} onNavigateTab={setActiveTab} />
+          {(activeTab === 'search' || activeTab === 'properties' || activeTab === 'applications' || activeTab === 'demandes' || activeTab === 'candidatures' || activeTab === 'visits' || activeTab === 'visites' || activeTab === 'favorites') && (
+            <LocataireSearchView activeTab={activeTab === 'demandes' || activeTab === 'candidatures' ? 'applications' : activeTab === 'visites' ? 'visits' : activeTab} onNavigateTab={handleSelectTab} />
           )}
 
           {/* TAB 3: Contracts, Receipts & Bailleur History */}
-          {(activeTab === 'contracts' || activeTab === 'receipts' || activeTab === 'documents') && (
-            <LocataireContratsView initialTab={activeTab === 'receipts' ? 'receipts' : 'contracts'} />
+          {(activeTab === 'contracts' || activeTab === 'contrats' || activeTab === 'receipts' || activeTab === 'quittances' || activeTab === 'documents') && (
+            <LocataireContratsView initialTab={activeTab === 'receipts' || activeTab === 'quittances' ? 'receipts' : 'contracts'} />
           )}
 
           {/* TAB 4: Payments Declarative */}
-          {activeTab === 'payments' && (
+          {(activeTab === 'payments' || activeTab === 'paiements' || activeTab === 'loyers') && (
             <LocatairePaiementsView />
           )}
 
           {/* TAB 5: Maintenance */}
-          {activeTab === 'maintenance' && (
+          {(activeTab === 'maintenance' || activeTab === 'pannes' || activeTab === 'tickets') && (
             <LocataireMaintenanceView />
           )}
 
           {/* TAB 5.bis: Mes Dépenses & Déductions sur Loyer */}
-          {activeTab === 'expenses' && (
+          {(activeTab === 'expenses' || activeTab === 'depenses') && (
             <LocataireExpensesView />
           )}
 
           {/* TAB 6: Guarantees / Cautions */}
-          {activeTab === 'guarantees' && (
+          {(activeTab === 'guarantees' || activeTab === 'cautions') && (
             <CautionsView userRole="locataire" />
           )}
 
           {/* TAB 7: Messages */}
-          {activeTab === 'messages' && (
+          {(activeTab === 'messages' || activeTab === 'messagerie' || activeTab === 'chat') && (
             <MessagerieView userRole="locataire" />
           )}
 
           {/* TAB 8: Notifications Locataire */}
-          {activeTab === 'notifications' && (
-            <LocataireNotificationsView onNavigateTab={setActiveTab} />
+          {(activeTab === 'notifications' || activeTab === 'notifs') && (
+            <LocataireNotificationsView onNavigateTab={handleSelectTab} />
           )}
 
           {/* TAB 9: Mon Compte / Mon Profil Locataire */}
-          {(activeTab === 'profile' || activeTab === 'account') && (
+          {(activeTab === 'profile' || activeTab === 'account' || activeTab === 'profil') && (
             <LocataireProfileView />
           )}
 
           {/* TAB 10: Paramètres Locataire */}
-          {activeTab === 'settings' && (
+          {(activeTab === 'settings' || activeTab === 'parametres') && (
             <LocataireSettingsView />
           )}
 
           {/* TAB 11: Aide & Support Locataire (Direct messaging ticket) */}
-          {activeTab === 'support' && (
+          {(activeTab === 'support' || activeTab === 'aide') && (
             <LocataireSupportView />
+          )}
+
+          {/* Fallback de sécurité: si aucun onglet ne correspond, ne JAMAIS afficher une page blanche */}
+          {!['feed', 'overview', 'accueil', 'search', 'properties', 'applications', 'demandes', 'candidatures', 'visits', 'visites', 'favorites', 'contracts', 'contrats', 'receipts', 'quittances', 'documents', 'payments', 'paiements', 'loyers', 'maintenance', 'pannes', 'tickets', 'expenses', 'depenses', 'guarantees', 'cautions', 'messages', 'messagerie', 'chat', 'notifications', 'notifs', 'profile', 'account', 'profil', 'settings', 'parametres', 'support', 'aide'].includes(activeTab) && (
+            <LocataireFeedView
+              onOpenMessages={(contactId?: string) => {
+                if (contactId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_active_chat_contact', contactId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_chat', { detail: { contactId } }));
+                }
+                handleSelectTab('messages');
+              }}
+              onNavigateTab={handleSelectTab}
+            />
           )}
 
         </main>

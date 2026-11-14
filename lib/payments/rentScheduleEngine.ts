@@ -1112,7 +1112,7 @@ export function checkAndNotifyExhaustedAdvances(
             timestamp: "À l'instant",
             category: 'paiement' as const,
             read: false,
-            targetTab: 'paiements',
+            targetTab: 'payments',
             userId: tenantId,
             contractNumber: contractNum,
             targetMonth: currentItem.target_month

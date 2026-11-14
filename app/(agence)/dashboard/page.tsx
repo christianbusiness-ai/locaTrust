@@ -110,12 +110,33 @@ export default function AgencyDashboardPage({
   const [isSendReminderOpen, setIsSendReminderOpen] = useState(false);
   const [isAddPaymentAccountOpen, setIsAddPaymentAccountOpen] = useState(false);
   const [isSupportOpen, setIsSupportOpen] = useState(false);
+  const handleSelectTab = (tabId: string) => {
+    if (!tabId) return;
+    const t = tabId.toLowerCase().trim();
+    let resolved = t;
+    if (['paiements', 'paiement', 'loyer', 'loyers'].includes(t)) resolved = 'payments';
+    else if (['contrats', 'contrat', 'baux', 'bail'].includes(t)) resolved = 'contracts';
+    else if (['candidatures', 'candidature', 'demandes', 'demande', 'requests'].includes(t)) resolved = 'applications';
+    else if (['visites', 'visite'].includes(t)) resolved = 'visits';
+    else if (['cautions', 'caution', 'garanties', 'garantie', 'sequestre'].includes(t)) resolved = 'guarantees';
+    else if (['depenses', 'depense'].includes(t)) resolved = 'expenses';
+    else if (['quittances', 'quittance', 'recus', 'recu'].includes(t)) resolved = 'receipts';
+    else if (['biens', 'logements'].includes(t)) resolved = 'properties';
+    else if (['locataires'].includes(t)) resolved = 'tenants';
+    else if (['mandants'].includes(t)) resolved = 'owners';
+    else if (['messages', 'messagerie', 'chat'].includes(t)) resolved = 'messages';
+    else if (['abonnement'].includes(t)) resolved = 'subscription';
+    else if (['parametres', 'settings', 'profil', 'compte'].includes(t)) resolved = 'settings';
+
+    setActiveTab(resolved);
+    setSelectedContractId(null);
+  };
+
   React.useEffect(() => {
     const handleNavigateTab = (e: any) => {
       const targetTab = e?.detail?.tab;
       if (targetTab) {
-        setActiveTab(targetTab);
-        setSelectedContractId(null);
+        handleSelectTab(targetTab);
       }
     };
     window.addEventListener('locatrust:navigate-tab', handleNavigateTab);
@@ -139,12 +160,9 @@ export default function AgencyDashboardPage({
         currentUser={currentUser}
         activeTab={activeTab}
         onSearch={(t) => console.log('Recherche Agence:', t)}
-        onOpenMessages={() => setActiveTab('messages')}
-        onOpenNotifications={() => setActiveTab('messages')}
-        onNavigateTab={(tab) => {
-          setActiveTab(tab);
-          setSelectedContractId(null);
-        }}
+        onOpenMessages={() => handleSelectTab('messages')}
+        onOpenNotifications={() => handleSelectTab('messages')}
+        onNavigateTab={handleSelectTab}
         onOpenRegisterModal={onOpenRegisterModal}
         onExitToLanding={onExitToLanding}
         showCreateAccountBtn={false}
@@ -156,10 +174,7 @@ export default function AgencyDashboardPage({
         <Sidebar
           currentRole="agence"
           activeTab={activeTab}
-          onSelectTab={(tab) => {
-            setActiveTab(tab);
-            setSelectedContractId(null);
-          }}
+          onSelectTab={handleSelectTab}
           onOpenSupport={() => setIsSupportOpen(true)}
         />
 

@@ -152,7 +152,7 @@ export async function checkAndSendContractExpiryNotifications(userId?: string) {
             timestamp: 'À l\'instant',
             category: 'contrat' as const,
             read: false,
-            targetTab: 'contrats',
+            targetTab: 'contracts',
             targetRole: 'locataire',
             targetUserId: tenantId
           };
@@ -373,7 +373,7 @@ export async function acceptContractRenewal(params: {
       timestamp: 'À l\'instant',
       category: 'contrat' as const,
       read: false,
-      targetTab: 'contrats',
+      targetTab: 'contracts',
       targetRole: 'locataire',
       targetUserId: tenantId
     };
@@ -452,7 +452,7 @@ export async function acceptContractRenewal(params: {
         renewal_status: 'accepte',
         duration_months: newDurationTotal,
         end_date: newEndDateIso,
-        targetTab: 'contrats'
+        targetTab: 'contracts'
       };
       await supabase.from('notifications').insert({
         user_id: tenantId,
@@ -521,7 +521,7 @@ export async function refuseContractRenewal(params: {
       timestamp: 'À l\'instant',
       category: 'contrat' as const,
       read: false,
-      targetTab: 'contrats',
+      targetTab: 'contracts',
       targetRole: 'locataire',
       targetUserId: tenantId
     };
@@ -597,7 +597,7 @@ export async function refuseContractRenewal(params: {
         contract_number: contractNumber,
         renewal_status: 'refuse',
         renewal_refusal_reason: reason,
-        targetTab: 'contrats'
+        targetTab: 'contracts'
       };
       await supabase.from('notifications').insert({
         user_id: tenantId,

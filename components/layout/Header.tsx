@@ -88,6 +88,30 @@ interface HeaderProps {
   showCreateAccountBtn?: boolean;
 }
 
+export function normalizeTab(rawTab?: string | null): string {
+  if (!rawTab) return 'overview';
+  const t = rawTab.trim().toLowerCase();
+  if (['paiements', 'paiement', 'loyer', 'loyers', 'reglement', 'reglements'].includes(t)) return 'payments';
+  if (['contrats', 'contrat', 'baux', 'bail'].includes(t)) return 'contracts';
+  if (['candidatures', 'candidature', 'demandes', 'demande', 'requests', 'candidats'].includes(t)) return 'applications';
+  if (['cautions', 'caution', 'garanties', 'garantie', 'sequestre'].includes(t)) return 'guarantees';
+  if (['visites', 'visite'].includes(t)) return 'visits';
+  if (['depenses', 'depense'].includes(t)) return 'expenses';
+  if (['quittances', 'quittance', 'recus', 'recu'].includes(t)) return 'receipts';
+  if (['profil', 'profile', 'compte', 'account'].includes(t)) return 'profile';
+  if (['parametres', 'settings', 'config'].includes(t)) return 'settings';
+  if (['messagerie', 'messages', 'chat', 'discussion', 'discussions'].includes(t)) return 'messages';
+  if (['notifications', 'notifs', 'alertes'].includes(t)) return 'notifications';
+  if (['maintenance', 'pannes', 'tickets', 'incidents'].includes(t)) return 'maintenance';
+  if (['biens', 'properties', 'logements'].includes(t)) return 'properties';
+  if (['locataires', 'tenants'].includes(t)) return 'tenants';
+  if (['proprietaires', 'owners'].includes(t)) return 'owners';
+  if (['abonnement', 'subscription'].includes(t)) return 'subscription';
+  if (['support', 'aide', 'assistance'].includes(t)) return 'support';
+  if (['feed', 'overview', 'dashboard', 'accueil'].includes(t)) return 'feed';
+  return t;
+}
+
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
   activeTab,
@@ -609,7 +633,12 @@ export const Header: React.FC<HeaderProps> = ({
       setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, read: true, is_read: true, unread: false } : n)));
       setShowNotifications(false);
 
-      // Redirection directe contextuelle selon la notification
+      const titleLower = String(item.title || '').toLowerCase();
+      const catLower = String(item.category || '').toLowerCase();
+      const typeLower = String(item.type || '').toLowerCase();
+      const rawTargetTab = String(item.targetTab || item.data?.targetTab || item.payload?.targetTab || '').toLowerCase();
+
+      // 1. Signature de quittance requise
       if (item.type === 'quittance_signature_requise' || item.payload?.action === 'sign_receipt') {
         if (onNavigateTab) {
           onNavigateTab('payments');
@@ -619,12 +648,17 @@ export const Header: React.FC<HeaderProps> = ({
             window.dispatchEvent(new CustomEvent('locatrust:open_sign_receipt', { detail: item.payload }));
           }
         }, 150);
-      } else if (
-        item.category === 'contrat' ||
-        item.type === 'contrat' ||
-        item.targetTab === 'contracts' ||
-        (item.title && item.title.toLowerCase().includes('contrat')) ||
-        (item.title && item.title.toLowerCase().includes('bail')) ||
+        return;
+      }
+
+      // 2. Contrat de bail
+      if (
+        catLower === 'contrat' ||
+        typeLower === 'contrat' ||
+        rawTargetTab === 'contracts' ||
+        rawTargetTab === 'contrats' ||
+        titleLower.includes('contrat') ||
+        titleLower.includes('bail') ||
         item.payload?.contract_id ||
         item.data?.contract_id ||
         item.payload?.contractNumber ||
@@ -653,23 +687,34 @@ export const Header: React.FC<HeaderProps> = ({
         if (onNavigateTab) {
           onNavigateTab('contracts');
         }
-      } else if (
-        item.category === 'visite' ||
-        item.type === 'visite' ||
-        item.targetTab === 'visits' ||
-        (item.title && item.title.toLowerCase().includes('visite'))
+        return;
+      }
+
+      // 3. Demandes de visite
+      if (
+        catLower === 'visite' ||
+        typeLower === 'visite' ||
+        rawTargetTab === 'visits' ||
+        rawTargetTab === 'visites' ||
+        titleLower.includes('visite')
       ) {
         if (onNavigateTab) {
           onNavigateTab('visits');
         }
-      } else if (
-        item.targetTab === 'applications' ||
-        item.category === 'candidature' ||
-        item.category === 'demande' ||
-        item.type === 'demande' ||
-        item.type === 'candidature' ||
-        (item.title && item.title.toLowerCase().includes('demande de location')) ||
-        (item.title && item.title.toLowerCase().includes('candidature'))
+        return;
+      }
+
+      // 4. Candidatures & Demandes de location
+      if (
+        rawTargetTab === 'applications' ||
+        rawTargetTab === 'demandes' ||
+        rawTargetTab === 'candidatures' ||
+        catLower === 'candidature' ||
+        catLower === 'demande' ||
+        typeLower === 'demande' ||
+        typeLower === 'candidature' ||
+        titleLower.includes('demande de location') ||
+        titleLower.includes('candidature')
       ) {
         const targetAppId =
           item.payload?.applicationId ||
@@ -690,10 +735,15 @@ export const Header: React.FC<HeaderProps> = ({
         if (onNavigateTab) {
           onNavigateTab('applications');
         }
-      } else if (
-        item.targetTab === 'messages' ||
-        item.type === 'message' ||
-        (item.title && item.title.toLowerCase().includes('message'))
+        return;
+      }
+
+      // 5. Messagerie instantanée
+      if (
+        rawTargetTab === 'messages' ||
+        rawTargetTab === 'messagerie' ||
+        typeLower === 'message' ||
+        titleLower.includes('message')
       ) {
         const contactId = item.senderUserId || item.payload?.contactId || item.payload?.sender_id;
         if (contactId && typeof window !== 'undefined') {
@@ -704,11 +754,102 @@ export const Header: React.FC<HeaderProps> = ({
         if (onNavigateTab) {
           onNavigateTab('messages');
         }
-      } else if (item.targetTab && onNavigateTab) {
-        onNavigateTab(item.targetTab);
-      } else {
-        setSelectedNotification(item);
+        return;
       }
+
+      // 6. Paiement / Loyer / Avance épuisée
+      if (
+        catLower === 'paiement' ||
+        typeLower === 'paiement' ||
+        rawTargetTab === 'payments' ||
+        rawTargetTab === 'paiements' ||
+        rawTargetTab === 'loyers' ||
+        titleLower.includes('loyer') ||
+        titleLower.includes('avance') ||
+        titleLower.includes('paiement') ||
+        titleLower.includes('quittance')
+      ) {
+        if (onNavigateTab) {
+          onNavigateTab('payments');
+        }
+        return;
+      }
+
+      // 7. Maintenance & Incidents
+      if (
+        catLower === 'maintenance' ||
+        typeLower === 'maintenance' ||
+        rawTargetTab === 'maintenance' ||
+        rawTargetTab === 'pannes' ||
+        titleLower.includes('maintenance') ||
+        titleLower.includes('panne') ||
+        titleLower.includes('incident') ||
+        titleLower.includes('fuite')
+      ) {
+        const ticketId = item.payload?.ticket_id || item.data?.ticket_id || item.ticket_id;
+        if (ticketId && typeof window !== 'undefined') {
+          localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
+          }, 150);
+        }
+        if (onNavigateTab) {
+          onNavigateTab('maintenance');
+        }
+        return;
+      }
+
+      // 8. Cautions & Séquestre
+      if (
+        catLower === 'caution' ||
+        typeLower === 'caution' ||
+        rawTargetTab === 'guarantees' ||
+        rawTargetTab === 'cautions' ||
+        titleLower.includes('caution') ||
+        titleLower.includes('séquestre')
+      ) {
+        if (onNavigateTab) {
+          onNavigateTab('guarantees');
+        }
+        return;
+      }
+
+      // 9. Dépenses & Interventions
+      if (
+        catLower === 'depense' ||
+        catLower === 'expense' ||
+        rawTargetTab === 'expenses' ||
+        rawTargetTab === 'depenses' ||
+        titleLower.includes('dépense') ||
+        titleLower.includes('reparation')
+      ) {
+        if (onNavigateTab) {
+          onNavigateTab('expenses');
+        }
+        return;
+      }
+
+      // 10. Abonnement SaaS
+      if (
+        catLower === 'abonnement' ||
+        typeLower === 'abonnement' ||
+        rawTargetTab === 'subscription' ||
+        titleLower.includes('abonnement')
+      ) {
+        if (onNavigateTab) {
+          onNavigateTab('subscription');
+        }
+        return;
+      }
+
+      // 11. Cible spécifique normalisée
+      if (rawTargetTab && onNavigateTab) {
+        onNavigateTab(normalizeTab(rawTargetTab));
+        return;
+      }
+
+      // 12. Fallback modal descriptif si non reconnu
+      setSelectedNotification(item);
     } catch (clickErr) {
       console.warn('Erreur navigation notification sécurisée:', clickErr);
     }
@@ -1236,8 +1377,14 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Modal Détail de la notification */}
       {selectedNotification && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 animate-scaleUp text-slate-900 dark:text-white">
+        <div 
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setSelectedNotification(null)}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 animate-scaleUp text-slate-900 dark:text-white"
+          >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-bold">
@@ -1248,6 +1395,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {selectedNotification.category === 'caution' && <ShieldCheck className="w-5 h-5" />}
                   {selectedNotification.category === 'maintenance' && <Wrench className="w-5 h-5" />}
                   {selectedNotification.category === 'abonnement' && <AlertTriangle className="w-5 h-5" />}
+                  {!['demande', 'visite', 'paiement', 'contrat', 'caution', 'maintenance', 'abonnement'].includes(selectedNotification.category) && <Bell className="w-5 h-5" />}
                 </div>
                 <div>
                   <h3 className="text-sm font-black tracking-tight">{selectedNotification.title}</h3>
@@ -1255,8 +1403,9 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedNotification(null)}
-                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600"
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1275,31 +1424,37 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedNotification(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer"
               >
                 Fermer
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  const isTenant = currentUser.role === 'locataire';
+                  const isTenant = currentUser?.role === 'locataire';
                   let target = selectedNotification.targetTab;
                   if (!target) {
                     if (selectedNotification.category === 'caution') target = 'guarantees';
-                    else if (selectedNotification.category === 'paiement') target = isTenant ? 'receipts' : 'payments';
-                    else target = 'overview';
+                    else if (selectedNotification.category === 'paiement') target = 'payments';
+                    else if (selectedNotification.category === 'contrat') target = 'contracts';
+                    else if (selectedNotification.category === 'maintenance') target = 'maintenance';
+                    else if (selectedNotification.category === 'depense') target = 'expenses';
+                    else if (selectedNotification.category === 'demande') target = 'applications';
+                    else if (selectedNotification.category === 'visite') target = 'visits';
+                    else target = isTenant ? 'feed' : 'overview';
                   }
+                  const finalTarget = normalizeTab(target);
                   setSelectedNotification(null);
-                  if (onNavigateTab) onNavigateTab(target);
+                  if (onNavigateTab) onNavigateTab(finalTarget);
                 }}
-                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md flex items-center gap-1.5 transition-all"
+                className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
               >
                 <span>
                   {selectedNotification.category === 'demande' && 'Consulter le dossier candidat'}
                   {selectedNotification.category === 'visite' && 'Voir la demande de visite'}
-                  {selectedNotification.category === 'paiement' && (currentUser.role === 'locataire' ? 'Télécharger ma quittance' : 'Vérifier le paiement')}
+                  {selectedNotification.category === 'paiement' && (currentUser?.role === 'locataire' ? 'Accéder à mes loyers' : 'Vérifier le paiement')}
                   {selectedNotification.category === 'contrat' && 'Consulter le contrat'}
-                  {selectedNotification.category === 'caution' && (currentUser.role === 'locataire' ? 'Consulter ma caution & Signer le reçu' : 'Consulter les cautions')}
+                  {selectedNotification.category === 'caution' && (currentUser?.role === 'locataire' ? 'Consulter ma caution' : 'Consulter les cautions')}
                   {selectedNotification.category === 'maintenance' && 'Ouvrir le ticket'}
                   {selectedNotification.category === 'abonnement' && 'Voir mon abonnement'}
                   {!['demande', 'visite', 'paiement', 'contrat', 'caution', 'maintenance', 'abonnement'].includes(selectedNotification.category) && 'Accéder à la section'}

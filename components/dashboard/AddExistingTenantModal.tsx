@@ -503,7 +503,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
           data: {
             property_id: savedPropertyId,
             owner_id: user?.id,
-            targetTab: 'contrats'
+            targetTab: 'contracts'
           }
         }]);
       } catch (notifDbErr) {
@@ -519,7 +519,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         read: false,
         unread: true,
         category: 'contrat',
-        targetTab: 'contrats',
+        targetTab: 'contracts',
         targetUserId: foundTenant.id,
         targetRole: 'locataire',
         senderUserId: user?.id,
