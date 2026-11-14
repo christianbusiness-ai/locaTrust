@@ -27,7 +27,8 @@ import {
   PenTool,
   Banknote,
   Lock,
-  BellRing
+  BellRing,
+  Wrench
 } from 'lucide-react';
 import { formatFCFA, sanitizeNumericInput, formatPeriodCovered } from '@/lib/utils';
 import confetti from 'canvas-confetti';
@@ -1094,11 +1095,23 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       due_day: validatingPayment.due_day || 5
     };
 
+    const dedAmt = Number((validatingPayment as any).deduction_amount) || 0;
+    const comps = dedAmt > 0 ? [
+      {
+        id: (validatingPayment as any).compensation_id || 'comp_maint',
+        contract_id: contract.id,
+        amount: dedAmt,
+        compensated_month: (validatingPayment as any).target_month || new Date().toISOString().slice(0, 7),
+        reason: (validatingPayment as any).deduction_reason || 'Déduction travaux de maintenance autorisée'
+      }
+    ] : [];
+
     const res = calculateRentPaymentAllocation({
       contract,
       paymentAmount: Number(validatingPayment.amount || 0),
       paymentDate: validatingPayment.payment_date || validatingPayment.created_at || new Date(),
       existingPayments: payments.filter(p => p.id !== validatingPayment.id && p.status === 'confirme'),
+      compensations: comps,
       includePendingDeclarations: false
     });
 
@@ -1175,6 +1188,10 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         target_month: targetPeriodFormatted,
         allocations: proposedAllocations?.allocations || (validatingPayment as any).allocations,
         confirmed_at: new Date().toISOString(),
+        deduction_amount: (validatingPayment as any).deduction_amount,
+        deduction_reason: (validatingPayment as any).deduction_reason,
+        contract_monthly_rent: (validatingPayment as any).contract_monthly_rent,
+        compensation_id: (validatingPayment as any).compensation_id,
       };
 
       setPayments((prev) =>
@@ -1205,6 +1222,12 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
         };
         if (proposedAllocations?.allocations) {
           updatePayload.allocations = proposedAllocations.allocations;
+        }
+        if ((validatingPayment as any).deduction_amount) {
+          updatePayload.deduction_amount = (validatingPayment as any).deduction_amount;
+          updatePayload.deduction_reason = (validatingPayment as any).deduction_reason;
+          updatePayload.contract_monthly_rent = (validatingPayment as any).contract_monthly_rent;
+          updatePayload.compensation_id = (validatingPayment as any).compensation_id;
         }
 
         let didUpdate = false;
@@ -1352,6 +1375,9 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
             tenantName: validatingPayment.tenant?.full_name || 'Locataire',
             ownerSignatureUrl: effectiveOwnerSig,
             tenantSignatureUrl: tenantSignatureUrl,
+            deductionAmount: (validatingPayment as any).deduction_amount,
+            deductionReason: (validatingPayment as any).deduction_reason,
+            contractMonthlyRent: (validatingPayment as any).contract_monthly_rent,
           },
           ownerId,
           tenantId
@@ -1377,10 +1403,29 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           payment_method: extractedOcrData.payment_method,
           created_at: new Date().toISOString(),
           owner_signature_url: effectiveOwnerSig,
-          status: 'en_attente_signature_locataire'
+          status: 'en_attente_signature_locataire',
+          deduction_amount: (validatingPayment as any).deduction_amount,
+          deduction_reason: (validatingPayment as any).deduction_reason,
+          contract_monthly_rent: (validatingPayment as any).contract_monthly_rent,
         });
       } catch (saveErr) {
         console.warn('Erreur upsertUnifiedReceipt notice:', saveErr);
+      }
+
+      // Scellement officiel de la compensation sur la dépense pour interdire tout double décompte
+      if ((validatingPayment as any).deduction_amount && (validatingPayment as any).compensation_id) {
+        try {
+          const { authorizeRentCompensation } = await import('@/lib/financial/expensesService');
+          await authorizeRentCompensation(
+            (validatingPayment as any).compensation_id,
+            contractIdToSave || 'contract',
+            Number((validatingPayment as any).deduction_amount),
+            targetPeriodFormatted,
+            validatingPayment.id || confirmedPmt.id
+          );
+        } catch (compErr) {
+          console.warn('Erreur scellement compensation dépense:', compErr);
+        }
       }
 
       // Marquer la notification initiale de déclaration comme traitée
@@ -2357,6 +2402,30 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* DÉDUCTION TRAVAUX SCÉNARIO C (Point légal 16 & Scénario C) */}
+                {(validatingPayment as any).deduction_amount > 0 && (
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 text-xs flex flex-col gap-2 shadow-xs">
+                    <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
+                      <span className="font-black text-emerald-900 flex items-center gap-1.5">
+                        <Wrench className="w-4 h-4 text-emerald-600" />
+                        Déduction travaux autorisée (Scénario C)
+                      </span>
+                      <span className="font-extrabold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                        -{formatFCFA((validatingPayment as any).deduction_amount)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-emerald-800 font-medium">
+                      <span>Loyer contractuel : <strong>{formatFCFA((validatingPayment as any).contract_monthly_rent || (Number(extractedOcrData.amount) + Number((validatingPayment as any).deduction_amount)))}</strong></span>
+                      <span className="font-extrabold text-emerald-900">Net déclaré : {formatFCFA(extractedOcrData.amount)}</span>
+                    </div>
+                    {(validatingPayment as any).deduction_reason && (
+                      <p className="text-[10px] text-emerald-700 italic bg-white/60 p-1.5 rounded-lg border border-emerald-100">
+                        Motif : {(validatingPayment as any).deduction_reason}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* RÉPARTITION PROPOSÉE PAR LOCATRUST (Point 16) */}
                 {proposedAllocations && proposedAllocations.allocations.length > 0 && (

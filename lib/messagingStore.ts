@@ -32,6 +32,9 @@ export interface ChatQuittanceAttachment {
   ownerPhone?: string;
   tenantCni?: string;
   tenantPhone?: string;
+  deductionAmount?: number;
+  deductionReason?: string;
+  contractMonthlyRent?: number;
 }
 
 export interface ChatContractAttachment {
@@ -2102,7 +2105,10 @@ export async function downloadQuittancePdfFromAttachment(q: ChatQuittanceAttachm
     paymentMethod: q.paymentMethod,
     transactionReference: q.transactionReference,
     ownerSignatureUrl: q.ownerSignatureUrl,
-    tenantSignatureUrl: q.tenantSignatureUrl
+    tenantSignatureUrl: q.tenantSignatureUrl,
+    deductionAmount: q.deductionAmount,
+    deductionReason: q.deductionReason,
+    contractMonthlyRent: q.contractMonthlyRent
   };
 
   await generateOfficialReceiptPDF(pdfData);

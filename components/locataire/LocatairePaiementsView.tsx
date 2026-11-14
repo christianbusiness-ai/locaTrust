@@ -136,11 +136,26 @@ export const LocatairePaiementsView: React.FC = () => {
   const [method, setMethod] = useState('Wave CI');
   const [reference, setReference] = useState('');
   const [proofUrl, setProofUrl] = useState('');
+  const [approvedCompensations, setApprovedCompensations] = useState<any[]>([]);
 
   // Contrat sélectionné pour la déclaration de loyer
   const currentRentContract = React.useMemo(() => {
     return userContracts.find(c => c.id === selectedContractId) || userContracts[0] || null;
   }, [userContracts, selectedContractId]);
+
+  // Déduction / Compensation active (Scénario C) applicable à ce bail
+  const activeCompensation = React.useMemo(() => {
+    if (!currentRentContract) return null;
+    return approvedCompensations.find(c =>
+      (c.contract_id && (c.contract_id === currentRentContract.id || c.contract_id === currentRentContract.contract_number)) ||
+      (c.property_id && (c.property_id === currentRentContract.property_id || c.property_id === currentRentContract.property?.id)) ||
+      (c.tenant_id && c.tenant_id === user?.id)
+    ) || null;
+  }, [approvedCompensations, currentRentContract, user?.id]);
+
+  const compensationAmount = activeCompensation
+    ? (Number(activeCompensation.compensation_balance) || Number(activeCompensation.amount) || 0)
+    : 0;
 
   // Calcul automatique en temps réel de la répartition du paiement
   const rentAllocationPreview = React.useMemo(() => {
@@ -150,9 +165,13 @@ export const LocatairePaiementsView: React.FC = () => {
       paymentAmount: Number(amount) || 0,
       paymentDate: getDeviceDate(),
       existingPayments: payments.filter(p => p.status === 'confirme'),
-      includePendingDeclarations: false
+      includePendingDeclarations: false,
+      compensations: activeCompensation ? [{
+        ...activeCompensation,
+        amount_deducted: compensationAmount
+      }] : []
     });
-  }, [currentRentContract, amount, payments]);
+  }, [currentRentContract, amount, payments, activeCompensation, compensationAmount]);
 
   // Caution Form State
   const [cautionContractId, setCautionContractId] = useState('');
@@ -173,8 +192,14 @@ export const LocatairePaiementsView: React.FC = () => {
     if (contractToUse) {
       setSelectedContractId(contractToUse.id);
       const realRent = extractContractMonthlyRent(contractToUse);
-      if (realRent > 0 && amount <= 0) {
-        setAmount(realRent);
+      const activeComp = approvedCompensations.find(c =>
+        (c.contract_id && (c.contract_id === contractToUse.id || c.contract_id === contractToUse.contract_number)) ||
+        (c.property_id && (c.property_id === contractToUse.property_id || c.property_id === contractToUse.property?.id)) ||
+        (c.tenant_id && c.tenant_id === user?.id)
+      );
+      const compAmt = activeComp ? (Number(activeComp.compensation_balance) || Number(activeComp.amount) || 0) : 0;
+      if (realRent > 0) {
+        setAmount(Math.max(0, realRent - compAmt));
       }
     }
     setShowDeclareModal(true);
@@ -291,6 +316,16 @@ export const LocatairePaiementsView: React.FC = () => {
                 }
               }
             }
+          }
+
+          const sExpenses = syncJson?.data?.expenses || [];
+          const activeComp = sExpenses.filter((e: any) =>
+            e.scenario === 'C' &&
+            (e.compensation_authorized === true || e.validation_status === 'APPROUVEE' || e.validation_status === 'COMPENSEE_PARTIELLEMENT') &&
+            (e.compensation_balance === undefined || Number(e.compensation_balance) > 0)
+          );
+          if (activeComp.length > 0) {
+            setApprovedCompensations(activeComp);
           }
         } catch {}
       }
@@ -1020,7 +1055,11 @@ export const LocatairePaiementsView: React.FC = () => {
         contract: chosenContract,
         paymentAmount: Number(amount) || 0,
         paymentDate: getDeviceDate(),
-        existingPayments: payments
+        existingPayments: payments,
+        compensations: activeCompensation ? [{
+          ...activeCompensation,
+          amount_deducted: compensationAmount
+        }] : []
       }) : null);
 
       let calculatedPeriodText = allocResult?.periods_covered_text || targetMonth;
@@ -1047,6 +1086,10 @@ export const LocatairePaiementsView: React.FC = () => {
         owner_id: ownerUuid || targetOwnerId || chosenContract?.owner_id || 'usr_owner',
         target_month: calculatedPeriodText,
         amount: amount,
+        deduction_amount: compensationAmount > 0 ? compensationAmount : undefined,
+        deduction_reason: compensationAmount > 0 ? (activeCompensation?.title || 'Réparation autorisée Scénario C') : undefined,
+        contract_monthly_rent: extractContractMonthlyRent(chosenContract) || undefined,
+        compensation_id: activeCompensation?.id || undefined,
         payment_date: new Date().toISOString().split('T')[0],
         payment_method: method,
         reference: method === 'Espèces' ? `ESP-${Date.now().toString().slice(-6)}` : reference,
@@ -2829,7 +2872,13 @@ export const LocatairePaiementsView: React.FC = () => {
                       const found = userContracts.find(c => c.id === newId);
                       if (found) {
                         const rentVal = extractContractMonthlyRent(found);
-                        if (rentVal > 0) setAmount(rentVal);
+                        const activeComp = approvedCompensations.find(c =>
+                          (c.contract_id && (c.contract_id === found.id || c.contract_id === found.contract_number)) ||
+                          (c.property_id && (c.property_id === found.property_id || c.property_id === found.property?.id)) ||
+                          (c.tenant_id && c.tenant_id === user?.id)
+                        );
+                        const compAmt = activeComp ? (Number(activeComp.compensation_balance) || Number(activeComp.amount) || 0) : 0;
+                        if (rentVal > 0) setAmount(Math.max(0, rentVal - compAmt));
                       }
                     }}
                     className="w-full p-2.5 rounded-xl border border-slate-300 text-xs font-bold"
@@ -2846,7 +2895,25 @@ export const LocatairePaiementsView: React.FC = () => {
                 )}
               </div>
 
-
+              {/* Accord officiel de déduction pour réparation (Scénario C) */}
+              {compensationAmount > 0 && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-400 text-xs text-emerald-950 flex flex-col gap-1.5 shadow-sm">
+                  <div className="flex items-center gap-2 text-emerald-800 font-black">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="uppercase text-[11px] tracking-wider">Déduction Travaux Autorisée par le Bailleur (Scénario C)</span>
+                  </div>
+                  <p className="font-semibold text-slate-800 leading-relaxed">
+                    Votre bailleur a validé un accord officiel de déduction pour réparation de{' '}
+                    <strong className="text-emerald-900 font-black">{formatFCFA(compensationAmount)}</strong>
+                    {activeCompensation?.ticket_id ? ` (suite au ticket ${activeCompensation.ticket_id})` : ''}.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-between pt-1.5 border-t border-emerald-200 font-bold text-slate-800 text-[11px] gap-2">
+                    <span>Loyer conventionné : {formatFCFA(extractContractMonthlyRent(currentRentContract))}</span>
+                    <span className="text-emerald-700 font-black">- {formatFCFA(compensationAmount)}</span>
+                    <span className="text-emerald-950 font-black bg-emerald-200/60 px-2 py-0.5 rounded-lg">Net à payer : {formatFCFA(Math.max(0, extractContractMonthlyRent(currentRentContract) - compensationAmount))}</span>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>

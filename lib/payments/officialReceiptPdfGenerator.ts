@@ -47,6 +47,9 @@ export interface OfficialReceiptData {
   ownerSignatureUrl?: string | null;
   tenantSignatureUrl?: string | null;
   allocations?: ReceiptAllocationDetail[];
+  deductionAmount?: number;
+  deductionReason?: string;
+  contractMonthlyRent?: number;
 }
 
 /**
@@ -632,6 +635,22 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
       currentY += rowHeight;
     }
 
+    if (data.deductionAmount && data.deductionAmount > 0) {
+      doc.setFillColor(240, 253, 244);
+      doc.rect(15, currentY, 180, rowHeight, 'F');
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(15, 23, 42);
+      doc.text('Déduction travaux (Scénario C)', 18, currentY + 4.5);
+      doc.setFont('helvetica', 'bold');
+      doc.text(data.deductionReason ? data.deductionReason.slice(0, 30) : 'Accord officiel', 68, currentY + 4.5);
+      doc.setTextColor(5, 150, 105);
+      doc.text('Compensée', 122, currentY + 4.5);
+      doc.setTextColor(5, 150, 105);
+      doc.text(`- ${formatFCFA(data.deductionAmount)}`, 168, currentY + 4.5);
+      currentY += rowHeight;
+    }
+
     doc.setDrawColor(226, 232, 240);
     doc.line(15, currentY, 195, currentY);
 
@@ -656,7 +675,11 @@ export const generateOfficialReceiptPDF = async (data: OfficialReceiptData): Pro
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);
     doc.setTextColor(30, 41, 59);
-    doc.text(`(${formatFCFA(data.amount)} CFA réglés en intégralité)`, 22, summaryY + 21);
+    if (data.deductionAmount && data.deductionAmount > 0) {
+      doc.text(`(Net acquitté sur loyer de ${formatFCFA(data.contractMonthlyRent || (data.amount + data.deductionAmount))})`, 22, summaryY + 21);
+    } else {
+      doc.text(`(${formatFCFA(data.amount)} CFA réglés en intégralité)`, 22, summaryY + 21);
+    }
 
     // Right Box: Metadata details
     doc.setFillColor(255, 255, 255);

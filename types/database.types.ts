@@ -170,6 +170,11 @@ export interface RentPayment {
   owner_signature_url?: string;
   tenant_signature_url?: string;
   created_at: string;
+  deduction_amount?: number;
+  deduction_reason?: string;
+  contract_monthly_rent?: number;
+  compensation_id?: string;
+  allocations?: any[];
 
   contract?: Contract;
   tenant?: User;

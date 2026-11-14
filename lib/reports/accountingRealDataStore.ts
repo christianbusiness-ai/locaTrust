@@ -927,15 +927,54 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
     const cautionsRestantes = Math.max(0, cautionsRecues - cautionsRemboursees - cautionsRetenues);
 
-    // Maintenance & Dépenses (Intégration du module Dépenses & Travaux)
+    // Maintenance & Dépenses (Intégration du module Dépenses & Travaux - Serveur source de vérité)
     let realPropertyExpenses: any[] = [];
     let realCompensations: any[] = [];
+
+    // Récupération prioritaire depuis Supabase
+    if (userId) {
+      try {
+        const { data: dbExp } = await supabase
+          .from('property_expenses')
+          .select('*')
+          .or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+        if (dbExp && dbExp.length > 0) {
+          realPropertyExpenses = dbExp;
+        }
+      } catch {}
+
+      try {
+        const { data: dbComp } = await supabase
+          .from('rent_compensations')
+          .select('*');
+        if (dbComp && dbComp.length > 0) {
+          realCompensations = dbComp;
+        }
+      } catch {}
+    }
+
     if (typeof window !== 'undefined') {
       try {
         const storedExp = localStorage.getItem('locatrust_property_expenses');
-        if (storedExp) realPropertyExpenses = JSON.parse(storedExp);
+        if (storedExp) {
+          const parsed = JSON.parse(storedExp);
+          if (Array.isArray(parsed)) {
+            const expMap = new Map<string, any>();
+            parsed.forEach((e: any) => expMap.set(e.id || e.expense_number, e));
+            realPropertyExpenses.forEach((e: any) => expMap.set(e.id || e.expense_number, e));
+            realPropertyExpenses = Array.from(expMap.values());
+          }
+        }
         const storedComp = localStorage.getItem('locatrust_rent_compensations');
-        if (storedComp) realCompensations = JSON.parse(storedComp);
+        if (storedComp) {
+          const parsed = JSON.parse(storedComp);
+          if (Array.isArray(parsed)) {
+            const compMap = new Map<string, any>();
+            parsed.forEach((c: any) => compMap.set(c.id, c));
+            realCompensations.forEach((c: any) => compMap.set(c.id, c));
+            realCompensations = Array.from(compMap.values());
+          }
+        }
       } catch {}
     }
 
