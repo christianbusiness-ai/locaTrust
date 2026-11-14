@@ -22,7 +22,9 @@ import {
   Calendar,
   Layers,
   HelpCircle,
-  Paperclip
+  Paperclip,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
@@ -44,7 +46,7 @@ import {
   calculateExpensesFinancialSummary,
   generateExpenseNumber
 } from '@/lib/financial/expensesService';
-import { resolvePropertyCity } from '@/src/lib/db';
+import { resolvePropertyCity, getProperties as fetchDbProperties } from '@/src/lib/db';
 
 interface ExpensesManagementViewProps {
   userRole?: 'proprietaire' | 'agence';
@@ -88,7 +90,9 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
   const [newDescription, setNewDescription] = useState('');
   const [newInvoiceRef, setNewInvoiceRef] = useState('');
   const [newInvoiceUrl, setNewInvoiceUrl] = useState('');
+  const [newInvoiceFileName, setNewInvoiceFileName] = useState('');
   const [ticketIdLinked, setTicketIdLinked] = useState<string>('');
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Formulaire de remboursement (Scénario B)
   const [reimbursementAmount, setReimbursementAmount] = useState<string>('');
@@ -102,25 +106,94 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
   // Formulaire de refus
   const [refusalReason, setRefusalReason] = useState<string>('');
 
-  // Charger les données initiales
+  // Gestionnaire de téléversement du justificatif (Cliquable et optionnel)
+  const handleInvoiceFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNewInvoiceFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      setNewInvoiceUrl(result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveInvoiceFile = () => {
+    setNewInvoiceUrl('');
+    setNewInvoiceFileName('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Charger les données initiales : CLOISONNEMENT STRICT PAR UTILISATEUR
   const loadExpensesData = async () => {
     if (!user?.id) return;
     setLoading(true);
 
     try {
-      // 1. Charger propriétés
-      const { data: props } = await supabase
-        .from('properties')
-        .select('id, title, city, commune, address, owner_id, agency_id')
-        .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
-      if (props) setProperties(props);
+      // 1. Charger propriétés : UNIQUEMENT les propres biens de l'utilisateur connecté
+      let myProps: any[] = [];
+      try {
+        const { data: dbProps } = await fetchDbProperties(user.id);
+        if (Array.isArray(dbProps)) {
+          myProps = dbProps.filter((p: any) =>
+            p &&
+            !p.deleted_at &&
+            (p.owner_id === user.id || p.agency_id === user.id)
+          );
+        }
+      } catch {}
 
-      // 2. Charger contrats
+      if (myProps.length === 0) {
+        const { data: props } = await supabase
+          .from('properties')
+          .select('id, title, city, commune, address, owner_id, agency_id, deleted_at')
+          .is('deleted_at', null)
+          .or(`owner_id.eq.${user.id},agency_id.eq.${user.id}`);
+        if (props) {
+          myProps = props.filter((p: any) => p && (p.owner_id === user.id || p.agency_id === user.id));
+        }
+      }
+
+      // Si stockage local de secours, filtrer STRICTEMENT par l'utilisateur connecté
+      if (typeof window !== 'undefined' && myProps.length === 0) {
+        try {
+          const stored = localStorage.getItem('locatrust_properties');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+              myProps = parsed.filter((p: any) =>
+                p &&
+                !p.deleted_at &&
+                (p.owner_id === user.id || p.agency_id === user.id)
+              );
+            }
+          }
+        } catch {}
+      }
+
+      // Dédoublonnage strict par identifiant
+      const seenPropIds = new Set<string>();
+      const strictlyMyProperties = myProps.filter((p) => {
+        if (!p || !p.id || seenPropIds.has(p.id)) return false;
+        seenPropIds.add(p.id);
+        return true;
+      });
+
+      setProperties(strictlyMyProperties);
+
+      // 2. Charger contrats de ses propres biens uniquement
+      const propIdSet = new Set(strictlyMyProperties.map((p) => p.id));
       const { data: cnts } = await supabase
         .from('contracts')
         .select('id, contract_number, property_id, tenant_id, tenant_name, status, monthly_rent')
         .eq('status', 'actif');
-      if (cnts) setContracts(cnts);
+      if (cnts) {
+        const myContracts = cnts.filter((c) => propIdSet.has(c.property_id));
+        setContracts(myContracts);
+      }
 
       // 3. Charger dépenses
       const filters: ExpenseFilters = {};
@@ -258,7 +331,11 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
     setNewDescription('');
     setNewInvoiceRef('');
     setNewInvoiceUrl('');
+    setNewInvoiceFileName('');
     setTicketIdLinked('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   // Traiter approbation
@@ -851,13 +928,18 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
                     onChange={(e) => setNewPropertyId(e.target.value)}
                     className="w-full p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                   >
-                    <option value="">Sélectionner un bien</option>
+                    <option value="">Sélectionner un de vos biens ({properties.length} disponible{properties.length > 1 ? 's' : ''})</option>
                     {properties.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.title} ({p.city || 'Abidjan'})
+                        {p.title} ({p.city || p.commune || 'Abidjan'})
                       </option>
                     ))}
                   </select>
+                  {properties.length === 0 && (
+                    <p className="text-[10px] text-amber-600 font-medium mt-1">
+                      Aucun bien associé à votre compte. Veuillez d'abord ajouter un logement.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-slate-700 block mb-1">Montant réel (FCFA) *</label>
@@ -909,10 +991,12 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
                 {newScenario === 'C' && 'Scénario C — Le locataire avance les fonds et pourra déduire le montant sur son prochain loyer.'}
               </div>
 
-              {/* Référence facture */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Numéro de facture & Justificatif cliquable (Optionnel) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                 <div>
-                  <label className="text-slate-700 block mb-1">Numéro de facture / Bon</label>
+                  <label className="text-slate-700 block mb-1">
+                    Numéro de facture / Bon <span className="text-slate-400 font-normal">(Optionnel)</span>
+                  </label>
                   <input
                     type="text"
                     value={newInvoiceRef}
@@ -922,14 +1006,59 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-slate-700 block mb-1">URL Justificatif / Facture</label>
+                  <label className="text-slate-700 block mb-1">
+                    Justificatif / Facture <span className="text-slate-400 font-normal">(Optionnel)</span>
+                  </label>
+
                   <input
-                    type="text"
-                    value={newInvoiceUrl}
-                    onChange={(e) => setNewInvoiceUrl(e.target.value)}
-                    placeholder="https://... ou fichier joint"
-                    className="w-full p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleInvoiceFileChange}
+                    accept="image/*,application/pdf"
+                    className="hidden"
                   />
+
+                  {!newInvoiceUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50/60 border border-dashed border-slate-300 hover:border-blue-400 text-xs font-bold text-slate-600 hover:text-blue-700 flex items-center justify-center gap-2 transition-all cursor-pointer group"
+                    >
+                      <Upload className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-colors" />
+                      <span>Cliquez pour choisir un justificatif</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs">
+                      <div className="flex items-center gap-2 overflow-hidden min-w-0">
+                        {newInvoiceUrl.startsWith('data:image') ? (
+                          <img src={newInvoiceUrl} alt="Miniature facture" className="w-8 h-8 rounded-lg object-cover shrink-0 border border-blue-300" />
+                        ) : (
+                          <FileText className="w-6 h-6 text-blue-600 shrink-0" />
+                        )}
+                        <span className="truncate font-semibold text-[11px]" title={newInvoiceFileName || 'Justificatif sélectionné'}>
+                          {newInvoiceFileName || 'Fichier justificatif joint'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewInvoiceUrl(newInvoiceUrl)}
+                          className="p-1 rounded-lg hover:bg-blue-100 text-blue-700 transition-colors"
+                          title="Aperçu"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRemoveInvoiceFile}
+                          className="p-1 rounded-lg hover:bg-rose-100 text-rose-600 transition-colors"
+                          title="Supprimer le justificatif"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1185,3 +1314,4 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
     </div>
   );
 };
+

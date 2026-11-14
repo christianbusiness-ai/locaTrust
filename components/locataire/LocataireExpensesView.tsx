@@ -17,7 +17,8 @@ import {
   Eye,
   Calendar,
   Send,
-  HelpCircle
+  HelpCircle,
+  Upload
 } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
@@ -47,20 +48,46 @@ export const LocataireExpensesView: React.FC = () => {
   const [description, setDescription] = useState('');
   const [invoiceRef, setInvoiceRef] = useState('');
   const [invoiceUrl, setInvoiceUrl] = useState('');
+  const [invoiceFileName, setInvoiceFileName] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setInvoiceFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      setInvoiceUrl(result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveFile = () => {
+    setInvoiceUrl('');
+    setInvoiceFileName('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const loadData = async () => {
     if (!user?.id) return;
     setLoading(true);
 
     try {
-      // 1. Charger les contrats actifs du locataire
+      // 1. Charger STRICTEMENT les contrats du locataire connecté
       const { data: cnts } = await getContracts(user.id, false);
       if (cnts) {
-        const active = cnts.filter((c: any) => c.status === 'actif' || c.status === 'contrat_actif');
-        setContracts(active);
-        if (active.length > 0 && !contractId) {
-          setContractId(active[0].id);
+        const myActive = cnts.filter(
+          (c: any) =>
+            (c.status === 'actif' || c.status === 'contrat_actif') &&
+            (c.tenant_id === user.id || (user.email && c.tenant_email === user.email))
+        );
+        setContracts(myActive);
+        if (myActive.length > 0 && !contractId) {
+          setContractId(myActive[0].id);
         }
       }
 
@@ -143,6 +170,10 @@ export const LocataireExpensesView: React.FC = () => {
     setDescription('');
     setInvoiceRef('');
     setInvoiceUrl('');
+    setInvoiceFileName('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -395,7 +426,9 @@ export const LocataireExpensesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-700 block mb-1">Numéro de la facture / Reçu</label>
+                  <label className="text-slate-700 block mb-1">
+                    Numéro de facture / Bon <span className="text-slate-400 font-normal">(Optionnel)</span>
+                  </label>
                   <input
                     type="text"
                     value={invoiceRef}
@@ -407,14 +440,59 @@ export const LocataireExpensesView: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-slate-700 block mb-1">Lien ou URL du justificatif (photo de la facture)</label>
+                <label className="text-slate-700 block mb-1">
+                  Justificatif / Photo de la facture <span className="text-slate-400 font-normal">(Optionnel)</span>
+                </label>
+
                 <input
-                  type="text"
-                  value={invoiceUrl}
-                  onChange={(e) => setInvoiceUrl(e.target.value)}
-                  placeholder="https://... ou photo du reçu"
-                  className="w-full p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*,application/pdf"
+                  className="hidden"
                 />
+
+                {!invoiceUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full p-3 rounded-xl bg-slate-50 hover:bg-blue-50/60 border border-dashed border-slate-300 hover:border-blue-400 text-xs font-bold text-slate-600 hover:text-blue-700 flex items-center justify-center gap-2 transition-all cursor-pointer group"
+                  >
+                    <Upload className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-colors" />
+                    <span>Cliquez pour choisir un justificatif (photo ou document)</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs">
+                    <div className="flex items-center gap-2 overflow-hidden min-w-0">
+                      {invoiceUrl.startsWith('data:image') ? (
+                        <img src={invoiceUrl} alt="Miniature facture" className="w-8 h-8 rounded-lg object-cover shrink-0 border border-blue-300" />
+                      ) : (
+                        <FileText className="w-6 h-6 text-blue-600 shrink-0" />
+                      )}
+                      <span className="truncate font-semibold text-[11px]" title={invoiceFileName || 'Justificatif sélectionné'}>
+                        {invoiceFileName || 'Justificatif joint'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewInvoiceUrl(invoiceUrl)}
+                        className="p-1 rounded-lg hover:bg-blue-100 text-blue-700 transition-colors"
+                        title="Aperçu"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRemoveFile}
+                        className="p-1 rounded-lg hover:bg-rose-100 text-rose-600 transition-colors"
+                        title="Supprimer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -465,3 +543,4 @@ export const LocataireExpensesView: React.FC = () => {
     </div>
   );
 };
+
