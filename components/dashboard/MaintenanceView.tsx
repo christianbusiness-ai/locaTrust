@@ -586,9 +586,26 @@ export const MaintenanceView: React.FC = () => {
     const handleMaintenanceUpdate = () => loadTickets();
     window.addEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
     window.addEventListener('storage', handleMaintenanceUpdate);
+
+    const handleOpenTicket = (e: any) => {
+      const tId = e?.detail?.ticketId || (e?.detail?.ticket && e.detail.ticket.id);
+      if (tId) {
+        setStatusFilter('all');
+        setSelectedTicketId(tId);
+        setTimeout(() => {
+          const el = document.getElementById(`ticket-${tId}`) || document.getElementById('maintenance-detail-panel');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
+      }
+    };
+    window.addEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
+
     return () => {
       window.removeEventListener('locatrust:maintenance-updated', handleMaintenanceUpdate);
       window.removeEventListener('storage', handleMaintenanceUpdate);
+      window.removeEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
     };
   }, [user]);
 
@@ -916,6 +933,7 @@ export const MaintenanceView: React.FC = () => {
               return (
                 <div
                   key={t.id}
+                  id={`ticket-${t.id}`}
                   onClick={() => setSelectedTicketId(t.id)}
                   className={`p-4 rounded-2xl border cursor-pointer transition-all flex flex-col gap-2.5 ${
                     isSelected
@@ -963,7 +981,7 @@ export const MaintenanceView: React.FC = () => {
         {/* Right Column: Ticket Full Details & Action Hub */}
         <div className="lg:col-span-7 flex flex-col">
           {selectedTicket ? (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-full min-h-[620px]">
+            <div id="maintenance-detail-panel" className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-full min-h-[620px]">
               {/* Card Header */}
               <div className="p-5 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50/30 rounded-t-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-start gap-3">

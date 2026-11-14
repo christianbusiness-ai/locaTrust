@@ -195,7 +195,13 @@ export default function TenantDashboardPage({
           <MaintenanceNotificationBanner
             currentUserId={user?.id}
             role="locataire"
-            onNavigateToMaintenance={() => handleSelectTab('maintenance')}
+            onNavigateToMaintenance={(ticketId) => {
+              if (ticketId && typeof window !== 'undefined') {
+                localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+                window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
+              }
+              handleSelectTab('maintenance');
+            }}
           />
 
           {/* TAB 1: Fil d'actualité */}

@@ -119,11 +119,13 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
   };
 
   const handleActionClick = (ticket: any) => {
+    const ticketId = ticket.id;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('locatrust_selected_maintenance_ticket', ticket.id);
+      localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+      window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId, ticket } }));
     }
     if (onNavigateToMaintenance) {
-      onNavigateToMaintenance(ticket.id);
+      onNavigateToMaintenance(ticketId);
     }
   };
 

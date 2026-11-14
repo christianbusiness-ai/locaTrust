@@ -223,6 +223,7 @@ export default function AgencyDashboardPage({
             onNavigateToMaintenance={(ticketId) => {
               if (ticketId && typeof window !== 'undefined') {
                 localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+                window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
               }
               setActiveTab('maintenance');
             }}

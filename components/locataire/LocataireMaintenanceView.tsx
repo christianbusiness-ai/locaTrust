@@ -34,6 +34,7 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [isSubmittingTicket, setIsSubmittingTicket] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
   const [tenantReplyText, setTenantReplyText] = useState<{ [ticketId: string]: string }>({});
+  const [highlightedTicketId, setHighlightedTicketId] = useState<string | null>(null);
 
   // Form states
   const [selectedContractId, setSelectedContractId] = useState('');
@@ -254,12 +255,35 @@ export const LocataireMaintenanceView: React.FC = () => {
     fetchTickets();
     const handleUpdate = () => fetchTickets(true);
     window.addEventListener('locatrust:maintenance-updated', handleUpdate);
-    window.addEventListener('locatrust:notifications-updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
+
+    const handleOpenTicket = (e: any) => {
+      const tId = e?.detail?.ticketId || (e?.detail?.ticket && e.detail.ticket.id);
+      if (tId) {
+        setHighlightedTicketId(tId);
+        setTimeout(() => {
+          const el = document.getElementById(`tenant-ticket-${tId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 150);
+        setTimeout(() => setHighlightedTicketId(null), 5000);
+      }
+    };
+    window.addEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
+
+    // Si un ticket a été ciblé récemment (ex: clic sur la bannière)
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('locatrust_selected_maintenance_ticket');
+      if (stored) {
+        setTimeout(() => handleOpenTicket({ detail: { ticketId: stored } }), 200);
+      }
+    }
+
     return () => {
       window.removeEventListener('locatrust:maintenance-updated', handleUpdate);
-      window.removeEventListener('locatrust:notifications-updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
+      window.removeEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
     };
   }, [user]);
 
@@ -692,7 +716,12 @@ export const LocataireMaintenanceView: React.FC = () => {
           {tickets.map((ticket) => (
             <div
               key={ticket.id}
-              className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col gap-4"
+              id={`tenant-ticket-${ticket.id}`}
+              className={`bg-white rounded-3xl border p-6 shadow-sm flex flex-col gap-4 transition-all duration-300 ${
+                highlightedTicketId === ticket.id
+                  ? 'border-amber-500 ring-4 ring-amber-400/50 shadow-xl scale-[1.01]'
+                  : 'border-slate-200'
+              }`}
             >
               <div className="flex items-center justify-between border-b pb-3">
                 <div className="flex items-center gap-3">
