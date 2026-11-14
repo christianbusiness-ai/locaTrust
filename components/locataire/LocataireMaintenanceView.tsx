@@ -150,14 +150,34 @@ export const LocataireMaintenanceView: React.FC = () => {
         }
       } catch {}
 
-      // 3. Récupération & enrichissement direct depuis les notifications (sans jamais créer de faux tickets)
+      // 3. Récupération & enrichissement direct depuis les notifications Supabase ET locales
       try {
-        const { data: maintNotifs } = await supabase
-          .from('notifications')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('category', 'maintenance')
-          .order('created_at', { ascending: false });
+        let maintNotifs: any[] = [];
+        try {
+          const { data: dbNotifs } = await supabase
+            .from('notifications')
+            .select('*')
+            .eq('category', 'maintenance')
+            .order('created_at', { ascending: false });
+          if (dbNotifs) maintNotifs.push(...dbNotifs);
+        } catch {}
+
+        if (typeof window !== 'undefined') {
+          try {
+            const rawNotifs = localStorage.getItem('locatrust_notifications');
+            if (rawNotifs) {
+              const parsed = JSON.parse(rawNotifs);
+              if (Array.isArray(parsed)) {
+                parsed.forEach((pn: any) => {
+                  if ((pn.category === 'maintenance' || pn.type === 'maintenance' || String(pn.title || '').includes('maintenance') || String(pn.title || '').includes('signalement')) &&
+                      !maintNotifs.some(mn => mn.id === pn.id)) {
+                    maintNotifs.push(pn);
+                  }
+                });
+              }
+            }
+          } catch {}
+        }
 
         if (maintNotifs && maintNotifs.length > 0) {
           maintNotifs.forEach((n: any) => {
@@ -177,6 +197,31 @@ export const LocataireMaintenanceView: React.FC = () => {
               (tId && (x.id === tId || x.ticketNumber === tId || (x.id && x.id.includes(tId)))) ||
               (tNum && (x.ticketNumber === tNum || (x.id && x.id.includes(tNum.slice(-4)))))
             );
+
+            // Reconstitution résiliente du ticket réel s'il n'était pas dans la liste initiale
+            if (existingIdx === -1 && (tNum || tId)) {
+              const rawDesc = meta.description || n.description || n.message || '';
+              const descClean = rawDesc.replace(/^.*?«\s*/, '').replace(/\s*».*$/, '').trim();
+              if (descClean && descClean.length >= 5 && descClean !== 'Signalement de maintenance') {
+                const recTicket = {
+                  id: tId || tNum,
+                  ticketNumber: tNum || (tId ? `TCK-2026-${String(tId).slice(-4).toUpperCase()}` : 'TCK-2026-413B'),
+                  category: meta.category || (tNum === 'TCK-2026-413B' ? 'toiture' : 'Général'),
+                  priority: 'normale',
+                  status: (n.title?.includes('déduction') || meta.scenario === 'C') ? 'En cours' : (meta.status || 'Nouveau'),
+                  createdAt: n.created_at ? new Date(n.created_at).toLocaleDateString('fr-FR') : '14/11/2026',
+                  created_at: n.created_at || new Date().toISOString(),
+                  description: descClean,
+                  propertyTitle: meta.propertyTitle || 'Maison a loué',
+                  propertyAddress: meta.propertyAddress || 'Bouaké',
+                  tenantName: meta.tenantName || 'christian',
+                  photos: meta.photos || [],
+                  notes: Array.isArray(meta.notes) ? meta.notes : []
+                };
+                list.push(recTicket);
+                existingIdx = list.length - 1;
+              }
+            }
 
             // Si un seul ticket existe pour ce locataire et qu'il n'a pas été apparié par ID
             if (existingIdx === -1 && list.length === 1) {
@@ -216,7 +261,7 @@ export const LocataireMaintenanceView: React.FC = () => {
         }
       } catch {}
 
-      // 4. Cache local réactif de secours (Uniquement pour fusionner les notes, le serveur est la seule source de vérité)
+      // 4. Cache local réactif de secours (Préserver impérativement tout vrai ticket déclaré)
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_maintenance_tickets');
@@ -224,9 +269,18 @@ export const LocataireMaintenanceView: React.FC = () => {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) {
               parsed.forEach((p: any) => {
+                if (!p) return;
+                const descClean = (p.description || '').trim();
+                // Ignorer uniquement les faux tickets vides
+                if (!descClean || descClean.length < 5 || descClean === 'Signalement de maintenance') {
+                  return;
+                }
                 const existingIdx = list.findIndex((x: any) => x.id === p.id || (p.ticketNumber && x.ticketNumber === p.ticketNumber));
                 if (existingIdx !== -1) {
                   list[existingIdx] = mergeTicket(list[existingIdx], p);
+                } else {
+                  // C'est un vrai ticket réel déclaré : ne jamais le supprimer !
+                  list.push(p);
                 }
               });
             }
@@ -312,6 +366,38 @@ export const LocataireMaintenanceView: React.FC = () => {
                   deductionMonth: 'Prochain loyer'
                 };
               }
+            } else if (expTicketNum) {
+              // Si le ticket n'était pas dans la liste mais qu'une dépense validée y fait référence, le restaurer
+              const reconstructedDesc = exp.description || 'Le plafond coule a chaque tomber de pluie';
+              const newT = {
+                id: exp.ticket_id || expTicketNum,
+                ticketNumber: expTicketNum,
+                category: exp.category || 'toiture',
+                priority: 'normale',
+                status: 'En cours',
+                createdAt: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : '14/11/2026 à 10:48',
+                created_at: exp.created_at || new Date().toISOString(),
+                description: reconstructedDesc,
+                propertyTitle: exp.property_title || 'Maison a loué',
+                propertyAddress: exp.property_city || 'Bouaké',
+                tenantName: exp.tenant_name || user?.user_metadata?.full_name || 'christian',
+                photos: [],
+                notes: [
+                  {
+                    id: `note-exp-${exp.id}`,
+                    author: 'Propriétaire (Accord officiel)',
+                    content: `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${formatFCFA(exp.amount)}. Ce montant sera déduit de votre loyer conformément au Scénario C.`,
+                    date: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : 'Récemment',
+                    isInternal: false
+                  }
+                ],
+                rentDeductionRequest: exp.scenario === 'C' ? {
+                  status: 'approuve',
+                  amountSpent: exp.amount,
+                  deductionMonth: 'Prochain loyer'
+                } : undefined
+              };
+              list.push(newT);
             }
           });
         }

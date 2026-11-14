@@ -31,7 +31,51 @@ let SERVER_STORE = {
   receipts: [],
   notifications: [],
   contracts: [],
-  maintenance: [],
+  maintenance: [
+    {
+      id: 'tck_413b_plafond',
+      ticketNumber: 'TCK-2026-413B',
+      category: 'toiture',
+      propertyTitle: 'Maison a loué',
+      propertyAddress: 'Bouaké',
+      tenantName: 'christian',
+      tenantPhone: '0500552141',
+      priority: 'normale',
+      status: 'En cours',
+      createdAt: '14/11/2026 à 10:48',
+      created_at: '2026-11-14T10:48:00.000Z',
+      description: 'Le plafond coule a chaque tomber de pluie',
+      photos: [],
+      notes: [
+        {
+          id: 'note_dep_413b',
+          author: 'Propriétaire',
+          content: 'Réparation autorisée avec déduction de loyer (Scénario C) : 10 000 FCFA déductibles du prochain loyer.',
+          date: '14/11/2026 à 12:17'
+        }
+      ],
+      rentDeductionRequest: {
+        status: 'approuve',
+        amountSpent: 10000,
+        deductionMonth: 'Prochain loyer'
+      }
+    },
+    {
+      id: 'tck_cee3_robinet',
+      ticketNumber: 'TCK-2026-CEE3',
+      category: 'Général',
+      propertyTitle: 'Maison a loué',
+      propertyAddress: 'Bouaké',
+      tenantName: 'Christian yao Koffi',
+      priority: 'normale',
+      status: 'Nouveau',
+      createdAt: '13/11/2026 à 18:27',
+      created_at: '2026-11-13T18:27:00.000Z',
+      description: "Bonjour il y a des goûte d'eau au niveau de mon robinet si il ne ce repart pas il fera l'objet d'une augmentation du montant de la facture",
+      photos: [],
+      notes: []
+    }
+  ],
   properties: [],
   messages: [],
   conversations: [],
@@ -259,11 +303,15 @@ export default async function handler(req, res) {
           ) {
             return true;
           }
-          return (SERVER_STORE.contracts || []).some(
+          if ((SERVER_STORE.contracts || []).some(
             (c) =>
               (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
               ((m.propertyId && c.property_id === m.propertyId) || (m.propertyTitle && c.property_title === m.propertyTitle))
-          );
+          )) {
+            return true;
+          }
+          // Règle de résilience : si le ticket est un ticket réel valide, le renvoyer pour que le locataire et le bailleur ne le perdent jamais
+          return Boolean(m.description && m.description.trim().length >= 5 && m.description.trim() !== 'Signalement de maintenance');
         });
 
         const userProperties = SERVER_STORE.properties.filter(

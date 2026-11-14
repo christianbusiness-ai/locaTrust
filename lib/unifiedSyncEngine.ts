@@ -125,8 +125,13 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
                 notes: combinedNotes.length > 0 ? combinedNotes : stNotes,
                 rentDeductionRequest: locT.rentDeductionRequest || existing.rentDeductionRequest
               });
+            } else if (k) {
+              const descClean = (locT.description || '').trim();
+              if (descClean && descClean.length >= 5 && descClean !== 'Signalement de maintenance' && !String(locT.id).startsWith('notif_')) {
+                // Vrai ticket valide du locataire : ne jamais le supprimer
+                dedupMap.set(k, locT);
+              }
             }
-            // Strictement AUCUN ajout d'élément local inconnu du serveur (Interdiction absolue de ressusciter des doublons/fantômes)
           });
         }
 

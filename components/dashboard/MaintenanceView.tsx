@@ -475,9 +475,14 @@ export const MaintenanceView: React.FC = () => {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
             parsed.forEach((pt: any) => {
+              if (!pt) return;
+              const descClean = (pt.description || '').trim();
+              if (!descClean || descClean.length < 5 || descClean === 'Signalement de maintenance') return;
               const existingIdx = list.findIndex(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber));
               if (existingIdx !== -1) {
                 list[existingIdx] = mergeTicket(list[existingIdx], pt);
+              } else {
+                list.push(pt);
               }
             });
           }
