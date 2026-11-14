@@ -10,7 +10,8 @@ import {
   Camera,
   Video,
   Send,
-  MessageSquare
+  MessageSquare,
+  Calendar
 } from 'lucide-react';
 import { MaintenanceTicket } from '@/types/database.types';
 import { getMaintenanceTickets, createMaintenanceTicket, getContracts, resolvePropertyCity } from '@/src/lib/db';
@@ -32,6 +33,7 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
   const [isSubmittingTicket, setIsSubmittingTicket] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
+  const [tenantReplyText, setTenantReplyText] = useState<{ [ticketId: string]: string }>({});
 
   // Form states
   const [selectedContractId, setSelectedContractId] = useState('');
@@ -101,6 +103,25 @@ export const LocataireMaintenanceView: React.FC = () => {
       const { data, error } = await getMaintenanceTickets(user.id);
       let list = data || [];
 
+      // Helper de fusion sécurisée pour ne jamais écraser les réponses du bailleur
+      const mergeTicket = (existing: any, incoming: any) => {
+        const existingNotes = Array.isArray(existing.notes) ? existing.notes : [];
+        const incomingNotes = Array.isArray(incoming.notes) ? incoming.notes : [];
+        const notesMap = new Map<string, any>();
+        existingNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+        incomingNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+        const mergedNotes = Array.from(notesMap.values());
+
+        return {
+          ...existing,
+          ...incoming,
+          status: incoming.status || existing.status,
+          scheduledDate: incoming.scheduledDate || existing.scheduledDate,
+          notes: mergedNotes.length > 0 ? mergedNotes : (existingNotes.length > 0 ? existingNotes : incomingNotes),
+          rentDeductionRequest: incoming.rentDeductionRequest || existing.rentDeductionRequest
+        };
+      };
+
       // Synchronisation depuis le serveur central /api/sync
       try {
         const syncRes = await fetch('/api/sync');
@@ -108,15 +129,18 @@ export const LocataireMaintenanceView: React.FC = () => {
           const syncJson = await syncRes.json();
           if (Array.isArray(syncJson?.data?.maintenance)) {
             syncJson.data.maintenance.forEach((m: any) => {
-              if (!list.some((x: any) => x.id === m.id || x.ticketNumber === m.ticketNumber)) {
+              const existingIdx = list.findIndex((x: any) => x.id === m.id || (m.ticketNumber && x.ticketNumber === m.ticketNumber));
+              if (existingIdx === -1) {
                 list.push(m);
+              } else {
+                list[existingIdx] = mergeTicket(list[existingIdx], m);
               }
             });
           }
         }
       } catch {}
 
-      // Cache local
+      // Cache local réactif de secours
       if (typeof window !== 'undefined') {
         try {
           const raw = localStorage.getItem('locatrust_maintenance_tickets');
@@ -124,8 +148,11 @@ export const LocataireMaintenanceView: React.FC = () => {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed)) {
               parsed.forEach((p: any) => {
-                if (!list.some((x: any) => x.id === p.id || x.ticketNumber === p.ticketNumber)) {
+                const existingIdx = list.findIndex((x: any) => x.id === p.id || (p.ticketNumber && x.ticketNumber === p.ticketNumber));
+                if (existingIdx === -1) {
                   list.push(p);
+                } else {
+                  list[existingIdx] = mergeTicket(list[existingIdx], p);
                 }
               });
             }
@@ -175,7 +202,125 @@ export const LocataireMaintenanceView: React.FC = () => {
 
   useEffect(() => {
     fetchTickets();
+    const handleUpdate = () => fetchTickets(true);
+    window.addEventListener('locatrust:maintenance-updated', handleUpdate);
+    window.addEventListener('locatrust:notifications-updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('locatrust:maintenance-updated', handleUpdate);
+      window.removeEventListener('locatrust:notifications-updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
   }, [user]);
+
+  const handleTenantSendReply = async (ticket: any) => {
+    const text = (tenantReplyText[ticket.id] || '').trim();
+    if (!text || !ticket) return;
+
+    const now = new Date();
+    const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+    const tenantAuthorName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire (Vous)';
+
+    const newNote = {
+      id: `n-${Date.now()}`,
+      author: tenantAuthorName,
+      content: text,
+      date: dateStr,
+      isInternal: false
+    };
+
+    const currentNotes = Array.isArray(ticket.notes) ? ticket.notes : [];
+    const updatedNotes = [...currentNotes, newNote];
+
+    const updatedTicket = {
+      ...ticket,
+      notes: updatedNotes
+    };
+
+    // 1. Mise à jour instantanée de l'interface
+    setTickets((prev) => prev.map((t) => (t.id === ticket.id ? updatedTicket : t)));
+    setTenantReplyText((prev) => ({ ...prev, [ticket.id]: '' }));
+
+    // 2. Cache local réactif
+    try {
+      const raw = localStorage.getItem('locatrust_maintenance_tickets');
+      const curList = raw ? JSON.parse(raw) : [];
+      const nextList = curList.map((t: any) => (t.id === ticket.id ? updatedTicket : t));
+      localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(nextList));
+    } catch {}
+
+    // 3. Inscription Supabase
+    try {
+      const richDesc = JSON.stringify({
+        description: updatedTicket.description,
+        category: updatedTicket.category,
+        notes: updatedNotes,
+        scheduledDate: updatedTicket.scheduledDate,
+        rentDeductionRequest: updatedTicket.rentDeductionRequest
+      });
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ticket.id)) {
+        await supabase
+          .from('maintenance_tickets')
+          .update({
+            description: richDesc,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', ticket.id);
+      }
+    } catch {}
+
+    // 4. Notification officielle pour le bailleur
+    const targetOwnerId = ticket.owner_id || ticket.ownerId;
+    if (targetOwnerId) {
+      try {
+        await pushGlobalNotification({
+          title: '💬 Réponse du locataire pour un incident',
+          description: `${tenantAuthorName} a répondu pour « ${ticket.propertyTitle} » : "${text}"`,
+          category: 'maintenance',
+          targetRole: 'proprietaire',
+          targetUserId: targetOwnerId,
+          targetTab: 'maintenance',
+          payload: {
+            ticketId: ticket.id,
+            ticketNumber: ticket.ticketNumber,
+            propertyTitle: ticket.propertyTitle,
+            category: ticket.category,
+            notes: updatedNotes
+          }
+        });
+      } catch {}
+    }
+
+    // 5. Broadcast WebSocket multi-écrans
+    try {
+      await broadcastLiveEvent('MAINTENANCE_TICKET_UPDATED', {
+        ticket: updatedTicket,
+        actorId: user?.id,
+        targetUserId: targetOwnerId
+      });
+    } catch {}
+
+    // 6. Synchronisation centrale
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_maintenance_ticket',
+          ticketId: ticket.id,
+          status: ticket.status,
+          notes: updatedNotes,
+          scheduledDate: ticket.scheduledDate,
+          description: ticket.description,
+          rentDeductionRequest: ticket.rentDeductionRequest,
+          notificationTitle: '💬 Réponse du locataire concernant un incident',
+          notificationDescription: `${tenantAuthorName} : "${text}"`
+        })
+      });
+    } catch {}
+
+    window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: updatedTicket }));
+  };
 
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -541,16 +686,81 @@ export const LocataireMaintenanceView: React.FC = () => {
                 </div>
               )}
 
-              {/* Owner Responses Thread */}
-              {ticket.responses && ticket.responses.length > 0 && (
-                <div className="flex flex-col gap-2 border-t pt-3">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Réponse du bailleur</span>
-                  {ticket.responses.map((resp: any) => (
-                    <div key={resp.id} className="p-3.5 rounded-2xl bg-blue-50 border border-blue-100 text-xs flex flex-col gap-1">
-                      <span className="font-black text-blue-950">{resp.author?.full_name || 'Bailleur'}</span>
-                      <p className="text-slate-800 font-medium">{resp.content}</p>
-                    </div>
-                  ))}
+              {/* Artisan intervention planifiée */}
+              {ticket.scheduledDate && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs font-bold text-amber-900 flex items-center gap-2.5">
+                  <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    📅 <strong>Intervention d'artisan programmée :</strong> {ticket.scheduledDate}
+                  </span>
+                </div>
+              )}
+
+              {/* Historique des échanges & Réponses du bailleur */}
+              {((Array.isArray(ticket.notes) && ticket.notes.filter((n: any) => !n.isInternal).length > 0) || (Array.isArray(ticket.responses) && ticket.responses.length > 0)) && (
+                <div className="flex flex-col gap-2.5 border-t border-slate-100 pt-3">
+                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                    Historique des échanges & Réponses
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {/* Notes non-internes du ticket */}
+                    {Array.isArray(ticket.notes) && ticket.notes.filter((n: any) => !n.isInternal).map((note: any) => {
+                      const isFromOwner = note.author && (
+                        note.author.toLowerCase().includes('propriétaire') ||
+                        note.author.toLowerCase().includes('bailleur') ||
+                        note.author.toLowerCase().includes('agence')
+                      );
+                      return (
+                        <div
+                          key={note.id}
+                          className={`p-3.5 rounded-2xl text-xs flex flex-col gap-1 border ${
+                            isFromOwner
+                              ? 'bg-blue-50/90 border-blue-200 text-slate-800'
+                              : 'bg-slate-50 border-slate-200 text-slate-800 self-end max-w-[90%]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className={`font-black ${isFromOwner ? 'text-blue-950' : 'text-slate-900'}`}>
+                              {note.author}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-semibold">{note.date}</span>
+                          </div>
+                          <p className="text-slate-800 font-medium leading-relaxed">{note.content}</p>
+                        </div>
+                      );
+                    })}
+
+                    {/* Responses legacy */}
+                    {Array.isArray(ticket.responses) && ticket.responses.map((resp: any) => (
+                      <div key={resp.id} className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 text-xs flex flex-col gap-1">
+                        <span className="font-black text-blue-950">{resp.author?.full_name || 'Bailleur'}</span>
+                        <p className="text-slate-800 font-medium">{resp.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Champ réponse pour le locataire */}
+              {ticket.status !== 'Résolu' && ticket.status !== 'Fermé' && (
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  <input
+                    type="text"
+                    value={tenantReplyText[ticket.id] || ''}
+                    onChange={(e) => setTenantReplyText({ ...tenantReplyText, [ticket.id]: e.target.value })}
+                    onKeyDown={(e) => e.key === 'Enter' && handleTenantSendReply(ticket)}
+                    placeholder="Répondre au bailleur..."
+                    className="flex-1 p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleTenantSendReply(ticket)}
+                    className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer shrink-0 active:scale-95"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Répondre</span>
+                  </button>
                 </div>
               )}
             </div>

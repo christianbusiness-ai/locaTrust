@@ -538,11 +538,15 @@ export async function getMaintenanceTickets(userId: string) {
       let cleanDesc = t.description || '';
       let parsedPhotos: string[] = Array.isArray(t.photos) ? t.photos : (t.media_url ? [t.media_url] : []);
 
+      if (Array.isArray(t.notes) && t.notes.length > 0) {
+        parsedNotes = t.notes;
+      }
+
       if (typeof cleanDesc === 'string' && cleanDesc.trim().startsWith('{')) {
         try {
           const meta = JSON.parse(cleanDesc.trim());
           if (meta.category) parsedCategory = meta.category;
-          if (meta.notes && Array.isArray(meta.notes)) parsedNotes = meta.notes;
+          if (meta.notes && Array.isArray(meta.notes) && meta.notes.length > 0) parsedNotes = meta.notes;
           if (meta.cost) parsedCost = Number(meta.cost);
           if (meta.scheduledDate) parsedSchedule = meta.scheduledDate;
           if (meta.photos && Array.isArray(meta.photos)) parsedPhotos = meta.photos;

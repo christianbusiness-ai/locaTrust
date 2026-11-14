@@ -93,8 +93,37 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     try {
       const { data: serverTickets, error: tckErr } = await getMaintenanceTickets(userId);
       if (!tckErr && typeof window !== 'undefined' && Array.isArray(serverTickets)) {
-        localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(serverTickets));
-        window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: { tickets: serverTickets } }));
+        const curLocalRaw = localStorage.getItem('locatrust_maintenance_tickets');
+        const curLocal = curLocalRaw ? JSON.parse(curLocalRaw) : [];
+        const mergedList: any[] = [...serverTickets];
+
+        if (Array.isArray(curLocal)) {
+          curLocal.forEach((locT: any) => {
+            const idx = mergedList.findIndex((st: any) => st.id === locT.id || (st.ticketNumber && locT.ticketNumber && st.ticketNumber === locT.ticketNumber));
+            if (idx === -1) {
+              mergedList.push(locT);
+            } else {
+              // Fusion intelligente des notes pour ne JAMAIS perdre les réponses du bailleur ou du locataire
+              const stNotes = Array.isArray(mergedList[idx].notes) ? mergedList[idx].notes : [];
+              const locNotes = Array.isArray(locT.notes) ? locT.notes : [];
+              const notesMap = new Map<string, any>();
+              stNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+              locNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+              const combinedNotes = Array.from(notesMap.values());
+
+              mergedList[idx] = {
+                ...mergedList[idx],
+                ...locT,
+                status: locT.status || mergedList[idx].status,
+                scheduledDate: locT.scheduledDate || mergedList[idx].scheduledDate,
+                notes: combinedNotes.length > 0 ? combinedNotes : (locNotes.length > 0 ? locNotes : stNotes)
+              };
+            }
+          });
+        }
+
+        localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(mergedList));
+        window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: { tickets: mergedList } }));
       }
     } catch (maintErr) {
       console.warn('Erreur synchronisation maintenance tickets:', maintErr);
@@ -754,7 +783,7 @@ async function pushPendingLocalDataToServer(userId: string) {
       }
     }
 
-    // E. Tickets de maintenance locaux non encore inscrits dans Supabase
+    // E. Tickets de maintenance locaux non encore inscrits ou mis à jour dans Supabase
     const rawTickets = localStorage.getItem('locatrust_maintenance_tickets');
     if (rawTickets) {
       try {
@@ -765,12 +794,35 @@ async function pushPendingLocalDataToServer(userId: string) {
             if (t.id && isValidUuid(t.id)) {
               const { data: existing } = await supabase
                 .from('maintenance_tickets')
-                .select('id')
+                .select('id, description')
                 .eq('id', t.id)
                 .maybeSingle();
 
               if (!existing) {
                 await createMaintenanceTicket(t);
+              } else if (Array.isArray(t.notes) && t.notes.length > 0) {
+                const richDesc = JSON.stringify({
+                  description: t.description || '',
+                  category: t.category || 'Général',
+                  notes: t.notes,
+                  scheduledDate: t.scheduledDate || '',
+                  rentDeductionRequest: t.rentDeductionRequest
+                });
+                const dbStatus =
+                  t.status === 'Résolu' || t.status === 'Fermé'
+                    ? 'resolu'
+                    : t.status === 'Nouveau'
+                    ? 'ouvert'
+                    : 'en_cours';
+
+                await supabase
+                  .from('maintenance_tickets')
+                  .update({
+                    status: dbStatus,
+                    description: richDesc,
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq('id', t.id);
               }
             }
           }

@@ -802,24 +802,54 @@ export default async function handler(req, res) {
 
       // 5. Mise à jour d'un ticket de maintenance (statut, devis/coût, programmation, notes)
       if (action === 'update_maintenance_ticket') {
-        const { ticketId, status, notes, scheduledDate, cost, description, rentDeductionRequest } = body;
-        const target = SERVER_STORE.maintenance.find(t => t.id === ticketId);
-        if (target) {
+        const { ticketId, status, notes, scheduledDate, cost, description, rentDeductionRequest, notificationTitle, notificationDescription } = body;
+        let target = SERVER_STORE.maintenance.find(t => 
+          t.id === ticketId || 
+          (ticketId && t.ticketNumber && String(t.ticketNumber).toLowerCase().includes(String(ticketId).slice(0, 4).toLowerCase())) ||
+          (ticketId && t.id && String(ticketId).toLowerCase().includes(String(t.id).slice(0, 4).toLowerCase()))
+        );
+
+        if (!target) {
+          target = {
+            id: ticketId || `tck_${Date.now()}`,
+            ticketNumber: `TCK-2026-${String(ticketId || Date.now()).slice(0, 4).toUpperCase()}`,
+            status: status || 'Nouveau',
+            notes: Array.isArray(notes) ? notes : [],
+            scheduledDate: scheduledDate || '',
+            cost: cost || 0,
+            description: description || '',
+            rentDeductionRequest: rentDeductionRequest,
+            category: 'Général',
+            propertyTitle: 'Logement'
+          };
+          SERVER_STORE.maintenance.unshift(target);
+        } else {
           if (status) target.status = status;
           if (notes) target.notes = notes;
           if (scheduledDate !== undefined) target.scheduledDate = scheduledDate;
           if (cost !== undefined) target.cost = cost;
           if (description) target.description = description;
           if (rentDeductionRequest) target.rentDeductionRequest = rentDeductionRequest;
+        }
 
-          // Si intervention programmée ou résolue, notifier le locataire
-          if (status === 'Résolu' || scheduledDate) {
+        // Notification automatique et certifiée sur TOUTE action
+        const targetTenantId = target.tenantId || target.tenant_id;
+        const targetOwnerId = target.ownerId || target.owner_id;
+        const lastNote = Array.isArray(notes) && notes.length > 0 ? notes[notes.length - 1] : null;
+
+        if (lastNote && !lastNote.isInternal) {
+          const isFromOwner = lastNote.author && (
+            lastNote.author.toLowerCase().includes('propriétaire') || 
+            lastNote.author.toLowerCase().includes('bailleur') || 
+            lastNote.author.toLowerCase().includes('agence')
+          );
+          
+          if (isFromOwner && targetTenantId) {
+            // Notifier le locataire de la réponse du bailleur
             const notifLoc = {
-              id: `notif_maint_upd_${Date.now()}`,
-              title: status === 'Résolu' ? '✅ Incident de maintenance résolu' : '📅 Intervention programmée',
-              description: status === 'Résolu'
-                ? `Votre signalement (${target.category}) pour « ${target.propertyTitle} » a été marqué comme résolu.`
-                : `Une intervention est programmée le ${scheduledDate} pour votre incident (${target.category}).`,
+              id: `notif_maint_reply_${Date.now()}`,
+              title: notificationTitle || '💬 Réponse du bailleur concernant votre incident',
+              description: notificationDescription || `Votre bailleur : "${lastNote.content}"`,
               time: "À l'instant",
               unread: true,
               read: false,
@@ -827,13 +857,59 @@ export default async function handler(req, res) {
               type: 'maintenance',
               targetTab: 'maintenance',
               targetRole: 'locataire',
-              targetUserId: target.tenantId || target.tenant_id
+              targetUserId: targetTenantId
             };
             SERVER_STORE.notifications = [notifLoc, ...SERVER_STORE.notifications];
+          } else if (!isFromOwner && targetOwnerId) {
+            // Notifier le bailleur de la réponse du locataire
+            const notifOwn = {
+              id: `notif_maint_reply_${Date.now()}`,
+              title: notificationTitle || '💬 Réponse du locataire concernant un incident',
+              description: notificationDescription || `${lastNote.author || 'Locataire'} : "${lastNote.content}"`,
+              time: "À l'instant",
+              unread: true,
+              read: false,
+              category: 'maintenance',
+              type: 'maintenance',
+              targetTab: 'maintenance',
+              targetRole: 'proprietaire',
+              targetUserId: targetOwnerId
+            };
+            SERVER_STORE.notifications = [notifOwn, ...SERVER_STORE.notifications];
           }
-          return res.status(200).json({ success: true, ticket: target, maintenance: SERVER_STORE.maintenance });
+        } else if (status === 'Résolu' && targetTenantId) {
+          const notifLoc = {
+            id: `notif_maint_res_${Date.now()}`,
+            title: notificationTitle || '✅ Incident de maintenance résolu',
+            description: notificationDescription || `Votre signalement (${target.category || 'Incident'}) pour « ${target.propertyTitle || 'Logement'} » a été marqué comme résolu par votre bailleur.`,
+            time: "À l'instant",
+            unread: true,
+            read: false,
+            category: 'maintenance',
+            type: 'maintenance',
+            targetTab: 'maintenance',
+            targetRole: 'locataire',
+            targetUserId: targetTenantId
+          };
+          SERVER_STORE.notifications = [notifLoc, ...SERVER_STORE.notifications];
+        } else if (scheduledDate && targetTenantId) {
+          const notifLoc = {
+            id: `notif_maint_sch_${Date.now()}`,
+            title: notificationTitle || '📅 Intervention programmée',
+            description: notificationDescription || `Une intervention est programmée le ${scheduledDate} pour votre incident (${target.category || 'Incident'}).`,
+            time: "À l'instant",
+            unread: true,
+            read: false,
+            category: 'maintenance',
+            type: 'maintenance',
+            targetTab: 'maintenance',
+            targetRole: 'locataire',
+            targetUserId: targetTenantId
+          };
+          SERVER_STORE.notifications = [notifLoc, ...SERVER_STORE.notifications];
         }
-        return res.status(404).json({ success: false, error: 'Ticket de maintenance non trouvé.' });
+
+        return res.status(200).json({ success: true, ticket: target, maintenance: SERVER_STORE.maintenance });
       }
 
       // 6. Enregistrement ou signature d'un contrat de bail

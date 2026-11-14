@@ -29,6 +29,8 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { useAuth } from '@/src/context/AuthContext';
+import { pushGlobalNotification } from '@/lib/waitingListNotifications';
+import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import {
   getMaintenanceTickets,
   extractCleanMaintenanceMessage,
@@ -112,7 +114,28 @@ export const MaintenanceView: React.FC = () => {
   const [interventionText, setInterventionText] = useState<string>('');
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
-  const syncTicketUpdateToSupabase = async (updatedTicket: MaintenanceItem) => {
+  const mergeTicket = (existing: MaintenanceItem, incoming: any): MaintenanceItem => {
+    const existingNotes = Array.isArray(existing.notes) ? existing.notes : [];
+    const incomingNotes = Array.isArray(incoming.notes) ? incoming.notes : [];
+    const notesMap = new Map<string, any>();
+    existingNotes.forEach(n => notesMap.set(String(n.id || n.content), n));
+    incomingNotes.forEach(n => notesMap.set(String(n.id || n.content), n));
+    const mergedNotes = Array.from(notesMap.values());
+
+    return {
+      ...existing,
+      ...incoming,
+      status: incoming.status || existing.status,
+      scheduledDate: incoming.scheduledDate || existing.scheduledDate,
+      notes: mergedNotes.length > 0 ? mergedNotes : (existingNotes.length > 0 ? existingNotes : incomingNotes),
+      rentDeductionRequest: incoming.rentDeductionRequest || existing.rentDeductionRequest
+    };
+  };
+
+  const syncTicketUpdateToSupabase = async (
+    updatedTicket: MaintenanceItem,
+    notificationData?: { title: string; description: string }
+  ) => {
     try {
       const dbStatus =
         updatedTicket.status === 'Résolu' || updatedTicket.status === 'Fermé'
@@ -129,6 +152,7 @@ export const MaintenanceView: React.FC = () => {
         rentDeductionRequest: updatedTicket.rentDeductionRequest
       });
 
+      // 1. Supabase PostgreSQL
       if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updatedTicket.id)) {
         await supabase
           .from('maintenance_tickets')
@@ -140,18 +164,70 @@ export const MaintenanceView: React.FC = () => {
           .eq('id', updatedTicket.id);
       }
 
-      // Mettre à jour le cache local réactif
+      // 2. Mettre à jour le cache local réactif
       try {
         const stored = localStorage.getItem('locatrust_maintenance_tickets');
         const list = stored ? JSON.parse(stored) : [];
-        const nextList = list.map((x: any) => (x.id === updatedTicket.id ? updatedTicket : x));
+        const nextList = list.some((x: any) => x.id === updatedTicket.id)
+          ? list.map((x: any) => (x.id === updatedTicket.id ? updatedTicket : x))
+          : [updatedTicket, ...list];
         localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(nextList));
-        window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: updatedTicket }));
       } catch {}
 
-      // Synchroniser avec le serveur central /api/sync
+      // 3. Notification officielle pour le locataire
+      const targetTenantId = (updatedTicket as any).tenant_id || (updatedTicket as any).tenantId;
+      if (targetTenantId) {
+        try {
+          const lastNote = updatedTicket.notes && updatedTicket.notes.length > 0 ? updatedTicket.notes[updatedTicket.notes.length - 1] : null;
+          const notifTitle = notificationData?.title || (
+            updatedTicket.status === 'Résolu'
+              ? '✅ Incident de maintenance résolu'
+              : updatedTicket.scheduledDate
+              ? '📅 Intervention d’artisan programmée'
+              : '💬 Réponse du bailleur concernant votre incident'
+          );
+          const notifDesc = notificationData?.description || (
+            updatedTicket.status === 'Résolu'
+              ? `Votre incident (${updatedTicket.category}) pour « ${updatedTicket.propertyTitle} » a été marqué comme résolu par votre bailleur.`
+              : updatedTicket.scheduledDate
+              ? `Une intervention d’artisan est programmée pour le ${updatedTicket.scheduledDate} (${updatedTicket.category}).`
+              : `Votre bailleur : "${lastNote ? lastNote.content : ''}"`
+          );
+
+          await pushGlobalNotification({
+            title: notifTitle,
+            description: notifDesc,
+            category: 'maintenance',
+            targetRole: 'locataire',
+            targetUserId: targetTenantId,
+            targetTab: 'maintenance',
+            payload: {
+              ticketId: updatedTicket.id,
+              ticketNumber: updatedTicket.ticketNumber,
+              propertyTitle: updatedTicket.propertyTitle,
+              category: updatedTicket.category,
+              status: updatedTicket.status,
+              notes: updatedTicket.notes,
+              scheduledDate: updatedTicket.scheduledDate
+            }
+          });
+        } catch (nErr) {
+          console.warn('Erreur push notification maintenance locataire:', nErr);
+        }
+      }
+
+      // 4. Diffusion WebSocket Realtime multi-écrans (Desktop bailleur ↔ Mobile locataire)
       try {
-        fetch('/api/sync', {
+        await broadcastLiveEvent('MAINTENANCE_TICKET_UPDATED', {
+          ticket: updatedTicket,
+          actorId: user?.id,
+          targetUserId: targetTenantId
+        });
+      } catch {}
+
+      // 5. Synchroniser avec le serveur central /api/sync
+      try {
+        await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -161,10 +237,15 @@ export const MaintenanceView: React.FC = () => {
             notes: updatedTicket.notes,
             scheduledDate: updatedTicket.scheduledDate,
             description: updatedTicket.description,
-            rentDeductionRequest: updatedTicket.rentDeductionRequest
+            rentDeductionRequest: updatedTicket.rentDeductionRequest,
+            notificationTitle: notificationData?.title,
+            notificationDescription: notificationData?.description
           })
-        }).catch(() => {});
+        });
       } catch {}
+
+      // 6. Événement local pour rafraîchir les autres vues
+      window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: updatedTicket }));
     } catch (err) {
       console.warn('Erreur mise à jour maintenance Supabase:', err);
     }
@@ -241,23 +322,28 @@ export const MaintenanceView: React.FC = () => {
               ? `${resolvedDateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${resolvedDateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
               : 'Date récente';
 
-            if (!list.some(l => l.id === ticketId)) {
-              list.push({
-                id: ticketId,
-                ticketNumber: `TCK-2026-${ticketId.slice(0, 4).toUpperCase()}`,
-                tenantName: resolvedTenant,
-                tenantPhone: meta.tenantPhone || '',
-                propertyTitle: resolvedPropTitle,
-                propertyAddress: resolvePropertyCity(resolvedPropTitle, meta.propertyAddress, meta.city, meta.commune),
-                category: meta.category || 'Général',
-                priority: 'normale',
-                status: 'Nouveau',
-                createdAt: resolvedDateStr,
-                created_at: n.created_at || new Date().toISOString(),
-                description: healMaintenanceDescription(rawText),
-                photos: meta.photos || [],
-                notes: []
-              });
+            const newItem = {
+              id: ticketId,
+              ticketNumber: `TCK-2026-${ticketId.slice(0, 4).toUpperCase()}`,
+              tenantName: resolvedTenant,
+              tenantPhone: meta.tenantPhone || '',
+              propertyTitle: resolvedPropTitle,
+              propertyAddress: resolvePropertyCity(resolvedPropTitle, meta.propertyAddress, meta.city, meta.commune),
+              category: meta.category || 'Général',
+              priority: 'normale' as const,
+              status: (meta.status || 'Nouveau') as MaintenanceStatus,
+              createdAt: resolvedDateStr,
+              created_at: n.created_at || new Date().toISOString(),
+              description: healMaintenanceDescription(rawText),
+              photos: meta.photos || [],
+              notes: Array.isArray(meta.notes) ? meta.notes : []
+            };
+
+            const existingIdx = list.findIndex(l => l.id === ticketId);
+            if (existingIdx === -1) {
+              list.push(newItem);
+            } else {
+              list[existingIdx] = mergeTicket(list[existingIdx], newItem);
             }
           });
         }
@@ -271,8 +357,11 @@ export const MaintenanceView: React.FC = () => {
         const syncJson = await syncRes.json();
         if (Array.isArray(syncJson?.data?.maintenance)) {
           syncJson.data.maintenance.forEach((m: any) => {
-            if (!list.some((x: any) => x.id === m.id || (m.ticketNumber && x.ticketNumber === m.ticketNumber))) {
+            const existingIdx = list.findIndex((x: any) => x.id === m.id || (m.ticketNumber && x.ticketNumber === m.ticketNumber));
+            if (existingIdx === -1) {
               list.push(m);
+            } else {
+              list[existingIdx] = mergeTicket(list[existingIdx], m);
             }
           });
         }
@@ -294,8 +383,13 @@ export const MaintenanceView: React.FC = () => {
                 pt.tenant_id === user.id ||
                 (pt.property_id && userPropIds.has(pt.property_id));
 
-              if (isMine && !list.some(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber))) {
-                list.push(pt);
+              if (isMine) {
+                const existingIdx = list.findIndex(l => l.id === pt.id || (pt.ticketNumber && l.ticketNumber === pt.ticketNumber));
+                if (existingIdx === -1) {
+                  list.push(pt);
+                } else {
+                  list[existingIdx] = mergeTicket(list[existingIdx], pt);
+                }
               }
             });
           }
@@ -443,7 +537,10 @@ export const MaintenanceView: React.FC = () => {
     setTickets((prev) =>
       prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
-    syncTicketUpdateToSupabase(updatedTicket);
+    syncTicketUpdateToSupabase(updatedTicket, {
+      title: '💬 Réponse de votre bailleur',
+      description: `Votre bailleur a répondu à votre incident : "${replyMessage.trim()}"`
+    });
     setReplyMessage('');
   };
 
@@ -481,7 +578,10 @@ export const MaintenanceView: React.FC = () => {
     setTickets((prev) =>
       prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
-    syncTicketUpdateToSupabase(updatedTicket);
+    syncTicketUpdateToSupabase(updatedTicket, {
+      title: newStatus === 'Résolu' ? '✅ Incident de maintenance résolu' : `🔄 Incident de maintenance : ${newStatus}`,
+      description: `Votre signalement pour « ${selectedTicket.propertyTitle} » est passé au statut : ${newStatus}.`
+    });
     setShowStatusModal(false);
   };
 
@@ -496,7 +596,10 @@ export const MaintenanceView: React.FC = () => {
     setTickets((prev) =>
       prev.map((t) => (t.id === selectedTicket.id ? updatedTicket : t))
     );
-    syncTicketUpdateToSupabase(updatedTicket);
+    syncTicketUpdateToSupabase(updatedTicket, {
+      title: '📅 Intervention d’artisan programmée',
+      description: `Une intervention est programmée le ${interventionText} pour votre incident (${selectedTicket.category}).`
+    });
     setShowScheduleModal(false);
     setInterventionText('');
   };

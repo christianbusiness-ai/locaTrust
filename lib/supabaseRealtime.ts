@@ -1159,7 +1159,23 @@ function dispatchDomEventForType(event: LiveEventType, payload?: BroadcastPayloa
               if (!exists) {
                 updatedTcks = [tckObj, ...curTcks];
               } else {
-                updatedTcks = curTcks.map((t: any) => (t.id === tckObj.id ? { ...t, ...tckObj } : t));
+                updatedTcks = curTcks.map((t: any) => {
+                  if (t.id === tckObj.id || (tckObj.ticketNumber && t.ticketNumber === tckObj.ticketNumber)) {
+                    const tNotes = Array.isArray(t.notes) ? t.notes : [];
+                    const newNotes = Array.isArray(tckObj.notes) ? tckObj.notes : [];
+                    const notesMap = new Map<string, any>();
+                    tNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+                    newNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+                    const combined = Array.from(notesMap.values());
+
+                    return {
+                      ...t,
+                      ...tckObj,
+                      notes: combined.length > 0 ? combined : (newNotes.length > 0 ? newNotes : tNotes)
+                    };
+                  }
+                  return t;
+                });
               }
               localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(updatedTcks));
             } catch {}
