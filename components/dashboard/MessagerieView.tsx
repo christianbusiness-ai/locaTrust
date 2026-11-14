@@ -675,6 +675,17 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
       (m) => {
         if (!activeContact?.id) return false;
 
+        // RÈGLE FORMELLE : Aucun contrat, quittance, reçu de caution ou de restitution dans la messagerie
+        if (
+          m.contract ||
+          m.quittance ||
+          m.restitution ||
+          m.declaration ||
+          String(m.id || '').startsWith('msg_contract_') ||
+          String(m.id || '').startsWith('msg_quittance_') ||
+          String(m.id || '').startsWith('msg_restitution_')
+        ) return false;
+
         let msgContract = m.contract;
         let msgQuittance = m.quittance;
         if ((!msgContract || !msgQuittance) && typeof m.text === 'string' && (m.text.includes('"contract"') || m.text.includes('"quittance"') || m.text.includes('"ownerName"'))) {
@@ -2542,7 +2553,7 @@ export const MessagerieView: React.FC<MessagerieViewProps> = ({ userRole = 'prop
                 type="button"
                 onClick={() => docInputRef.current?.click()}
                 className="p-2.5 rounded-xl hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-500 hover:text-blue-600 transition-colors"
-                title="Joindre un document officiel (PDF, bail, quittance...)"
+                title="Joindre un fichier (PDF, image...)"
               >
                 <Paperclip className="w-4 h-4" />
               </button>

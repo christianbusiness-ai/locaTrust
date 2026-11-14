@@ -50,7 +50,6 @@ import {
 import { generateOfficialReceiptPDF } from '@/lib/payments/officialReceiptPdfGenerator';
 import { SignatureModal } from '@/components/common/SignatureModal';
 import { getUnifiedReceipts, upsertUnifiedReceipt } from '@/lib/receiptsStore';
-import { sendQuittanceToTenant } from '@/lib/messagingStore';
 import { ActionConfirmationModal, ConfirmationType } from '@/components/common/ActionConfirmationModal';
 import { TableRowsSkeleton, KpiGridSkeleton } from '@/components/common/SkeletonLoader';
 import { TopProgressBar } from '@/components/common/TopProgressBar';
@@ -1358,33 +1357,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       const ownerId = user?.id || 'usr_owner';
       const tenantId = validatingPayment.tenant_id || (validatingPayment.tenant as any)?.id || 'usr_tenant';
 
-      // 3. Dispatch official receipt to Tenant Messaging Inbox
-      try {
-        sendQuittanceToTenant(
-          {
-            receiptNumber: extractedOcrData.reference,
-            contractNumber: validatingPayment.contract_id || 'LT-CI-2026-000123',
-            propertyTitle: validatingPayment.contract?.property?.title || 'Logement LocaTrust',
-            propertyAddress: (validatingPayment.contract?.property as any)?.address || [validatingPayment.contract?.property?.quartier, validatingPayment.contract?.property?.commune, validatingPayment.contract?.property?.city].filter(Boolean).join(', ') || 'Abidjan - Côte d\'Ivoire',
-            amount: extractedOcrData.amount,
-            periodCovered: targetPeriodFormatted,
-            paymentDate: new Date().toLocaleDateString('fr-FR'),
-            paymentMethod: extractedOcrData.payment_method,
-            transactionReference: extractedOcrData.reference,
-            ownerName: resolvedContract.ownerName || 'KK',
-            tenantName: validatingPayment.tenant?.full_name || 'Locataire',
-            ownerSignatureUrl: effectiveOwnerSig,
-            tenantSignatureUrl: tenantSignatureUrl,
-            deductionAmount: (validatingPayment as any).deduction_amount,
-            deductionReason: (validatingPayment as any).deduction_reason,
-            contractMonthlyRent: (validatingPayment as any).contract_monthly_rent,
-          },
-          ownerId,
-          tenantId
-        );
-      } catch (msgErr) {
-        console.warn('sendQuittanceToTenant notice:', msgErr);
-      }
+      // 3. Mise à disposition de la quittance officielle dans l'espace Quittances & Baux du locataire (JAMAIS dans la messagerie)
+      // La quittance est enregistrée dans le Registre Unifié des Reçus et accessible directement par le preneur.
 
       // Persister dans le Registre Unifié des Reçus (synchronise immédiatement locatrust_receipts et locatrust_tenant_receipts_v2)
       const receiptUuid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `00000000-0000-4000-8007-${Date.now().toString(16).padStart(12, '0')}`;
@@ -1642,26 +1616,22 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       const ownerName = user?.user_metadata?.full_name || (user as any)?.name || 'Bailleur';
       const tenantName = pmt.tenant?.full_name || 'Locataire';
 
-      // 1. Send receipt attachment to tenant via messagingStore (enregistre dans les quittances officielles)
-      sendQuittanceToTenant(
-        {
-          receiptNumber: receiptNum,
-          contractNumber: pmt.contract_id || (pmt.contract as any)?.contract_number || 'LT-CI-2026-000123',
-          propertyTitle: pmt.contract?.property?.title || 'Logement LocaTrust',
-          propertyAddress: (pmt.contract?.property as any)?.address || [(pmt.contract?.property as any)?.quartier, (pmt.contract?.property as any)?.commune, (pmt.contract?.property as any)?.city].filter(Boolean).join(', ') || 'Abidjan - Côte d\'Ivoire',
-          amount: pmt.amount,
-          periodCovered: targetMonth,
-          paymentDate: new Date(pmt.confirmed_at || pmt.payment_date || Date.now()).toLocaleDateString('fr-FR'),
-          paymentMethod: formatRealPaymentMethod(pmt.payment_method, pmt.reference, receiptNum),
-          transactionReference: pmt.reference || receiptNum,
-          ownerName: ownerName,
-          tenantName: tenantName,
-          ownerSignatureUrl: ownerSignatureUrl || 'SIG_CERTIFIED_BAILLEUR',
-          tenantSignatureUrl: tenantSignatureUrl || undefined,
-        },
-        ownerId,
-        tenantId
-      );
+      // 1. Mise à disposition dans le registre officiel des quittances (JAMAIS dans la messagerie)
+      upsertUnifiedReceipt({
+        id: `rcpt_${receiptNum}`,
+        receipt_number: receiptNum,
+        receiptNumber: receiptNum,
+        type: 'loyer',
+        contract_id: pmt.contract_id,
+        tenant_id: tenantId,
+        owner_id: ownerId,
+        amount: pmt.amount,
+        period_covered: targetMonth,
+        payment_date: new Date(pmt.confirmed_at || pmt.payment_date || Date.now()).toISOString(),
+        payment_method: pmt.payment_method,
+        owner_signature_url: ownerSignatureUrl || 'SIG_CERTIFIED_BAILLEUR',
+        status: pmt.status === 'confirme' ? 'confirme' : 'en_attente_signature_locataire'
+      });
 
       // 2. Persist in Supabase receipts table
       if (isValidUuid(tenantId) && isValidUuid(ownerId)) {
@@ -2906,39 +2876,27 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      sendQuittanceToTenant(
-                        {
-                          receiptNumber: previewingReceipt.reference,
-                          contractNumber: resolved.contractNumber,
-                          propertyTitle: resolved.propertyTitle,
-                          propertyAddress: resolved.propertyAddress,
-                          amount: previewingReceipt.amount,
-                          periodCovered: formatPeriodCovered(previewingReceipt.target_month || resolved.formattedPeriod || resolved.periodCovered),
-                          paymentDate: new Date(previewingReceipt.confirmed_at || previewingReceipt.created_at).toLocaleDateString('fr-FR'),
-                          paymentMethod: previewingReceipt.reference.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
-                          transactionReference: previewingReceipt.reference,
-                          ownerName: resolved.ownerName,
-                          tenantName: resolved.tenantName,
-                          ownerSignatureUrl: effectiveOwnerSig,
-                          tenantSignatureUrl: effectiveTenantSig,
-                          durationMonths: resolved.durationMonths,
-                          leaseStartDate: resolved.leaseStartDate,
-                          leaseEndDate: resolved.leaseEndDate,
-                          propertyReference: resolved.propertyReference,
-                          propertyType: resolved.propertyType,
-                          ownerCni: resolved.ownerCni,
-                          ownerPhone: resolved.ownerPhone,
-                          tenantCni: resolved.tenantCni,
-                          tenantPhone: resolved.tenantPhone,
-                        },
-                        user?.id,
-                        previewingReceipt.tenant_id
-                      );
+                      upsertUnifiedReceipt({
+                        id: `rcpt_${previewingReceipt.reference}`,
+                        receipt_number: previewingReceipt.reference,
+                        receiptNumber: previewingReceipt.reference,
+                        type: 'loyer',
+                        contract_id: resolved.contractNumber,
+                        tenant_id: previewingReceipt.tenant_id,
+                        owner_id: user?.id,
+                        amount: previewingReceipt.amount,
+                        period_covered: formatPeriodCovered(previewingReceipt.target_month || resolved.formattedPeriod || resolved.periodCovered),
+                        payment_date: new Date(previewingReceipt.confirmed_at || previewingReceipt.created_at).toISOString(),
+                        payment_method: previewingReceipt.reference.startsWith('OM') ? 'Orange Money' : 'Mobile Money',
+                        owner_signature_url: effectiveOwnerSig,
+                        tenant_signature_url: effectiveTenantSig,
+                        status: effectiveTenantSig ? 'confirme' : 'en_attente_signature_locataire'
+                      });
                       setConfirmationModal({
                         isOpen: true,
                         type: 'sent',
-                        title: 'Reçu officiel expédié !',
-                        message: `Le reçu officiel avec QR code scannable a été transmis directement au locataire ${resolved.tenantName} pour contre-signature.`,
+                        title: 'Quittance mise à disposition !',
+                        message: `La quittance officielle N° ${previewingReceipt.reference} est enregistrée et accessible dans l'espace Quittances & Baux du preneur (aucun document dans la messagerie).`,
                         confirmText: 'OK, parfait',
                         withCelebration: true
                       });
@@ -2946,7 +2904,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                     className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>{effectiveTenantSig ? "Renvoyer le reçu officiel" : "Transmettre pour signature locataire"}</span>
+                    <span>{effectiveTenantSig ? "Actualiser la quittance certifiée" : "Mettre à disposition du locataire"}</span>
                   </button>
 
                   <button

@@ -1,10 +1,10 @@
 import { Deposit } from '@/types/database.types';
-import { ChatMessage, getStoredMessages, saveStoredMessages, sendChatMessage, sendQuittanceToTenant, isValidUuid, ChatQuittanceAttachment } from '@/lib/messagingStore';
+import { ChatMessage, getStoredMessages, saveStoredMessages, sendChatMessage, isValidUuid, ChatQuittanceAttachment } from '@/lib/messagingStore';
 import { formatFCFA } from '@/lib/utils';
 import { supabase } from '@/src/lib/supabase';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
-import { getUnifiedReceipts, saveUnifiedReceipts } from '@/lib/receiptsStore';
+import { getUnifiedReceipts, saveUnifiedReceipts, upsertUnifiedReceipt } from '@/lib/receiptsStore';
 
 const STORAGE_KEY = 'locatrust_deposits_v1';
 
@@ -1033,11 +1033,48 @@ export function sendCautionReceiptToTenant(
     depositId: target.id
   };
 
-  // 1. Transmission officielle via sendQuittanceToTenant (enregistre dans locatrust_tenant_receipts et le chat)
+  // 1. Enregistrement officiel dans le Registre Unifié des Reçus (JAMAIS dans la messagerie)
   try {
-    sendQuittanceToTenant(quittance, senderId, receiverId);
+    upsertUnifiedReceipt({
+      id: `rcpt_caut_${cleanReceiptNum}`,
+      receipt_number: cleanReceiptNum,
+      receiptNumber: cleanReceiptNum,
+      type: 'caution',
+      contract_id: resolved.contractNumber,
+      tenant_id: receiverId,
+      owner_id: senderId,
+      amount: confirmedAmount,
+      period_covered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
+      payment_date: new Date().toISOString(),
+      payment_method: target.payment_method || 'Mobile Money',
+      owner_signature_url: finalOwnerSig,
+      tenant_signature_url: target.tenant_signature || null,
+      status: target.tenant_signature ? 'confirme' : 'en_attente_signature_locataire'
+    });
+
+    if (typeof window !== 'undefined') {
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const tenantNotif = {
+        id: `notif_rcpt_${Date.now()}`,
+        title: '🛡️ Reçu officiel de caution disponible',
+        description: `Votre bailleur a certifié le versement de votre caution (${formatFCFA(confirmedAmount)}). Reçu N° ${cleanReceiptNum} accessible dans l'espace Cautions.`,
+        time: "À l'instant",
+        unread: true,
+        type: 'caution',
+        targetTab: 'guarantees',
+        targetRole: 'locataire',
+        targetUserId: receiverId,
+        senderUserId: senderId
+      };
+      const filtered = (Array.isArray(existingNotifs) ? existingNotifs : []).filter(
+        (n: any) => !n?.description?.includes(cleanReceiptNum)
+      );
+      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...filtered]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [tenantNotif, ...filtered] } }));
+    }
   } catch (err) {
-    console.warn('Error sending caution receipt through sendQuittanceToTenant:', err);
+    console.warn('Error saving caution receipt to unified registry:', err);
   }
 
   // 1.bis Enregistrement officiel immédiat dans le registre de vérification publique (QR Code)
@@ -1230,25 +1267,31 @@ export function sendRestitutionReceiptToTenant(depositId: string): Deposit | nul
   const updatedList = all.map((d) => (d.id === depositId ? updatedDeposit : d));
   saveStoredDeposits(updatedList);
 
+  // Notification officielle dans l'espace Cautions (JAMAIS dans la messagerie)
   try {
-    const existingMessages = getStoredMessages();
-    const isImp = target.restitution_status === 'impute_loyers';
-    const chatText = isImp
-      ? `Attestation d'imputation sur préavis émise\nVotre caution a été imputée sur vos loyers de préavis. Veuillez apposer votre signature pour validation conjointe.`
-      : `Reçu officiel de restitution de caution émis\nLe décompte de restitution de caution est disponible. Veuillez apposer votre signature pour finaliser la procédure.`;
-
-    const msg: ChatMessage = {
-      id: `msg_restitution_receipt_${Date.now()}`,
-      sender_id: target.owner_id || 'usr_owner_1',
-      receiver_id: target.tenant_id,
-      text: chatText,
-      created_at: now,
-      status: 'delivered'
-    };
-    saveStoredMessages([...existingMessages, msg]);
-    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
+    if (typeof window !== 'undefined') {
+      const isImp = target.restitution_status === 'impute_loyers';
+      const notifsRaw = localStorage.getItem('locatrust_notifications');
+      const existingNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
+      const tenantNotif = {
+        id: `notif_restit_${Date.now()}`,
+        title: isImp ? "Attestation d'imputation sur préavis émise" : "Reçu officiel de restitution de caution",
+        description: isImp
+          ? "Votre caution a été imputée sur vos loyers de préavis. Consultez l'attestation dans l'espace Cautions."
+          : "Le décompte de restitution de caution est disponible. Consultez et signez dans l'espace Cautions.",
+        time: "À l'instant",
+        unread: true,
+        type: 'caution',
+        targetTab: 'guarantees',
+        targetRole: 'locataire',
+        targetUserId: target.tenant_id,
+        senderUserId: target.owner_id || 'usr_owner_1'
+      };
+      localStorage.setItem('locatrust_notifications', JSON.stringify([tenantNotif, ...existingNotifs]));
+      window.dispatchEvent(new CustomEvent('locatrust:notifications-updated', { detail: { notifications: [tenantNotif, ...existingNotifs] } }));
+    }
   } catch (err) {
-    console.error('Error dispatching restitution message:', err);
+    console.error('Error dispatching restitution notification:', err);
   }
 
   return updatedDeposit;

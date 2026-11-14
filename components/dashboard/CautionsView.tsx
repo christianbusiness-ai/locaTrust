@@ -302,7 +302,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
       const sig = signatureData || deposit.owner_signature || generatedOwnerSignature || 'SIG_OFFICIAL_OWNER_CERTIFIED';
       const now = new Date().toISOString();
 
-      // 1. Transmission officielle dans la messagerie avec la quittance certifiée
+      // 1. Transmission officielle dans l'espace Cautions & Séquestre (JAMAIS dans la messagerie)
       const updated = sendCautionReceiptToTenant(deposit.id, {
         signatureData: sig,
         actorName,
@@ -403,7 +403,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     }
   };
 
-  // Renvoyer le reçu de caution dans la messagerie du locataire
+  // Mettre à disposition le reçu de caution dans l'espace Cautions du locataire (JAMAIS dans la messagerie)
   const handleResendCautionReceipt = (dep: Deposit) => {
     const updated = sendCautionReceiptToTenant(dep.id, {
       signatureData: dep.owner_signature,
@@ -413,11 +413,10 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     if (updated) {
       setDeposits(prev => prev.map(d => d.id === dep.id ? updated : d));
     }
-    setSuccessFeedback(`Reçu officiel de caution renvoyé avec succès dans la boîte de messagerie de ${dep.tenant?.full_name || 'votre locataire'} !`);
+    setSuccessFeedback(`Reçu officiel de caution mis à disposition avec succès dans l'espace Cautions de ${dep.tenant?.full_name || 'votre locataire'} !`);
     confetti({ particleCount: 40, spread: 50, origin: { y: 0.6 } });
     window.dispatchEvent(new CustomEvent('locatrust:cautions_updated'));
     window.dispatchEvent(new CustomEvent('locatrust:receipts_updated'));
-    window.dispatchEvent(new CustomEvent('locatrust:messages_updated'));
   };
 
   // Handle Approval of Caution by Owner / Agency (Points 8, 9, 11)
@@ -1001,16 +1000,16 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     sendCautionReceiptToTenant(deposit.id);
     reloadDeposits();
     setSuccessFeedback(
-      `📨 Reçu de caution envoyé avec succès dans la messagerie de ${deposit.tenant?.full_name} avec notification pour signature !`
+      `🛡️ Reçu officiel de caution mis à disposition de ${deposit.tenant?.full_name || 'votre locataire'} dans l'espace Cautions !`
     );
   };
 
-  // Handle Send Restitution Receipt to Tenant Chat (Point 2 Étape 4)
+  // Mettre à disposition le reçu de restitution dans l'espace Cautions du locataire
   const handleSendRestitutionReceipt = (deposit: Deposit) => {
     sendRestitutionReceiptToTenant(deposit.id);
     reloadDeposits();
     setSuccessFeedback(
-      `📨 Reçu de restitution envoyé avec succès dans la messagerie de ${deposit.tenant?.full_name} avec notification pour signature !`
+      `🛡️ Reçu officiel de restitution mis à disposition de ${deposit.tenant?.full_name || 'votre locataire'} dans l'espace Cautions !`
     );
   };
 
@@ -1730,7 +1729,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                             }
                           }}
                           className="h-8 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-extrabold text-[11px] flex items-center gap-1.5 transition-colors border border-blue-200 dark:border-blue-800 whitespace-nowrap cursor-pointer"
-                          title="Transmettre ou renvoyer le reçu certifié dans la messagerie du locataire"
+                          title="Mettre à disposition le reçu certifié dans l'espace Cautions du locataire"
                         >
                           <Send className="w-3.5 h-3.5" />
                           <span>Renvoyer le reçu</span>
@@ -2326,7 +2325,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
                     handleTransmitCautionReceiptForSigning(generatingReceiptDeposit, generatedOwnerSignature);
                   }}
                   className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
-                  title="Certifier le reçu avec votre signature et le transmettre directement dans la messagerie du locataire pour sa signature"
+                  title="Certifier le reçu avec votre signature et le mettre à disposition du locataire pour sa signature"
                 >
                   <Send className="w-4 h-4" />
                   <span>Transmettre pour signature</span>

@@ -729,9 +729,9 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
     setConfirmationModal({
       isOpen: true,
       type: 'contract_sent',
-      title: 'Contrat envoyé au locataire',
-      message: `Le contrat N° ${contractNumber} a été déposé dans la boîte de messagerie interne de ${tenantData.name}.`,
-      details: 'Le locataire peut maintenant l\'ouvrir, le consulter en ligne et apposer sa signature électronique.',
+      title: 'Contrat mis à disposition du locataire',
+      message: `Le contrat N° ${contractNumber} est désormais disponible dans l'espace Contrats de ${tenantData.name} pour signature électronique certifiée (aucun document dans la messagerie).`,
+      details: 'Le preneur a été notifié et peut le consulter et le signer directement depuis son onglet Contrats.',
       withCelebration: true
     });
   };
@@ -1524,7 +1524,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
                 className="w-full min-h-[40px] py-2.5 px-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 text-xs font-black text-center transition-all flex items-center justify-center gap-2 shadow-sm"
               >
                 <Send className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Envoyer le contrat au locataire</span>
+                <span className="truncate">Transmettre pour signature locataire</span>
               </button>
             )}
 

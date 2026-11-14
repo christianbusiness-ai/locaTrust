@@ -714,8 +714,16 @@ export function getStoredMessages(explicitUserId?: string): ChatMessage[] {
         if (m.text && (m.text.includes('Kouassi Jean-Philippe') || m.text.includes('Awa Touré'))) return false;
         // L'utilisateur connecté DOIT être expéditeur ou destinataire réel
         if (m.sender_id !== uid && m.receiver_id !== uid) return false;
-        // Règle formelle : les déclarations et quittances ne doivent jamais apparaître dans la messagerie
-        if (m.declaration || m.quittance || m.restitution) return false;
+        // Règle formelle absolue : aucun contrat, quittance, reçu de caution ou de restitution de caution dans la messagerie
+        if (
+          m.declaration ||
+          m.quittance ||
+          m.restitution ||
+          m.contract ||
+          String(m.id || '').startsWith('msg_quittance_') ||
+          String(m.id || '').startsWith('msg_contract_') ||
+          String(m.id || '').startsWith('msg_restitution_')
+        ) return false;
         return true;
       })
       .map((m: any) => {
@@ -765,6 +773,16 @@ export function saveStoredMessages(
       if (m.sender_id === m.receiver_id) return false;
       if (GENERIC_DEMO_IDS.has(m.sender_id) || GENERIC_DEMO_IDS.has(m.receiver_id)) return false;
       if (uid && m.sender_id !== uid && m.receiver_id !== uid) return false;
+      // Interdiction absolue : aucun contrat, quittance, reçu de caution ou de restitution dans les messages
+      if (
+        m.declaration ||
+        m.quittance ||
+        m.restitution ||
+        m.contract ||
+        String(m.id || '').startsWith('msg_quittance_') ||
+        String(m.id || '').startsWith('msg_contract_') ||
+        String(m.id || '').startsWith('msg_restitution_')
+      ) return false;
       return true;
     });
     const deduplicated = deduplicateMessageList(filtered);
@@ -1974,17 +1992,13 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
     id: `msg_contract_${Date.now()}`,
     sender_id: finalSenderId,
     receiver_id: tenantId,
-    text: `📑 Contrat de Bail Officiel Transmis (N° ${contract.contractNumber})\nVotre bailleur vous a transmis le bail d'habitation pour le logement : ${contract.propertyTitle}.\nVeuillez consulter les articles et apposer votre signature électronique pour officialiser la location.`,
+    text: `📑 Contrat de Bail Officiel Disponible (N° ${contract.contractNumber})\nVotre bailleur a mis à disposition votre bail d'habitation pour le logement : ${contract.propertyTitle} dans votre espace Contrats.`,
     created_at: new Date().toISOString(),
-    contract,
     status: 'delivered'
   };
 
-  const updated = [...current, newMsg];
-  saveStoredMessages(updated);
-
-  // Synchronisation Supabase & Realtime pour le contrat
-  syncMessageToSupabase(newMsg, finalSenderId, tenantId, newMsg.text);
+  // RÈGLE FORMELE : Aucun contrat ne doit être transmis dans la messagerie
+  // Le contrat est accessible, consultable et signé exclusivement dans l'espace Contrats (LocataireContratsView)
 
   // Sauvegarder immédiatement les contacts dans le stockage scopé par utilisateur
   if (typeof window !== 'undefined') {
@@ -2022,17 +2036,17 @@ export function sendContractToTenant(tenantId: string, contract: ChatContractAtt
         online: true
       });
 
-      // Notification push in-app ciblée EXCLUSIVEMENT pour le locataire
+      // Notification push in-app ciblée EXCLUSIVEMENT pour l'espace Contrats (JAMAIS la messagerie)
       const notifsRaw = localStorage.getItem('locatrust_notifications');
       const currentNotifs = notifsRaw ? JSON.parse(notifsRaw) : [];
       const notifItem = {
         id: `notif_cnt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        title: `Bail officiel reçu pour signature (N° ${contract.contractNumber})`,
-        description: `${contract.ownerName} vous a transmis le bail pour « ${contract.propertyTitle} ». Veuillez y apposer votre signature certifiée.`,
+        title: `Bail officiel disponible pour signature (N° ${contract.contractNumber})`,
+        description: `${contract.ownerName} a mis à disposition votre bail pour « ${contract.propertyTitle} ». Veuillez vous rendre dans l'onglet Contrats pour apposer votre signature certifiée.`,
         timestamp: "À l'instant",
         category: 'contrat' as const,
         read: false,
-        targetTab: 'messages',
+        targetTab: 'contracts',
         targetUserId: tenantId,
         senderUserId: finalSenderId
       };
