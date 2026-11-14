@@ -125,6 +125,7 @@ export const LocataireMaintenanceView: React.FC = () => {
       };
 
       // 2. Synchronisation depuis le serveur central /api/sync
+      let expenseList: any[] = [];
       try {
         const syncRes = await fetch(`/api/sync?userId=${user.id}`);
         if (syncRes.ok) {
@@ -139,10 +140,17 @@ export const LocataireMaintenanceView: React.FC = () => {
               }
             });
           }
+          if (Array.isArray(syncJson?.data?.expenses)) {
+            syncJson.data.expenses.forEach((se: any) => {
+              if (!expenseList.some((e: any) => e.id === se.id || (se.expense_number && e.expense_number === se.expense_number))) {
+                expenseList.push(se);
+              }
+            });
+          }
         }
       } catch {}
 
-      // 3. Récupération & fusion directe depuis les notifications Supabase de maintenance
+      // 3. Récupération & enrichissement direct depuis les notifications (sans jamais créer de faux tickets)
       try {
         const { data: maintNotifs } = await supabase
           .from('notifications')
@@ -161,32 +169,32 @@ export const LocataireMaintenanceView: React.FC = () => {
             } else if (n.payload) {
               meta = n.payload;
             }
-            const tId = meta.ticketId || meta.ticket_id || n.id;
-            const tNum = meta.ticketNumber;
-            const existingIdx = list.findIndex((x: any) => (tId && x.id === tId) || (tNum && x.ticketNumber === tNum));
+            const tId = meta.ticketId || meta.ticket_id;
+            const tNum = meta.ticketNumber || (n.description || n.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+            const existingIdx = list.findIndex((x: any) => (tId && (x.id === tId || x.ticketNumber === tId)) || (tNum && x.ticketNumber === tNum));
             const incomingNotes = Array.isArray(meta.notes) ? meta.notes : [];
 
             if (existingIdx !== -1) {
               list[existingIdx] = mergeTicket(list[existingIdx], {
-                status: meta.status,
-                scheduledDate: meta.scheduledDate,
+                status: meta.status || list[existingIdx].status,
+                scheduledDate: meta.scheduledDate || list[existingIdx].scheduledDate,
                 notes: incomingNotes
               });
-            } else if (tId) {
-              list.push({
-                id: tId,
-                ticketNumber: tNum || `TCK-2026-${String(tId).slice(0, 4).toUpperCase()}`,
-                propertyTitle: meta.propertyTitle || 'Logement',
-                propertyAddress: meta.propertyAddress || '',
-                category: meta.category || 'Général',
-                status: meta.status || 'Nouveau',
-                description: meta.description || n.description || '',
-                notes: incomingNotes,
-                photos: Array.isArray(meta.photos) ? meta.photos : [],
-                scheduledDate: meta.scheduledDate || '',
-                createdAt: n.created_at ? new Date(n.created_at).toLocaleDateString('fr-FR') : 'Date récente',
-                created_at: n.created_at || new Date().toISOString()
-              });
+
+              // Si la notification signale un accord de réparation avec déduction de loyer
+              const isDeductionNotif = (n.title || '').includes('déduction de loyer') || (n.description || '').includes('déductibles du loyer') || meta.scenario === 'C';
+              if (isDeductionNotif) {
+                list[existingIdx].status = 'En cours';
+                const notifAmtMatch = (n.description || '').match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+                const notifAmount = Number(meta.amount) || (notifAmtMatch ? Number(notifAmtMatch) : 0);
+                if (notifAmount > 0) {
+                  list[existingIdx].rentDeductionRequest = {
+                    status: 'approuve',
+                    amountSpent: notifAmount,
+                    deductionMonth: 'Prochain loyer'
+                  };
+                }
+              }
             }
           });
         }
@@ -214,11 +222,19 @@ export const LocataireMaintenanceView: React.FC = () => {
 
       // 5. Réconciliation directe avec les dépenses & accords de déduction (Scénarios A, B, C)
       try {
-        let expenseList: any[] = [];
         if (typeof window !== 'undefined') {
           const rawExpenses = localStorage.getItem('locatrust_property_expenses');
           if (rawExpenses) {
-            try { expenseList = JSON.parse(rawExpenses); } catch {}
+            try {
+              const parsed = JSON.parse(rawExpenses);
+              if (Array.isArray(parsed)) {
+                parsed.forEach((pe: any) => {
+                  if (!expenseList.some((e: any) => e.id === pe.id || (pe.expense_number && e.expense_number === pe.expense_number))) {
+                    expenseList.push(pe);
+                  }
+                });
+              }
+            } catch {}
           }
         }
         if (expenseList.length === 0 && user?.id) {
@@ -231,7 +247,13 @@ export const LocataireMaintenanceView: React.FC = () => {
               query = query.eq('tenant_id', user.id);
             }
             const { data: dbExp } = await query;
-            if (dbExp && dbExp.length > 0) expenseList = dbExp;
+            if (dbExp && dbExp.length > 0) {
+              dbExp.forEach((de: any) => {
+                if (!expenseList.some((e: any) => e.id === de.id || (de.expense_number && e.expense_number === de.expense_number))) {
+                  expenseList.push(de);
+                }
+              });
+            }
           } catch {}
         }
 
@@ -240,7 +262,8 @@ export const LocataireMaintenanceView: React.FC = () => {
             const expTicketNum = (exp.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
             const targetTicket = list.find((t: any) =>
               (exp.ticket_id && (t.id === exp.ticket_id || t.ticketNumber === exp.ticket_id)) ||
-              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum))))
+              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum)))) ||
+              (exp.category && t.category && exp.category.toLowerCase() === t.category.toLowerCase())
             );
             if (targetTicket) {
               const noteText =
@@ -280,7 +303,36 @@ export const LocataireMaintenanceView: React.FC = () => {
         }
       } catch {}
 
-      setTickets(list);
+      // 6. DÉDUPLICATION RIGOUREUSE ET ÉLIMINATION DES FAUX TICKETS
+      const deduplicatedMap = new Map<string, any>();
+      list.forEach((t: any) => {
+        if (!t) return;
+        const tIdStr = String(t.id || '');
+        // Supprimer les tickets créés par d'anciennes notifications fantômes
+        const isPhantom = (tIdStr.startsWith('notif_') || tIdStr.startsWith('notif-')) &&
+          (!t.description || t.description === 'Signalement de maintenance' || t.propertyTitle === 'Logement');
+        if (isPhantom) return;
+
+        const tNum = t.ticketNumber || (t.title || t.description || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+        const descKey = (t.description || '').trim().toLowerCase().slice(0, 35);
+        const uniqueKey = tNum ? tNum.toUpperCase() : (tIdStr && !tIdStr.startsWith('notif') ? tIdStr : descKey);
+
+        if (!uniqueKey) return;
+
+        if (deduplicatedMap.has(uniqueKey)) {
+          deduplicatedMap.set(uniqueKey, mergeTicket(deduplicatedMap.get(uniqueKey), t));
+        } else {
+          deduplicatedMap.set(uniqueKey, t);
+        }
+      });
+
+      const finalTickets = Array.from(deduplicatedMap.values());
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(finalTickets));
+        } catch {}
+      }
+      setTickets(finalTickets);
 
       const { data: cntData } = await getContracts(user.id, 'locataire');
       let userCntList = cntData || [];
@@ -327,17 +379,31 @@ export const LocataireMaintenanceView: React.FC = () => {
     window.addEventListener('storage', handleUpdate);
 
     const handleOpenTicket = (e: any) => {
-      const tId = e?.detail?.ticketId || (e?.detail?.ticket && e.detail.ticket.id);
-      if (tId) {
-        setHighlightedTicketId(tId);
-        setTimeout(() => {
-          const el = document.getElementById(`tenant-ticket-${tId}`);
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 150);
-        setTimeout(() => setHighlightedTicketId(null), 5000);
-      }
+      const rawTarget = e?.detail?.ticketId || (e?.detail?.ticket && e.detail.ticket.id);
+      if (!rawTarget) return;
+      const targetQueryStr = String(rawTarget).trim().toLowerCase();
+
+      // Rechercher le ticket correspondant par id, ticketNumber ou description
+      const matched = tickets.find((t: any) => {
+        if (!t) return false;
+        if (String(t.id).toLowerCase() === targetQueryStr) return true;
+        if (t.ticketNumber && String(t.ticketNumber).toLowerCase() === targetQueryStr) return true;
+        if (t.ticketNumber && targetQueryStr.includes(String(t.ticketNumber).toLowerCase())) return true;
+        if (String(t.id).toLowerCase().includes(targetQueryStr)) return true;
+        return false;
+      });
+
+      const matchedId = matched ? matched.id : rawTarget;
+      setHighlightedTicketId(matchedId);
+
+      setTimeout(() => {
+        const el = document.getElementById(`tenant-ticket-${matchedId}`) ||
+                   (matched?.ticketNumber ? document.getElementById(`tenant-ticket-${matched.ticketNumber}`) : null);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+      setTimeout(() => setHighlightedTicketId(null), 6000);
     };
     window.addEventListener('locatrust:open_maintenance_ticket', handleOpenTicket);
 
@@ -786,8 +852,9 @@ export const LocataireMaintenanceView: React.FC = () => {
             <div
               key={ticket.id}
               id={`tenant-ticket-${ticket.id}`}
+              data-ticket-number={ticket.ticketNumber}
               className={`bg-white rounded-3xl border p-6 shadow-sm flex flex-col gap-4 transition-all duration-300 ${
-                highlightedTicketId === ticket.id
+                highlightedTicketId === ticket.id || (ticket.ticketNumber && highlightedTicketId === ticket.ticketNumber)
                   ? 'border-amber-500 ring-4 ring-amber-400/50 shadow-xl scale-[1.01]'
                   : 'border-slate-200'
               }`}

@@ -171,36 +171,56 @@ export default async function handler(req, res) {
         const userContracts = SERVER_STORE.contracts.filter(
           (c) => c.owner_id === cleanUserId || c.agency_id === cleanUserId || c.tenant_id === cleanUserId
         );
-        const userMaintenance = SERVER_STORE.maintenance.filter(
-          (m) =>
-            m &&
-            (m.ownerId === cleanUserId ||
-              m.agencyId === cleanUserId ||
-              m.tenantId === cleanUserId ||
-              m.owner_id === cleanUserId ||
-              m.agency_id === cleanUserId ||
-              m.tenant_id === cleanUserId ||
-              SERVER_STORE.contracts.some(
-                (c) =>
-                  (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
-                  ((m.propertyId && c.property_id === m.propertyId) || (m.propertyTitle && c.property_title === m.propertyTitle))
-              ))
-        );
+        const userMaintenance = SERVER_STORE.maintenance.filter((m) => {
+          if (!m) return false;
+          if (
+            m.ownerId === cleanUserId ||
+            m.agencyId === cleanUserId ||
+            m.tenantId === cleanUserId ||
+            m.owner_id === cleanUserId ||
+            m.agency_id === cleanUserId ||
+            m.tenant_id === cleanUserId
+          ) {
+            return true;
+          }
+          if (
+            (SERVER_STORE.expenses || []).some(
+              (e) =>
+                e.tenant_id === cleanUserId &&
+                (e.ticket_id === m.id || e.ticket_id === m.ticketNumber || (e.title && m.ticketNumber && e.title.includes(m.ticketNumber)))
+            )
+          ) {
+            return true;
+          }
+          return (SERVER_STORE.contracts || []).some(
+            (c) =>
+              (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
+              ((m.propertyId && c.property_id === m.propertyId) || (m.propertyTitle && c.property_title === m.propertyTitle))
+          );
+        });
+
         const userProperties = SERVER_STORE.properties.filter(
           (pr) => pr.owner_id === cleanUserId || pr.agency_id === cleanUserId
         );
-        const userExpenses = (SERVER_STORE.expenses || []).filter(
-          (e) =>
-            e &&
-            (e.owner_id === cleanUserId ||
-              e.agency_id === cleanUserId ||
-              e.tenant_id === cleanUserId ||
-              SERVER_STORE.contracts.some(
-                (c) =>
-                  (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
-                  ((e.property_id && c.property_id === e.property_id) || (e.property_title && c.property_title === e.property_title))
-              ))
-        );
+
+        const userExpenses = (SERVER_STORE.expenses || []).filter((e) => {
+          if (!e) return false;
+          if (e.owner_id === cleanUserId || e.agency_id === cleanUserId || e.tenant_id === cleanUserId) return true;
+          if (
+            (SERVER_STORE.maintenance || []).some(
+              (m) =>
+                (m.tenantId === cleanUserId || m.tenant_id === cleanUserId) &&
+                (m.id === e.ticket_id || m.ticketNumber === e.ticket_id || (e.title && m.ticketNumber && e.title.includes(m.ticketNumber)))
+            )
+          ) {
+            return true;
+          }
+          return (SERVER_STORE.contracts || []).some(
+            (c) =>
+              (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
+              ((e.property_id && c.property_id === e.property_id) || (e.property_title && c.property_title === e.property_title))
+          );
+        });
         const userReadState = SERVER_STORE.readState[cleanUserId] || {
           readMessageIds: [],
           readNotifIds: [],

@@ -724,15 +724,25 @@ export const MaintenanceView: React.FC = () => {
     if (!ticket) return;
     if (typeof window !== 'undefined') {
       try {
+        const rawCat = (ticket.category || '').toLowerCase();
+        let expenseCat = 'autre';
+        if (rawCat.includes('eau') || rawCat.includes('robinet') || rawCat.includes('plomb') || rawCat.includes('fuite')) expenseCat = 'plomberie';
+        else if (rawCat.includes('toit') || rawCat.includes('plafon') || rawCat.includes('macon')) expenseCat = 'toiture_maconnerie';
+        else if (rawCat.includes('elec') || rawCat.includes('courant') || rawCat.includes('lum')) expenseCat = 'electricite';
+        else if (rawCat.includes('serrur') || rawCat.includes('porte') || rawCat.includes('cle')) expenseCat = 'serrurerie';
+        else if (rawCat.includes('peint')) expenseCat = 'peinture';
+
         localStorage.setItem(
           'locatrust_prefill_expense',
           JSON.stringify({
-            ticket_id: ticket.id,
-            property_id: (ticket as any).property_id,
-            contract_id: (ticket as any).contract_id,
-            tenant_id: (ticket as any).tenant_id,
-            title: `Réparation suite à ticket ${ticket.ticketNumber} (${ticket.category})`,
-            category: (ticket.category || 'plomberie').toLowerCase().includes('eau') || (ticket.category || '').toLowerCase().includes('robinet') ? 'plomberie' : 'autre',
+            ticket_id: ticket.id || ticket.ticketNumber,
+            property_id: (ticket as any).property_id || (ticket as any).propertyId || '',
+            contract_id: (ticket as any).contract_id || (ticket as any).contractId || '',
+            tenant_id: (ticket as any).tenant_id || (ticket as any).tenantId || '',
+            tenant_name: ticket.tenantName || (ticket as any).tenant?.full_name || '',
+            property_title: ticket.propertyTitle || (ticket as any).property?.title || '',
+            title: `Réparation suite à ticket ${ticket.ticketNumber || ticket.id} (${ticket.category || 'Général'})`,
+            category: expenseCat,
             description: healMaintenanceDescription(extractCleanMaintenanceMessage(ticket.description)),
             payer: 'proprietaire',
             responsible: 'proprietaire',

@@ -810,14 +810,28 @@ export const Header: React.FC<HeaderProps> = ({
         titleLower.includes('maintenance') ||
         titleLower.includes('panne') ||
         titleLower.includes('incident') ||
-        titleLower.includes('fuite')
+        titleLower.includes('fuite') ||
+        titleLower.includes('réparation') ||
+        titleLower.includes('reparation') ||
+        titleLower.includes('déduction') ||
+        titleLower.includes('deduction')
       ) {
-        const ticketId = item.payload?.ticket_id || item.data?.ticket_id || item.ticket_id;
+        const ticketId =
+          item.payload?.ticketId ||
+          item.payload?.ticket_id ||
+          item.payload?.ticketNumber ||
+          item.data?.ticketId ||
+          item.data?.ticket_id ||
+          item.ticket_id ||
+          (item.description || '').match(/TCK-[A-Z0-9-]+/i)?.[0] ||
+          (item.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+
         if (ticketId && typeof window !== 'undefined') {
-          localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+          localStorage.setItem('locatrust_selected_maintenance_ticket', String(ticketId));
+          window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId: String(ticketId) } }));
           setTimeout(() => {
-            window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
-          }, 150);
+            window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId: String(ticketId) } }));
+          }, 250);
         }
         if (onNavigateTab) {
           onNavigateTab('maintenance');

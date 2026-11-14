@@ -66,26 +66,57 @@ export const MaintenanceNotificationBanner: React.FC<MaintenanceNotificationBann
     const pending = ticketsList.filter((t: any) => {
       if (!t) return false;
       const st = String(t.status || '').toLowerCase().trim();
-      const isPending = st === 'nouveau' || st === 'ouvert' || st === 'en_attente' || st === 'en cours' || st === 'en_cours';
+
+      // Pour le locataire : si le bailleur a déjà pris en charge ou autorisé la réparation, masquer l'alerte
+      if (role === 'locataire') {
+        if (currentUserId && t.tenant_id && t.tenant_id !== currentUserId && t.tenantId !== currentUserId) {
+          return false;
+        }
+        const isAuthorizedOrAnswered =
+          t.rentDeductionRequest?.status === 'approuve' ||
+          st === 'en cours' ||
+          st === 'en_cours' ||
+          st === 'resolu' ||
+          st === 'cloture' ||
+          (Array.isArray(t.notes) && t.notes.some((n: any) => !n.isInternal && (n.author?.includes('Propriétaire') || n.author?.includes('Bailleur'))));
+
+        if (isAuthorizedOrAnswered) return false;
+
+        const isPending = st === 'nouveau' || st === 'ouvert' || st === 'en_attente';
+        return isPending;
+      }
+
+      // Pour les propriétaires / agences : uniquement les incidents nouveaux nécessitant une action
+      const isHandledByOwner =
+        t.rentDeductionRequest?.status === 'approuve' ||
+        st === 'en cours' ||
+        st === 'en_cours' ||
+        st === 'resolu' ||
+        st === 'cloture';
+
+      if (isHandledByOwner) return false;
+
+      const isPending = st === 'nouveau' || st === 'ouvert' || st === 'en_attente';
       if (!isPending) return false;
 
-      // Pour les propriétaires / agences : tous les incidents ouverts signalés
-      if (role === 'proprietaire' || role === 'agence') {
-        if (!currentUserId) return true;
-        const matchesOwner = t.owner_id === currentUserId || t.agency_id === currentUserId;
-        const matchesProperty = Boolean(t.property_id);
-        return matchesOwner || matchesProperty;
-      }
-
-      // Pour le locataire : ses propres incidents en attente
-      if (role === 'locataire') {
-        return !currentUserId || t.tenant_id === currentUserId;
-      }
-
-      return true;
+      if (!currentUserId) return true;
+      const matchesOwner = t.owner_id === currentUserId || t.agency_id === currentUserId || t.ownerId === currentUserId || t.agencyId === currentUserId;
+      const matchesProperty = Boolean(t.property_id || t.propertyId);
+      return matchesOwner || matchesProperty;
     });
 
-    setActiveTickets(pending);
+    // 4. Déduplication stricte des tickets affichés dans la bannière
+    const seenBannerKeys = new Set<string>();
+    const uniquePending: any[] = [];
+    for (const pt of pending) {
+      const pKey = pt.ticketNumber || (pt.description ? pt.description.slice(0, 30) : '') || pt.id;
+      if (pKey && !seenBannerKeys.has(pKey)) {
+        seenBannerKeys.add(pKey);
+        uniquePending.push(pt);
+      }
+    }
+
+    setActiveTickets(uniquePending);
   }, [currentUserId, role]);
 
   useEffect(() => {

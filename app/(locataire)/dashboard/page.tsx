@@ -191,18 +191,20 @@ export default function TenantDashboardPage({
             </div>
           )}
 
-          {/* BANNIÈRE D'ALERTE MAINTENANCE */}
-          <MaintenanceNotificationBanner
-            currentUserId={user?.id}
-            role="locataire"
-            onNavigateToMaintenance={(ticketId) => {
-              if (ticketId && typeof window !== 'undefined') {
-                localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
-                window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
-              }
-              handleSelectTab('maintenance');
-            }}
-          />
+          {/* BANNIÈRE D'ALERTE MAINTENANCE (uniquement en dehors de l'onglet maintenance) */}
+          {activeTab !== 'maintenance' && (
+            <MaintenanceNotificationBanner
+              currentUserId={user?.id}
+              role="locataire"
+              onNavigateToMaintenance={(ticketId) => {
+                if (ticketId && typeof window !== 'undefined') {
+                  localStorage.setItem('locatrust_selected_maintenance_ticket', ticketId);
+                  window.dispatchEvent(new CustomEvent('locatrust:open_maintenance_ticket', { detail: { ticketId } }));
+                }
+                handleSelectTab('maintenance');
+              }}
+            />
+          )}
 
           {/* TAB 1: Fil d'actualité */}
           {(activeTab === 'feed' || activeTab === 'overview' || activeTab === 'accueil') && (
