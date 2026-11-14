@@ -362,11 +362,14 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
   const handleApprove = async (expense: PropertyExpense) => {
     await updateExpenseValidationStatus(expense.id, 'APPROUVEE', { actorId: user?.id });
     try {
-      await syncExpenseDecisionToMaintenanceTicket({
-        ...expense,
-        validation_status: 'APPROUVEE',
-        compensation_authorized: true
-      });
+      await syncExpenseDecisionToMaintenanceTicket(
+        {
+          ...expense,
+          validation_status: 'APPROUVEE',
+          compensation_authorized: true
+        },
+        { closeTicket: true }
+      );
     } catch {}
     loadExpensesData();
   };

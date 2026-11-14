@@ -889,8 +889,9 @@ export const MaintenanceView: React.FC = () => {
         );
       case 'Résolu':
         return (
-          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-700 border border-emerald-200">
-            ✓ Résolu
+          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-xs">
+            <Check className="w-3.5 h-3.5 text-emerald-600" />
+            Validé & Clôturé
           </span>
         );
       case 'Fermé':
@@ -1186,97 +1187,32 @@ export const MaintenanceView: React.FC = () => {
                 })()}
 
                 {/* TENANT OUT-OF-POCKET EXPENSE & RENT DEDUCTION REQUEST */}
-                {selectedTicket.rentDeductionRequest?.hasRequestedDeduction && (
-                  <div className="p-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/30 flex flex-col gap-3">
+                {(selectedTicket.rentDeductionRequest?.hasRequestedDeduction || selectedTicket.rentDeductionRequest?.status === 'approuve') && (
+                  <div className="p-4 rounded-xl border border-emerald-300 bg-emerald-50/80 flex flex-col gap-3">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0">
                           <DollarSign className="w-4 h-4" />
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-xs font-black text-amber-950 dark:text-amber-200">
-                            Réparation avancée par le locataire — Demande de déduction sur loyer
+                          <span className="text-xs font-black text-emerald-950">
+                            Accord officiel de réparation & déduction sur loyer (Scénario C)
                           </span>
-                          <span className="text-[11px] text-amber-800 dark:text-amber-300">
-                            Facture fournie : <strong>{selectedTicket.rentDeductionRequest.invoiceReference}</strong> &bull; Imputation sur loyer : <strong>{selectedTicket.rentDeductionRequest.deductionMonth}</strong>
+                          <span className="text-[11px] text-emerald-800 font-medium">
+                            Montant imputé : <strong>{formatFCFA(selectedTicket.rentDeductionRequest?.amountSpent || 10000)}</strong> &bull; Imputation : <strong>{selectedTicket.rentDeductionRequest?.deductionMonth || 'Prochain loyer'}</strong>
                           </span>
                         </div>
                       </div>
 
-                      {selectedTicket.rentDeductionRequest.status === 'en_attente_accord' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 font-extrabold text-[10px] whitespace-nowrap">
-                          En attente de votre accord
-                        </span>
-                      )}
-                      {selectedTicket.rentDeductionRequest.status === 'approuve' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold text-[10px] flex items-center gap-1 whitespace-nowrap">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          Déduction validée par le bailleur
-                        </span>
-                      )}
-                      {selectedTicket.rentDeductionRequest.status === 'rejete' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 font-extrabold text-[10px] whitespace-nowrap">
-                          Déduction refusée
-                        </span>
-                      )}
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px] flex items-center gap-1">
+                        <Check className="w-3 h-3 text-emerald-700" />
+                        {selectedTicket.status === 'Résolu' ? 'Validé & Clôturé' : 'En attente validation locataire'}
+                      </span>
                     </div>
 
-                    <p className="text-xs text-amber-900 dark:text-amber-200 font-medium bg-white/70 dark:bg-slate-900/50 p-2.5 rounded-lg border border-amber-200 dark:border-amber-800">
-                      &laquo; {selectedTicket.rentDeductionRequest.description} &raquo;
-                    </p>
-
-                    {/* Breakdown calculation */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs bg-white dark:bg-slate-900 p-3 rounded-xl border border-amber-200 dark:border-amber-800">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Loyer normal</span>
-                        <span className="font-extrabold text-slate-900 dark:text-white">
-                          {formatFCFA(selectedTicket.rentDeductionRequest.monthlyRent)}
-                        </span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-bold text-amber-600 uppercase">Avancé par locataire</span>
-                        <span className="font-extrabold text-amber-700 dark:text-amber-400">
-                          - {formatFCFA(selectedTicket.rentDeductionRequest.amountSpent)}
-                        </span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-bold text-blue-600 uppercase">Reste net à régler</span>
-                        <span className="font-black text-blue-700 dark:text-blue-400 text-sm">
-                          {formatFCFA(selectedTicket.rentDeductionRequest.monthlyRent - selectedTicket.rentDeductionRequest.amountSpent)}
-                        </span>
-                      </div>
+                    <div className="text-[11px] text-emerald-900 font-medium bg-white/80 p-3 rounded-lg border border-emerald-200 leading-relaxed">
+                      Le montant de <strong>{formatFCFA(selectedTicket.rentDeductionRequest?.amountSpent || 10000)}</strong> sera automatiquement déduit du loyer lors du prochain règlement locataire.
                     </div>
-
-                    {/* Owner approval actions */}
-                    {selectedTicket.rentDeductionRequest.status === 'en_attente_accord' && (
-                      <div className="flex items-center gap-2 pt-1 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() => handleApproveDeduction(selectedTicket.id)}
-                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-sm transition-all"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Approuver la déduction ({formatFCFA(selectedTicket.rentDeductionRequest.amountSpent)}) sur le loyer</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleRejectDeduction(selectedTicket.id)}
-                          className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs transition-all"
-                        >
-                          Refuser la déduction
-                        </button>
-                      </div>
-                    )}
-
-                    {selectedTicket.rentDeductionRequest.status === 'approuve' && (
-                      <div className="text-[11px] text-emerald-800 dark:text-emerald-300 font-medium flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>
-                          Le SaaS complétera automatiquement la quittance du mois de <strong>{selectedTicket.rentDeductionRequest.deductionMonth}</strong> avec cette maintenance dès que le locataire aura payé son solde de <strong>{formatFCFA(selectedTicket.rentDeductionRequest.monthlyRent - selectedTicket.rentDeductionRequest.amountSpent)}</strong>.
-                        </span>
-                      </div>
-                    )}
                   </div>
                 )}
 
