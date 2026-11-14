@@ -1,0 +1,688 @@
+/**
+ * LOCATRUST — SERVICE CENTRAL DE GESTION DES DÉPENSES, RÉPARATIONS ET DÉDUCTIONS DE LOYER
+ * 
+ * SERVER IS THE SOURCE OF TRUTH : Supabase PostgreSQL (tables property_expenses,
+ * expense_reimbursements, rent_compensations).
+ * 
+ * Ce service gère les 3 scénarios impératifs :
+ * - SCÉNARIO A : Propriétaire ou agence paie directement la réparation (à la charge du propriétaire).
+ * - SCÉNARIO B : Le locataire doit rembourser une réparation avancée par le propriétaire/agence.
+ * - SCÉNARIO C : Le locataire paie la réparation et déduit le montant du loyer avec compensation autorisée.
+ * 
+ * Circuit de validation :
+ * EN_ATTENTE_VALIDATION -> INFORMATIONS_DEMANDEES -> APPROUVEE -> REFUSEE -> COMPENSEE_PARTIELLEMENT -> COMPENSEE_TOTALEMENT
+ */
+
+import { supabase } from '@/src/lib/supabase';
+
+export const isValidUuid = (id?: string | null): boolean =>
+  Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+export type ExpensePayer = 'proprietaire' | 'agence' | 'locataire';
+export type ExpenseResponsible = 'proprietaire' | 'locataire' | 'copropriete' | 'indecis';
+export type ExpenseScenario = 'A' | 'B' | 'C';
+
+export type ExpenseValidationStatus =
+  | 'EN_ATTENTE_VALIDATION'
+  | 'INFORMATIONS_DEMANDEES'
+  | 'APPROUVEE'
+  | 'REFUSEE'
+  | 'COMPENSEE_PARTIELLEMENT'
+  | 'COMPENSEE_TOTALEMENT';
+
+export type ExpenseCategory =
+  | 'plomberie'
+  | 'electricite'
+  | 'toiture_maconnerie'
+  | 'serrurerie'
+  | 'peinture'
+  | 'parties_communes'
+  | 'autre';
+
+export interface PropertyExpense {
+  id: string;
+  expense_number: string;
+  property_id: string;
+  contract_id?: string;
+  ticket_id?: string;
+  owner_id: string;
+  agency_id?: string;
+  tenant_id?: string;
+  category: ExpenseCategory;
+  title: string;
+  description: string;
+  amount: number;
+  currency: string;
+  payer: ExpensePayer;
+  responsible: ExpenseResponsible;
+  scenario: ExpenseScenario;
+  validation_status: ExpenseValidationStatus;
+  expense_date: string;
+  invoice_reference?: string;
+  invoice_url?: string;
+  receipt_url?: string;
+  photos: string[];
+  reimbursement_status?: 'non_applicable' | 'en_attente' | 'partiel' | 'total';
+  amount_to_recover: number;
+  amount_recovered: number;
+  recovery_balance: number;
+  compensation_authorized: boolean;
+  compensation_total_applied: number;
+  compensation_balance: number;
+  refusal_reason?: string;
+  info_requested_text?: string;
+  approved_by?: string;
+  approved_at?: string;
+  created_at: string;
+  updated_at: string;
+  // Métadonnées d'affichage jointes
+  property_title?: string;
+  property_city?: string;
+  tenant_name?: string;
+  mandant_name?: string;
+}
+
+export interface ExpenseReimbursement {
+  id: string;
+  expense_id: string;
+  contract_id?: string;
+  tenant_id: string;
+  amount_paid: number;
+  payment_method: 'wave' | 'orange_money' | 'mtn' | 'moov' | 'virement' | 'especes';
+  transaction_reference?: string;
+  receipt_number?: string;
+  proof_url?: string;
+  paid_at: string;
+  recorded_by: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface RentCompensation {
+  id: string;
+  expense_id: string;
+  contract_id: string;
+  target_month: string; // '2026-11'
+  amount_deducted: number;
+  authorized_by: string;
+  authorized_at: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface ExpenseFilters {
+  propertyId?: string;
+  contractId?: string;
+  scenario?: ExpenseScenario;
+  validationStatus?: ExpenseValidationStatus;
+  category?: ExpenseCategory;
+  payer?: ExpensePayer;
+  responsible?: ExpenseResponsible;
+  mandantId?: string;
+  search?: string;
+}
+
+export interface ExpenseFinancialSummary {
+  // Scénario A : Pris en charge par le propriétaire
+  totalPaidByOwner: number;
+  // Scénario B : À récupérer auprès du locataire
+  totalToRecoverFromTenants: number;
+  totalRecoveredFromTenants: number;
+  balanceRemainingToRecover: number;
+  // Scénario C : Compensations de loyers
+  totalCompensationsAuthorized: number;
+  totalCompensationsApplied: number;
+  compensationsBalanceRemaining: number;
+  // Statuts & volumes
+  totalExpensesCount: number;
+  pendingValidationCount: number;
+  approvedCount: number;
+  refusedCount: number;
+}
+
+/**
+ * Génère un numéro officiel de dépense unique (DEP-2026-XXXX)
+ */
+export function generateExpenseNumber(): string {
+  const year = new Date().getFullYear();
+  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `DEP-${year}-${rand}`;
+}
+
+/**
+ * Récupère les dépenses avec enrichissement automatique et filtres
+ */
+export async function getPropertyExpenses(
+  userId: string,
+  role: 'proprietaire' | 'agence' | 'locataire',
+  filters?: ExpenseFilters
+): Promise<{ data: PropertyExpense[]; error: string | null }> {
+  try {
+    let query = supabase
+      .from('property_expenses')
+      .select('*')
+      .order('expense_date', { ascending: false });
+
+    // Filtrage par rôle
+    if (role === 'proprietaire') {
+      query = query.or(`owner_id.eq.${userId}`);
+    } else if (role === 'agence') {
+      query = query.or(`agency_id.eq.${userId},owner_id.eq.${userId}`);
+    } else if (role === 'locataire') {
+      query = query.eq('tenant_id', userId);
+    }
+
+    // Filtres optionnels
+    if (filters?.propertyId) query = query.eq('property_id', filters.propertyId);
+    if (filters?.contractId) query = query.eq('contract_id', filters.contractId);
+    if (filters?.scenario) query = query.eq('scenario', filters.scenario);
+    if (filters?.validationStatus) query = query.eq('validation_status', filters.validationStatus);
+    if (filters?.category) query = query.eq('category', filters.category);
+    if (filters?.payer) query = query.eq('payer', filters.payer);
+    if (filters?.responsible) query = query.eq('responsible', filters.responsible);
+    if (filters?.mandantId) query = query.eq('owner_id', filters.mandantId);
+
+    const { data, error } = await query;
+
+    let expenses: PropertyExpense[] = [];
+
+    if (!error && Array.isArray(data)) {
+      expenses = data as PropertyExpense[];
+    }
+
+    // Secours réactif / Offline-First synchronisé
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_property_expenses');
+        if (stored) {
+          const localList: PropertyExpense[] = JSON.parse(stored);
+          localList.forEach((localItem) => {
+            const isMine =
+              role === 'locataire'
+                ? localItem.tenant_id === userId
+                : localItem.owner_id === userId || localItem.agency_id === userId;
+
+            if (isMine && !expenses.some((e) => e.id === localItem.id || e.expense_number === localItem.expense_number)) {
+              expenses.push(localItem);
+            }
+          });
+        }
+      } catch {}
+    }
+
+    // Enrichissement avec les titres des biens et noms des locataires
+    if (expenses.length > 0) {
+      const propIds = Array.from(new Set(expenses.map((e) => e.property_id).filter(Boolean)));
+      const tenantIds = Array.from(new Set(expenses.map((e) => e.tenant_id).filter(Boolean))) as string[];
+
+      const propsMap = new Map<string, { title: string; city: string }>();
+      const tenantsMap = new Map<string, string>();
+
+      if (propIds.length > 0) {
+        try {
+          const { data: props } = await supabase
+            .from('properties')
+            .select('id, title, city, commune')
+            .in('id', propIds);
+          if (props) {
+            props.forEach((p: any) => {
+              propsMap.set(p.id, {
+                title: p.title || 'Logement',
+                city: p.city || p.commune || 'Abidjan'
+              });
+            });
+          }
+        } catch {}
+      }
+
+      if (tenantIds.length > 0) {
+        try {
+          const { data: tenants } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', tenantIds);
+          if (tenants) {
+            tenants.forEach((t: any) => tenantsMap.set(t.id, t.full_name || 'Locataire'));
+          }
+        } catch {}
+      }
+
+      expenses = expenses.map((e) => ({
+        ...e,
+        property_title: propsMap.get(e.property_id)?.title || e.property_title || 'Logement',
+        property_city: propsMap.get(e.property_id)?.city || e.property_city || 'Abidjan',
+        tenant_name: (e.tenant_id ? tenantsMap.get(e.tenant_id) : undefined) || e.tenant_name || 'Locataire'
+      }));
+    }
+
+    return { data: expenses, error: null };
+  } catch (err: any) {
+    return { data: [], error: err?.message || 'Erreur chargement dépenses' };
+  }
+}
+
+/**
+ * Crée une nouvelle dépense selon les règles strictes des 3 scénarios
+ */
+export async function createPropertyExpense(
+  payload: Omit<PropertyExpense, 'id' | 'created_at' | 'updated_at' | 'amount_recovered' | 'recovery_balance' | 'compensation_total_applied' | 'compensation_balance'> & {
+    id?: string;
+  }
+): Promise<{ data: PropertyExpense | null; error: string | null }> {
+  try {
+    const expenseId = payload.id && isValidUuid(payload.id) ? payload.id : crypto.randomUUID();
+    const expenseNumber = payload.expense_number || generateExpenseNumber();
+    const amount = Number(payload.amount || 0);
+
+    // Détermination automatique du Scénario selon le payeur et le responsable
+    let scenario: ExpenseScenario = payload.scenario;
+    if (!scenario) {
+      if (payload.payer === 'locataire' && payload.responsible === 'proprietaire') {
+        scenario = 'C';
+      } else if (payload.payer === 'proprietaire' && payload.responsible === 'locataire') {
+        scenario = 'B';
+      } else {
+        scenario = 'A';
+      }
+    }
+
+    // Calcul des soldes initiaux selon le scénario
+    let amountToRecover = 0;
+    let compensationAuthorized = false;
+
+    if (scenario === 'B') {
+      amountToRecover = amount;
+    } else if (scenario === 'C') {
+      compensationAuthorized = payload.validation_status === 'APPROUVEE';
+    }
+
+    const expenseRecord: PropertyExpense = {
+      id: expenseId,
+      expense_number: expenseNumber,
+      property_id: payload.property_id,
+      contract_id: payload.contract_id,
+      ticket_id: payload.ticket_id,
+      owner_id: payload.owner_id,
+      agency_id: payload.agency_id,
+      tenant_id: payload.tenant_id,
+      category: payload.category || 'autre',
+      title: payload.title,
+      description: payload.description,
+      amount: amount,
+      currency: payload.currency || 'XOF',
+      payer: payload.payer,
+      responsible: payload.responsible,
+      scenario: scenario,
+      validation_status: payload.validation_status || (payload.payer === 'locataire' ? 'EN_ATTENTE_VALIDATION' : 'APPROUVEE'),
+      expense_date: payload.expense_date || new Date().toISOString().slice(0, 10),
+      invoice_reference: payload.invoice_reference || '',
+      invoice_url: payload.invoice_url || '',
+      receipt_url: payload.receipt_url || '',
+      photos: payload.photos || [],
+      reimbursement_status: scenario === 'B' ? 'en_attente' : 'non_applicable',
+      amount_to_recover: amountToRecover,
+      amount_recovered: 0,
+      recovery_balance: amountToRecover,
+      compensation_authorized: compensationAuthorized,
+      compensation_total_applied: 0,
+      compensation_balance: scenario === 'C' ? amount : 0,
+      refusal_reason: payload.refusal_reason || '',
+      info_requested_text: payload.info_requested_text || '',
+      approved_by: payload.approved_by,
+      approved_at: payload.approved_at,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      property_title: payload.property_title,
+      property_city: payload.property_city,
+      tenant_name: payload.tenant_name,
+      mandant_name: payload.mandant_name
+    };
+
+    // 1. Insertion dans Supabase
+    try {
+      const { error: dbErr } = await supabase.from('property_expenses').insert({
+        id: expenseRecord.id,
+        expense_number: expenseRecord.expense_number,
+        property_id: expenseRecord.property_id,
+        contract_id: expenseRecord.contract_id,
+        ticket_id: expenseRecord.ticket_id,
+        owner_id: expenseRecord.owner_id,
+        agency_id: expenseRecord.agency_id,
+        tenant_id: expenseRecord.tenant_id,
+        category: expenseRecord.category,
+        title: expenseRecord.title,
+        description: expenseRecord.description,
+        amount: expenseRecord.amount,
+        currency: expenseRecord.currency,
+        payer: expenseRecord.payer,
+        responsible: expenseRecord.responsible,
+        scenario: expenseRecord.scenario,
+        validation_status: expenseRecord.validation_status,
+        expense_date: expenseRecord.expense_date,
+        invoice_reference: expenseRecord.invoice_reference,
+        invoice_url: expenseRecord.invoice_url,
+        receipt_url: expenseRecord.receipt_url,
+        photos: expenseRecord.photos,
+        reimbursement_status: expenseRecord.reimbursement_status,
+        amount_to_recover: expenseRecord.amount_to_recover,
+        amount_recovered: expenseRecord.amount_recovered,
+        recovery_balance: expenseRecord.recovery_balance,
+        compensation_authorized: expenseRecord.compensation_authorized,
+        compensation_total_applied: expenseRecord.compensation_total_applied,
+        compensation_balance: expenseRecord.compensation_balance,
+        refusal_reason: expenseRecord.refusal_reason,
+        info_requested_text: expenseRecord.info_requested_text,
+        approved_by: expenseRecord.approved_by,
+        approved_at: expenseRecord.approved_at
+      });
+
+      if (dbErr) {
+        console.warn('Notice insertion Supabase property_expenses:', dbErr.message);
+      }
+    } catch {}
+
+    // 2. Synchronisation cache local et événement réactif
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_property_expenses');
+        const list = stored ? JSON.parse(stored) : [];
+        const updated = [expenseRecord, ...list.filter((x: any) => x.id !== expenseRecord.id)];
+        localStorage.setItem('locatrust_property_expenses', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('locatrust:expenses-updated', { detail: expenseRecord }));
+      } catch {}
+    }
+
+    return { data: expenseRecord, error: null };
+  } catch (err: any) {
+    return { data: null, error: err?.message || 'Erreur création dépense' };
+  }
+}
+
+/**
+ * Mise à jour du statut de validation d'une dépense (Circuit d'approbation)
+ */
+export async function updateExpenseValidationStatus(
+  expenseId: string,
+  newStatus: ExpenseValidationStatus,
+  options?: {
+    refusalReason?: string;
+    infoRequest?: string;
+    actorId?: string;
+  }
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const now = new Date().toISOString();
+    const isApproved = newStatus === 'APPROUVEE';
+    const isCompensated = newStatus === 'COMPENSEE_PARTIELLEMENT' || newStatus === 'COMPENSEE_TOTALEMENT';
+
+    const updatePayload: any = {
+      validation_status: newStatus,
+      updated_at: now
+    };
+
+    if (isApproved || isCompensated) {
+      updatePayload.approved_by = options?.actorId;
+      updatePayload.approved_at = now;
+      updatePayload.compensation_authorized = true;
+    }
+
+    if (newStatus === 'REFUSEE') {
+      updatePayload.refusal_reason = options?.refusalReason || 'Non conforme aux termes contractuels';
+      updatePayload.compensation_authorized = false;
+    }
+
+    if (newStatus === 'INFORMATIONS_DEMANDEES') {
+      updatePayload.info_requested_text = options?.infoRequest || 'Facture détaillée manquante';
+    }
+
+    // 1. Supabase
+    try {
+      await supabase.from('property_expenses').update(updatePayload).eq('id', expenseId);
+    } catch {}
+
+    // 2. Cache local réactif
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_property_expenses');
+        if (stored) {
+          const list = JSON.parse(stored);
+          const next = list.map((item: PropertyExpense) => {
+            if (item.id === expenseId) {
+              return {
+                ...item,
+                ...updatePayload,
+                compensation_authorized: isApproved || isCompensated
+              };
+            }
+            return item;
+          });
+          localStorage.setItem('locatrust_property_expenses', JSON.stringify(next));
+          window.dispatchEvent(new CustomEvent('locatrust:expenses-updated'));
+        }
+      } catch {}
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Erreur mise à jour statut dépense' };
+  }
+}
+
+/**
+ * SCÉNARIO B — Enregistrer un remboursement effectué par le locataire
+ */
+export async function recordExpenseReimbursement(
+  reimbursement: Omit<ExpenseReimbursement, 'id' | 'created_at'>
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const reimbursementId = crypto.randomUUID();
+    const amountPaid = Number(reimbursement.amount_paid || 0);
+
+    const record: ExpenseReimbursement = {
+      ...reimbursement,
+      id: reimbursementId,
+      amount_paid: amountPaid,
+      created_at: new Date().toISOString()
+    };
+
+    // 1. Enregistrer le remboursement dans Supabase
+    try {
+      await supabase.from('expense_reimbursements').insert(record);
+    } catch {}
+
+    // 2. Mettre à jour la dépense mère (solde restant et statut)
+    const { data: expenses } = await getPropertyExpenses('', 'proprietaire');
+    const targetExpense = expenses.find((e) => e.id === reimbursement.expense_id);
+
+    if (targetExpense) {
+      const newAmountRecovered = (targetExpense.amount_recovered || 0) + amountPaid;
+      const newRecoveryBalance = Math.max(0, targetExpense.amount - newAmountRecovered);
+      const newStatus = newRecoveryBalance === 0 ? 'total' : 'partiel';
+
+      try {
+        await supabase
+          .from('property_expenses')
+          .update({
+            amount_recovered: newAmountRecovered,
+            recovery_balance: newRecoveryBalance,
+            reimbursement_status: newStatus,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', targetExpense.id);
+      } catch {}
+
+      // Mettre à jour cache local
+      if (typeof window !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('locatrust_property_expenses');
+          if (stored) {
+            const list: PropertyExpense[] = JSON.parse(stored);
+            const next = list.map((e) => {
+              if (e.id === targetExpense.id) {
+                return {
+                  ...e,
+                  amount_recovered: newAmountRecovered,
+                  recovery_balance: newRecoveryBalance,
+                  reimbursement_status: newStatus
+                };
+              }
+              return e;
+            });
+            localStorage.setItem('locatrust_property_expenses', JSON.stringify(next));
+            window.dispatchEvent(new CustomEvent('locatrust:expenses-updated'));
+          }
+        } catch {}
+      }
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Erreur enregistrement remboursement' };
+  }
+}
+
+/**
+ * SCÉNARIO C — Autoriser et imputer une compensation sur une échéance de loyer
+ */
+export async function authorizeRentCompensation(
+  compensation: Omit<RentCompensation, 'id' | 'created_at' | 'authorized_at'> & {
+    authorized_at?: string;
+  }
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const compId = crypto.randomUUID();
+    const amountDeducted = Number(compensation.amount_deducted || 0);
+    const now = new Date().toISOString();
+
+    const record: RentCompensation = {
+      ...compensation,
+      id: compId,
+      amount_deducted: amountDeducted,
+      authorized_at: compensation.authorized_at || now,
+      created_at: now
+    };
+
+    // 1. Supabase
+    try {
+      await supabase.from('rent_compensations').insert(record);
+    } catch {}
+
+    // 2. Mettre à jour la dépense mère
+    const { data: expenses } = await getPropertyExpenses('', 'proprietaire');
+    const targetExpense = expenses.find((e) => e.id === compensation.expense_id);
+
+    if (targetExpense) {
+      const newTotalApplied = (targetExpense.compensation_total_applied || 0) + amountDeducted;
+      const newCompensationBalance = Math.max(0, targetExpense.amount - newTotalApplied);
+      const newValidationStatus: ExpenseValidationStatus =
+        newCompensationBalance === 0 ? 'COMPENSEE_TOTALEMENT' : 'COMPENSEE_PARTIELLEMENT';
+
+      try {
+        await supabase
+          .from('property_expenses')
+          .update({
+            compensation_authorized: true,
+            compensation_total_applied: newTotalApplied,
+            compensation_balance: newCompensationBalance,
+            validation_status: newValidationStatus,
+            updated_at: now
+          })
+          .eq('id', targetExpense.id);
+      } catch {}
+
+      // Mettre à jour cache local
+      if (typeof window !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('locatrust_property_expenses');
+          if (stored) {
+            const list: PropertyExpense[] = JSON.parse(stored);
+            const next = list.map((e) => {
+              if (e.id === targetExpense.id) {
+                return {
+                  ...e,
+                  compensation_authorized: true,
+                  compensation_total_applied: newTotalApplied,
+                  compensation_balance: newCompensationBalance,
+                  validation_status: newValidationStatus
+                };
+              }
+              return e;
+            });
+            localStorage.setItem('locatrust_property_expenses', JSON.stringify(next));
+          }
+
+          // Stocker également dans le registre des compensations pour rentCalculationEngine
+          const storedComps = localStorage.getItem('locatrust_rent_compensations');
+          const compsList: RentCompensation[] = storedComps ? JSON.parse(storedComps) : [];
+          compsList.push(record);
+          localStorage.setItem('locatrust_rent_compensations', JSON.stringify(compsList));
+
+          window.dispatchEvent(new CustomEvent('locatrust:expenses-updated'));
+          window.dispatchEvent(new CustomEvent('locatrust:compensations-updated', { detail: record }));
+        } catch {}
+      }
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Erreur compensation loyer' };
+  }
+}
+
+/**
+ * Calcule la synthèse financière globale des dépenses pour un utilisateur
+ */
+export function calculateExpensesFinancialSummary(expenses: PropertyExpense[]): ExpenseFinancialSummary {
+  let totalPaidByOwner = 0;
+  let totalToRecoverFromTenants = 0;
+  let totalRecoveredFromTenants = 0;
+  let totalCompensationsAuthorized = 0;
+  let totalCompensationsApplied = 0;
+
+  let pendingValidationCount = 0;
+  let approvedCount = 0;
+  let refusedCount = 0;
+
+  expenses.forEach((e) => {
+    // Comptages statuts
+    if (e.validation_status === 'EN_ATTENTE_VALIDATION' || e.validation_status === 'INFORMATIONS_DEMANDEES') {
+      pendingValidationCount++;
+    } else if (e.validation_status === 'APPROUVEE' || e.validation_status.startsWith('COMPENSEE')) {
+      approvedCount++;
+    } else if (e.validation_status === 'REFUSEE') {
+      refusedCount++;
+    }
+
+    // Scénario A : Dépenses prises en charge directement par le propriétaire
+    if (e.scenario === 'A' && (e.validation_status === 'APPROUVEE' || e.payer === 'proprietaire')) {
+      totalPaidByOwner += e.amount;
+    }
+
+    // Scénario B : Dépenses avancées par le propriétaire à récupérer auprès du locataire
+    if (e.scenario === 'B') {
+      totalToRecoverFromTenants += e.amount;
+      totalRecoveredFromTenants += e.amount_recovered || 0;
+    }
+
+    // Scénario C : Dépenses avancées par le locataire avec déduction autorisée sur loyer
+    if (e.scenario === 'C' && (e.compensation_authorized || e.validation_status === 'APPROUVEE' || e.validation_status.startsWith('COMPENSEE'))) {
+      totalCompensationsAuthorized += e.amount;
+      totalCompensationsApplied += e.compensation_total_applied || 0;
+    }
+  });
+
+  return {
+    totalPaidByOwner,
+    totalToRecoverFromTenants,
+    totalRecoveredFromTenants,
+    balanceRemainingToRecover: Math.max(0, totalToRecoverFromTenants - totalRecoveredFromTenants),
+    totalCompensationsAuthorized,
+    totalCompensationsApplied,
+    compensationsBalanceRemaining: Math.max(0, totalCompensationsAuthorized - totalCompensationsApplied),
+    totalExpensesCount: expenses.length,
+    pendingValidationCount,
+    approvedCount,
+    refusedCount
+  };
+}
+

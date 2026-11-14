@@ -11,6 +11,7 @@ import { BiensView } from '@/components/dashboard/BiensView';
 import { CautionsView } from '@/components/dashboard/CautionsView';
 import { PaiementsView } from '@/components/dashboard/PaiementsView';
 import { MaintenanceView } from '@/components/dashboard/MaintenanceView';
+import { ExpensesManagementView } from '@/components/expenses/ExpensesManagementView';
 import { AbonnementView } from '@/components/dashboard/AbonnementView';
 import { MessagerieView } from '@/components/dashboard/MessagerieView';
 import { VisitesView } from '@/components/dashboard/VisitesView';
@@ -386,6 +387,13 @@ export default function ProprietaireDashboardPage({
             {activeTab === 'maintenance' && (
               <ErrorBoundary>
                 <MaintenanceView />
+              </ErrorBoundary>
+            )}
+
+            {/* TAB 12.bis: Expenses & Repairs (Dépenses, Réparations & Déductions) */}
+            {activeTab === 'expenses' && (
+              <ErrorBoundary>
+                <ExpensesManagementView userRole="proprietaire" />
               </ErrorBoundary>
             )}
 

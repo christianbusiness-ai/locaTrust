@@ -20,6 +20,7 @@ import { CautionsView } from '@/components/dashboard/CautionsView';
 import { PaiementsView } from '@/components/dashboard/PaiementsView';
 import { HistoriqueView } from '@/components/dashboard/HistoriqueView';
 import { MaintenanceView } from '@/components/dashboard/MaintenanceView';
+import { ExpensesManagementView } from '@/components/expenses/ExpensesManagementView';
 import { AbonnementView } from '@/components/dashboard/AbonnementView';
 import { MessagerieView } from '@/components/dashboard/MessagerieView';
 import { ContractListView } from '@/components/contracts/ContractListView';
@@ -365,6 +366,13 @@ export default function AgencyDashboardPage({
             {activeTab === 'maintenance' && (
               <ErrorBoundary>
                 <MaintenanceView />
+              </ErrorBoundary>
+            )}
+
+            {/* TAB 14.bis: Expenses & Repairs (Dépenses, Réparations & Déductions) */}
+            {activeTab === 'expenses' && (
+              <ErrorBoundary>
+                <ExpensesManagementView userRole="agence" />
               </ErrorBoundary>
             )}
 

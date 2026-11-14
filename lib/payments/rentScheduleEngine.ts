@@ -57,6 +57,7 @@ export interface CalculateAllocationOptions {
   paymentDate?: string | Date;
   existingPayments?: any[];
   includePendingDeclarations?: boolean;
+  compensations?: any[];
 }
 
 export interface RentAllocationResult {
@@ -319,10 +320,41 @@ export function generateContractSchedule(
 export function reconcilePaymentsOnSchedule(
   schedule: MonthlyScheduleItem[],
   existingPayments: any[] = [],
-  includePending: boolean = false
+  includePending: boolean = false,
+  compensations: any[] = []
 ): MonthlyScheduleItem[] {
   const updatedSchedule = schedule.map((item) => ({ ...item }));
   const targetContractId = schedule[0]?.contract_id ? String(schedule[0].contract_id).trim() : null;
+
+  // SCÉNARIO C : Imputer d'abord les compensations autorisées sur l'échéancier
+  if (Array.isArray(compensations) && compensations.length > 0) {
+    compensations.forEach((c: any) => {
+      const isAuthorized =
+        c.compensation_authorized === true ||
+        c.validation_status === 'APPROUVEE' ||
+        c.validation_status === 'COMPENSEE_PARTIELLEMENT' ||
+        c.validation_status === 'COMPENSEE_TOTALEMENT';
+      if (!isAuthorized) return;
+
+      const cContractId = String(c.contract_id || '').trim();
+      if (targetContractId && cContractId && cContractId !== targetContractId) return;
+
+      const compAmt = Number(c.amount_deducted || c.amount || 0);
+      if (compAmt <= 0) return;
+
+      const targetMonthStr = String(c.target_month || c.deduction_month || '').toLowerCase();
+      let matched = updatedSchedule.find((s) => s.target_month.toLowerCase().includes(targetMonthStr));
+      if (!matched) {
+        matched = updatedSchedule.find((s) => s.amount_paid < s.amount_due);
+      }
+
+      if (matched) {
+        const needed = matched.amount_due - matched.amount_paid;
+        const alloc = Math.min(needed, compAmt);
+        matched.amount_paid += alloc;
+      }
+    });
+  }
 
   const validPayments = existingPayments.filter((p) => {
     if (!p) return false;
@@ -618,7 +650,8 @@ export function calculateRentPaymentAllocation(
     paymentAmount,
     paymentDate,
     existingPayments = [],
-    includePendingDeclarations = false
+    includePendingDeclarations = false,
+    compensations = []
   } = options;
 
   const monthlyRent = Number(
@@ -663,8 +696,8 @@ export function calculateRentPaymentAllocation(
   // 1. Génération de l'échéancier complet (horizon 36 mois pour supporter les avances)
   let schedule = generateContractSchedule(contract, pDate, 36);
 
-  // 2. Réconciliation avec l'historique existant
-  schedule = reconcilePaymentsOnSchedule(schedule, existingPayments, includePendingDeclarations);
+  // 2. Réconciliation avec l'historique existant (et compensations autorisées)
+  schedule = reconcilePaymentsOnSchedule(schedule, existingPayments, includePendingDeclarations, compensations);
 
   // 3. Calcul de la situation avant le paiement
   const unpaidBefore = schedule.filter(

@@ -927,10 +927,28 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
 
     const cautionsRestantes = Math.max(0, cautionsRecues - cautionsRemboursees - cautionsRetenues);
 
-    // Maintenance & Dépenses
-    const depensesMaintenance = realTickets.reduce(
-      (s: number, t: any) => s + (Number(t.cost || t.amount || t.final_cost || t.estimated_cost) || 0),
-      0
+    // Maintenance & Dépenses (Intégration du module Dépenses & Travaux)
+    let realPropertyExpenses: any[] = [];
+    let realCompensations: any[] = [];
+    if (typeof window !== 'undefined') {
+      try {
+        const storedExp = localStorage.getItem('locatrust_property_expenses');
+        if (storedExp) realPropertyExpenses = JSON.parse(storedExp);
+        const storedComp = localStorage.getItem('locatrust_rent_compensations');
+        if (storedComp) realCompensations = JSON.parse(storedComp);
+      } catch {}
+    }
+
+    const totalPropertyExpensesPaid = realPropertyExpenses
+      .filter((e: any) => e.scenario === 'A' || e.payer === 'proprietaire')
+      .reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
+
+    const depensesMaintenance = Math.max(
+      realTickets.reduce(
+        (s: number, t: any) => s + (Number(t.cost || t.amount || t.final_cost || t.estimated_cost) || 0),
+        0
+      ),
+      totalPropertyExpensesPaid
     );
 
     // 7. Calcul unifié et rigoureux via computeOwnerFinancialMetrics (Règles 1 à 10 du prompt)
@@ -943,7 +961,9 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       activeContracts,
       realPayments,
       activeCautionsList,
-      effectiveReferenceDate
+      effectiveReferenceDate,
+      realCompensations,
+      realPropertyExpenses
     );
 
     // 8. Tableau mensuel réel des 12 mois : calcul précis issu directement de rentCalculationEngine

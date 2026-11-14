@@ -14,6 +14,7 @@ import { LocataireSearchView } from '@/components/locataire/LocataireSearchView'
 import { LocataireContratsView } from '@/components/locataire/LocataireContratsView';
 import { LocatairePaiementsView } from '@/components/locataire/LocatairePaiementsView';
 import { LocataireMaintenanceView } from '@/components/locataire/LocataireMaintenanceView';
+import { LocataireExpensesView } from '@/components/locataire/LocataireExpensesView';
 import { LocataireNotificationsView } from '@/components/locataire/LocataireNotificationsView';
 import { LocataireProfileView } from '@/components/locataire/LocataireProfileView';
 import { LocataireSettingsView } from '@/components/locataire/LocataireSettingsView';
@@ -193,6 +194,11 @@ export default function TenantDashboardPage({
           {/* TAB 5: Maintenance */}
           {activeTab === 'maintenance' && (
             <LocataireMaintenanceView />
+          )}
+
+          {/* TAB 5.bis: Mes Dépenses & Déductions sur Loyer */}
+          {activeTab === 'expenses' && (
+            <LocataireExpensesView />
           )}
 
           {/* TAB 6: Guarantees / Cautions */}

@@ -85,6 +85,7 @@ export interface ScheduledMonthRecord {
   dueDate: Date;               // date limite de paiement
   amountDue: number;
   amountPaid: number;
+  amountCompensated: number;   // Montant des déductions autorisées (Scénario C)
   balanceRemaining: number;
   status: 'paye' | 'avance' | 'en_retard' | 'en_attente' | 'partiel';
   statusLabel: string;
@@ -93,6 +94,12 @@ export interface ScheduledMonthRecord {
     reference?: string;
     amount: number;
     date?: string;
+  }[];
+  compensations?: {
+    expenseId?: string;
+    expenseNumber?: string;
+    amount: number;
+    description?: string;
   }[];
 }
 
@@ -115,6 +122,11 @@ export interface OwnerFinancialMetrics {
   terminatedDebtsAmount?: number;
   terminatedContractsCount?: number;
   terminatedContractsAnalysis?: ContractSituationAnalysis[];
+  // DÉPENSES & COMPENSATIONS (Scénarios A, B, C)
+  totalExpensesPaidByOwner?: number;
+  totalExpensesToRecover?: number;
+  totalCompensationsAuthorized?: number;
+  netRentalIncome?: number;
 }
 
 export interface MandantFinancialRecord {
@@ -296,7 +308,8 @@ export function isConfirmedPayment(payment: any): boolean {
 export function analyzeContractSituation(
   contract: any,
   payments: any[] = [],
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  compensations: any[] = []
 ): ContractSituationAnalysis {
   const contractId = String(contract?.id || contract?.contract_number || '');
   const contractNumber = String(contract?.contract_number || contract?.id || '');
@@ -433,10 +446,105 @@ export function analyzeContractSituation(
       dueDate,
       amountDue: monthlyRent,
       amountPaid: 0,
+      amountCompensated: 0,
       balanceRemaining: monthlyRent,
       status: 'en_attente',
       statusLabel: 'En attente',
-      allocations: []
+      allocations: [],
+      compensations: []
+    });
+  }
+
+  // 5.bis SCÉNARIO C : Déductions / Compensations autorisées sur loyer (Réparations avancées par le locataire)
+  // RÈGLE SCÉNARIO C : La compensation réduit la dette du loyer sans modifier le loyer contractuel ni créer de faux impayé.
+  const contractCompensations: any[] = [];
+  if (Array.isArray(compensations) && compensations.length > 0) {
+    compensations.forEach((c: any) => {
+      if (!c) return;
+      const cContractId = String(c.contract_id || '').trim();
+      const isAuthorized =
+        c.compensation_authorized === true ||
+        c.validation_status === 'APPROUVEE' ||
+        c.validation_status === 'COMPENSEE_PARTIELLEMENT' ||
+        c.validation_status === 'COMPENSEE_TOTALEMENT';
+
+      if (!isAuthorized) return;
+
+      let compMatches = false;
+      if (cContractId) {
+        if (
+          cContractId === contractId ||
+          cContractId === contractNumber ||
+          (contractNumber && cContractId.toLowerCase() === contractNumber.toLowerCase()) ||
+          (contractId && cContractId.toLowerCase() === contractId.toLowerCase())
+        ) {
+          compMatches = true;
+        }
+      } else {
+        const matchesTenant = Boolean(contract?.tenant_id && c.tenant_id && String(c.tenant_id) === String(contract.tenant_id));
+        const matchesProp = Boolean(contract?.property_id && c.property_id && String(c.property_id) === String(contract.property_id));
+        if (matchesTenant && matchesProp) compMatches = true;
+      }
+
+      if (compMatches) {
+        contractCompensations.push(c);
+      }
+    });
+
+    // Appliquer les compensations sur les mois ciblés ou dans l'ordre chronologique
+    contractCompensations.forEach((c: any) => {
+      const compAmt = cleanAmount(c.amount_deducted || c.amount || 0);
+      if (compAmt <= 0) return;
+
+      const targetMonth = String(c.target_month || c.deduction_month || '').trim();
+      let remainingComp = compAmt;
+
+      if (targetMonth) {
+        const targetItem = schedule.find((s) => s.monthKey === targetMonth);
+        if (targetItem && targetItem.balanceRemaining > 0) {
+          const alloc = Math.min(targetItem.balanceRemaining, remainingComp);
+          targetItem.amountCompensated += alloc;
+          targetItem.balanceRemaining = Math.max(0, targetItem.amountDue - targetItem.amountPaid - targetItem.amountCompensated);
+          targetItem.compensations?.push({
+            expenseId: c.expense_id || c.id,
+            expenseNumber: c.expense_number || c.invoice_reference,
+            amount: alloc,
+            description: c.description || c.title || 'Compensation réparation autorisée'
+          });
+          targetItem.allocations.push({
+            paymentId: `comp-${c.id || c.expense_id}`,
+            reference: `DÉDUCTION RÉPARATION (${c.expense_number || 'VALIDÉE'})`,
+            amount: alloc,
+            date: c.authorized_at || c.created_at
+          });
+          remainingComp -= alloc;
+        }
+      }
+
+      // Si reliquat (réparation > montant d'un mois), imputer sur les mois suivants
+      if (remainingComp > 0) {
+        for (const item of schedule) {
+          if (remainingComp <= 0) break;
+          if (item.balanceRemaining > 0) {
+            const alloc = Math.min(item.balanceRemaining, remainingComp);
+            item.amountCompensated += alloc;
+            item.balanceRemaining = Math.max(0, item.amountDue - item.amountPaid - item.amountCompensated);
+            item.compensations?.push({
+              expenseId: c.expense_id || c.id,
+              expenseNumber: c.expense_number || c.invoice_reference,
+              amount: alloc,
+              description: c.description || c.title || 'Compensation réparation autorisée (Reliquat)'
+            });
+            item.allocations.push({
+              paymentId: `comp-rel-${c.id || c.expense_id}`,
+              reference: `DÉDUCTION RÉPARATION RELIQUAT (${c.expense_number || 'VALIDÉE'})`,
+              amount: alloc,
+              date: c.authorized_at || c.created_at
+            });
+            remainingComp -= alloc;
+          }
+        }
+      }
     });
   }
 
@@ -462,7 +570,7 @@ export function analyzeContractSituation(
         if (item && item.balanceRemaining > 0 && remaining > 0) {
           const alloc = Math.min(item.balanceRemaining, remaining);
           item.amountPaid += alloc;
-          item.balanceRemaining = Math.max(0, item.amountDue - item.amountPaid);
+          item.balanceRemaining = Math.max(0, item.amountDue - item.amountPaid - item.amountCompensated);
           item.allocations.push({
             paymentId: p.id,
             reference: p.reference || p.receipt_number,
@@ -482,7 +590,7 @@ export function analyzeContractSituation(
       if (item.balanceRemaining > 0) {
         const alloc = Math.min(item.balanceRemaining, remaining);
         item.amountPaid += alloc;
-        item.balanceRemaining = Math.max(0, item.amountDue - item.amountPaid);
+        item.balanceRemaining = Math.max(0, item.amountDue - item.amountPaid - item.amountCompensated);
         item.allocations.push({
           paymentId: p.id,
           reference: p.reference || p.receipt_number,
@@ -664,7 +772,9 @@ export function computeOwnerFinancialMetrics(
   contracts: any[] = [],
   payments: any[] = [],
   cautions: any[] = [],
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  compensations: any[] = [],
+  expenses: any[] = []
 ): OwnerFinancialMetrics {
   // 1. Séparation stricte des contrats actifs et des anciens contrats terminés (RÈGLE 14)
   const activeContracts: any[] = [];
@@ -692,13 +802,13 @@ export function computeOwnerFinancialMetrics(
 
   // 2. Analyser chaque contrat actif (situation financière strictement indépendante)
   const contractsAnalysis: ContractSituationAnalysis[] = dedupedContracts.map((c) =>
-    analyzeContractSituation(c, payments, referenceDate)
+    analyzeContractSituation(c, payments, referenceDate, compensations)
   );
 
   // RÈGLE 14 (Point 4) : Les dettes des anciens contrats restent enregistrées dans les anciens contrats
   // et consultables comme créances liées aux anciens locataires, JAMAIS mélangées avec le contrat actuel !
   const terminatedContractsAnalysis: ContractSituationAnalysis[] = terminatedContracts.map((c) =>
-    analyzeContractSituation(c, payments, referenceDate)
+    analyzeContractSituation(c, payments, referenceDate, compensations)
   );
   const terminatedDebtsAmount = terminatedContractsAnalysis.reduce((sum, an) => sum + an.lateAmount, 0);
 
@@ -754,6 +864,28 @@ export function computeOwnerFinancialMetrics(
       ? Math.round((collectedRentCurrentMonth / expectedRentCurrentMonth) * 100)
       : 100;
 
+  // 4. Calculs des dépenses et compensations (Scénarios A, B, C)
+  let totalExpensesPaidByOwner = 0;
+  let totalExpensesToRecover = 0;
+  let totalCompensationsAuthorized = 0;
+
+  if (Array.isArray(expenses)) {
+    expenses.forEach((e: any) => {
+      const amt = cleanAmount(e.amount);
+      if (e.scenario === 'A' || (e.payer === 'proprietaire' && e.responsible === 'proprietaire')) {
+        totalExpensesPaidByOwner += amt;
+      } else if (e.scenario === 'B' || (e.payer === 'proprietaire' && e.responsible === 'locataire')) {
+        const recovered = cleanAmount(e.amount_recovered);
+        totalExpensesToRecover += Math.max(0, amt - recovered);
+      } else if (e.scenario === 'C') {
+        totalCompensationsAuthorized += amt;
+      }
+    });
+  }
+
+  // Net = Revenu loyer encaissé - Dépenses directes prises en charge par le propriétaire
+  const netRentalIncome = Math.max(0, collectedRentCurrentMonth - totalExpensesPaidByOwner);
+
   return {
     expectedRentCurrentMonth,
     collectedRentCurrentMonth,
@@ -771,7 +903,11 @@ export function computeOwnerFinancialMetrics(
     contractsAnalysis,
     terminatedDebtsAmount,
     terminatedContractsCount: terminatedContracts.length,
-    terminatedContractsAnalysis
+    terminatedContractsAnalysis,
+    totalExpensesPaidByOwner,
+    totalExpensesToRecover,
+    totalCompensationsAuthorized,
+    netRentalIncome
   };
 }
 
@@ -791,9 +927,19 @@ export function computeAgencyFinancialMetrics(
   payments: any[] = [],
   cautions: any[] = [],
   mandants: { id: string; full_name: string; phone?: string; commission_rate?: number }[] = [],
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  compensations: any[] = [],
+  expenses: any[] = []
 ): AgencyFinancialMetrics {
-  const baseMetrics = computeOwnerFinancialMetrics(properties, contracts, payments, cautions, referenceDate);
+  const baseMetrics = computeOwnerFinancialMetrics(
+    properties,
+    contracts,
+    payments,
+    cautions,
+    referenceDate,
+    compensations,
+    expenses
+  );
 
   // Regrouper par mandant
   const mandantMap = new Map<string, MandantFinancialRecord>();

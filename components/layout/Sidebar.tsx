@@ -30,7 +30,8 @@ import {
   FileCheck,
   ShieldAlert,
   Calendar,
-  Clock
+  Clock,
+  DollarSign
 } from 'lucide-react';
 import { Logo } from '@/components/common/Logo';
 import { UserRole } from '@/types/database.types';
@@ -210,6 +211,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'contracts', name: 'Contrats', icon: FileText, badge: contractCount > 0 ? contractCount : undefined },
     { id: 'payments', name: 'Paiements', icon: CreditCard },
     { id: 'receipts', name: 'Reçus', icon: Receipt },
+    { id: 'expenses', name: 'Dépenses & Déductions', icon: DollarSign },
     { id: 'guarantees', name: 'Cautions', icon: ShieldCheck, badge: cautionPendingCount > 0 ? cautionPendingCount : undefined },
     { id: 'maintenance', name: 'Maintenance', icon: Wrench },
     { id: 'profile', name: 'Mon profil', icon: UserIcon },
@@ -244,6 +246,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'receipts', name: 'Reçus & Quittances', icon: Receipt },
     { id: 'history', name: 'Historique général', icon: History },
     { id: 'maintenance', name: 'Maintenance', icon: Wrench },
+    { id: 'expenses', name: 'Dépenses & Travaux', icon: DollarSign },
     { id: 'bank_accounts', name: 'Comptes de paiement', icon: Wallet },
   ];
 

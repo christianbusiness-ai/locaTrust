@@ -501,6 +501,31 @@ export const MaintenanceView: React.FC = () => {
     setInterventionText('');
   };
 
+  // Action exigée par le prompt : « Enregistrer une dépense » depuis la maintenance
+  const handleOpenExpenseFromMaintenance = (ticket: MaintenanceItem) => {
+    if (!ticket) return;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(
+          'locatrust_prefill_expense',
+          JSON.stringify({
+            ticket_id: ticket.id,
+            property_id: (ticket as any).property_id,
+            contract_id: (ticket as any).contract_id,
+            tenant_id: (ticket as any).tenant_id,
+            title: `Réparation suite à ticket ${ticket.ticketNumber} (${ticket.category})`,
+            category: (ticket.category || 'plomberie').toLowerCase().includes('eau') || (ticket.category || '').toLowerCase().includes('robinet') ? 'plomberie' : 'autre',
+            description: healMaintenanceDescription(extractCleanMaintenanceMessage(ticket.description)),
+            payer: 'proprietaire',
+            responsible: 'proprietaire',
+            scenario: 'A'
+          })
+        );
+        window.dispatchEvent(new CustomEvent('locatrust:navigate-tab', { detail: { tab: 'expenses' } }));
+      } catch {}
+    }
+  };
+
   // Action: Approve Tenant Rent Deduction for out-of-pocket repair
   const handleApproveDeduction = (ticketId: string) => {
     let updated: MaintenanceItem | null = null;
@@ -720,7 +745,7 @@ export const MaintenanceView: React.FC = () => {
                   </div>
 
                   <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed bg-slate-50/80 p-2.5 rounded-xl border border-slate-100">
-                    {t.description}
+                    {healMaintenanceDescription(extractCleanMaintenanceMessage(t.description))}
                   </p>
 
                   <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[11px] text-slate-400">
@@ -762,7 +787,10 @@ export const MaintenanceView: React.FC = () => {
                       </span>
                     </div>
                     <span className="text-xs text-slate-600 font-medium">
-                      {selectedTicket.propertyTitle} {selectedTicket.propertyAddress ? `• ${selectedTicket.propertyAddress}` : ''}
+                      {selectedTicket.propertyTitle} {(() => {
+                        const city = resolvePropertyCity(selectedTicket.propertyTitle, selectedTicket.propertyAddress);
+                        return city ? `• ${city}` : '';
+                      })()}
                     </span>
                     <span className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
                       {selectedTicket.tenantPhone && selectedTicket.tenantPhone !== '+225 00 00 00 00' && (
@@ -854,7 +882,7 @@ export const MaintenanceView: React.FC = () => {
 
                       <div className="p-3.5 rounded-xl bg-white border border-slate-200/90 shadow-2xs">
                         <p className="text-xs sm:text-sm text-slate-800 leading-relaxed whitespace-pre-wrap font-medium">
-                          {extractCleanMaintenanceMessage(selectedTicket.description)}
+                          {healMaintenanceDescription(extractCleanMaintenanceMessage(selectedTicket.description))}
                         </p>
                       </div>
 
@@ -1060,6 +1088,15 @@ export const MaintenanceView: React.FC = () => {
                     className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 text-[11px] font-bold hover:bg-slate-100 transition-all"
                   >
                     Proposer une date d'artisan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenExpenseFromMaintenance(selectedTicket)}
+                    className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-black flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    title="Transformer cette intervention en dépense comptable"
+                  >
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>Enregistrer une dépense</span>
                   </button>
                   {selectedTicket.status !== 'Résolu' && (
                     <button

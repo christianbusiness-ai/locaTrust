@@ -357,9 +357,24 @@ export function resolvePropertyCity(
   city?: string,
   commune?: string
 ): string {
+  const isInvalidCity = (val: string) => {
+    if (!val) return true;
+    const clean = val.toLowerCase().trim();
+    return (
+      clean === "côte d'ivoire" ||
+      clean === "cote d'ivoire" ||
+      clean === "ci" ||
+      clean === "rci" ||
+      clean === "republique de cote d'ivoire" ||
+      clean === "république de côte d'ivoire" ||
+      clean === "logement" ||
+      clean === "undefined" ||
+      clean === "null"
+    );
+  };
+
   const cleanCity = (city || '').trim();
   const cleanCommune = (commune || '').trim();
-  const isInvalidCity = (val: string) => !val || /^(côte d'?ivoire|cote d'?ivoire|ci)$/i.test(val);
 
   if (cleanCity && !isInvalidCity(cleanCity)) {
     return cleanCommune && cleanCommune !== cleanCity && !isInvalidCity(cleanCommune)
@@ -381,7 +396,7 @@ export function resolvePropertyCity(
     }
   }
 
-  // 2. Extraire la ville depuis l'adresse : "Yamoussoukro - Côte d'Ivoire", "Bouaké, Quartier Commerce"
+  // 2. Extraire la ville depuis l'adresse en excluant formellement le pays
   if (propertyAddress) {
     const parts = propertyAddress.split(/[-–—,•|]/).map((s) => s.trim()).filter(Boolean);
     for (const part of parts) {
