@@ -223,10 +223,14 @@ export const LocataireMaintenanceView: React.FC = () => {
         }
         if (expenseList.length === 0 && user?.id) {
           try {
-            const { data: dbExp } = await supabase
-              .from('property_expenses')
-              .select('*')
-              .or(`tenant_id.eq.${user.id},title.ilike.%${user?.user_metadata?.full_name || 'Christian'}%`);
+            const userFullName = (user?.user_metadata?.full_name || '').trim();
+            let query = supabase.from('property_expenses').select('*');
+            if (userFullName) {
+              query = query.or(`tenant_id.eq.${user.id},tenant_name.ilike.%${userFullName}%,title.ilike.%${userFullName}%`);
+            } else {
+              query = query.eq('tenant_id', user.id);
+            }
+            const { data: dbExp } = await query;
             if (dbExp && dbExp.length > 0) expenseList = dbExp;
           } catch {}
         }

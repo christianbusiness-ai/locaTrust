@@ -634,10 +634,10 @@ export const ProprietaireDashboardView: React.FC<ProprietaireDashboardViewProps>
     held: 4900000
   } : {
     expected: activeContracts.length > 0
-      ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 60000), 0)
+      ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 0), 0)
       : 0,
     held: activeContracts.length > 0
-      ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 60000), 0)
+      ? activeContracts.reduce((sum, c) => sum + (Number(c.caution_amount || c.caution) || 0), 0)
       : 0
   };
 

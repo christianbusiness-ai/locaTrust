@@ -173,7 +173,7 @@ export const LocatairePaiementsView: React.FC = () => {
     if (contractToUse) {
       setSelectedContractId(contractToUse.id);
       const realRent = extractContractMonthlyRent(contractToUse);
-      if (realRent > 0 && (amount <= 0 || amount === 30000)) {
+      if (realRent > 0 && amount <= 0) {
         setAmount(realRent);
       }
     }
@@ -302,11 +302,10 @@ export const LocatairePaiementsView: React.FC = () => {
           for (const dn of declaredNotifs) {
             const pld = dn.payload || dn.data || {};
             const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
-            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
-            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
-            const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
-            const targetContractNum = pld.contract_number || userContracts[0]?.contract_number || 'Bail en cours';
-            const matchedContract = userContracts.find(c => c.contract_number === targetContractNum || c.id === pld.contract_id) || userContracts[0];
+            const targetContractNum = pld.contract_number || userContracts[0]?.contract_number || '';
+            const matchedContract = userContracts.find(c => (targetContractNum && c.contract_number === targetContractNum) || c.id === pld.contract_id) || userContracts[0];
+            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || (matchedContract ? extractContractMonthlyRent(matchedContract) : 0);
+            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
             const exists = rentList.some(r => r.id === pmtId || (pmtRef && r.reference === pmtRef));
             if (!exists) {
@@ -1863,7 +1862,7 @@ export const LocatairePaiementsView: React.FC = () => {
         tenantName: resolved.tenantName,
         tenantCni: resolved.tenantCni,
         tenantPhone: resolved.tenantPhone,
-        amount: dep.amount_paid || dep.amount_requested || 60000,
+        amount: Number(dep.amount_paid || dep.amount_requested || (activeCautionContract ? Number(activeCautionContract.caution_amount || activeCautionContract.caution) : 0)),
         periodCovered: 'Dépôt de Garantie Contractuel (Loi n° 2019-576 Art. 414)',
         paymentDate: dep.declared_at ? new Date(dep.declared_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
         paymentMethod: formatRealPaymentMethod(dep.payment_method, dep.declared_reference, cleanNum),
@@ -2257,8 +2256,8 @@ export const LocatairePaiementsView: React.FC = () => {
               </h4>
               <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed max-w-2xl">
                 {hasTenantSignedDeposit
-                  ? `Dépôt de garantie de ${formatFCFA(myDeposit.amount_paid || myDeposit.amount_requested || 60000)} consigné sous séquestre conforme. Ce raccourci reste affiché pendant 24h (retrouvez-le ensuite de façon permanente dans votre onglet Cautions).`
-                  : `Le bailleur a validé votre versement de ${formatFCFA(myDeposit.amount_paid || myDeposit.amount_requested || 60000)}. Apposez votre signature certifiée pour générer le reçu officiel avec QR Code.`}
+                  ? `Dépôt de garantie de ${formatFCFA(Number(myDeposit.amount_paid || myDeposit.amount_requested || (activeCautionContract ? Number(activeCautionContract.caution_amount || activeCautionContract.caution) : 0)))} consigné sous séquestre conforme. Ce raccourci reste affiché pendant 24h (retrouvez-le ensuite de façon permanente dans votre onglet Cautions).`
+                  : `Le bailleur a validé votre versement de ${formatFCFA(Number(myDeposit.amount_paid || myDeposit.amount_requested || (activeCautionContract ? Number(activeCautionContract.caution_amount || activeCautionContract.caution) : 0)))}. Apposez votre signature certifiée pour générer le reçu officiel avec QR Code.`}
               </p>
             </div>
           </div>

@@ -519,7 +519,7 @@ export const ContractListView: React.FC<ContractListViewProps> = ({
         rawContract.tenant_signature ||
         getCertifiedSignatureDataUrl('locataire', resolvedParties.tenant.name || tenantFallbackName);
 
-      const rentVal = Number(rawContract.monthly_rent || rawContract.rent || 30000);
+      const rentVal = Number(rawContract.monthly_rent || rawContract.rent || 0);
       const cautionVal = Number(rawContract.caution_amount || rawContract.caution || rentVal * 2);
 
       await generateOfficialContractPdf({

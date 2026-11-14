@@ -184,7 +184,7 @@ export async function collectProofDossierData(contractOrId: any): Promise<ProofD
   const propertyRooms = prop.rooms || rawContract?.property_rooms || 3;
 
   // Conditions du contrat
-  const rentAmount = Number(rawContract?.monthly_rent || rawContract?.rent || 30000);
+  const rentAmount = Number(rawContract?.monthly_rent || rawContract?.rent || 0);
   const chargesAmount = Number(rawContract?.charges || rawContract?.charges_amount || 0);
   const durationMonths = Number(rawContract?.duration_months || 12);
   const startDate = rawContract?.start_date ? new Date(rawContract.start_date).toLocaleDateString('fr-FR') : '01/01/2026';

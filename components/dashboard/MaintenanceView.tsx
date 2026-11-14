@@ -171,8 +171,18 @@ export const MaintenanceView: React.FC = () => {
           }
         } catch {}
       }
-      if (!targetTenantId && updatedTicket.tenantName?.toLowerCase().includes('christian')) {
-        targetTenantId = 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+      if (!targetTenantId && updatedTicket.tenantName) {
+        try {
+          const { data: matchedUser } = await supabase
+            .from('users')
+            .select('id')
+            .ilike('full_name', `%${updatedTicket.tenantName}%`)
+            .limit(1)
+            .maybeSingle();
+          if (matchedUser?.id) {
+            targetTenantId = matchedUser.id;
+          }
+        } catch {}
       }
 
       // 1. Supabase PostgreSQL avec upsert de sécurité

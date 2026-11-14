@@ -240,7 +240,7 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
 
   const tenantData = React.useMemo(() => {
     if (realContract) {
-      const rentVal = Number(dbContract?.monthly_rent || realContract.monthly_rent || realContract.rent || realContract.rent_amount || 30000);
+      const rentVal = Number(dbContract?.monthly_rent || realContract.monthly_rent || realContract.rent || realContract.rent_amount || 0);
       const cautionVal = Number(dbContract?.caution_amount || realContract.caution_amount || realContract.caution || rentVal * 2);
       const chargesVal = Number(dbContract?.charges_amount ?? realContract.charges_amount ?? realContract.charges ?? 0);
 
@@ -296,8 +296,8 @@ export const ContractDetailView: React.FC<ContractDetailViewProps> = ({
       address: 'Abidjan, Côte d\'Ivoire',
       propertyTitle: 'Bien immobilier',
       propertyAddress: 'Abidjan - Côte d\'Ivoire',
-      rent: 30000,
-      caution: 60000,
+      rent: 0,
+      caution: 0,
       charges: 0,
       startDate: '07/11/2026',
       dueDay: 7,

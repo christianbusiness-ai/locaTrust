@@ -1,6 +1,6 @@
 // api/sync.js
 // Vercel Serverless Function — Moteur Centralisé de Synchronisation Multi-Appareils & Multi-Comptes
-// Source de vérité unique pour Agences (KK), Propriétaires, Locataires (Christian) et Administrateurs.
+// Source de vérité unique pour Agences, Propriétaires, Locataires et Administrateurs.
 
 export const config = {
   runtime: 'nodejs',
@@ -26,122 +26,11 @@ let DELETED_PAYMENTS = new Set([
 ]);
 
 let SERVER_STORE = {
-  payments: [
-    {
-      id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
-      contract_id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
-      contract_number: 'LT-2026-CI-39210687',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-      agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-      amount: 60000,
-      payment_date: '2026-11-10',
-      payment_method: 'Espèces',
-      reference: 'ESP-895031',
-      status: 'confirme',
-      target_month: 'Novembre 2026 à Janvier 2027',
-      created_at: '2026-11-10T11:51:18.000Z',
-      confirmed_at: '2026-11-10T11:51:18.000Z',
-      owner_signature_url: 'SIG_OWNER_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
-      tenant: {
-        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        full_name: 'Christian',
-        email: 'christianyaokoffi88@gmail.com',
-        phone: '0500552141',
-        role: 'locataire',
-        verification_status: 'verifie'
-      },
-      contract: {
-        id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
-        contract_number: 'LT-2026-CI-39210687',
-        monthly_rent: 20000,
-        caution_amount: 40000,
-        property: {
-          title: 'Maison a loué',
-          address: 'Yamoussoukro - Côte d\'Ivoire',
-          city: 'Yamoussoukro'
-        }
-      }
-    }
-  ],
-
+  payments: [],
   cautions: [],
-
-  receipts: [
-    {
-      id: 'c8beb2ea-0b93-4724-bf97-7f809c43a5c0',
-      receipt_number: 'ESP-895031',
-      type: 'loyer',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-      agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-      tenant_name: 'Christian',
-      property_title: 'Maison a loué',
-      property_address: 'Yamoussoukro - Côte d\'Ivoire',
-      contract_number: 'LT-2026-CI-39210687',
-      period_covered: 'Novembre 2026 à Janvier 2027',
-      amount: 60000,
-      payment_method: 'Espèces',
-      payment_date: '10/11/2026',
-      token: 'tok_rec_esp_895031_signed',
-      status: 'certifie',
-      owner_signed: true,
-      tenant_signed: true,
-      owner_signature_url: 'SIG_OWNER_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED'
-    }
-  ],
-
+  receipts: [],
   notifications: [],
-
-  contracts: [
-    {
-      id: '0a712408-7819-4711-8e05-bfa1be4a1ed0',
-      contract_number: 'LT-2026-CI-39210687',
-      contractNumber: 'LT-2026-CI-39210687',
-      property_id: '59cc106e-d787-448d-9513-5c9e2aa2e184',
-      tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-      owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-      agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-      rent: 20000,
-      monthly_rent: 20000,
-      caution: 40000,
-      caution_amount: 40000,
-      charges: 0,
-      charges_amount: 0,
-      duration_months: 12,
-      start_date: '2026-11-01',
-      signed_date: '2026-11-10',
-      end_date: '2027-10-31',
-      status: 'actif',
-      owner_signed: true,
-      tenant_signed: true,
-      owner_signature_url: 'SIG_OWNER_CERTIFIED',
-      tenant_signature_url: 'SIG_TENANT_CHRISTIAN_CERTIFIED',
-      owner: {
-        id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-        full_name: 'locatrust',
-        phone: '0584269885',
-        email: 'locatrust@locatrust.ci',
-        account_type: 'proprietaire'
-      },
-      tenant: {
-        id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-        full_name: 'Christian',
-        phone: '0500552141',
-        email: 'christianyaokoffi88@gmail.com',
-        account_type: 'locataire'
-      },
-      property: {
-        id: '59cc106e-d787-448d-9513-5c9e2aa2e184',
-        title: 'Maison a loué',
-        address: 'Yamoussoukro - Côte d\'Ivoire',
-        city: 'Yamoussoukro'
-      }
-    }
-  ],
-
+  contracts: [],
   maintenance: [],
   properties: [],
   messages: [],
@@ -284,13 +173,18 @@ export default async function handler(req, res) {
         );
         const userMaintenance = SERVER_STORE.maintenance.filter(
           (m) =>
-            m.ownerId === cleanUserId ||
-            m.agencyId === cleanUserId ||
-            m.tenantId === cleanUserId ||
-            m.owner_id === cleanUserId ||
-            m.agency_id === cleanUserId ||
-            m.tenant_id === cleanUserId ||
-            (m.tenantName && m.tenantName.toLowerCase().includes('christian') && cleanUserId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46')
+            m &&
+            (m.ownerId === cleanUserId ||
+              m.agencyId === cleanUserId ||
+              m.tenantId === cleanUserId ||
+              m.owner_id === cleanUserId ||
+              m.agency_id === cleanUserId ||
+              m.tenant_id === cleanUserId ||
+              SERVER_STORE.contracts.some(
+                (c) =>
+                  (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
+                  ((m.propertyId && c.property_id === m.propertyId) || (m.propertyTitle && c.property_title === m.propertyTitle))
+              ))
         );
         const userProperties = SERVER_STORE.properties.filter(
           (pr) => pr.owner_id === cleanUserId || pr.agency_id === cleanUserId
@@ -301,7 +195,11 @@ export default async function handler(req, res) {
             (e.owner_id === cleanUserId ||
               e.agency_id === cleanUserId ||
               e.tenant_id === cleanUserId ||
-              (e.tenant_name && e.tenant_name.toLowerCase().includes('christian') && cleanUserId === 'a939eff5-c93d-4e6e-9f1f-b61c39986a46'))
+              SERVER_STORE.contracts.some(
+                (c) =>
+                  (c.tenant_id === cleanUserId || c.owner_id === cleanUserId || c.agency_id === cleanUserId) &&
+                  ((e.property_id && c.property_id === e.property_id) || (e.property_title && c.property_title === e.property_title))
+              ))
         );
         const userReadState = SERVER_STORE.readState[cleanUserId] || {
           readMessageIds: [],
@@ -474,7 +372,7 @@ export default async function handler(req, res) {
         const newId = payment.id || `pmt_${Date.now()}`;
         const newRef = payment.reference || `REF-${Date.now().toString().slice(-6)}`;
         const monthText = payment.target_month || 'Mois en cours';
-        const amt = Number(payment.amount) || 30000;
+        const amt = Number(payment.amount) || 0;
 
         const normalizedPayment = {
           ...payment,
@@ -624,44 +522,37 @@ export default async function handler(req, res) {
 
       // 2b. Signature de la quittance par le locataire (Scellement définitif)
       if (action === 'sign_receipt') {
-        const { paymentId, reference, tenantSignatureUrl, ownerSignatureUrl } = body;
+        const { paymentId, reference, tenantSignatureUrl, ownerSignatureUrl, payment: pData } = body;
         let targetPayment = SERVER_STORE.payments.find(p => (paymentId && p.id === paymentId) || (reference && p.reference === reference));
 
         if (!targetPayment) {
-          // Résilience : Si le paiement n'était pas en mémoire, l'insérer comme confirmé
-          const recRefFallback = reference || `ESP-${Date.now().toString().slice(-6)}`;
+          // Résilience : Si le paiement n'était pas en mémoire, l'insérer dynamiquement
+          const recRefFallback = reference || (pData && pData.reference) || `ESP-${Date.now().toString().slice(-6)}`;
+          const payloadPayment = pData || {};
+          const matchedContract = SERVER_STORE.contracts.find(
+            c => (payloadPayment.contract_id && c.id === payloadPayment.contract_id) ||
+                 (payloadPayment.contract_number && c.contract_number === payloadPayment.contract_number) ||
+                 (payloadPayment.tenant_id && c.tenant_id === payloadPayment.tenant_id)
+          );
+
           targetPayment = {
-            id: paymentId || `pmt_${Date.now()}`,
-            contract_id: 'LT-2026-CI-39210687',
-            tenant_id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-            owner_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-            agency_id: '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-            amount: 60000,
-            payment_date: new Date().toISOString().split('T')[0],
-            payment_method: 'Espèces',
+            id: paymentId || payloadPayment.id || `pmt_${Date.now()}`,
+            contract_id: payloadPayment.contract_id || matchedContract?.id || '',
+            contract_number: payloadPayment.contract_number || matchedContract?.contract_number || '',
+            tenant_id: payloadPayment.tenant_id || matchedContract?.tenant_id || '',
+            owner_id: payloadPayment.owner_id || matchedContract?.owner_id || '',
+            agency_id: payloadPayment.agency_id || matchedContract?.agency_id || '',
+            amount: Number(payloadPayment.amount) || Number(body.amount) || 0,
+            payment_date: payloadPayment.payment_date || new Date().toISOString().split('T')[0],
+            payment_method: payloadPayment.payment_method || 'Espèces',
             reference: recRefFallback,
             status: 'confirme',
-            target_month: 'Novembre 2026 à Janvier 2027',
+            target_month: payloadPayment.target_month || '',
             confirmed_at: new Date().toISOString(),
-            owner_signature_url: ownerSignatureUrl || 'SIG_OWNER_CERTIFIED',
-            tenant_signature_url: tenantSignatureUrl,
-            tenant: {
-              id: 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-              full_name: 'Christian',
-              email: 'christian@locatrust.ci',
-              phone: '0500552141',
-              role: 'locataire',
-              verification_status: 'verifie'
-            },
-            contract: {
-              id: 'LT-2026-CI-39210687',
-              contract_number: 'LT-2026-CI-39210687',
-              property: {
-                title: 'Maison a loué',
-                address: 'Yamoussoukro - Côte d\'Ivoire',
-                city: 'Yamoussoukro'
-              }
-            }
+            owner_signature_url: ownerSignatureUrl || payloadPayment.owner_signature_url || 'SIG_OWNER_CERTIFIED',
+            tenant_signature_url: tenantSignatureUrl || payloadPayment.tenant_signature_url || '',
+            tenant: payloadPayment.tenant || matchedContract?.tenant || null,
+            contract: payloadPayment.contract || matchedContract || null
           };
           SERVER_STORE.payments.unshift(targetPayment);
         } else {
@@ -691,12 +582,19 @@ export default async function handler(req, res) {
             id: `rec_${Date.now()}`,
             receipt_number: recRef,
             type: 'loyer',
-            tenant_name: targetPayment.tenant?.full_name || 'Christian',
-            property_title: targetPayment.contract?.property?.title || 'Maison a loué',
-            property_address: targetPayment.contract?.property?.address || 'Yamoussoukro',
-            contract_number: targetPayment.contract?.contract_number || 'LT-2026-CI-39210687',
-            period_covered: targetPayment.target_month || 'Novembre 2026 à Janvier 2027',
-            amount: targetPayment.amount || 60000,
+            tenant_name: targetPayment.tenant?.full_name || '',
+            property_title: targetPayment.contract?.property?.title || '',
+            property_address: targetPayment.contract?.property?.address || '',
+            contract_number: targetPayment.contract?.contract_number || targetPayment.contract_number || '',
+            period_covered: targetPayment.target_month || '',
+            amount: Number(targetPayment.amount) || 0,
+            payment_method: targetPayment.payment_method || 'Espèces',
+            payment_date: targetPayment.payment_date || new Date().toISOString().split('T')[0],
+            status: 'certifie',
+            tenant_signed: true,
+            tenant_signature_url: tenantSignatureUrl,
+            owner_signature_url: targetPayment.owner_signature_url,
+          };
             payment_method: targetPayment.payment_method || 'Espèces',
             payment_date: targetPayment.payment_date || new Date().toISOString().split('T')[0],
             status: 'certifie',
@@ -868,13 +766,13 @@ export default async function handler(req, res) {
         // Notification automatique et certifiée sur TOUTE action
         let targetTenantId = target.tenantId || target.tenant_id;
         if (!targetTenantId) {
-          const christian = SERVER_STORE.payments.find(p => p.tenant_id)?.tenant_id;
-          if (christian) targetTenantId = christian;
+          const relContract = SERVER_STORE.contracts.find(c => (c.property_id && c.property_id === target.propertyId) || (target.ticketNumber && c.contract_number));
+          if (relContract?.tenant_id) targetTenantId = relContract.tenant_id;
         }
         let targetOwnerId = target.ownerId || target.owner_id;
         if (!targetOwnerId) {
-          const owner = SERVER_STORE.payments.find(p => p.owner_id)?.owner_id;
-          if (owner) targetOwnerId = owner;
+          const relContract = SERVER_STORE.contracts.find(c => (c.property_id && c.property_id === target.propertyId) || (target.ticketNumber && c.contract_number));
+          if (relContract?.owner_id) targetOwnerId = relContract.owner_id;
         }
         const lastNote = Array.isArray(notes) && notes.length > 0 ? notes[notes.length - 1] : null;
 
@@ -1002,14 +900,22 @@ export default async function handler(req, res) {
           );
 
           if (!targetTicket && (targetTckNum || expense.ticket_id)) {
+            const relContract = SERVER_STORE.contracts.find(
+              c => (expense.property_id && c.property_id === expense.property_id) || (expense.contract_id && c.id === expense.contract_id)
+            );
+            const dynamicTenantId = expense.tenant_id || relContract?.tenant_id || '';
+            const dynamicTenantName = expense.tenant_name || relContract?.tenant_name || relContract?.tenant?.full_name || 'Locataire';
+            const dynamicOwnerId = expense.owner_id || relContract?.owner_id || '';
+            const dynamicPropertyTitle = expense.property_title || relContract?.property_title || relContract?.property?.title || 'Logement';
+
             targetTicket = {
               id: expense.ticket_id || targetTckNum,
               ticketNumber: targetTckNum || expense.ticket_id,
-              propertyTitle: expense.property_title || 'Maison a loué',
-              tenantName: expense.tenant_name || 'Christian',
-              tenantId: expense.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46',
-              ownerId: expense.owner_id || '95efc3ce-726a-407a-9b9a-f2aad36cc79d',
-              category: expense.category || 'toiture',
+              propertyTitle: dynamicPropertyTitle,
+              tenantName: dynamicTenantName,
+              tenantId: dynamicTenantId,
+              ownerId: dynamicOwnerId,
+              category: expense.category || 'Général',
               status: 'En cours',
               description: expense.description || 'Signalement de maintenance',
               notes: [],
@@ -1021,12 +927,13 @@ export default async function handler(req, res) {
 
           if (targetTicket) {
             targetTicket.status = 'En cours';
+            const dynamicAmount = Number(expense.amount || 0);
             const noteText = expense.scenario === 'C'
-              ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${Number(expense.amount || 0).toLocaleString('fr-FR')} FCFA. Ce montant sera déduit de votre loyer conformément au Scénario C.`
-              : `Décision du bailleur : La réparation de ${Number(expense.amount || 0).toLocaleString('fr-FR')} FCFA a été validée.`;
+              ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${dynamicAmount.toLocaleString('fr-FR')} FCFA. Ce montant sera déduit de votre loyer conformément au Scénario C.`
+              : `Décision du bailleur : La réparation de ${dynamicAmount.toLocaleString('fr-FR')} FCFA a été validée.`;
 
             const existingNotes = Array.isArray(targetTicket.notes) ? targetTicket.notes : [];
-            const hasNote = existingNotes.some(n => n.content && n.content.includes(String(expense.amount)));
+            const hasNote = existingNotes.some(n => n.content && n.content.includes(dynamicAmount.toLocaleString('fr-FR')));
             if (!hasNote) {
               targetTicket.notes = [
                 ...existingNotes,
@@ -1043,38 +950,41 @@ export default async function handler(req, res) {
             if (expense.scenario === 'C') {
               targetTicket.rentDeductionRequest = {
                 status: 'approuve',
-                amountSpent: expense.amount,
+                amountSpent: dynamicAmount,
                 deductionMonth: 'Prochain loyer'
               };
             }
 
-            const targetTenantId = expense.tenant_id || targetTicket.tenantId || targetTicket.tenant_id || 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+            const targetTenantId = expense.tenant_id || targetTicket.tenantId || targetTicket.tenant_id || '';
             const notifTitle = expense.scenario === 'C'
               ? '🛠️ Réparation autorisée avec déduction de loyer'
               : '🛠️ Décision du bailleur concernant votre signalement';
-            const notifDesc = `Votre bailleur a validé votre signalement pour « ${expense.property_title || 'Maison a loué'} » : vous êtes autorisé(e) à faire effectuer la réparation (${Number(expense.amount || 0).toLocaleString('fr-FR')} FCFA déductibles du loyer).`;
+            const resolvedPropTitle = expense.property_title || targetTicket.propertyTitle || 'votre logement';
+            const notifDesc = `Votre bailleur a validé votre signalement pour « ${resolvedPropTitle} » : vous êtes autorisé(e) à faire effectuer la réparation (${dynamicAmount.toLocaleString('fr-FR')} FCFA déductibles du loyer).`;
 
-            SERVER_STORE.notifications.unshift({
-              id: `notif_exp_${Date.now()}`,
-              title: notifTitle,
-              description: notifDesc,
-              time: "À l'instant",
-              timestamp: "À l'instant",
-              category: 'maintenance',
-              type: 'maintenance',
-              targetRole: 'locataire',
-              targetUserId: targetTenantId,
-              targetTab: 'maintenance',
-              unread: true,
-              read: false,
-              payload: {
-                ticketId: targetTicket.id,
-                ticketNumber: targetTicket.ticketNumber,
-                expenseId: expense.id,
-                amount: expense.amount,
-                scenario: expense.scenario
-              }
-            });
+            if (targetTenantId) {
+              SERVER_STORE.notifications.unshift({
+                id: `notif_exp_${Date.now()}`,
+                title: notifTitle,
+                description: notifDesc,
+                time: "À l'instant",
+                timestamp: "À l'instant",
+                category: 'maintenance',
+                type: 'maintenance',
+                targetRole: 'locataire',
+                targetUserId: targetTenantId,
+                targetTab: 'maintenance',
+                unread: true,
+                read: false,
+                payload: {
+                  ticketId: targetTicket.id,
+                  ticketNumber: targetTicket.ticketNumber,
+                  expenseId: expense.id,
+                  amount: dynamicAmount,
+                  scenario: expense.scenario
+                }
+              });
+            }
           }
 
           return res.status(200).json({ success: true, expense, ticket: targetTicket, maintenance: SERVER_STORE.maintenance, notifications: SERVER_STORE.notifications });

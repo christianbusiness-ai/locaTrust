@@ -452,13 +452,35 @@ export async function syncExpenseDecisionToMaintenanceTicket(expense: PropertyEx
         const rawContracts = localStorage.getItem('locatrust_contracts');
         if (rawContracts) {
           const contracts = JSON.parse(rawContracts);
-          const c = contracts.find((x: any) => x.property_id === expense.property_id || x.property?.id === expense.property_id);
+          const c = contracts.find((x: any) => (expense.property_id && (x.property_id === expense.property_id || x.property?.id === expense.property_id)) || (expense.contract_id && x.id === expense.contract_id));
           if (c?.tenant_id) targetTenantId = c.tenant_id;
         }
       } catch {}
     }
-    if (!targetTenantId && (expense.tenant_name?.toLowerCase().includes('christian') || matchedTicket?.tenantName?.toLowerCase().includes('christian'))) {
-      targetTenantId = 'a939eff5-c93d-4e6e-9f1f-b61c39986a46';
+    if (!targetTenantId && expense.property_id) {
+      try {
+        const { data: dbContract } = await supabase
+          .from('contracts')
+          .select('tenant_id')
+          .eq('property_id', expense.property_id)
+          .limit(1)
+          .maybeSingle();
+        if (dbContract?.tenant_id) targetTenantId = dbContract.tenant_id;
+      } catch {}
+    }
+    if (!targetTenantId && (expense.tenant_name || matchedTicket?.tenantName)) {
+      const searchName = (expense.tenant_name || matchedTicket?.tenantName || '').trim();
+      if (searchName) {
+        try {
+          const { data: dbUser } = await supabase
+            .from('users')
+            .select('id')
+            .ilike('full_name', `%${searchName}%`)
+            .limit(1)
+            .maybeSingle();
+          if (dbUser?.id) targetTenantId = dbUser.id;
+        } catch {}
+      }
     }
 
     const noteContent =
@@ -556,7 +578,7 @@ export async function syncExpenseDecisionToMaintenanceTicket(expense: PropertyEx
           title: expense.scenario === 'C'
             ? '🛠️ Réparation autorisée avec déduction de loyer'
             : '🛠️ Décision du bailleur concernant votre signalement',
-          description: `Votre bailleur a validé votre signalement pour « ${expense.property_title || matchedTicket?.propertyTitle || 'Maison a loué'} » : vous pouvez faire réparer la panne (${formatFCFA(expense.amount)} déductibles du loyer).`,
+          description: `Votre bailleur a validé votre signalement pour « ${expense.property_title || matchedTicket?.propertyTitle || 'votre logement'} » : vous pouvez faire réparer la panne (${formatFCFA(expense.amount)} déductibles du loyer).`,
           category: 'maintenance',
           targetRole: 'locataire',
           targetUserId: targetTenantId,

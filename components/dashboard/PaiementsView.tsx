@@ -485,8 +485,8 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
           for (const dn of declaredNotifs) {
             const pld = dn.payload || dn.data || {};
             const pmtRef = pld.reference || (dn.content?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]) || (dn.title?.match(/Réf:\s*([A-Z0-9-]+)/i)?.[1]);
-            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 20000;
-            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || 'Novembre 2026';
+            const pmtAmt = Number(pld.amount) || Number(dn.content?.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '')) || 0;
+            const pmtMonth = pld.month || (dn.content?.match(/pour\s+([A-Za-zÉéû]+ \d{4})/i)?.[1]) || new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
             const pmtId = pld.payment_id || pld.paymentId || `pmt_notif_${dn.id}`;
 
             if (
@@ -2069,14 +2069,16 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
                           count = allocs.length;
                           isMulti = count > 1;
                         } else {
-                          const rent = extractContractMonthlyRent((pmt as any).contract) || 20000;
+                          const rent = extractContractMonthlyRent((pmt as any).contract) || 0;
                           const pmtAmt = Number(pmt.amount || 0);
                           if (pmtAmt > rent && rent > 0) {
-                            count = Math.round(pmtAmt / rent);
-                            isMulti = true;
-                            if (count === 3) label = 'Novembre 2026 à Janvier 2027';
-                            else if (count === 2) label = 'Novembre 2026 – Décembre 2026';
-                            else label = `Novembre 2026 (${count} mois)`;
+                            count = Math.max(1, Math.round(pmtAmt / rent));
+                            isMulti = count > 1;
+                            const baseDate = pmt.payment_date ? new Date(pmt.payment_date) : new Date();
+                            const startM = baseDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                            const endD = new Date(baseDate.getFullYear(), baseDate.getMonth() + count - 1, 1);
+                            const endM = endD.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+                            label = count > 1 ? `${startM} à ${endM} (${count} mois)` : startM;
                           } else {
                             const cleanTarget = String(pmt.target_month || '').trim();
                             if (cleanTarget && !cleanTarget.toLowerCase().includes('janvier 2026')) {
