@@ -572,14 +572,19 @@ export async function syncExpenseDecisionToMaintenanceTicket(
 
       const updatedNotes = alreadyHasDecisionNote ? existingNotes : [...existingNotes, newNote];
       const isResolving = Boolean(options?.closeTicket);
-      const newStatus = isResolving ? 'Résolu' : (matchedTicket.status === 'Résolu' ? 'Résolu' : 'En cours');
+      const isSameScenario = matchedTicket.scenario === expense.scenario;
+      const isAlreadyValidatedForThis = isSameScenario && Boolean(matchedTicket.scenarioValidated);
+      const newStatus = isResolving || isAlreadyValidatedForThis ? 'Résolu' : 'En cours';
+      const isScenarioValidated = isResolving || isAlreadyValidatedForThis;
 
       const updatedTicket = {
         ...matchedTicket,
         status: newStatus,
         scenario: expense.scenario,
         scenarioAmount: expense.amount,
-        scenarioValidated: isResolving,
+        scenarioValidated: isScenarioValidated,
+        validatedByTenant: isScenarioValidated,
+        validatedScenario: isScenarioValidated ? expense.scenario : undefined,
         notes: updatedNotes,
         rentDeductionRequest: expense.scenario === 'C' ? {
           status: 'approuve',
@@ -1037,6 +1042,7 @@ export async function tenantConfirmScenarioDecision(params: {
                   scenario: dynamicScenario,
                   scenarioValidated: true,
                   validatedByTenant: true,
+                  validatedScenario: dynamicScenario,
                   validatedAt: now.toISOString(),
                   notes: [...existingNotes, validationNote],
                   rentDeductionRequest: dynamicScenario === 'C' ? {

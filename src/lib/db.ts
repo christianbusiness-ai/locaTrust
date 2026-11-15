@@ -542,6 +542,7 @@ export async function getMaintenanceTickets(userId: string) {
       let parsedScenarioAmount = Number(t.scenario_amount || t.scenarioAmount || 0);
       let parsedScenarioValidated = Boolean(t.scenario_validated || t.scenarioValidated);
       let parsedValidatedByTenant = Boolean(t.validated_by_tenant || t.validatedByTenant);
+      let parsedValidatedScenario = t.validated_scenario || t.validatedScenario || null;
 
       if (Array.isArray(t.notes) && t.notes.length > 0) {
         parsedNotes = t.notes;
@@ -560,6 +561,7 @@ export async function getMaintenanceTickets(userId: string) {
           if (meta.scenarioAmount) parsedScenarioAmount = Number(meta.scenarioAmount);
           if (meta.scenarioValidated !== undefined) parsedScenarioValidated = Boolean(meta.scenarioValidated);
           if (meta.validatedByTenant !== undefined) parsedValidatedByTenant = Boolean(meta.validatedByTenant);
+          if (meta.validatedScenario) parsedValidatedScenario = meta.validatedScenario;
           if (meta.description) cleanDesc = meta.description;
         } catch {}
       }
@@ -639,7 +641,8 @@ export async function getMaintenanceTickets(userId: string) {
         scenario: parsedScenario,
         scenarioAmount: parsedScenarioAmount,
         scenarioValidated: parsedScenarioValidated,
-        validatedByTenant: parsedValidatedByTenant
+        validatedByTenant: parsedValidatedByTenant,
+        validatedScenario: parsedValidatedScenario
       };
     });
 

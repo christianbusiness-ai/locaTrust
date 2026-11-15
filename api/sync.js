@@ -1202,6 +1202,7 @@ export default async function handler(req, res) {
           targetTicket.scenario = dynamicScenario;
           targetTicket.scenarioValidated = true;
           targetTicket.validatedByTenant = true;
+          targetTicket.validatedScenario = dynamicScenario;
           targetTicket.validatedAt = new Date().toISOString();
 
           if (dynamicScenario === 'C') {

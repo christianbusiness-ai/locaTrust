@@ -29,6 +29,7 @@ export const LocataireMaintenanceView: React.FC = () => {
   const { user } = useAuth();
   const [tickets, setTickets] = useState<any[]>([]);
   const [userContracts, setUserContracts] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const hasLoadedOnceRef = React.useRef<boolean>(false);
@@ -291,9 +292,22 @@ export const LocataireMaintenanceView: React.FC = () => {
                 }
                 const existingIdx = list.findIndex((x: any) => x.id === p.id || (p.ticketNumber && x.ticketNumber === p.ticketNumber));
                 if (existingIdx !== -1) {
-                  list[existingIdx] = mergeTicket(list[existingIdx], p);
+                  // SERVER IS SOURCE OF TRUTH: Le ticket serveur prévaut sur le statut/scénario
+                  const serverTicket = list[existingIdx];
+                  const localNotes = Array.isArray(p.notes) ? p.notes : [];
+                  const srvNotes = Array.isArray(serverTicket.notes) ? serverTicket.notes : [];
+                  const notesMap = new Map();
+                  srvNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+                  localNotes.forEach((n: any) => {
+                    const k = String(n.id || n.content);
+                    if (!notesMap.has(k)) notesMap.set(k, n);
+                  });
+                  list[existingIdx] = {
+                    ...serverTicket,
+                    notes: Array.from(notesMap.values())
+                  };
                 } else {
-                  // C'est un vrai ticket réel déclaré : ne jamais le supprimer !
+                  // C'est un vrai ticket réel déclaré localement qui n'est pas encore sur le serveur : l'ajouter
                   list.push(p);
                 }
               });
@@ -350,6 +364,19 @@ export const LocataireMaintenanceView: React.FC = () => {
               targetTicket.scenario = exp.scenario;
               targetTicket.scenarioAmount = Number(exp.amount) || targetTicket.scenarioAmount;
               targetTicket.expense_id = exp.id;
+
+              // Une dépense active lie ce ticket à une décision bailleur : statut en cours et validation attendue
+              targetTicket.status = 'En cours';
+              targetTicket.scenarioValidated = false;
+              targetTicket.validatedByTenant = false;
+
+              // Nettoyer les anciennes validations contradictoires
+              if (Array.isArray(targetTicket.notes)) {
+                targetTicket.notes = targetTicket.notes.filter((n: any) => {
+                  const c = String(n.content || '');
+                  return !(c.includes('Accord validé par le locataire') && !c.includes(`Scénario ${exp.scenario}`));
+                });
+              }
 
               const noteText =
                 exp.scenario === 'C'
@@ -459,6 +486,7 @@ export const LocataireMaintenanceView: React.FC = () => {
           localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(finalTickets));
         } catch {}
       }
+      setExpenses(expenseList);
       setTickets(finalTickets);
 
       const { data: cntData } = await getContracts(user.id, 'locataire');
@@ -768,6 +796,7 @@ export const LocataireMaintenanceView: React.FC = () => {
               scenarioAmount: amount || t.scenarioAmount,
               scenarioValidated: true,
               validatedByTenant: true,
+              validatedScenario: scenario,
               validatedAt: now.toISOString(),
               notes: [...(Array.isArray(t.notes) ? t.notes : []), validationNote],
               rentDeductionRequest: scenario === 'C' ? {
@@ -1110,14 +1139,16 @@ export const LocataireMaintenanceView: React.FC = () => {
                 </div>
 
                 {(() => {
-                  const isTicketResolved =
-                    String(ticket.status || '').toLowerCase().includes('resolu') ||
-                    String(ticket.status || '').toLowerCase().includes('résolu') ||
-                    String(ticket.status || '').toLowerCase().includes('ferme') ||
-                    String(ticket.status || '').toLowerCase().includes('fermé') ||
-                    String(ticket.status || '').toLowerCase().includes('clôturé') ||
-                    Boolean(ticket.scenarioValidated) ||
-                    Boolean(ticket.validatedByTenant);
+                  const matchingExp = Array.isArray(expenses) ? [...expenses].reverse().find((e: any) =>
+                    (ticket.id && (e.ticket_id === ticket.id || (e.title && e.title.includes(ticket.id)))) ||
+                    (ticket.ticketNumber && (e.ticket_id === ticket.ticketNumber || (e.title && e.title.includes(ticket.ticketNumber))))
+                  ) : null;
+                  const currentSc = matchingExp?.scenario || ticket.scenario;
+                  const hasValidationForCurrent = currentSc && Array.isArray(ticket.notes) && ticket.notes.some((n: any) => {
+                    const c = String(n.content || '');
+                    return c.includes('Accord validé par le locataire') && c.includes(`Scénario ${currentSc}`);
+                  });
+                  const isTicketResolved = hasValidationForCurrent || (Boolean(ticket.scenarioValidated) && ticket.validatedScenario === currentSc);
 
                   if (isTicketResolved) {
                     return (
@@ -1128,7 +1159,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                     );
                   }
                   const st = String(ticket.status || '').toLowerCase().trim();
-                  if (st === 'en_cours' || st === 'en cours' || st === 'intervention programmée') {
+                  if (st === 'en_cours' || st === 'en cours' || st === 'intervention programmée' || Boolean(currentSc)) {
                     return (
                       <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-900 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
                         <Clock className="w-3.5 h-3.5" />
@@ -1151,23 +1182,24 @@ export const LocataireMaintenanceView: React.FC = () => {
 
               {/* DÉCISION DU BAILLEUR / SCÉNARIOS A, B, C AVEC BOUTON DE VALIDATION ET CLÔTURE LOCATAIRE */}
               {(() => {
-                const isTicketResolved =
-                  String(ticket.status || '').toLowerCase().includes('resolu') ||
-                  String(ticket.status || '').toLowerCase().includes('résolu') ||
-                  String(ticket.status || '').toLowerCase().includes('ferme') ||
-                  String(ticket.status || '').toLowerCase().includes('fermé') ||
-                  String(ticket.status || '').toLowerCase().includes('clôturé') ||
-                  Boolean(ticket.scenarioValidated) ||
-                  Boolean(ticket.validatedByTenant);
+                // Trouver la dépense active associée au ticket si présente
+                const matchingExp = Array.isArray(expenses) ? [...expenses].reverse().find((e: any) =>
+                  (ticket.id && (e.ticket_id === ticket.id || (e.title && e.title.includes(ticket.id)))) ||
+                  (ticket.ticketNumber && (e.ticket_id === ticket.ticketNumber || (e.title && e.title.includes(ticket.ticketNumber))))
+                ) : null;
 
-                // 1. Détection prioritaire du scénario
-                let effectiveScenario = ticket.scenario;
-                let effectiveAmount = Number(ticket.scenarioAmount) || 0;
+                // 1. Détection prioritaire du scénario : la décision active du bailleur prévaut
+                let effectiveScenario = matchingExp?.scenario || ticket.scenario;
+                let effectiveAmount = Number(matchingExp?.amount) || Number(ticket.scenarioAmount) || 0;
 
-                // 2. Détection depuis les notes du ticket
+                // 2. Détection depuis les notes du bailleur (ignorer impérativement les notes du locataire)
                 if (!effectiveScenario && Array.isArray(ticket.notes)) {
                   for (let i = ticket.notes.length - 1; i >= 0; i--) {
-                    const nContent = String(ticket.notes[i]?.content || '');
+                    const note = ticket.notes[i];
+                    const nContent = String(note?.content || '');
+                    if (nContent.includes('Accord validé par le locataire')) continue;
+                    if (note?.authorRole === 'locataire' || note?.author === 'Vous') continue;
+
                     const nAmtMatch = nContent.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
                     const nAmt = nAmtMatch ? Number(nAmtMatch) : 0;
                     if (nContent.includes('Scénario B') || nContent.includes('charge locative') || nContent.includes('réparation locative')) {
@@ -1186,33 +1218,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                   }
                 }
 
-                // 3. Détection depuis rentDeductionRequest
-                if (!effectiveScenario && ticket.rentDeductionRequest?.status === 'approuve') {
-                  effectiveScenario = 'C';
-                  if (!effectiveAmount) effectiveAmount = Number(ticket.rentDeductionRequest?.amountSpent) || 0;
-                }
-
-                // 4. Détection depuis les dépenses locales
-                if (!effectiveScenario && typeof window !== 'undefined') {
-                  try {
-                    const rawExp = localStorage.getItem('locatrust_property_expenses');
-                    if (rawExp) {
-                      const expArr = JSON.parse(rawExp);
-                      if (Array.isArray(expArr)) {
-                        const matchedExp = expArr.find((e: any) =>
-                          (ticket.id && (e.ticket_id === ticket.id || (e.title && e.title.includes(ticket.id)))) ||
-                          (ticket.ticketNumber && (e.ticket_id === ticket.ticketNumber || (e.title && e.title.includes(ticket.ticketNumber))))
-                        );
-                        if (matchedExp) {
-                          effectiveScenario = matchedExp.scenario || 'B';
-                          effectiveAmount = Number(matchedExp.amount) || effectiveAmount;
-                        }
-                      }
-                    }
-                  } catch {}
-                }
-
-                // 5. Détection depuis les notifications du locataire
+                // 3. Détection depuis les notifications du locataire
                 if (!effectiveScenario && typeof window !== 'undefined') {
                   try {
                     const rawNotifs = localStorage.getItem('locatrust_notifications');
@@ -1228,7 +1234,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                           const meta = mNotif.metadata || mNotif.payload || {};
                           const notifDesc = mNotif.description || '';
                           const nAmtMatch = notifDesc.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
-                          effectiveAmount = Number(meta.amount) || (nAmtMatch ? Number(nAmtMatch) : 0);
+                          if (!effectiveAmount) effectiveAmount = Number(meta.amount) || (nAmtMatch ? Number(nAmtMatch) : 0);
                           if (meta.scenario) {
                             effectiveScenario = meta.scenario;
                           } else if (notifDesc.includes('Scénario B') || notifDesc.includes('locative')) {
@@ -1244,7 +1250,23 @@ export const LocataireMaintenanceView: React.FC = () => {
                   } catch {}
                 }
 
+                // 4. Détection de secours depuis rentDeductionRequest
+                if (!effectiveScenario && ticket.rentDeductionRequest?.status === 'approuve') {
+                  effectiveScenario = 'C';
+                  if (!effectiveAmount) effectiveAmount = Number(ticket.rentDeductionRequest?.amountSpent) || 0;
+                }
+
                 if (!effectiveScenario) return null;
+
+                // Le ticket est résolu UNIQUEMENT si le locataire a validé CE scénario spécifique
+                const hasMatchingValidationNote = Array.isArray(ticket.notes) && ticket.notes.some((n: any) => {
+                  const c = String(n.content || '');
+                  return c.includes('Accord validé par le locataire') && c.includes(`Scénario ${effectiveScenario}`);
+                });
+
+                const isTicketResolved =
+                  hasMatchingValidationNote ||
+                  (Boolean(ticket.scenarioValidated) && ticket.validatedScenario === effectiveScenario);
 
                 if (effectiveScenario === 'C') {
                   return (
