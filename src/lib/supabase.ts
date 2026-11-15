@@ -19,6 +19,17 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
+  global: {
+    fetch: (url, options = {}) => {
+      // Timeout de protection 10s contre les erreurs 522 (Cloudflare connection timed out) de Supabase
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        try { controller.abort(); } catch {}
+      }, 10000);
+      const signal = options?.signal || controller.signal;
+      return fetch(url, { ...options, signal }).finally(() => clearTimeout(timer));
+    }
+  }
 });
 
 export default supabase;
