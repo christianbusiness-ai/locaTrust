@@ -1160,8 +1160,89 @@ export const LocataireMaintenanceView: React.FC = () => {
                   Boolean(ticket.scenarioValidated) ||
                   Boolean(ticket.validatedByTenant);
 
-                const effectiveScenario = ticket.scenario || (ticket.rentDeductionRequest?.status === 'approuve' ? 'C' : null);
-                const effectiveAmount = Number(ticket.scenarioAmount) || Number(ticket.rentDeductionRequest?.amountSpent) || 0;
+                // 1. Détection prioritaire du scénario
+                let effectiveScenario = ticket.scenario;
+                let effectiveAmount = Number(ticket.scenarioAmount) || 0;
+
+                // 2. Détection depuis les notes du ticket
+                if (!effectiveScenario && Array.isArray(ticket.notes)) {
+                  for (let i = ticket.notes.length - 1; i >= 0; i--) {
+                    const nContent = String(ticket.notes[i]?.content || '');
+                    const nAmtMatch = nContent.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+                    const nAmt = nAmtMatch ? Number(nAmtMatch) : 0;
+                    if (nContent.includes('Scénario B') || nContent.includes('charge locative') || nContent.includes('réparation locative')) {
+                      effectiveScenario = 'B';
+                      if (nAmt > 0 && !effectiveAmount) effectiveAmount = nAmt;
+                      break;
+                    } else if (nContent.includes('Scénario A') || nContent.includes('prise en charge par le propriétaire') || nContent.includes('intégralement prise en charge')) {
+                      effectiveScenario = 'A';
+                      if (nAmt > 0 && !effectiveAmount) effectiveAmount = nAmt;
+                      break;
+                    } else if (nContent.includes('Scénario C') || nContent.includes('déduit de votre loyer') || nContent.includes('déductibles du loyer')) {
+                      effectiveScenario = 'C';
+                      if (nAmt > 0 && !effectiveAmount) effectiveAmount = nAmt;
+                      break;
+                    }
+                  }
+                }
+
+                // 3. Détection depuis rentDeductionRequest
+                if (!effectiveScenario && ticket.rentDeductionRequest?.status === 'approuve') {
+                  effectiveScenario = 'C';
+                  if (!effectiveAmount) effectiveAmount = Number(ticket.rentDeductionRequest?.amountSpent) || 0;
+                }
+
+                // 4. Détection depuis les dépenses locales
+                if (!effectiveScenario && typeof window !== 'undefined') {
+                  try {
+                    const rawExp = localStorage.getItem('locatrust_property_expenses');
+                    if (rawExp) {
+                      const expArr = JSON.parse(rawExp);
+                      if (Array.isArray(expArr)) {
+                        const matchedExp = expArr.find((e: any) =>
+                          (ticket.id && (e.ticket_id === ticket.id || (e.title && e.title.includes(ticket.id)))) ||
+                          (ticket.ticketNumber && (e.ticket_id === ticket.ticketNumber || (e.title && e.title.includes(ticket.ticketNumber))))
+                        );
+                        if (matchedExp) {
+                          effectiveScenario = matchedExp.scenario || 'B';
+                          effectiveAmount = Number(matchedExp.amount) || effectiveAmount;
+                        }
+                      }
+                    }
+                  } catch {}
+                }
+
+                // 5. Détection depuis les notifications du locataire
+                if (!effectiveScenario && typeof window !== 'undefined') {
+                  try {
+                    const rawNotifs = localStorage.getItem('locatrust_notifications');
+                    if (rawNotifs) {
+                      const notifArr = JSON.parse(rawNotifs);
+                      if (Array.isArray(notifArr)) {
+                        const mNotif = notifArr.find((n: any) => {
+                          const meta = n.metadata || n.payload || {};
+                          return meta.ticketId === ticket.id || meta.ticketNumber === ticket.ticketNumber ||
+                                 (n.description && ticket.ticketNumber && n.description.includes(ticket.ticketNumber));
+                        });
+                        if (mNotif) {
+                          const meta = mNotif.metadata || mNotif.payload || {};
+                          const notifDesc = mNotif.description || '';
+                          const nAmtMatch = notifDesc.match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+                          effectiveAmount = Number(meta.amount) || (nAmtMatch ? Number(nAmtMatch) : 0);
+                          if (meta.scenario) {
+                            effectiveScenario = meta.scenario;
+                          } else if (notifDesc.includes('Scénario B') || notifDesc.includes('locative')) {
+                            effectiveScenario = 'B';
+                          } else if (notifDesc.includes('Scénario A') || notifDesc.includes('prise en charge')) {
+                            effectiveScenario = 'A';
+                          } else if (notifDesc.includes('Scénario C') || notifDesc.includes('déductibles')) {
+                            effectiveScenario = 'C';
+                          }
+                        }
+                      }
+                    }
+                  } catch {}
+                }
 
                 if (!effectiveScenario) return null;
 

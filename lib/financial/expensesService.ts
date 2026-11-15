@@ -600,6 +600,9 @@ export async function syncExpenseDecisionToMaintenanceTicket(
             category: updatedTicket.category,
             notes: updatedNotes,
             scheduledDate: updatedTicket.scheduledDate || '',
+            scenario: updatedTicket.scenario,
+            scenarioAmount: updatedTicket.scenarioAmount,
+            scenarioValidated: updatedTicket.scenarioValidated,
             rentDeductionRequest: updatedTicket.rentDeductionRequest
           });
           await supabase.from('maintenance_tickets').update({

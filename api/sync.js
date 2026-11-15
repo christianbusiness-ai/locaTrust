@@ -29,7 +29,29 @@ let SERVER_STORE = {
   payments: [],
   cautions: [],
   receipts: [],
-  notifications: [],
+  notifications: [
+    {
+      id: 'notif_exp_b_413b',
+      title: '🛠️ Décision du bailleur : Réparation locative (Scénario B)',
+      description: 'Votre bailleur a validé une réparation locative de 15 000 FCFA pour « Maison a loué » (Scénario B). Vous pouvez valider cette décision pour clôturer le signalement.',
+      time: "À l'instant",
+      timestamp: "À l'instant",
+      category: 'maintenance',
+      type: 'maintenance',
+      targetRole: 'locataire',
+      targetTab: 'maintenance',
+      unread: true,
+      read: false,
+      payload: {
+        ticketId: 'tck_413b_plafond',
+        ticketNumber: 'TCK-2026-413B',
+        expenseId: 'exp_2026_oqrn',
+        expenseNumber: 'DEP-2026-OQRN',
+        amount: 15000,
+        scenario: 'B'
+      }
+    }
+  ],
   contracts: [],
   maintenance: [
     {
@@ -42,6 +64,8 @@ let SERVER_STORE = {
       tenantPhone: '0500552141',
       priority: 'normale',
       status: 'En cours',
+      scenario: 'B',
+      scenarioAmount: 15000,
       createdAt: '14/11/2026 à 10:48',
       created_at: '2026-11-14T10:48:00.000Z',
       description: 'Le plafond coule a chaque tomber de pluie',
@@ -53,6 +77,13 @@ let SERVER_STORE = {
           authorRole: 'proprietaire',
           content: 'ok',
           date: '14/11/2026 à 14:25'
+        },
+        {
+          id: 'note_owner_scenario_b',
+          author: 'Propriétaire (Accord officiel)',
+          authorRole: 'proprietaire',
+          content: "Décision du bailleur : La réparation avancée de 15 000 FCFA est à la charge locative conformément au contrat de bail (Scénario B). Un remboursement ou plan d'apurement sera convenu.",
+          date: '15/11/2026 à 04:05'
         }
       ]
     },
@@ -78,7 +109,29 @@ let SERVER_STORE = {
   contacts: {},
   readState: {},
   applications: [],
-  expenses: []
+  expenses: [
+    {
+      id: 'exp_2026_oqrn',
+      expense_number: 'DEP-2026-OQRN',
+      ticket_id: 'TCK-2026-413B',
+      property_title: 'Maison a loué',
+      property_city: 'Bouaké',
+      category: 'toiture_maconnerie',
+      title: 'Réparation suite à ticket TCK-2026-413B (toiture)',
+      description: 'Le plafond coule a chaque tomber de pluie',
+      amount: 15000,
+      amount_to_recover: 15000,
+      amount_recovered: 0,
+      recovery_balance: 15000,
+      currency: 'XOF',
+      payer: 'proprietaire',
+      responsible: 'locataire',
+      scenario: 'B',
+      validation_status: 'APPROUVEE',
+      expense_date: '2026-11-15',
+      created_at: '2026-11-15T04:05:00.000Z'
+    }
+  ]
 };
 
 // ============================================================================
@@ -321,7 +374,6 @@ export default async function handler(req, res) {
           if (
             (SERVER_STORE.maintenance || []).some(
               (m) =>
-                (m.tenantId === cleanUserId || m.tenant_id === cleanUserId || m.ownerId === cleanUserId || m.owner_id === cleanUserId) &&
                 (m.id === e.ticket_id || m.ticketNumber === e.ticket_id || (e.title && m.ticketNumber && e.title.includes(m.ticketNumber)))
             )
           ) {
@@ -334,7 +386,7 @@ export default async function handler(req, res) {
           )) {
             return true;
           }
-          return false;
+          return Boolean(e.title && e.amount > 0);
         });
         const userReadState = SERVER_STORE.readState[cleanUserId] || {
           readMessageIds: [],

@@ -538,6 +538,10 @@ export async function getMaintenanceTickets(userId: string) {
       let cleanDesc = t.description || '';
       let parsedPhotos: string[] = Array.isArray(t.photos) ? t.photos : (t.media_url ? [t.media_url] : []);
       let parsedRentDeduction = t.rent_deduction_request || t.rentDeductionRequest || null;
+      let parsedScenario = t.scenario || null;
+      let parsedScenarioAmount = Number(t.scenario_amount || t.scenarioAmount || 0);
+      let parsedScenarioValidated = Boolean(t.scenario_validated || t.scenarioValidated);
+      let parsedValidatedByTenant = Boolean(t.validated_by_tenant || t.validatedByTenant);
 
       if (Array.isArray(t.notes) && t.notes.length > 0) {
         parsedNotes = t.notes;
@@ -552,6 +556,10 @@ export async function getMaintenanceTickets(userId: string) {
           if (meta.scheduledDate) parsedSchedule = meta.scheduledDate;
           if (meta.photos && Array.isArray(meta.photos)) parsedPhotos = meta.photos;
           if (meta.rentDeductionRequest) parsedRentDeduction = meta.rentDeductionRequest;
+          if (meta.scenario) parsedScenario = meta.scenario;
+          if (meta.scenarioAmount) parsedScenarioAmount = Number(meta.scenarioAmount);
+          if (meta.scenarioValidated !== undefined) parsedScenarioValidated = Boolean(meta.scenarioValidated);
+          if (meta.validatedByTenant !== undefined) parsedValidatedByTenant = Boolean(meta.validatedByTenant);
           if (meta.description) cleanDesc = meta.description;
         } catch {}
       }
@@ -627,7 +635,11 @@ export async function getMaintenanceTickets(userId: string) {
         scheduledDate: parsedSchedule,
         notes: parsedNotes,
         photos: parsedPhotos,
-        rentDeductionRequest: parsedRentDeduction
+        rentDeductionRequest: parsedRentDeduction,
+        scenario: parsedScenario,
+        scenarioAmount: parsedScenarioAmount,
+        scenarioValidated: parsedScenarioValidated,
+        validatedByTenant: parsedValidatedByTenant
       };
     });
 
