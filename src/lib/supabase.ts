@@ -20,14 +20,33 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true,
   },
   global: {
-    fetch: (url, options = {}) => {
+    fetch: async (url, options = {}) => {
       // Timeout de protection 10s contre les erreurs 522 (Cloudflare connection timed out) de Supabase
       const controller = new AbortController();
       const timer = setTimeout(() => {
         try { controller.abort(); } catch {}
       }, 10000);
       const signal = options?.signal || controller.signal;
-      return fetch(url, { ...options, signal }).finally(() => clearTimeout(timer));
+      try {
+        const res = await fetch(url, { ...options, signal });
+        // Si Supabase renvoie une page d'erreur Cloudflare 520/522/524 HTML, la convertir en JSON valide
+        if (res.status === 522 || res.status === 520 || res.status === 524) {
+          return new Response(
+            JSON.stringify({
+              message: 'Supabase project paused or unreachable (Cloudflare Error 522)',
+              error: 'Connection timed out',
+              code: '522'
+            }),
+            {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        return res;
+      } finally {
+        clearTimeout(timer);
+      }
     }
   }
 });
