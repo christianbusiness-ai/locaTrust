@@ -203,8 +203,8 @@ export async function getPropertyExpenses(
             const isMine =
               !userId ||
               (role === 'locataire'
-                ? se.tenant_id === userId || !se.tenant_id || se.tenant_name?.toLowerCase().includes('christian')
-                : se.owner_id === userId || se.agency_id === userId || !se.owner_id || se.property_title === 'Maison a loué');
+                ? se.tenant_id === userId
+                : se.owner_id === userId || se.agency_id === userId);
 
             if (isMine) {
               const existingIdx = expenses.findIndex((e) => e.id === se.id || (se.expense_number && e.expense_number === se.expense_number));
@@ -1042,8 +1042,7 @@ export async function tenantConfirmScenarioDecision(params: {
             const nextExp = expList.map((e: any) => {
               const isTarget =
                 (params.expenseId && e.id === params.expenseId) ||
-                (params.ticketNumber && (e.ticket_id === params.ticketNumber || (e.title && e.title.includes(params.ticketNumber)))) ||
-                (e.expense_number === 'DEP-2026-E93L');
+                (params.ticketNumber && (e.ticket_id === params.ticketNumber || (e.title && e.title.includes(params.ticketNumber))));
               if (isTarget) {
                 return {
                   ...e,

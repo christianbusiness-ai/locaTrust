@@ -653,13 +653,17 @@ export const MaintenanceView: React.FC = () => {
     const now = new Date();
     const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
 
+    const authorName = (user?.user_metadata?.full_name || 'Propriétaire').trim();
+
     const updatedTicket: MaintenanceItem = {
       ...selectedTicket,
       notes: [
         ...selectedTicket.notes,
         {
           id: `n-${Date.now()}`,
-          author: 'Propriétaire (Vous)',
+          author: authorName,
+          authorRole: 'proprietaire',
+          authorId: user?.id,
           content: replyMessage,
           date: dateStr,
           isInternal: false
@@ -1223,35 +1227,44 @@ export const MaintenanceView: React.FC = () => {
                   </span>
 
                   <div className="flex flex-col gap-3">
-                    {selectedTicket.notes.map((note) => (
-                      <div
-                        key={note.id}
-                        className={`p-4 rounded-xl border flex flex-col gap-1.5 ${
-                          note.isInternal
-                            ? 'bg-amber-50/60 border-amber-300/80 ml-4'
-                            : note.author.includes('Propriétaire')
-                            ? 'bg-blue-50/80 border-blue-200 ml-6'
-                            : 'bg-white border-slate-200'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span
-                            className={`font-black ${
-                              note.isInternal
-                                ? 'text-amber-900 flex items-center gap-1.5'
-                                : note.author.includes('Propriétaire')
-                                ? 'text-blue-900'
-                                : 'text-slate-900'
-                            }`}
-                          >
-                            {note.isInternal && <StickyNote className="w-3.5 h-3.5 text-amber-600" />}
-                            {note.author}
-                          </span>
-                          <span className="text-[11px] text-slate-400 font-semibold">{note.date}</span>
+                    {selectedTicket.notes.map((note: any) => {
+                      const isOwner = note.authorRole === 'proprietaire' || note.authorId === user?.id || (note.author && (
+                        note.author.toLowerCase().includes('propriétaire') ||
+                        note.author.toLowerCase().includes('bailleur') ||
+                        note.author.toLowerCase().includes('agence')
+                      ));
+                      const cleanAuthor = String(note.author || '').replace(/\s*\(Vous\)/gi, '').trim();
+                      const displayAuthor = isOwner ? `${cleanAuthor || 'Propriétaire'} (Vous)` : (cleanAuthor || 'Locataire');
+                      return (
+                        <div
+                          key={note.id}
+                          className={`p-4 rounded-xl border flex flex-col gap-1.5 ${
+                            note.isInternal
+                              ? 'bg-amber-50/60 border-amber-300/80 ml-4'
+                              : isOwner
+                              ? 'bg-blue-50/80 border-blue-200 ml-6'
+                              : 'bg-white border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs">
+                            <span
+                              className={`font-black ${
+                                note.isInternal
+                                  ? 'text-amber-900 flex items-center gap-1.5'
+                                  : isOwner
+                                  ? 'text-blue-900'
+                                  : 'text-slate-900'
+                              }`}
+                            >
+                              {note.isInternal && <StickyNote className="w-3.5 h-3.5 text-amber-600" />}
+                              {note.isInternal ? `${cleanAuthor || 'Note interne'} (Interne)` : displayAuthor}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-semibold">{note.date}</span>
+                          </div>
+                          <p className="text-xs text-slate-800 font-medium leading-relaxed">{note.content}</p>
                         </div>
-                        <p className="text-xs text-slate-800 font-medium leading-relaxed">{note.content}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>

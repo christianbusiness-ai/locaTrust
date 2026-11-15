@@ -201,24 +201,6 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
       if (selectedMandantId && selectedMandantId !== 'all') filters.mandantId = selectedMandantId;
       const { data: expList } = await getPropertyExpenses(user.id, userRole, filters);
 
-      // Auto-validation et synchronisation immédiate des décisions de déduction créées par le bailleur (ex: DEP-2026-E93L)
-      if (userRole === 'proprietaire' || userRole === 'agence') {
-        for (const exp of expList) {
-          if (exp.scenario === 'C' && (exp.validation_status === 'EN_ATTENTE_VALIDATION' || exp.validation_status === 'APPROUVEE')) {
-            if (exp.validation_status === 'EN_ATTENTE_VALIDATION') {
-              exp.validation_status = 'APPROUVEE';
-              exp.compensation_authorized = true;
-              try {
-                await updateExpenseValidationStatus(exp.id, 'APPROUVEE', { actorId: user?.id });
-              } catch {}
-            }
-            try {
-              await syncExpenseDecisionToMaintenanceTicket(exp);
-            } catch {}
-          }
-        }
-      }
-
       setExpenses(expList);
     } catch (e) {
       console.warn('Erreur chargement dépenses:', e);

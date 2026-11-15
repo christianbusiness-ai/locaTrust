@@ -208,27 +208,22 @@ export const LocataireMaintenanceView: React.FC = () => {
               if (descClean && descClean.length >= 5 && descClean !== 'Signalement de maintenance') {
                 const recTicket = {
                   id: tId || tNum,
-                  ticketNumber: tNum || (tId ? `TCK-2026-${String(tId).slice(-4).toUpperCase()}` : 'TCK-2026-413B'),
-                  category: meta.category || (tNum === 'TCK-2026-413B' ? 'toiture' : 'Général'),
-                  priority: 'normale',
-                  status: (n.title?.includes('déduction') || meta.scenario === 'C') ? 'En cours' : (meta.status || 'Nouveau'),
-                  createdAt: n.created_at ? new Date(n.created_at).toLocaleDateString('fr-FR') : '14/11/2026',
+                  ticketNumber: tNum || (tId ? `TCK-${String(tId).slice(-4).toUpperCase()}` : 'TCK-SIGNALEMENT'),
+                  category: meta.category || 'Général',
+                  priority: meta.priority || 'normale',
+                  status: (meta.scenario === 'C') ? 'En cours' : (meta.status || 'Nouveau'),
+                  createdAt: n.created_at ? new Date(n.created_at).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
                   created_at: n.created_at || new Date().toISOString(),
                   description: descClean,
-                  propertyTitle: meta.propertyTitle || 'Maison a loué',
-                  propertyAddress: meta.propertyAddress || 'Bouaké',
-                  tenantName: meta.tenantName || 'christian',
+                  propertyTitle: meta.propertyTitle || 'Logement',
+                  propertyAddress: meta.propertyAddress || '',
+                  tenantName: meta.tenantName || user?.user_metadata?.full_name || 'Locataire',
                   photos: meta.photos || [],
                   notes: Array.isArray(meta.notes) ? meta.notes : []
                 };
                 list.push(recTicket);
                 existingIdx = list.length - 1;
               }
-            }
-
-            // Si un seul ticket existe pour ce locataire et qu'il n'a pas été apparié par ID
-            if (existingIdx === -1 && list.length === 1) {
-              existingIdx = 0;
             }
 
             const incomingNotes = Array.isArray(meta.notes) ? meta.notes : [];
@@ -240,24 +235,18 @@ export const LocataireMaintenanceView: React.FC = () => {
                 notes: incomingNotes
               });
 
-              // Si la notification signale un accord de réparation avec déduction de loyer (Scénario C)
-              const isDeductionNotif =
-                (n.title || '').includes('déduction de loyer') ||
-                (n.description || '').includes('déductibles du loyer') ||
-                (n.message || '').includes('déductibles du loyer') ||
-                meta.scenario === 'C';
+              // Si la notification signale un accord réel de réparation avec déduction de loyer (Scénario C)
+              const notifAmtMatch = (n.description || n.message || '').match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
+              const notifAmount = Number(meta.amount) || (notifAmtMatch ? Number(notifAmtMatch) : 0);
+              const isRealDeductionNotif = meta.scenario === 'C' && notifAmount > 0;
 
-              if (isDeductionNotif) {
+              if (isRealDeductionNotif) {
                 list[existingIdx].status = 'En cours';
-                const notifAmtMatch = (n.description || n.message || '').match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
-                const notifAmount = Number(meta.amount) || (notifAmtMatch ? Number(notifAmtMatch) : 0);
-                if (notifAmount > 0) {
-                  list[existingIdx].rentDeductionRequest = {
-                    status: 'approuve',
-                    amountSpent: notifAmount,
-                    deductionMonth: 'Prochain loyer'
-                  };
-                }
+                list[existingIdx].rentDeductionRequest = {
+                  status: 'approuve',
+                  amountSpent: notifAmount,
+                  deductionMonth: 'Prochain loyer'
+                };
               }
             }
           });
@@ -333,10 +322,13 @@ export const LocataireMaintenanceView: React.FC = () => {
             const expTicketNum = (exp.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
             const targetTicket = list.find((t: any) =>
               (exp.ticket_id && (t.id === exp.ticket_id || t.ticketNumber === exp.ticket_id)) ||
-              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum)))) ||
-              (exp.category && t.category && exp.category.toLowerCase() === t.category.toLowerCase())
+              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum))))
             );
             if (targetTicket) {
+              targetTicket.scenario = exp.scenario;
+              targetTicket.scenarioAmount = Number(exp.amount) || targetTicket.scenarioAmount;
+              targetTicket.expense_id = exp.id;
+
               const noteText =
                 exp.scenario === 'C'
                   ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${formatFCFA(exp.amount)}. Ce montant sera déduit de votre loyer conformément au Scénario C.`
@@ -350,7 +342,8 @@ export const LocataireMaintenanceView: React.FC = () => {
                   ...(Array.isArray(targetTicket.notes) ? targetTicket.notes : []),
                   {
                     id: `note-exp-${exp.id}`,
-                    author: 'Propriétaire (Accord officiel)',
+                    author: 'Propriétaire',
+                    authorRole: 'proprietaire',
                     content: noteText,
                     date: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : 'Récemment',
                     isInternal: false
@@ -362,33 +355,36 @@ export const LocataireMaintenanceView: React.FC = () => {
                 targetTicket.status = 'En cours';
               }
 
-              if (exp.scenario === 'C') {
+              if (exp.scenario === 'C' && Number(exp.amount) > 0) {
                 targetTicket.rentDeductionRequest = {
                   status: 'approuve',
-                  amountSpent: exp.amount,
+                  amountSpent: Number(exp.amount),
                   deductionMonth: 'Prochain loyer'
                 };
               }
-            } else if (expTicketNum) {
+            } else if (expTicketNum && exp.description && exp.description.trim().length >= 5) {
               // Si le ticket n'était pas dans la liste mais qu'une dépense validée y fait référence, le restaurer
-              const reconstructedDesc = exp.description || 'Le plafond coule a chaque tomber de pluie';
               const newT = {
                 id: exp.ticket_id || expTicketNum,
                 ticketNumber: expTicketNum,
-                category: exp.category || 'toiture',
+                category: exp.category || 'Général',
                 priority: 'normale',
                 status: 'En cours',
-                createdAt: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : '14/11/2026 à 10:48',
+                scenario: exp.scenario,
+                scenarioAmount: Number(exp.amount) || 0,
+                expense_id: exp.id,
+                createdAt: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
                 created_at: exp.created_at || new Date().toISOString(),
-                description: reconstructedDesc,
-                propertyTitle: exp.property_title || 'Maison a loué',
-                propertyAddress: exp.property_city || 'Bouaké',
-                tenantName: exp.tenant_name || user?.user_metadata?.full_name || 'christian',
+                description: exp.description,
+                propertyTitle: exp.property_title || 'Logement',
+                propertyAddress: exp.property_city || '',
+                tenantName: exp.tenant_name || user?.user_metadata?.full_name || 'Locataire',
                 photos: [],
                 notes: [
                   {
                     id: `note-exp-${exp.id}`,
-                    author: 'Propriétaire (Accord officiel)',
+                    author: 'Propriétaire',
+                    authorRole: 'proprietaire',
                     content: `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${formatFCFA(exp.amount)}. Ce montant sera déduit de votre loyer conformément au Scénario C.`,
                     date: exp.expense_date ? new Date(exp.expense_date).toLocaleDateString('fr-FR') : 'Récemment',
                     isInternal: false
@@ -396,7 +392,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                 ],
                 rentDeductionRequest: exp.scenario === 'C' ? {
                   status: 'approuve',
-                  amountSpent: exp.amount,
+                  amountSpent: Number(exp.amount),
                   deductionMonth: 'Prochain loyer'
                 } : undefined
               };
@@ -569,11 +565,13 @@ export const LocataireMaintenanceView: React.FC = () => {
 
     const now = new Date();
     const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
-    const tenantAuthorName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire (Vous)';
+    const tenantAuthorName = user?.user_metadata?.full_name || (user as any)?.name || 'Locataire';
 
     const newNote = {
       id: `n-${Date.now()}`,
       author: tenantAuthorName,
+      authorRole: 'locataire',
+      authorId: user?.id,
       content: text,
       date: dateStr,
       isInternal: false
@@ -1136,22 +1134,19 @@ export const LocataireMaintenanceView: React.FC = () => {
                   Boolean(ticket.validatedByTenant);
 
                 const hasScenarioC =
-                  ticket.rentDeductionRequest?.status === 'approuve' ||
-                  ticket.scenario === 'C' ||
-                  (Array.isArray(ticket.notes) && ticket.notes.some((n: any) => (n.content || '').includes('Scénario C') || (n.content || '').includes('déductibles du loyer')));
+                  (ticket.scenario === 'C' && Number(ticket.scenarioAmount) > 0) ||
+                  (ticket.rentDeductionRequest?.status === 'approuve' && Number(ticket.rentDeductionRequest?.amountSpent) > 0);
 
                 const hasScenarioA =
-                  ticket.scenario === 'A' ||
-                  (Array.isArray(ticket.notes) && ticket.notes.some((n: any) => (n.content || '').includes('Scénario A') || (n.content || '').includes('prise en charge par le propriétaire')));
+                  ticket.scenario === 'A' && ticket.scenarioStatus !== 'cancelled';
 
                 const hasScenarioB =
-                  ticket.scenario === 'B' ||
-                  (Array.isArray(ticket.notes) && ticket.notes.some((n: any) => (n.content || '').includes('Scénario B') || (n.content || '').includes('charge locative')));
+                  ticket.scenario === 'B' && Number(ticket.scenarioAmount) > 0;
 
                 const scenarioCAmount =
                   Number(ticket.rentDeductionRequest?.amountSpent) ||
                   Number(ticket.scenarioAmount) ||
-                  10000;
+                  0;
 
                 if (hasScenarioC) {
                   return (
@@ -1319,11 +1314,13 @@ export const LocataireMaintenanceView: React.FC = () => {
                   <div className="flex flex-col gap-2">
                     {/* Notes non-internes du ticket */}
                     {Array.isArray(ticket.notes) && ticket.notes.filter((n: any) => !n.isInternal).map((note: any) => {
-                      const isFromOwner = note.author && (
+                      const isFromOwner = note.authorRole === 'proprietaire' || note.authorRole === 'agence' || (note.author && (
                         note.author.toLowerCase().includes('propriétaire') ||
                         note.author.toLowerCase().includes('bailleur') ||
                         note.author.toLowerCase().includes('agence')
-                      );
+                      ));
+                      const cleanAuthor = String(note.author || '').replace(/\s*\(Vous\)/gi, '').trim();
+                      const displayAuthor = isFromOwner ? (cleanAuthor || 'Bailleur') : 'Vous';
                       return (
                         <div
                           key={note.id}
@@ -1335,7 +1332,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                         >
                           <div className="flex items-center justify-between gap-3">
                             <span className={`font-black ${isFromOwner ? 'text-blue-950' : 'text-slate-900'}`}>
-                              {note.author}
+                              {displayAuthor}
                             </span>
                             <span className="text-[10px] text-slate-400 font-semibold">{note.date}</span>
                           </div>

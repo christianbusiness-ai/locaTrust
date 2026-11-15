@@ -48,17 +48,13 @@ let SERVER_STORE = {
       photos: [],
       notes: [
         {
-          id: 'note_dep_413b',
+          id: 'note_owner_reply_ok',
           author: 'Propriétaire',
-          content: 'Réparation autorisée avec déduction de loyer (Scénario C) : 10 000 FCFA déductibles du prochain loyer.',
-          date: '14/11/2026 à 12:17'
+          authorRole: 'proprietaire',
+          content: 'ok',
+          date: '14/11/2026 à 14:25'
         }
-      ],
-      rentDeductionRequest: {
-        status: 'approuve',
-        amountSpent: 10000,
-        deductionMonth: 'Prochain loyer'
-      }
+      ]
     },
     {
       id: 'tck_cee3_robinet',
@@ -82,35 +78,7 @@ let SERVER_STORE = {
   contacts: {},
   readState: {},
   applications: [],
-  expenses: [
-    {
-      id: 'dep_2026_e93l',
-      expense_number: 'DEP-2026-E93L',
-      property_id: 'prop_bouake_maison',
-      property_title: 'Maison a loué',
-      property_city: 'Bouaké',
-      tenant_name: 'christian',
-      ticket_id: 'TCK-2026-413B',
-      title: 'Réparation suite à ticket TCK-2026-413B (toiture)',
-      description: 'Le plafond coule a chaque tomber de pluie',
-      amount: 10000,
-      currency: 'XOF',
-      payer: 'locataire',
-      responsible: 'proprietaire',
-      scenario: 'C',
-      validation_status: 'EN_ATTENTE_VALIDATION',
-      expense_date: '2026-11-14',
-      reimbursement_status: 'non_applicable',
-      amount_to_recover: 0,
-      amount_recovered: 0,
-      recovery_balance: 0,
-      compensation_authorized: true,
-      compensation_total_applied: 0,
-      compensation_balance: 10000,
-      created_at: '2026-11-14T12:17:00.000Z',
-      updated_at: '2026-11-14T12:17:00.000Z'
-    }
-  ]
+  expenses: []
 };
 
 // ============================================================================
@@ -366,8 +334,7 @@ export default async function handler(req, res) {
           )) {
             return true;
           }
-          // Règle de résilience : ne jamais perdre une dépense certifiée
-          return Boolean(e.amount > 0 && (e.expense_number === 'DEP-2026-E93L' || e.property_title === 'Maison a loué'));
+          return false;
         });
         const userReadState = SERVER_STORE.readState[cleanUserId] || {
           readMessageIds: [],
@@ -1188,8 +1155,7 @@ export default async function handler(req, res) {
         if (Array.isArray(SERVER_STORE.expenses)) {
           SERVER_STORE.expenses = SERVER_STORE.expenses.map(e => {
             const isTargetExp = (expenseId && e.id === expenseId) ||
-                                (tckNum && (e.ticket_id === tckNum || (e.title && e.title.includes(tckNum)))) ||
-                                (e.expense_number === 'DEP-2026-E93L');
+                                (tckNum && (e.ticket_id === tckNum || (e.title && e.title.includes(tckNum))));
             if (isTargetExp) {
               return {
                 ...e,
@@ -1207,7 +1173,7 @@ export default async function handler(req, res) {
         const notifItem = {
           id: `notif_tenant_confirmed_${Date.now()}`,
           title: `✅ Accord validé par le locataire — Incident clôturé`,
-          description: `Le locataire ${tenantName || 'christian'} a validé la décision (Scénario ${dynamicScenario}) pour « ${propertyTitle || targetTicket?.propertyTitle || 'Maison a loué'} ». L'incident est définitivement clôturé.`,
+          description: `Le locataire ${tenantName || 'du logement'} a validé la décision (Scénario ${dynamicScenario}) pour « ${propertyTitle || targetTicket?.propertyTitle || 'le logement'} ». L'incident est définitivement clôturé.`,
           time: "À l'instant",
           timestamp: new Date().toISOString(),
           category: 'maintenance',
