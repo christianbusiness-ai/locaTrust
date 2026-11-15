@@ -585,7 +585,7 @@ export async function syncExpenseDecisionToMaintenanceTicket(
           status: 'approuve',
           amountSpent: expense.amount,
           deductionMonth: 'Prochain loyer'
-        } : matchedTicket.rentDeductionRequest
+        } : undefined
       };
 
       // 1. Mettre à jour localStorage
@@ -632,10 +632,16 @@ export async function syncExpenseDecisionToMaintenanceTicket(
             ticketId: matchedTicket.id,
             ticketNumber: targetTicketNum || matchedTicket.ticketNumber,
             status: newStatus,
+            scenario: expense.scenario,
+            scenarioAmount: expense.amount,
             closeTicket: isResolving,
             notes: updatedNotes,
             rentDeductionRequest: updatedTicket.rentDeductionRequest,
-            notificationTitle: '🛠️ Décision du bailleur sur votre signalement',
+            notificationTitle: expense.scenario === 'C'
+              ? '🛠️ Réparation autorisée avec déduction de loyer (Scénario C)'
+              : expense.scenario === 'B'
+              ? '🛠️ Décision du bailleur : Réparation locative (Scénario B)'
+              : '🛠️ Réparation prise en charge par le bailleur (Scénario A)',
             notificationDescription: noteContent,
             ownerId: expense.owner_id,
             tenantId: targetTenantId
@@ -647,11 +653,22 @@ export async function syncExpenseDecisionToMaintenanceTicket(
     // 6. Notification globale pour le locataire (cloche + push)
     if (targetTenantId) {
       try {
+        const notifTitle = expense.scenario === 'C'
+          ? '🛠️ Réparation autorisée avec déduction de loyer (Scénario C)'
+          : expense.scenario === 'B'
+          ? '🛠️ Décision du bailleur : Réparation locative (Scénario B)'
+          : '🛠️ Réparation prise en charge par le bailleur (Scénario A)';
+
+        const resolvedPropTitle = expense.property_title || matchedTicket?.propertyTitle || 'votre logement';
+        const notifDesc = expense.scenario === 'C'
+          ? `Votre bailleur a validé votre signalement pour « ${resolvedPropTitle} » : vous pouvez faire réparer la panne (${formatFCFA(expense.amount)} déductibles du loyer). Vous pouvez valider cette décision pour clôturer le signalement.`
+          : expense.scenario === 'B'
+          ? `Votre bailleur a validé une réparation locative de ${formatFCFA(expense.amount)} pour « ${resolvedPropTitle} » (Scénario B). Vous pouvez valider cette décision pour clôturer le signalement.`
+          : `Votre bailleur prend intégralement en charge les réparations de ${formatFCFA(expense.amount)} pour « ${resolvedPropTitle} » (Scénario A). Aucun frais pour vous. Vous pouvez valider cette décision pour clôturer le signalement.`;
+
         await pushGlobalNotification({
-          title: expense.scenario === 'C'
-            ? '🛠️ Réparation autorisée avec déduction de loyer'
-            : '🛠️ Décision du bailleur concernant votre signalement',
-          description: `Votre bailleur a validé votre signalement pour « ${expense.property_title || matchedTicket?.propertyTitle || 'votre logement'} » : vous pouvez faire réparer la panne (${formatFCFA(expense.amount)} déductibles du loyer).`,
+          title: notifTitle,
+          description: notifDesc,
           category: 'maintenance',
           targetRole: 'locataire',
           targetUserId: targetTenantId,
@@ -1021,9 +1038,9 @@ export async function tenantConfirmScenarioDecision(params: {
                   notes: [...existingNotes, validationNote],
                   rentDeductionRequest: dynamicScenario === 'C' ? {
                     status: 'approuve',
-                    amountSpent: dynamicAmount || 10000,
+                    amountSpent: dynamicAmount,
                     deductionMonth: 'Prochain loyer'
-                  } : t.rentDeductionRequest
+                  } : undefined
                 };
               }
               return t;

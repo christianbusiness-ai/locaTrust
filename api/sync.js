@@ -853,7 +853,7 @@ export default async function handler(req, res) {
 
       // 5. Mise à jour d'un ticket de maintenance (statut, devis/coût, programmation, notes)
       if (action === 'update_maintenance_ticket') {
-        const { ticketId, status, notes, scheduledDate, cost, description, rentDeductionRequest, notificationTitle, notificationDescription, tenantId, ownerId } = body;
+        const { ticketId, status, notes, scheduledDate, cost, description, rentDeductionRequest, notificationTitle, notificationDescription, tenantId, ownerId, scenario, scenarioAmount, scenarioValidated, closeTicket } = body;
         const cleanTenantId = tenantId || body.tenant_id;
         const cleanOwnerId = ownerId || body.owner_id;
 
@@ -875,6 +875,10 @@ export default async function handler(req, res) {
 
         if (target) {
           if (status) target.status = status;
+          if (closeTicket) target.status = 'Résolu';
+          if (scenario !== undefined) target.scenario = scenario;
+          if (scenarioAmount !== undefined) target.scenarioAmount = Number(scenarioAmount);
+          if (scenarioValidated !== undefined) target.scenarioValidated = Boolean(scenarioValidated);
           if (notes && Array.isArray(notes)) {
             const existingNotes = Array.isArray(target.notes) ? target.notes : [];
             const notesMap = new Map();
@@ -885,7 +889,11 @@ export default async function handler(req, res) {
           if (scheduledDate !== undefined) target.scheduledDate = scheduledDate;
           if (cost !== undefined) target.cost = cost;
           if (description && description.trim().length > 5) target.description = description;
-          if (rentDeductionRequest) target.rentDeductionRequest = rentDeductionRequest;
+          if (rentDeductionRequest !== undefined) {
+            target.rentDeductionRequest = rentDeductionRequest;
+          } else if (scenario && scenario !== 'C') {
+            target.rentDeductionRequest = null;
+          }
           if (cleanTenantId) {
             target.tenantId = cleanTenantId;
             target.tenant_id = cleanTenantId;
@@ -1045,9 +1053,21 @@ export default async function handler(req, res) {
             targetTicket.scenario = expense.scenario || targetTicket.scenario;
             const dynamicAmount = Number(expense.amount || 0);
             targetTicket.scenarioAmount = dynamicAmount;
-            const noteText = expense.scenario === 'C'
-              ? `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${dynamicAmount.toLocaleString('fr-FR')} FCFA. Ce montant sera déduit de votre loyer conformément au Scénario C.`
-              : `Décision du bailleur : La réparation de ${dynamicAmount.toLocaleString('fr-FR')} FCFA a été validée.`;
+            let noteText = '';
+            if (expense.scenario === 'C') {
+              noteText = `Accord officiel du bailleur pour réparation : Vous êtes expressément autorisé(e) à faire réaliser la réparation pour un montant de ${dynamicAmount.toLocaleString('fr-FR')} FCFA. Ce montant sera déduit de votre loyer conformément au Scénario C.`;
+              targetTicket.rentDeductionRequest = {
+                status: 'approuve',
+                amountSpent: dynamicAmount,
+                deductionMonth: 'Prochain loyer'
+              };
+            } else if (expense.scenario === 'B') {
+              noteText = `Décision du bailleur : La réparation avancée de ${dynamicAmount.toLocaleString('fr-FR')} FCFA est à la charge locative conformément au contrat de bail (Scénario B). Un remboursement ou plan d'apurement sera convenu.`;
+              targetTicket.rentDeductionRequest = null;
+            } else {
+              noteText = `Prise en charge par le bailleur : La réparation de ${dynamicAmount.toLocaleString('fr-FR')} FCFA est intégralement prise en charge par le propriétaire (Scénario A). Aucun frais pour le locataire.`;
+              targetTicket.rentDeductionRequest = null;
+            }
 
             const existingNotes = Array.isArray(targetTicket.notes) ? targetTicket.notes : [];
             const hasNote = existingNotes.some(n => n.content && n.content.includes(dynamicAmount.toLocaleString('fr-FR')));
@@ -1064,20 +1084,21 @@ export default async function handler(req, res) {
               ];
             }
 
-            if (expense.scenario === 'C') {
-              targetTicket.rentDeductionRequest = {
-                status: 'approuve',
-                amountSpent: dynamicAmount,
-                deductionMonth: 'Prochain loyer'
-              };
-            }
-
             const targetTenantId = expense.tenant_id || targetTicket.tenantId || targetTicket.tenant_id || '';
-            const notifTitle = expense.scenario === 'C'
-              ? '🛠️ Réparation autorisée avec déduction de loyer'
-              : '🛠️ Décision du bailleur concernant votre signalement';
             const resolvedPropTitle = expense.property_title || targetTicket.propertyTitle || 'votre logement';
-            const notifDesc = `Votre bailleur a validé votre signalement pour « ${resolvedPropTitle} » : vous êtes autorisé(e) à faire effectuer la réparation (${dynamicAmount.toLocaleString('fr-FR')} FCFA déductibles du loyer).`;
+            let notifTitle = '';
+            let notifDesc = '';
+
+            if (expense.scenario === 'C') {
+              notifTitle = '🛠️ Réparation autorisée avec déduction de loyer (Scénario C)';
+              notifDesc = `Votre bailleur a validé votre signalement pour « ${resolvedPropTitle} » : vous êtes autorisé(e) à faire effectuer la réparation (${dynamicAmount.toLocaleString('fr-FR')} FCFA déductibles du loyer). Vous pouvez valider cette décision pour clôturer le signalement.`;
+            } else if (expense.scenario === 'B') {
+              notifTitle = '🛠️ Décision du bailleur : Réparation locative (Scénario B)';
+              notifDesc = `Votre bailleur a validé une réparation locative avancée de ${dynamicAmount.toLocaleString('fr-FR')} FCFA pour « ${resolvedPropTitle} » (Scénario B). Vous pouvez valider cette décision pour clôturer le signalement.`;
+            } else {
+              notifTitle = '🛠️ Réparation prise en charge par le bailleur (Scénario A)';
+              notifDesc = `Votre bailleur prend intégralement en charge les réparations de ${dynamicAmount.toLocaleString('fr-FR')} FCFA pour « ${resolvedPropTitle} » (Scénario A). Aucun frais pour vous. Vous pouvez valider cette décision pour clôturer le signalement.`;
+            }
 
             if (targetTenantId) {
               SERVER_STORE.notifications.unshift({
@@ -1134,9 +1155,11 @@ export default async function handler(req, res) {
           if (dynamicScenario === 'C') {
             targetTicket.rentDeductionRequest = {
               status: 'approuve',
-              amountSpent: dynamicAmount || 10000,
+              amountSpent: dynamicAmount,
               deductionMonth: 'Prochain loyer'
             };
+          } else {
+            targetTicket.rentDeductionRequest = null;
           }
 
           const validationNote = {

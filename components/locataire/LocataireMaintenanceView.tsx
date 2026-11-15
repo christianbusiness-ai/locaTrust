@@ -117,13 +117,24 @@ export const LocataireMaintenanceView: React.FC = () => {
         incomingNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
         const mergedNotes = Array.from(notesMap.values());
 
+        const mergedScenario = incoming.scenario || existing.scenario;
+        const mergedScenarioAmount = incoming.scenarioAmount !== undefined ? incoming.scenarioAmount : existing.scenarioAmount;
+        const mergedRentDeduction = (mergedScenario && mergedScenario !== 'C')
+          ? undefined
+          : (incoming.rentDeductionRequest !== undefined ? incoming.rentDeductionRequest : (existing.scenario && existing.scenario !== 'C' ? undefined : existing.rentDeductionRequest));
+
         return {
           ...existing,
           ...incoming,
           status: incoming.status || existing.status,
           scheduledDate: incoming.scheduledDate || existing.scheduledDate,
+          scenario: mergedScenario,
+          scenarioAmount: mergedScenarioAmount,
+          scenarioValidated: incoming.scenarioValidated !== undefined ? incoming.scenarioValidated : existing.scenarioValidated,
+          validatedByTenant: incoming.validatedByTenant !== undefined ? incoming.validatedByTenant : existing.validatedByTenant,
+          expense_id: incoming.expense_id || existing.expense_id,
           notes: mergedNotes.length > 0 ? mergedNotes : (existingNotes.length > 0 ? existingNotes : incomingNotes),
-          rentDeductionRequest: incoming.rentDeductionRequest || existing.rentDeductionRequest
+          rentDeductionRequest: mergedRentDeduction
         };
       };
 
@@ -235,18 +246,29 @@ export const LocataireMaintenanceView: React.FC = () => {
                 notes: incomingNotes
               });
 
-              // Si la notification signale un accord réel de réparation avec déduction de loyer (Scénario C)
+              // Si la notification signale une décision de réparation (Scénario A, B ou C)
               const notifAmtMatch = (n.description || n.message || '').match(/(\d[\d\s]*)\s*FCFA/i)?.[1]?.replace(/\s/g, '');
               const notifAmount = Number(meta.amount) || (notifAmtMatch ? Number(notifAmtMatch) : 0);
-              const isRealDeductionNotif = meta.scenario === 'C' && notifAmount > 0;
+              const notifScenario = meta.scenario ||
+                (String(n.title || '').includes('Scénario B') || String(n.description || '').includes('Scénario B') ? 'B' :
+                 String(n.title || '').includes('Scénario A') || String(n.description || '').includes('Scénario A') ? 'A' :
+                 String(n.title || '').includes('Scénario C') || String(n.description || '').includes('déductibles') ? 'C' : null);
 
-              if (isRealDeductionNotif) {
-                list[existingIdx].status = 'En cours';
-                list[existingIdx].rentDeductionRequest = {
-                  status: 'approuve',
-                  amountSpent: notifAmount,
-                  deductionMonth: 'Prochain loyer'
-                };
+              if (notifScenario) {
+                list[existingIdx].scenario = notifScenario;
+                if (notifAmount > 0) list[existingIdx].scenarioAmount = notifAmount;
+                if (list[existingIdx].status === 'Nouveau' || list[existingIdx].status === 'En attente') {
+                  list[existingIdx].status = 'En cours';
+                }
+                if (notifScenario === 'C' && notifAmount > 0) {
+                  list[existingIdx].rentDeductionRequest = {
+                    status: 'approuve',
+                    amountSpent: notifAmount,
+                    deductionMonth: 'Prochain loyer'
+                  };
+                } else {
+                  list[existingIdx].rentDeductionRequest = undefined;
+                }
               }
             }
           });
@@ -361,6 +383,8 @@ export const LocataireMaintenanceView: React.FC = () => {
                   amountSpent: Number(exp.amount),
                   deductionMonth: 'Prochain loyer'
                 };
+              } else {
+                targetTicket.rentDeductionRequest = undefined;
               }
             } else if (expTicketNum && exp.description && exp.description.trim().length >= 5) {
               // Si le ticket n'était pas dans la liste mais qu'une dépense validée y fait référence, le restaurer
@@ -702,14 +726,14 @@ export const LocataireMaintenanceView: React.FC = () => {
     window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated', { detail: updatedTicket }));
   };
 
-  const handleConfirmTicketDecision = async (ticket: any, scenario: 'A' | 'B' | 'C' = 'C', amount: number = 10000) => {
+  const handleConfirmTicketDecision = async (ticket: any, scenario: 'A' | 'B' | 'C' = 'C', amount: number = 0) => {
     if (!ticket) return;
     setValidatingTicketId(ticket.id);
 
     try {
-      const tenantName = user?.user_metadata?.full_name || (user as any)?.name || ticket.tenantName || 'christian';
-      const propertyTitle = ticket.propertyTitle || 'Maison a loué';
-      const ownerId = ticket.owner_id || ticket.ownerId || 'usr_owner';
+      const tenantName = user?.user_metadata?.full_name || (user as any)?.name || ticket.tenantName || 'Locataire';
+      const propertyTitle = ticket.propertyTitle || 'Logement';
+      const ownerId = ticket.owner_id || ticket.ownerId || '';
 
       await tenantConfirmScenarioDecision({
         ticketId: ticket.id,
@@ -729,7 +753,7 @@ export const LocataireMaintenanceView: React.FC = () => {
       const validationNote = {
         id: `note-conf-${Date.now()}`,
         author: 'Locataire (Validation officielle)',
-        content: `✅ Accord validé par le locataire : Les conditions de la réparation (Scénario ${scenario} — ${formatFCFA(amount)}) ont été acceptées. L'incident est désormais clôturé.`,
+        content: `✅ Accord validé par le locataire : Les conditions de la réparation (Scénario ${scenario}${amount > 0 ? ` — ${formatFCFA(amount)}` : ''}) ont été acceptées. L'incident est désormais clôturé.`,
         date: dateStr,
         isInternal: false
       };
@@ -741,6 +765,7 @@ export const LocataireMaintenanceView: React.FC = () => {
               ...t,
               status: 'Résolu',
               scenario: scenario,
+              scenarioAmount: amount || t.scenarioAmount,
               scenarioValidated: true,
               validatedByTenant: true,
               validatedAt: now.toISOString(),
@@ -749,7 +774,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                 status: 'approuve',
                 amountSpent: amount,
                 deductionMonth: 'Prochain loyer'
-              } : t.rentDeductionRequest
+              } : undefined
             };
           }
           return t;
@@ -761,7 +786,9 @@ export const LocataireMaintenanceView: React.FC = () => {
         title: 'Décision validée et incident clôturé !',
         desc: scenario === 'C'
           ? `Votre accord est enregistré. La déduction de ${formatFCFA(amount)} sera automatiquement déduite de votre prochain loyer dans la section Paiements.`
-          : `Votre accord pour le signalement a été transmis à votre bailleur et le ticket est désormais clôturé.`
+          : scenario === 'B'
+          ? `Votre accord pour la réparation locative (${formatFCFA(amount)}) a été transmis au bailleur et l'incident est désormais clôturé.`
+          : `Votre accord a été transmis au bailleur et le ticket est désormais clôturé.`
       });
     } catch (err) {
       console.warn('Erreur validation ticket décision:', err);
@@ -1133,22 +1160,12 @@ export const LocataireMaintenanceView: React.FC = () => {
                   Boolean(ticket.scenarioValidated) ||
                   Boolean(ticket.validatedByTenant);
 
-                const hasScenarioC =
-                  (ticket.scenario === 'C' && Number(ticket.scenarioAmount) > 0) ||
-                  (ticket.rentDeductionRequest?.status === 'approuve' && Number(ticket.rentDeductionRequest?.amountSpent) > 0);
+                const effectiveScenario = ticket.scenario || (ticket.rentDeductionRequest?.status === 'approuve' ? 'C' : null);
+                const effectiveAmount = Number(ticket.scenarioAmount) || Number(ticket.rentDeductionRequest?.amountSpent) || 0;
 
-                const hasScenarioA =
-                  ticket.scenario === 'A' && ticket.scenarioStatus !== 'cancelled';
+                if (!effectiveScenario) return null;
 
-                const hasScenarioB =
-                  ticket.scenario === 'B' && Number(ticket.scenarioAmount) > 0;
-
-                const scenarioCAmount =
-                  Number(ticket.rentDeductionRequest?.amountSpent) ||
-                  Number(ticket.scenarioAmount) ||
-                  0;
-
-                if (hasScenarioC) {
+                if (effectiveScenario === 'C') {
                   return (
                     <div className={`p-4 rounded-2xl border-2 flex flex-col gap-3 shadow-sm transition-all ${
                       isTicketResolved
@@ -1177,10 +1194,10 @@ export const LocataireMaintenanceView: React.FC = () => {
 
                       <p className="font-semibold text-slate-800 leading-relaxed text-xs">
                         Votre bailleur a validé la réparation pour un montant de{' '}
-                        <strong className="text-emerald-900 font-black">{formatFCFA(scenarioCAmount)}</strong>.
+                        <strong className="text-emerald-900 font-black">{formatFCFA(effectiveAmount)}</strong>.
                         {isTicketResolved
                           ? ' Cet accord est validé et scellé : ce montant sera automatiquement déduit de votre prochain loyer dans la section Paiements.'
-                          : ' Vous pouvez valider cette décision ci-dessous pour clôturer l\'incident et appliquer automatiquement la déduction de 10 000 FCFA sur votre prochain loyer.'}
+                          : ` Vous pouvez valider cette décision ci-dessous pour clôturer l'incident et appliquer automatiquement la déduction de ${formatFCFA(effectiveAmount)} sur votre prochain loyer.`}
                       </p>
 
                       {!isTicketResolved && (
@@ -1188,7 +1205,7 @@ export const LocataireMaintenanceView: React.FC = () => {
                           <button
                             type="button"
                             disabled={validatingTicketId === ticket.id}
-                            onClick={() => handleConfirmTicketDecision(ticket, 'C', scenarioCAmount)}
+                            onClick={() => handleConfirmTicketDecision(ticket, 'C', effectiveAmount)}
                             className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer animate-pulse hover:animate-none"
                           >
                             <CheckCircle2 className="w-4 h-4" />
@@ -1200,31 +1217,55 @@ export const LocataireMaintenanceView: React.FC = () => {
                   );
                 }
 
-                if (hasScenarioA) {
+                if (effectiveScenario === 'B') {
                   return (
-                    <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-xs text-emerald-950 flex flex-col gap-2.5 shadow-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 font-black text-xs text-emerald-900">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                          <span className="uppercase text-[11px]">Décision du bailleur : Prise en charge intégrale (Scénario A)</span>
+                    <div className={`p-4 rounded-2xl border-2 flex flex-col gap-3 shadow-sm transition-all ${
+                      isTicketResolved
+                        ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-emerald-950'
+                        : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-400 text-slate-900'
+                    }`}>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 font-black text-xs">
+                          {isTicketResolved ? (
+                            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                          ) : (
+                            <Clock className="w-4 h-4 shrink-0 text-amber-600" />
+                          )}
+                          <span className="uppercase tracking-wider text-[11px]">
+                            {isTicketResolved
+                              ? 'Accord validé & Clôturé (Scénario B)'
+                              : 'Décision du bailleur — Réparation locative (Scénario B)'}
+                          </span>
                         </div>
-                        {isTicketResolved && (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-bold text-[10px]">Clôturé</span>
+                        {isTicketResolved ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px]">
+                            Validé & Clôturé
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 font-extrabold text-[10px]">
+                            En attente de votre accord
+                          </span>
                         )}
                       </div>
-                      <p className="font-medium text-slate-800 leading-relaxed">
-                        Le propriétaire prend intégralement en charge les frais de réparation. Aucun frais pour vous.
+
+                      <p className="font-semibold text-slate-800 leading-relaxed text-xs">
+                        Le bailleur a validé la réparation locative pour un montant de{' '}
+                        <strong className="text-amber-950 font-black">{formatFCFA(effectiveAmount)}</strong>.
+                        {isTicketResolved
+                          ? ' Cet accord est validé et l\'incident est clôturé. Le remboursement s\'effectuera selon les modalités convenues.'
+                          : ' Cette réparation d\'entretien est à la charge du locataire conformément au bail. Vous pouvez valider cette décision ci-dessous pour clôturer l\'incident.'}
                       </p>
+
                       {!isTicketResolved && (
-                        <div className="pt-1">
+                        <div className="pt-2 flex items-center gap-3">
                           <button
                             type="button"
                             disabled={validatingTicketId === ticket.id}
-                            onClick={() => handleConfirmTicketDecision(ticket, 'A', 0)}
-                            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm"
+                            onClick={() => handleConfirmTicketDecision(ticket, 'B', effectiveAmount)}
+                            className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer animate-pulse hover:animate-none"
                           >
                             <CheckCircle2 className="w-4 h-4" />
-                            <span>Valider et clôturer l'incident</span>
+                            <span>{validatingTicketId === ticket.id ? 'Validation en cours...' : 'Valider la décision & Clôturer l\'incident'}</span>
                           </button>
                         </div>
                       )}
@@ -1232,31 +1273,53 @@ export const LocataireMaintenanceView: React.FC = () => {
                   );
                 }
 
-                if (hasScenarioB) {
+                if (effectiveScenario === 'A') {
                   return (
-                    <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-400 text-xs text-amber-950 flex flex-col gap-2.5 shadow-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 font-black text-xs text-amber-900">
-                          <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span className="uppercase text-[11px]">Décision du bailleur : Réparation locative (Scénario B)</span>
+                    <div className={`p-4 rounded-2xl border-2 flex flex-col gap-3 shadow-sm transition-all ${
+                      isTicketResolved
+                        ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-emerald-950'
+                        : 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-slate-900'
+                    }`}>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 font-black text-xs">
+                          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                          <span className="uppercase tracking-wider text-[11px]">
+                            {isTicketResolved
+                              ? 'Accord validé & Clôturé (Scénario A)'
+                              : 'Décision du bailleur — Prise en charge intégrale (Scénario A)'}
+                          </span>
                         </div>
-                        {isTicketResolved && (
-                          <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold text-[10px]">Clôturé</span>
+                        {isTicketResolved ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px]">
+                            Validé & Clôturé
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px]">
+                            En attente de votre accord
+                          </span>
                         )}
                       </div>
-                      <p className="font-medium text-slate-800 leading-relaxed">
-                        Cette réparation d'entretien incombant au locataire est à votre charge conformément au bail.
+
+                      <p className="font-semibold text-slate-800 leading-relaxed text-xs">
+                        Le propriétaire prend intégralement en charge les frais de réparation
+                        {effectiveAmount > 0 ? (
+                          <> pour un montant de <strong className="text-emerald-900 font-black">{formatFCFA(effectiveAmount)}</strong></>
+                        ) : ''}. Aucun frais n'est à votre charge.
+                        {isTicketResolved
+                          ? ' L\'incident est définitivement clôturé.'
+                          : ' Vous pouvez valider cette décision ci-dessous pour confirmer et clôturer l\'incident.'}
                       </p>
+
                       {!isTicketResolved && (
-                        <div className="pt-1">
+                        <div className="pt-2 flex items-center gap-3">
                           <button
                             type="button"
                             disabled={validatingTicketId === ticket.id}
-                            onClick={() => handleConfirmTicketDecision(ticket, 'B', 0)}
-                            className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm"
+                            onClick={() => handleConfirmTicketDecision(ticket, 'A', effectiveAmount)}
+                            className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer animate-pulse hover:animate-none"
                           >
                             <CheckCircle2 className="w-4 h-4" />
-                            <span>Valider et clôturer l'incident</span>
+                            <span>{validatingTicketId === ticket.id ? 'Validation en cours...' : 'Valider la décision & Clôturer l\'incident'}</span>
                           </button>
                         </div>
                       )}
