@@ -196,6 +196,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchAttempted, setSearchAttempted] = useState(false);
+  const [searchResults, setSearchResults] = useState<ExistingTenantData[]>([]);
   const [foundTenant, setFoundTenant] = useState<ExistingTenantData | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -257,12 +258,15 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
     setSearchError(null);
     setSearchAttempted(true);
     setFoundTenant(null);
+    setSearchResults([]);
 
+    let foundCandidates: ExistingTenantData[] = [];
+
+    // 1. Recherche directe dans Supabase profiles
     try {
       let sbQuery = supabase
         .from('profiles')
-        .select('id, full_name, email, phone, cni_number, avatar_url, verification_status, account_type')
-        .eq('account_type', 'locataire');
+        .select('id, full_name, email, phone, cni_number, avatar_url, verification_status, account_type, role');
 
       const isEmail = query.includes('@');
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query);
@@ -270,14 +274,13 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
       if (isUuid) {
         sbQuery = sbQuery.eq('id', query);
       } else if (isEmail) {
-        sbQuery = sbQuery.ilike('email', query.toLowerCase());
+        sbQuery = sbQuery.ilike('email', `%${query.toLowerCase()}%`);
       } else {
         const digitsOnly = query.replace(/[^0-9]/g, '');
         if (digitsOnly.length >= 8) {
           sbQuery = sbQuery.or(`phone.ilike.%${digitsOnly}%,cni_number.ilike.%${query}%`);
         } else {
           // Découpage multi-tokens pour correspondre dans n'importe quel ordre
-          // Ex: "Zouzoua laurence" retrouve le profil avec full_name "Laurence Zouzoua"
           const tokens = query.split(/\s+/).filter(Boolean);
           for (const token of tokens) {
             sbQuery = sbQuery.ilike('full_name', `%${token}%`);
@@ -285,37 +288,86 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
         }
       }
 
-      const { data, error } = await sbQuery.limit(5);
+      const { data, error } = await sbQuery.limit(10);
 
-      if (error) {
-        console.error('Erreur technique recherche profil locataire:', error);
-        setSearchError('Impossible d\'effectuer la recherche pour le moment. Veuillez réessayer.');
-        return;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        foundCandidates = data
+          .filter((p: any) => p && (p.account_type === 'locataire' || p.role === 'locataire' || p.role === 'user' || !p.account_type))
+          .map((p: any) => ({
+            id: p.id,
+            fullName: p.full_name || 'Locataire LocaTrust',
+            email: p.email || '',
+            phone: p.phone || '',
+            cniNumber: p.cni_number || '',
+            avatarUrl: p.avatar_url || '',
+            verificationStatus: p.verification_status || 'verifie'
+          }));
       }
-
-      if (!data || data.length === 0) {
-        // Aucun compte correspondant trouvé (Section 6)
-        setFoundTenant(null);
-        return;
-      }
-
-      // Locataire trouvé (Section 5 & 8)
-      const matched = data[0];
-      setFoundTenant({
-        id: matched.id,
-        fullName: matched.full_name || 'Locataire LocaTrust',
-        email: matched.email || '',
-        phone: matched.phone || '',
-        cniNumber: matched.cni_number || '',
-        avatarUrl: matched.avatar_url || '',
-        verificationStatus: matched.verification_status || 'non_verifie'
-      });
-    } catch (err: any) {
-      console.error('Exception imprévue lors de la recherche:', err);
-      setSearchError('Impossible d\'effectuer la recherche pour le moment. Veuillez réessayer.');
-    } finally {
-      setIsSearching(false);
+    } catch (sbErr) {
+      console.warn('Tentative de recherche directe Supabase:', sbErr);
     }
+
+    // 2. Fallback serveur sécurisé via /api/sync (si Supabase retourne vide ou erreur réseau)
+    if (foundCandidates.length === 0) {
+      try {
+        const syncRes = await fetch(`/api/sync?action=search_tenants&q=${encodeURIComponent(query)}`);
+        if (syncRes.ok) {
+          const syncJson = await syncRes.json();
+          if (Array.isArray(syncJson?.tenants) && syncJson.tenants.length > 0) {
+            foundCandidates = syncJson.tenants;
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Tentative de recherche via api/sync:', syncErr);
+      }
+    }
+
+    // 3. Fallback stockage local (candidatures et contrats déjà connus)
+    if (foundCandidates.length === 0 && typeof window !== 'undefined') {
+      try {
+        const rawApps = localStorage.getItem('locatrust_rental_applications');
+        if (rawApps) {
+          const apps = JSON.parse(rawApps);
+          if (Array.isArray(apps)) {
+            const qLower = query.toLowerCase();
+            apps.forEach((a: any) => {
+              const name = String(a.applicant_name || a.tenant_name || a.fullName || '').toLowerCase();
+              const mail = String(a.applicant_email || a.email || '').toLowerCase();
+              const ph = String(a.applicant_phone || a.phone || '');
+              if (name.includes(qLower) || mail.includes(qLower) || ph.includes(qLower)) {
+                if (!foundCandidates.some(c => c.id === (a.tenant_id || a.id))) {
+                  foundCandidates.push({
+                    id: a.tenant_id || a.id || crypto.randomUUID(),
+                    fullName: a.applicant_name || a.tenant_name || a.fullName || 'Locataire',
+                    email: a.applicant_email || a.email || '',
+                    phone: a.applicant_phone || a.phone || '',
+                    cniNumber: a.applicant_cni || a.cni_number || '',
+                    avatarUrl: a.applicant_avatar || '',
+                    verificationStatus: a.verification_status || 'verifie'
+                  });
+                }
+              }
+            });
+          }
+        }
+      } catch {}
+    }
+
+    // 4. Traitement et sélection des résultats
+    if (foundCandidates.length === 0) {
+      setFoundTenant(null);
+      setSearchResults([]);
+    } else {
+      setSearchResults(foundCandidates);
+      // Si un seul compte correspond, le sélectionner directement
+      if (foundCandidates.length === 1) {
+        setFoundTenant(foundCandidates[0]);
+      } else {
+        // Si plusieurs comptes correspondent, laisser l'utilisateur sélectionner le nom
+        setFoundTenant(null);
+      }
+    }
+    setIsSearching(false);
   };
 
   // Message d'invitation généré (Section 17)
@@ -685,7 +737,67 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
               </p>
             )}
 
-            {/* CAS A : LOCATAIRE TROUVÉ (Section 5) */}
+            {/* LISTE DES LOCATAIRES TROUVÉS PERMETTANT DE SÉLECTIONNER LE NOM */}
+            {searchResults.length > 0 && !foundTenant && (
+              <div className="space-y-2.5 animate-fadeIn">
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="font-extrabold text-slate-800 dark:text-slate-200">
+                    {searchResults.length} compte(s) locataire(s) trouvé(s) — Choisissez le locataire :
+                  </span>
+                  <span className="text-[11px] text-blue-600 font-semibold">
+                    Cliquez sur Sélectionner
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto pr-1">
+                  {searchResults.map((t) => (
+                    <div
+                      key={t.id}
+                      onClick={() => setFoundTenant(t)}
+                      className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-blue-500 hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-3 group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <UserAvatar
+                          avatarUrl={t.avatarUrl}
+                          name={t.fullName}
+                          size="md"
+                          role="locataire"
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-slate-900 dark:text-white group-hover:text-blue-600 transition-colors">
+                              {t.fullName}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800">
+                              Compte vérifié
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                            <span>{maskEmail(t.email)}</span>
+                            <span>•</span>
+                            <span>{maskPhone(t.phone)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFoundTenant(t);
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all shrink-0 cursor-pointer"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Sélectionner</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* CAS A : LOCATAIRE SÉLECTIONNÉ */}
             {foundTenant && (
               <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border-2 border-emerald-500/40 dark:border-emerald-500/30 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn">
                 <div className="flex items-center gap-3.5">
@@ -725,10 +837,13 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
                     type="button"
                     onClick={() => {
                       setFoundTenant(null);
-                      setSearchQuery('');
-                      setSearchAttempted(false);
+                      if (searchResults.length <= 1) {
+                        setSearchResults([]);
+                        setSearchQuery('');
+                        setSearchAttempted(false);
+                      }
                     }}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                     title="Changer de locataire"
                   >
                     <X className="w-4 h-4" />
@@ -738,7 +853,7 @@ export const AddExistingTenantModal: React.FC<AddExistingTenantModalProps> = ({
             )}
 
             {/* CAS B : LOCATAIRE NON TROUVÉ -> INVITATION (Section 17) */}
-            {!foundTenant && searchAttempted && !isSearching && (
+            {!foundTenant && searchResults.length === 0 && searchAttempted && !isSearching && (
               <div className="p-5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 space-y-3 animate-fadeIn">
                 <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
                   <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />

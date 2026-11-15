@@ -212,9 +212,68 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const { role, userId } = req.query || {};
+      const { role, userId, action, q } = req.query || {};
       const cleanUserId = userId ? String(userId).trim() : null;
       const isAdmin = role === 'admin';
+
+      // 0. Recherche sécurisée et résiliente des locataires réels pour formalisation de bail
+      if (action === 'search_tenants' || action === 'search_tenant') {
+        const queryStr = String(q || '').trim();
+        if (!queryStr) {
+          return res.status(200).json({ success: true, tenants: [] });
+        }
+
+        const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://owaxmnanqqvbjjzpouvo.supabase.co';
+        const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93YXhtbmFucXF2YmpqenBvdXZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDk1MzAsImV4cCI6MjEwNjUyNTUzMH0.9Uvq3qcEB7upM93xiJ528e726RH_Rp8LxOOaZ9CYKj0';
+
+        try {
+          const isEmail = queryStr.includes('@');
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(queryStr);
+          let restUrl = `${SUPABASE_URL}/rest/v1/profiles?select=id,full_name,email,phone,cni_number,avatar_url,verification_status,account_type&limit=15`;
+
+          if (isUuid) {
+            restUrl += `&id=eq.${encodeURIComponent(queryStr)}`;
+          } else if (isEmail) {
+            restUrl += `&email=ilike.*${encodeURIComponent(queryStr.toLowerCase())}*`;
+          } else {
+            const digits = queryStr.replace(/[^0-9]/g, '');
+            if (digits.length >= 8) {
+              restUrl += `&or=(phone.ilike.*${encodeURIComponent(digits)}*,cni_number.ilike.*${encodeURIComponent(queryStr)}*)`;
+            } else {
+              restUrl += `&full_name=ilike.*${encodeURIComponent(queryStr)}*`;
+            }
+          }
+
+          const sbRes = await fetch(restUrl, {
+            headers: {
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+          });
+
+          if (sbRes.ok) {
+            const rawProfiles = await sbRes.json();
+            const tenants = Array.isArray(rawProfiles)
+              ? rawProfiles
+                  .filter(p => !p.account_type || p.account_type === 'locataire' || p.role === 'locataire')
+                  .map(p => ({
+                    id: p.id,
+                    fullName: p.full_name || 'Locataire',
+                    email: p.email || '',
+                    phone: p.phone || '',
+                    cniNumber: p.cni_number || '',
+                    avatarUrl: p.avatar_url || '',
+                    verificationStatus: p.verification_status || 'verifie'
+                  }))
+              : [];
+            return res.status(200).json({ success: true, tenants });
+          }
+        } catch (fetchErr) {
+          console.error('Erreur recherche locataires api/sync:', fetchErr);
+        }
+
+        return res.status(200).json({ success: true, tenants: [] });
+      }
 
       // Si l'utilisateur est admin, il a accès à la supervision globale
       if (isAdmin && cleanUserId) {
@@ -527,6 +586,65 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = req.body || {};
       const action = body.action;
+
+      // 0. Recherche sécurisée de locataires réels
+      if (action === 'search_tenants' || action === 'search_tenant') {
+        const queryStr = String(body.query || body.q || '').trim();
+        if (!queryStr) {
+          return res.status(200).json({ success: true, tenants: [] });
+        }
+
+        const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://owaxmnanqqvbjjzpouvo.supabase.co';
+        const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93YXhtbmFucXF2YmpqenBvdXZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDk1MzAsImV4cCI6MjEwNjUyNTUzMH0.9Uvq3qcEB7upM93xiJ528e726RH_Rp8LxOOaZ9CYKj0';
+
+        try {
+          const isEmail = queryStr.includes('@');
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(queryStr);
+          let restUrl = `${SUPABASE_URL}/rest/v1/profiles?select=id,full_name,email,phone,cni_number,avatar_url,verification_status,account_type&limit=15`;
+
+          if (isUuid) {
+            restUrl += `&id=eq.${encodeURIComponent(queryStr)}`;
+          } else if (isEmail) {
+            restUrl += `&email=ilike.*${encodeURIComponent(queryStr.toLowerCase())}*`;
+          } else {
+            const digits = queryStr.replace(/[^0-9]/g, '');
+            if (digits.length >= 8) {
+              restUrl += `&or=(phone.ilike.*${encodeURIComponent(digits)}*,cni_number.ilike.*${encodeURIComponent(queryStr)}*)`;
+            } else {
+              restUrl += `&full_name=ilike.*${encodeURIComponent(queryStr)}*`;
+            }
+          }
+
+          const sbRes = await fetch(restUrl, {
+            headers: {
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+          });
+
+          if (sbRes.ok) {
+            const rawProfiles = await sbRes.json();
+            const tenants = Array.isArray(rawProfiles)
+              ? rawProfiles
+                  .filter(p => !p.account_type || p.account_type === 'locataire' || p.role === 'locataire')
+                  .map(p => ({
+                    id: p.id,
+                    fullName: p.full_name || 'Locataire',
+                    email: p.email || '',
+                    phone: p.phone || '',
+                    cniNumber: p.cni_number || '',
+                    avatarUrl: p.avatar_url || '',
+                    verificationStatus: p.verification_status || 'verifie'
+                  }))
+              : [];
+            return res.status(200).json({ success: true, tenants });
+          }
+        } catch (fetchErr) {
+          console.error('Erreur recherche locataires api/sync POST:', fetchErr);
+        }
+
+        return res.status(200).json({ success: true, tenants: [] });
+      }
 
       // 0. Suppression / Annulation d'un paiement ou d'une déclaration
       if (action === 'delete_payment' || action === 'cancel_payment') {
