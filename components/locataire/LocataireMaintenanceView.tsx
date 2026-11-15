@@ -11,7 +11,8 @@ import {
   Video,
   Send,
   MessageSquare,
-  Calendar
+  Calendar,
+  XCircle
 } from 'lucide-react';
 import { MaintenanceTicket } from '@/types/database.types';
 import { getMaintenanceTickets, createMaintenanceTicket, getContracts, resolvePropertyCity } from '@/src/lib/db';
@@ -22,7 +23,7 @@ import { supabase } from '@/src/lib/supabase';
 import { pushGlobalNotification } from '@/lib/waitingListNotifications';
 import { broadcastLiveEvent } from '@/lib/supabaseRealtime';
 import { formatFCFA } from '@/lib/utils';
-import { tenantConfirmScenarioDecision } from '@/lib/financial/expensesService';
+import { tenantConfirmScenarioDecision, tenantRejectScenarioDecision } from '@/lib/financial/expensesService';
 import { triggerCelebration } from '@/lib/celebration';
 
 export const LocataireMaintenanceView: React.FC = () => {
@@ -37,6 +38,9 @@ export const LocataireMaintenanceView: React.FC = () => {
   const [showNewTicketModal, setShowNewTicketModal] = useState<boolean>(false);
   const [isSubmittingTicket, setIsSubmittingTicket] = useState<boolean>(false);
   const [validatingTicketId, setValidatingTicketId] = useState<string | null>(null);
+  const [rejectingTicket, setRejectingTicket] = useState<{ ticket: any; scenario: 'A' | 'B' | 'C'; amount: number } | null>(null);
+  const [rejectionReason, setRejectionReason] = useState<string>('');
+  const [isSubmittingRejection, setIsSubmittingRejection] = useState<boolean>(false);
   const [successModalMessage, setSuccessModalMessage] = useState<{ title: string; desc: string } | null>(null);
   const [tenantReplyText, setTenantReplyText] = useState<{ [ticketId: string]: string }>({});
   const [highlightedTicketId, setHighlightedTicketId] = useState<string | null>(null);
@@ -109,13 +113,44 @@ export const LocataireMaintenanceView: React.FC = () => {
       const { data, error } = await getMaintenanceTickets(user.id);
       let list = data || [];
 
-      // Helper de fusion sécurisée pour ne jamais écraser les réponses du bailleur
+      // Helper de détection sémantique d'un même incident technique
+      const normalizeDesc = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 35);
+      const isSameTicket = (a: any, b: any) => {
+        if (!a || !b) return false;
+        if (a.id && b.id && String(a.id).trim() === String(b.id).trim()) return true;
+        if (a.ticketNumber && b.ticketNumber && String(a.ticketNumber).trim().toUpperCase() === String(b.ticketNumber).trim().toUpperCase()) return true;
+        if (a.ticketNumber && b.id && (String(a.ticketNumber).toUpperCase() === String(b.id).toUpperCase() || String(b.id).includes(String(a.ticketNumber)))) return true;
+        if (b.ticketNumber && a.id && (String(b.ticketNumber).toUpperCase() === String(a.id).toUpperCase() || String(a.id).includes(String(b.ticketNumber)))) return true;
+        const descA = normalizeDesc(a.description || a.title);
+        const descB = normalizeDesc(b.description || b.title);
+        if (descA && descB && (descA === descB || (descA.length >= 15 && (descA.includes(descB) || descB.includes(descA))))) {
+          const propA = (a.propertyTitle || a.property_title || a.propertyAddress || '').trim().toLowerCase();
+          const propB = (b.propertyTitle || b.property_title || b.propertyAddress || '').trim().toLowerCase();
+          if (!propA || !propB || propA === propB) return true;
+        }
+        return false;
+      };
+
+      // Helper de fusion sécurisée pour ne jamais écraser les réponses du bailleur et dédoublonner strictement les notes
       const mergeTicket = (existing: any, incoming: any) => {
         const existingNotes = Array.isArray(existing.notes) ? existing.notes : [];
         const incomingNotes = Array.isArray(incoming.notes) ? incoming.notes : [];
         const notesMap = new Map<string, any>();
-        existingNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
-        incomingNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
+
+        const getNoteKey = (n: any) => {
+          const author = (n.author || '').trim().toLowerCase();
+          const content = (n.content || '').trim().toLowerCase().replace(/\s+/g, ' ');
+          return `${author}___${content}`;
+        };
+
+        existingNotes.forEach((n: any) => {
+          const k = getNoteKey(n);
+          if (k !== '___') notesMap.set(k, n);
+        });
+        incomingNotes.forEach((n: any) => {
+          const k = getNoteKey(n);
+          if (k !== '___') notesMap.set(k, n);
+        });
         const mergedNotes = Array.from(notesMap.values());
 
         const mergedScenario = incoming.scenario || existing.scenario;
@@ -124,15 +159,29 @@ export const LocataireMaintenanceView: React.FC = () => {
           ? undefined
           : (incoming.rentDeductionRequest !== undefined ? incoming.rentDeductionRequest : (existing.scenario && existing.scenario !== 'C' ? undefined : existing.rentDeductionRequest));
 
+        // Déterminer la source de vérité pour le statut et la validation
+        let finalStatus = incoming.status || existing.status;
+        let finalScenarioVal = incoming.scenarioValidated !== undefined ? incoming.scenarioValidated : existing.scenarioValidated;
+        let finalTenantVal = incoming.validatedByTenant !== undefined ? incoming.validatedByTenant : existing.validatedByTenant;
+
+        // Si une décision en attente est apportée par le bailleur et n'a pas encore été validée
+        if (incoming.status === 'En cours' && incoming.scenarioValidated === false) {
+          finalStatus = 'En cours';
+          finalScenarioVal = false;
+          finalTenantVal = false;
+        }
+
         return {
           ...existing,
           ...incoming,
-          status: incoming.status || existing.status,
+          id: existing.id || incoming.id,
+          ticketNumber: existing.ticketNumber || incoming.ticketNumber,
+          status: finalStatus,
           scheduledDate: incoming.scheduledDate || existing.scheduledDate,
           scenario: mergedScenario,
           scenarioAmount: mergedScenarioAmount,
-          scenarioValidated: incoming.scenarioValidated !== undefined ? incoming.scenarioValidated : existing.scenarioValidated,
-          validatedByTenant: incoming.validatedByTenant !== undefined ? incoming.validatedByTenant : existing.validatedByTenant,
+          scenarioValidated: finalScenarioVal,
+          validatedByTenant: finalTenantVal,
           expense_id: incoming.expense_id || existing.expense_id,
           notes: mergedNotes.length > 0 ? mergedNotes : (existingNotes.length > 0 ? existingNotes : incomingNotes),
           rentDeductionRequest: mergedRentDeduction
@@ -147,7 +196,7 @@ export const LocataireMaintenanceView: React.FC = () => {
           const syncJson = await syncRes.json();
           if (Array.isArray(syncJson?.data?.maintenance)) {
             syncJson.data.maintenance.forEach((m: any) => {
-              const existingIdx = list.findIndex((x: any) => x.id === m.id || (m.ticketNumber && x.ticketNumber === m.ticketNumber));
+              const existingIdx = list.findIndex((x: any) => isSameTicket(x, m));
               if (existingIdx === -1) {
                 list.push(m);
               } else {
@@ -210,7 +259,8 @@ export const LocataireMaintenanceView: React.FC = () => {
             const tNum = meta.ticketNumber || (n.description || n.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
             let existingIdx = list.findIndex((x: any) =>
               (tId && (x.id === tId || x.ticketNumber === tId || (x.id && x.id.includes(tId)))) ||
-              (tNum && (x.ticketNumber === tNum || (x.id && x.id.includes(tNum.slice(-4)))))
+              (tNum && (x.ticketNumber === tNum || (x.id && x.id.includes(tNum.slice(-4))))) ||
+              isSameTicket(x, { description: meta.description || n.description || n.title, propertyTitle: meta.propertyTitle })
             );
 
             // Reconstitution résiliente du ticket réel s'il n'était pas dans la liste initiale
@@ -290,22 +340,9 @@ export const LocataireMaintenanceView: React.FC = () => {
                 if (!descClean || descClean.length < 5 || descClean === 'Signalement de maintenance') {
                   return;
                 }
-                const existingIdx = list.findIndex((x: any) => x.id === p.id || (p.ticketNumber && x.ticketNumber === p.ticketNumber));
+                const existingIdx = list.findIndex((x: any) => isSameTicket(x, p));
                 if (existingIdx !== -1) {
-                  // SERVER IS SOURCE OF TRUTH: Le ticket serveur prévaut sur le statut/scénario
-                  const serverTicket = list[existingIdx];
-                  const localNotes = Array.isArray(p.notes) ? p.notes : [];
-                  const srvNotes = Array.isArray(serverTicket.notes) ? serverTicket.notes : [];
-                  const notesMap = new Map();
-                  srvNotes.forEach((n: any) => notesMap.set(String(n.id || n.content), n));
-                  localNotes.forEach((n: any) => {
-                    const k = String(n.id || n.content);
-                    if (!notesMap.has(k)) notesMap.set(k, n);
-                  });
-                  list[existingIdx] = {
-                    ...serverTicket,
-                    notes: Array.from(notesMap.values())
-                  };
+                  list[existingIdx] = mergeTicket(list[existingIdx], p);
                 } else {
                   // C'est un vrai ticket réel déclaré localement qui n'est pas encore sur le serveur : l'ajouter
                   list.push(p);
@@ -358,17 +395,31 @@ export const LocataireMaintenanceView: React.FC = () => {
             const expTicketNum = (exp.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
             const targetTicket = list.find((t: any) =>
               (exp.ticket_id && (t.id === exp.ticket_id || t.ticketNumber === exp.ticket_id)) ||
-              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum))))
+              (expTicketNum && (t.ticketNumber === expTicketNum || t.id === expTicketNum || (t.id && t.id.includes(expTicketNum)))) ||
+              isSameTicket(t, { id: exp.ticket_id, ticketNumber: expTicketNum, description: exp.description || exp.title, propertyTitle: exp.property_title })
             );
             if (targetTicket) {
               targetTicket.scenario = exp.scenario;
               targetTicket.scenarioAmount = Number(exp.amount) || targetTicket.scenarioAmount;
               targetTicket.expense_id = exp.id;
 
-              // Une dépense active lie ce ticket à une décision bailleur : statut en cours et validation attendue
-              targetTicket.status = 'En cours';
-              targetTicket.scenarioValidated = false;
-              targetTicket.validatedByTenant = false;
+              // Statut et validation selon la dépense liée
+              if (exp.validation_status === 'APPROUVEE') {
+                targetTicket.status = 'Résolu';
+                targetTicket.scenarioValidated = true;
+                targetTicket.validatedByTenant = true;
+                targetTicket.rejectedByTenant = false;
+              } else if (exp.validation_status === 'REFUSEE') {
+                targetTicket.status = 'Contesté';
+                targetTicket.scenarioValidated = false;
+                targetTicket.validatedByTenant = false;
+                targetTicket.rejectedByTenant = true;
+              } else {
+                targetTicket.status = 'En cours';
+                targetTicket.scenarioValidated = false;
+                targetTicket.validatedByTenant = false;
+                targetTicket.rejectedByTenant = false;
+              }
 
               // Nettoyer les anciennes validations contradictoires
               if (Array.isArray(targetTicket.notes)) {
@@ -454,7 +505,7 @@ export const LocataireMaintenanceView: React.FC = () => {
       } catch {}
 
       // 6. DÉDUPLICATION RIGOUREUSE ET ÉLIMINATION DES FAUX TICKETS
-      const deduplicatedMap = new Map<string, any>();
+      const deduplicatedList: any[] = [];
       list.forEach((t: any) => {
         if (!t) return;
         const descClean = (t.description || '').trim();
@@ -467,20 +518,15 @@ export const LocataireMaintenanceView: React.FC = () => {
           return;
         }
 
-        const tNum = t.ticketNumber || (t.title || t.description || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
-        const descKey = descClean.toLowerCase().slice(0, 35);
-        const uniqueKey = tNum ? tNum.toUpperCase() : (tIdStr && !tIdStr.startsWith('notif') ? tIdStr : descKey);
-
-        if (!uniqueKey) return;
-
-        if (deduplicatedMap.has(uniqueKey)) {
-          deduplicatedMap.set(uniqueKey, mergeTicket(deduplicatedMap.get(uniqueKey), t));
+        const matchIdx = deduplicatedList.findIndex((item) => isSameTicket(item, t));
+        if (matchIdx !== -1) {
+          deduplicatedList[matchIdx] = mergeTicket(deduplicatedList[matchIdx], t);
         } else {
-          deduplicatedMap.set(uniqueKey, t);
+          deduplicatedList.push(t);
         }
       });
 
-      const finalTickets = Array.from(deduplicatedMap.values());
+      const finalTickets = deduplicatedList;
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(finalTickets));
@@ -823,6 +869,75 @@ export const LocataireMaintenanceView: React.FC = () => {
       console.warn('Erreur validation ticket décision:', err);
     } finally {
       setValidatingTicketId(null);
+    }
+  };
+
+  const handleOpenRejectModal = (ticket: any, scenario: 'A' | 'B' | 'C', amount: number) => {
+    setRejectingTicket({ ticket, scenario, amount });
+    setRejectionReason('');
+  };
+
+  const handleConfirmRejection = async () => {
+    if (!rejectingTicket) return;
+    const { ticket, scenario, amount } = rejectingTicket;
+    setIsSubmittingRejection(true);
+    try {
+      const tenantName = user?.user_metadata?.full_name || (user as any)?.name || ticket.tenantName || 'Locataire';
+      const propertyTitle = ticket.propertyTitle || 'Logement';
+      const ownerId = ticket.owner_id || ticket.ownerId || '';
+      const reasonText = rejectionReason.trim() || 'Désaccord sur la responsabilité ou le montant';
+
+      await tenantRejectScenarioDecision({
+        ticketId: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        scenario: scenario,
+        amount: amount,
+        reason: reasonText,
+        propertyTitle: propertyTitle,
+        tenantName: tenantName,
+        ownerId: ownerId,
+        expenseId: ticket.expense_id
+      });
+
+      const now = new Date();
+      const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+      const rejectionNote = {
+        id: `note-rej-${Date.now()}`,
+        author: 'Locataire (Refus / Contestation)',
+        content: `❌ Décision contestée par le locataire : Les conditions de la réparation (Scénario ${scenario}) ont été refusées. Motif : ${reasonText}`,
+        date: dateStr,
+        isInternal: false
+      };
+
+      setTickets((prev) =>
+        prev.map((t) => {
+          if (t.id === ticket.id || (ticket.ticketNumber && t.ticketNumber === ticket.ticketNumber)) {
+            return {
+              ...t,
+              status: 'Contesté',
+              scenario: scenario,
+              scenarioAmount: amount || t.scenarioAmount,
+              scenarioValidated: false,
+              validatedByTenant: false,
+              rejectedByTenant: true,
+              rejectionReason: reasonText,
+              notes: [...(Array.isArray(t.notes) ? t.notes : []), rejectionNote],
+              rentDeductionRequest: undefined
+            };
+          }
+          return t;
+        })
+      );
+
+      setRejectingTicket(null);
+      setSuccessModalMessage({
+        title: 'Décision refusée',
+        desc: `Votre contestation a été transmise au bailleur. Aucune retenue ni déduction financière ne sera appliquée.`
+      });
+    } catch (err) {
+      console.warn('Erreur contestation décision:', err);
+    } finally {
+      setIsSubmittingRejection(false);
     }
   };
 
@@ -1264,27 +1379,48 @@ export const LocataireMaintenanceView: React.FC = () => {
                   return c.includes('Accord validé par le locataire') && c.includes(`Scénario ${effectiveScenario}`);
                 });
 
+                const hasMatchingRejectionNote = Array.isArray(ticket.notes) && ticket.notes.some((n: any) => {
+                  const c = String(n.content || '');
+                  return c.includes('Décision contestée par le locataire') && c.includes(`Scénario ${effectiveScenario}`);
+                });
+                const isTicketRejected = hasMatchingRejectionNote || ticket.status === 'Contesté' || Boolean(ticket.rejectedByTenant);
+
                 const isTicketResolved =
-                  hasMatchingValidationNote ||
-                  (Boolean(ticket.scenarioValidated) && ticket.validatedScenario === effectiveScenario);
+                  !isTicketRejected &&
+                  (hasMatchingValidationNote ||
+                  (Boolean(ticket.scenarioValidated) && ticket.validatedScenario === effectiveScenario));
 
                 if (effectiveScenario === 'C') {
                   return (
                     <div className={`p-4 rounded-2xl border-2 flex flex-col gap-3 shadow-sm transition-all ${
-                      isTicketResolved
+                      isTicketRejected
+                        ? 'bg-rose-50/80 border-rose-300 text-rose-950'
+                        : isTicketResolved
                         ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-emerald-950'
                         : 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-400 text-slate-900'
                     }`}>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2 font-black text-xs">
-                          <CheckCircle2 className={`w-4 h-4 shrink-0 ${isTicketResolved ? 'text-emerald-600' : 'text-blue-600'}`} />
+                          {isTicketRejected ? (
+                            <XCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                          ) : isTicketResolved ? (
+                            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                          ) : (
+                            <Clock className="w-4 h-4 shrink-0 text-blue-600" />
+                          )}
                           <span className="uppercase tracking-wider text-[11px]">
-                            {isTicketResolved
+                            {isTicketRejected
+                              ? 'Décision contestée & refusée (Scénario C)'
+                              : isTicketResolved
                               ? 'Accord validé & Déduction active sur prochain loyer (Scénario C)'
                               : 'Décision du bailleur — Déduction sur loyer proposée (Scénario C)'}
                           </span>
                         </div>
-                        {isTicketResolved ? (
+                        {isTicketRejected ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-200 text-rose-900 font-extrabold text-[10px]">
+                            Refusé
+                          </span>
+                        ) : isTicketResolved ? (
                           <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px]">
                             Validé & Clôturé
                           </span>
@@ -1296,15 +1432,17 @@ export const LocataireMaintenanceView: React.FC = () => {
                       </div>
 
                       <p className="font-semibold text-slate-800 leading-relaxed text-xs">
-                        Votre bailleur a validé la réparation pour un montant de{' '}
-                        <strong className="text-emerald-900 font-black">{formatFCFA(effectiveAmount)}</strong>.
-                        {isTicketResolved
+                        Votre bailleur a proposé une réparation pour un montant de{' '}
+                        <strong className="text-slate-900 font-black">{formatFCFA(effectiveAmount)}</strong>.
+                        {isTicketRejected
+                          ? ' Vous avez refusé cette décision. Aucune déduction ni retenue ne sera appliquée sur votre loyer.'
+                          : isTicketResolved
                           ? ' Cet accord est validé et scellé : ce montant sera automatiquement déduit de votre prochain loyer dans la section Paiements.'
                           : ` Vous pouvez valider cette décision ci-dessous pour clôturer l'incident et appliquer automatiquement la déduction de ${formatFCFA(effectiveAmount)} sur votre prochain loyer.`}
                       </p>
 
-                      {!isTicketResolved && (
-                        <div className="pt-2 flex items-center gap-3">
+                      {!isTicketResolved && !isTicketRejected && (
+                        <div className="pt-2 flex items-center gap-3 flex-wrap">
                           <button
                             type="button"
                             disabled={validatingTicketId === ticket.id}
@@ -1313,6 +1451,16 @@ export const LocataireMaintenanceView: React.FC = () => {
                           >
                             <CheckCircle2 className="w-4 h-4" />
                             <span>{validatingTicketId === ticket.id ? 'Validation en cours...' : 'Valider la décision & Clôturer l\'incident'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={validatingTicketId === ticket.id}
+                            onClick={() => handleOpenRejectModal(ticket, 'C', effectiveAmount)}
+                            className="w-full sm:w-auto px-4 py-3 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>Contester / Refuser</span>
                           </button>
                         </div>
                       )}
@@ -1323,24 +1471,34 @@ export const LocataireMaintenanceView: React.FC = () => {
                 if (effectiveScenario === 'B') {
                   return (
                     <div className={`p-4 rounded-2xl border-2 flex flex-col gap-3 shadow-sm transition-all ${
-                      isTicketResolved
+                      isTicketRejected
+                        ? 'bg-rose-50/80 border-rose-300 text-rose-950'
+                        : isTicketResolved
                         ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-emerald-950'
                         : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-400 text-slate-900'
                     }`}>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2 font-black text-xs">
-                          {isTicketResolved ? (
+                          {isTicketRejected ? (
+                            <XCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                          ) : isTicketResolved ? (
                             <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
                           ) : (
                             <Clock className="w-4 h-4 shrink-0 text-amber-600" />
                           )}
                           <span className="uppercase tracking-wider text-[11px]">
-                            {isTicketResolved
+                            {isTicketRejected
+                              ? 'Décision contestée & refusée (Scénario B)'
+                              : isTicketResolved
                               ? 'Accord validé & Clôturé (Scénario B)'
                               : 'Décision du bailleur — Réparation locative (Scénario B)'}
                           </span>
                         </div>
-                        {isTicketResolved ? (
+                        {isTicketRejected ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-200 text-rose-900 font-extrabold text-[10px]">
+                            Refusé
+                          </span>
+                        ) : isTicketResolved ? (
                           <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px]">
                             Validé & Clôturé
                           </span>
@@ -1353,14 +1511,16 @@ export const LocataireMaintenanceView: React.FC = () => {
 
                       <p className="font-semibold text-slate-800 leading-relaxed text-xs">
                         Le bailleur a validé la réparation locative pour un montant de{' '}
-                        <strong className="text-amber-950 font-black">{formatFCFA(effectiveAmount)}</strong>.
-                        {isTicketResolved
+                        <strong className="text-slate-900 font-black">{formatFCFA(effectiveAmount)}</strong>.
+                        {isTicketRejected
+                          ? ' Vous avez contesté cette décision. Aucun remboursement ne sera exigé tant qu\'un accord n\'est pas trouvé.'
+                          : isTicketResolved
                           ? ' Cet accord est validé et l\'incident est clôturé. Le remboursement s\'effectuera selon les modalités convenues.'
                           : ' Cette réparation d\'entretien est à la charge du locataire conformément au bail. Vous pouvez valider cette décision ci-dessous pour clôturer l\'incident.'}
                       </p>
 
-                      {!isTicketResolved && (
-                        <div className="pt-2 flex items-center gap-3">
+                      {!isTicketResolved && !isTicketRejected && (
+                        <div className="pt-2 flex items-center gap-3 flex-wrap">
                           <button
                             type="button"
                             disabled={validatingTicketId === ticket.id}
@@ -1369,6 +1529,16 @@ export const LocataireMaintenanceView: React.FC = () => {
                           >
                             <CheckCircle2 className="w-4 h-4" />
                             <span>{validatingTicketId === ticket.id ? 'Validation en cours...' : 'Valider la décision & Clôturer l\'incident'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={validatingTicketId === ticket.id}
+                            onClick={() => handleOpenRejectModal(ticket, 'B', effectiveAmount)}
+                            className="w-full sm:w-auto px-4 py-3 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>Contester / Refuser</span>
                           </button>
                         </div>
                       )}
@@ -1379,20 +1549,32 @@ export const LocataireMaintenanceView: React.FC = () => {
                 if (effectiveScenario === 'A') {
                   return (
                     <div className={`p-4 rounded-2xl border-2 flex flex-col gap-3 shadow-sm transition-all ${
-                      isTicketResolved
+                      isTicketRejected
+                        ? 'bg-rose-50/80 border-rose-300 text-rose-950'
+                        : isTicketResolved
                         ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-emerald-950'
                         : 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 text-slate-900'
                     }`}>
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2 font-black text-xs">
-                          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                          {isTicketRejected ? (
+                            <XCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                          ) : (
+                            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                          )}
                           <span className="uppercase tracking-wider text-[11px]">
-                            {isTicketResolved
+                            {isTicketRejected
+                              ? 'Décision contestée (Scénario A)'
+                              : isTicketResolved
                               ? 'Accord validé & Clôturé (Scénario A)'
                               : 'Décision du bailleur — Prise en charge intégrale (Scénario A)'}
                           </span>
                         </div>
-                        {isTicketResolved ? (
+                        {isTicketRejected ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-200 text-rose-900 font-extrabold text-[10px]">
+                            Refusé
+                          </span>
+                        ) : isTicketResolved ? (
                           <span className="px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-extrabold text-[10px]">
                             Validé & Clôturé
                           </span>
@@ -1408,13 +1590,15 @@ export const LocataireMaintenanceView: React.FC = () => {
                         {effectiveAmount > 0 ? (
                           <> pour un montant de <strong className="text-emerald-900 font-black">{formatFCFA(effectiveAmount)}</strong></>
                         ) : ''}. Aucun frais n'est à votre charge.
-                        {isTicketResolved
+                        {isTicketRejected
+                          ? ' Vous avez contesté cette modalité.'
+                          : isTicketResolved
                           ? ' L\'incident est définitivement clôturé.'
                           : ' Vous pouvez valider cette décision ci-dessous pour confirmer et clôturer l\'incident.'}
                       </p>
 
-                      {!isTicketResolved && (
-                        <div className="pt-2 flex items-center gap-3">
+                      {!isTicketResolved && !isTicketRejected && (
+                        <div className="pt-2 flex items-center gap-3 flex-wrap">
                           <button
                             type="button"
                             disabled={validatingTicketId === ticket.id}
@@ -1423,6 +1607,16 @@ export const LocataireMaintenanceView: React.FC = () => {
                           >
                             <CheckCircle2 className="w-4 h-4" />
                             <span>{validatingTicketId === ticket.id ? 'Validation en cours...' : 'Valider la décision & Clôturer l\'incident'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={validatingTicketId === ticket.id}
+                            onClick={() => handleOpenRejectModal(ticket, 'A', effectiveAmount)}
+                            className="w-full sm:w-auto px-4 py-3 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>Contester / Refuser</span>
                           </button>
                         </div>
                       )}
@@ -1722,10 +1916,69 @@ export const LocataireMaintenanceView: React.FC = () => {
             <button
               type="button"
               onClick={() => setSuccessModalMessage(null)}
-              className="mt-2 w-full py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors"
+              className="mt-2 w-full py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Compris
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONTESTATION / REFUS DE LA DÉCISION */}
+      {rejectingTicket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-200 shadow-2xl flex flex-col gap-4 animate-scaleUp">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center border border-rose-200 shrink-0">
+                <XCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-slate-900">Contester la décision du bailleur</h4>
+                <p className="text-xs text-slate-500">Scénario {rejectingTicket.scenario} ({formatFCFA(rejectingTicket.amount)})</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              En refusant cette décision, aucune déduction ni remboursement ne sera imputé. L'incident sera marqué comme contesté et le bailleur sera notifié de votre désaccord.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Motif de la contestation (facultatif)
+              </label>
+              <textarea
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Ex : Réparation incombant au propriétaire, montant excessif, etc."
+                className="w-full h-20 p-3 rounded-xl border border-slate-200 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500 resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t">
+              <button
+                type="button"
+                disabled={isSubmittingRejection}
+                onClick={() => setRejectingTicket(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingRejection}
+                onClick={handleConfirmRejection}
+                className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md flex items-center gap-2 transition-all cursor-pointer"
+              >
+                {isSubmittingRejection ? (
+                  <>
+                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Envoi...</span>
+                  </>
+                ) : (
+                  <span>Confirmer le refus</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

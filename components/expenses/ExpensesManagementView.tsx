@@ -816,18 +816,37 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
                         )}
 
                         {/* Action Scénario B : Enregistrer un remboursement locataire */}
-                        {isScenarioB && expense.recovery_balance > 0 && (
+                        {isScenarioB && expense.validation_status === 'APPROUVEE' && expense.recovery_balance > 0 && (
                           <button
                             type="button"
                             onClick={() => {
                               setSelectedExpenseForReimbursement(expense);
                               setReimbursementAmount(String(expense.recovery_balance));
                             }}
-                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] shadow-sm transition-all flex items-center gap-1"
+                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] shadow-sm transition-all flex items-center gap-1 cursor-pointer"
+                            title="Enregistrer un remboursement reçu du locataire"
                           >
                             <RotateCcw className="w-3 h-3" />
                             <span>Remboursement</span>
                           </button>
+                        )}
+                        {isScenarioB && expense.validation_status === 'EN_ATTENTE_VALIDATION' && (
+                          <span
+                            className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 font-bold text-[10px] border border-amber-200 flex items-center gap-1"
+                            title="En attente de l'accord officiel du locataire"
+                          >
+                            <Clock className="w-3 h-3 text-amber-600" />
+                            <span>Remboursement (En attente)</span>
+                          </span>
+                        )}
+                        {isScenarioB && expense.validation_status === 'REFUSEE' && (
+                          <span
+                            className="px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 font-bold text-[10px] border border-rose-200 flex items-center gap-1"
+                            title="Décision contestée par le locataire : aucun remboursement exigé"
+                          >
+                            <XCircle className="w-3 h-3 text-rose-500" />
+                            <span>Refusé</span>
+                          </span>
                         )}
 
                         {/* Action Scénario C : Imputer compensation sur loyer */}

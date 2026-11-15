@@ -240,6 +240,36 @@ export async function getPropertyExpenses(
       } catch {}
     }
 
+    // 2ter. Synchronisation bidirectionnelle stricte avec le statut réel du ticket lié
+    if (typeof window !== 'undefined' && expenses.length > 0) {
+      try {
+        const rawTickets = localStorage.getItem('locatrust_maintenance_tickets');
+        if (rawTickets) {
+          const ticketsList = JSON.parse(rawTickets);
+          if (Array.isArray(ticketsList)) {
+            expenses.forEach((e) => {
+              const expTNum = (e.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+              const matchedTicket = ticketsList.find((t: any) =>
+                (e.ticket_id && (t.id === e.ticket_id || t.ticketNumber === e.ticket_id)) ||
+                (expTNum && (t.ticketNumber === expTNum || t.id === expTNum))
+              );
+              if (matchedTicket) {
+                if (matchedTicket.status === 'Contesté' || matchedTicket.rejectedByTenant) {
+                  e.validation_status = 'REFUSEE';
+                  e.recovery_balance = 0;
+                  e.amount_to_recover = 0;
+                } else if (matchedTicket.status === 'Résolu' || matchedTicket.status === 'Validé & Clôturé' || matchedTicket.scenarioValidated || matchedTicket.validatedByTenant) {
+                  e.validation_status = 'APPROUVEE';
+                } else if (matchedTicket.status === 'En cours' && !matchedTicket.scenarioValidated) {
+                  e.validation_status = 'EN_ATTENTE_VALIDATION';
+                }
+              }
+            });
+          }
+        }
+      } catch {}
+    }
+
     // 3. Mise à jour du cache d'affichage local (ne jamais écraser avec vide si le local contenait déjà des dépenses)
     if (typeof window !== 'undefined' && expenses.length > 0) {
       try {
@@ -1152,6 +1182,133 @@ export async function tenantConfirmScenarioDecision(params: {
     return { success: true, error: null };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Erreur validation scénario' };
+  }
+}
+
+export async function tenantRejectScenarioDecision(params: {
+  ticketId: string;
+  ticketNumber?: string;
+  scenario: ExpenseScenario;
+  amount: number;
+  reason?: string;
+  propertyTitle?: string;
+  tenantName?: string;
+  ownerId?: string;
+  expenseId?: string;
+}): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const dynamicScenario = params.scenario || 'B';
+    const dynamicAmount = Number(params.amount) || 0;
+    const reasonText = params.reason || 'Désaccord sur la responsabilité ou le montant';
+
+    // 1. Mettre à jour localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('locatrust_maintenance_tickets');
+        if (stored) {
+          const list = JSON.parse(stored);
+          if (Array.isArray(list)) {
+            const nextList = list.map((t: any) => {
+              const isTarget =
+                (params.ticketId && (t.id === params.ticketId || t.ticketNumber === params.ticketId)) ||
+                (params.ticketNumber && (t.ticketNumber === params.ticketNumber || t.id === params.ticketNumber));
+              if (isTarget) {
+                const now = new Date();
+                const dateStr = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+                const rejectionNote = {
+                  id: `note-rej-${Date.now()}`,
+                  author: 'Locataire (Refus / Contestation)',
+                  content: `❌ Décision contestée par le locataire : Les conditions de la réparation (Scénario ${dynamicScenario}) ont été refusées. Motif : ${reasonText}`,
+                  date: dateStr,
+                  isInternal: false
+                };
+                const existingNotes = Array.isArray(t.notes) ? t.notes : [];
+                return {
+                  ...t,
+                  status: 'Contesté',
+                  scenario: dynamicScenario,
+                  scenarioValidated: false,
+                  validatedByTenant: false,
+                  rejectedByTenant: true,
+                  rejectionReason: reasonText,
+                  notes: [...existingNotes, rejectionNote],
+                  rentDeductionRequest: undefined
+                };
+              }
+              return t;
+            });
+            localStorage.setItem('locatrust_maintenance_tickets', JSON.stringify(nextList));
+          }
+        }
+      } catch {}
+
+      // Mettre à jour la dépense dans locatrust_property_expenses
+      try {
+        const storedExp = localStorage.getItem('locatrust_property_expenses');
+        if (storedExp) {
+          const expList = JSON.parse(storedExp);
+          if (Array.isArray(expList)) {
+            const nextExp = expList.map((e: any) => {
+              const isTarget =
+                (params.expenseId && e.id === params.expenseId) ||
+                (params.ticketNumber && (e.ticket_id === params.ticketNumber || (e.title && e.title.includes(params.ticketNumber))));
+              if (isTarget) {
+                return {
+                  ...e,
+                  validation_status: 'REFUSEE',
+                  refusal_reason: reasonText,
+                  amount_to_recover: 0,
+                  recovery_balance: 0,
+                  compensation_authorized: false,
+                  compensation_balance: 0
+                };
+              }
+              return e;
+            });
+            localStorage.setItem('locatrust_property_expenses', JSON.stringify(nextExp));
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Synchronisation centralisée avec /api/sync
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'tenant_reject_ticket_scenario',
+          ticketId: params.ticketId,
+          ticketNumber: params.ticketNumber,
+          scenario: dynamicScenario,
+          amount: dynamicAmount,
+          reason: reasonText,
+          expenseId: params.expenseId,
+          tenantName: params.tenantName,
+          propertyTitle: params.propertyTitle,
+          ownerId: params.ownerId
+        })
+      });
+    } catch {}
+
+    // 3. Realtime event
+    try {
+      await broadcastLiveEvent('MAINTENANCE_TICKET_REJECTED', {
+        ticketId: params.ticketId,
+        scenario: dynamicScenario,
+        reason: reasonText
+      });
+    } catch {}
+
+    // 4. Événements locaux
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('locatrust:maintenance-updated'));
+      window.dispatchEvent(new CustomEvent('locatrust:expenses-updated'));
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Erreur contestation scénario' };
   }
 }
 

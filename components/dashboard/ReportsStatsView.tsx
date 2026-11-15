@@ -228,7 +228,12 @@ export const ReportsStatsView: React.FC = () => {
       activeProperties: realDataset.activePropertiesCount,
       activeTenants: realDataset.activeTenantsCount,
       activeContracts: realDataset.activeContractsCount,
-      maintenanceTickets: period === 'annee' ? realDataset.maintenance.length : filteredMonths.reduce((s, m) => s + (m.maintenanceExpense > 0 ? 1 : 0), 0),
+      maintenanceTickets: period === 'annee'
+        ? (realDataset.maintenance.length || realDataset.extraStats?.totalTickets || 0)
+        : (realDataset.maintenance.filter((item: any) => {
+            const itemDate = String(item.date || item.created_at || '');
+            return filteredMonths.some(m => itemDate.includes(m.monthName) || itemDate.includes(`-${m.monthKey.slice(-2)}-`));
+          }).length || (maintenanceExpense > 0 ? 1 : 0)),
       monthlyBreakdown: filteredMonths
     };
   }, [realDataset, filteredMonths, period, selectedYear, selectedHistoricalMonth, selectedQuarter]);

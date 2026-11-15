@@ -127,7 +127,7 @@ let SERVER_STORE = {
       payer: 'proprietaire',
       responsible: 'locataire',
       scenario: 'B',
-      validation_status: 'APPROUVEE',
+      validation_status: 'EN_ATTENTE_VALIDATION',
       expense_date: '2026-11-15',
       created_at: '2026-11-15T04:05:00.000Z'
     }
@@ -1266,6 +1266,90 @@ export default async function handler(req, res) {
           ticket: targetTicket,
           maintenance: SERVER_STORE.maintenance,
           expenses: SERVER_STORE.expenses,
+          notifications: SERVER_STORE.notifications
+        });
+      }
+
+      // Action: Le locataire conteste ou refuse la décision du bailleur (Scénarios A, B, C)
+      if (body.action === 'tenant_reject_ticket_scenario') {
+        const { ticketId, ticketNumber, scenario, amount, reason, propertyTitle, tenantName, ownerId, expenseId } = body;
+        const dynamicScenario = scenario || 'B';
+        const dynamicAmount = Number(amount || 0);
+        const tckNum = ticketNumber || (body.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+
+        const targetTicket = SERVER_STORE.maintenance.find(
+          t => (ticketId && t.id === ticketId) ||
+               (tckNum && (t.ticketNumber === tckNum || t.id === tckNum || (t.id && t.id.includes(tckNum))))
+        );
+
+        if (targetTicket) {
+          targetTicket.status = 'Contesté';
+          targetTicket.scenario = dynamicScenario;
+          targetTicket.scenarioValidated = false;
+          targetTicket.validatedByTenant = false;
+          targetTicket.rejectedByTenant = true;
+          targetTicket.rejectionReason = reason || 'Désaccord sur la réparation';
+          targetTicket.rentDeductionRequest = null;
+
+          const rejectionNote = {
+            id: `note-tenant-reject-${Date.now()}`,
+            author: 'Locataire (Refus / Contestation)',
+            content: `❌ Décision contestée par le locataire : Les conditions de la réparation (Scénario ${dynamicScenario}) ont été refusées.${reason ? ` Motif : ${reason}` : ''}`,
+            date: `${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+            isInternal: false
+          };
+
+          const existingNotes = Array.isArray(targetTicket.notes) ? targetTicket.notes : [];
+          targetTicket.notes = [...existingNotes, rejectionNote];
+        }
+
+        // Mettre à jour la dépense associée en REFUSEE
+        if (Array.isArray(SERVER_STORE.expenses)) {
+          SERVER_STORE.expenses = SERVER_STORE.expenses.map(e => {
+            const isTargetExp = (expenseId && e.id === expenseId) ||
+                                (tckNum && (e.ticket_id === tckNum || (e.title && e.title.includes(tckNum))));
+            if (isTargetExp) {
+              return {
+                ...e,
+                validation_status: 'REFUSEE',
+                refusal_reason: reason || 'Refusé par le locataire',
+                amount_to_recover: 0,
+                recovery_balance: 0,
+                compensation_authorized: false,
+                compensation_balance: 0
+              };
+            }
+            return e;
+          });
+        }
+
+        // Notification envoyée au propriétaire
+        const notifOwnerId = ownerId || targetTicket?.ownerId || targetTicket?.owner_id || 'usr_owner';
+        SERVER_STORE.notifications.unshift({
+          id: `notif_tenant_rejected_${Date.now()}`,
+          title: `⚠️ Décision contestée par le locataire`,
+          description: `Le locataire ${tenantName || 'du logement'} a refusé la décision de réparation (Scénario ${dynamicScenario}) pour « ${propertyTitle || targetTicket?.propertyTitle || 'le logement'} ».${reason ? ` Motif : ${reason}` : ''}`,
+          time: "À l'instant",
+          timestamp: new Date().toISOString(),
+          category: 'maintenance',
+          type: 'warning',
+          targetRole: 'proprietaire',
+          targetUserId: notifOwnerId,
+          targetTab: 'maintenance',
+          unread: true,
+          read: false,
+          payload: {
+            ticketId: targetTicket?.id || ticketId,
+            ticketNumber: targetTicket?.ticketNumber || tckNum,
+            reason: reason || ''
+          }
+        });
+
+        return res.status(200).json({
+          success: true,
+          ticket: targetTicket,
+          expenses: SERVER_STORE.expenses,
+          maintenance: SERVER_STORE.maintenance,
           notifications: SERVER_STORE.notifications
         });
       }

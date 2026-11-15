@@ -354,6 +354,13 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       mQuery = mQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
     }
 
+    let expQuery = supabase.from('property_expenses').select('*');
+    if (userId && !isTenant) {
+      expQuery = expQuery.or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+    }
+
+    let compQuery = supabase.from('rent_compensations').select('*');
+
     let profQuery = supabase.from('profiles').select('id, full_name, email, phone, account_type, role');
 
     // 2. Exécution résiliente via Promise.allSettled (garantit que rien n'est écrasé à 0 en cas d'erreur isolée)
@@ -364,6 +371,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       cautionsRes,
       receiptsRes,
       ticketsRes,
+      expRes,
+      compRes,
       profilesRes
     ] = await Promise.allSettled([
       pQuery,
@@ -372,6 +381,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       cauQuery,
       recQuery,
       mQuery,
+      expQuery,
+      compQuery,
       profQuery
     ]);
 
@@ -381,6 +392,8 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     let realCautions: any[] = cautionsRes.status === 'fulfilled' && Array.isArray(cautionsRes.value.data) ? cautionsRes.value.data : [];
     let realReceipts: any[] = receiptsRes.status === 'fulfilled' && Array.isArray(receiptsRes.value.data) ? receiptsRes.value.data : [];
     let realTickets: any[] = ticketsRes.status === 'fulfilled' && Array.isArray(ticketsRes.value.data) ? ticketsRes.value.data : [];
+    let realPropertyExpenses: any[] = expRes.status === 'fulfilled' && Array.isArray(expRes.value.data) ? expRes.value.data : [];
+    let realCompensations: any[] = compRes.status === 'fulfilled' && Array.isArray(compRes.value.data) ? compRes.value.data : [];
     const allProfiles: any[] = profilesRes.status === 'fulfilled' && Array.isArray(profilesRes.value.data) ? profilesRes.value.data : [];
 
     // 3. Synchronisation multi-appareils (/api/sync) et résilience locale isolée par utilisateur
@@ -524,6 +537,28 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
                     knownRNums.add(sr.receipt_number);
                   }
                 });
+            }
+            // Tickets de maintenance (Source de vérité)
+            if (Array.isArray(syncJson.data.maintenance)) {
+              syncJson.data.maintenance.filter(isMine).forEach((sm: any) => {
+                const existingIdx = realTickets.findIndex((t: any) => (sm.id && t.id === sm.id) || (sm.ticketNumber && t.ticketNumber === sm.ticketNumber));
+                if (existingIdx !== -1) {
+                  realTickets[existingIdx] = { ...realTickets[existingIdx], ...sm };
+                } else {
+                  realTickets.push(sm);
+                }
+              });
+            }
+            // Dépenses de biens (Source de vérité)
+            if (Array.isArray(syncJson.data.expenses)) {
+              syncJson.data.expenses.filter(isMine).forEach((se: any) => {
+                const existingIdx = realPropertyExpenses.findIndex((e: any) => (se.id && e.id === se.id) || (se.expense_number && e.expense_number === se.expense_number));
+                if (existingIdx !== -1) {
+                  realPropertyExpenses[existingIdx] = { ...realPropertyExpenses[existingIdx], ...se };
+                } else {
+                  realPropertyExpenses.push(se);
+                }
+              });
             }
           }
         }
@@ -928,29 +963,29 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
     const cautionsRestantes = Math.max(0, cautionsRecues - cautionsRemboursees - cautionsRetenues);
 
     // Maintenance & Dépenses (Intégration du module Dépenses & Travaux - Serveur source de vérité)
-    let realPropertyExpenses: any[] = [];
-    let realCompensations: any[] = [];
-
-    // Récupération prioritaire depuis Supabase
     if (userId) {
-      try {
-        const { data: dbExp } = await supabase
-          .from('property_expenses')
-          .select('*')
-          .or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
-        if (dbExp && dbExp.length > 0) {
-          realPropertyExpenses = dbExp;
-        }
-      } catch {}
+      if (realPropertyExpenses.length === 0) {
+        try {
+          const { data: dbExp } = await supabase
+            .from('property_expenses')
+            .select('*')
+            .or(`owner_id.eq.${userId},agency_id.eq.${userId}`);
+          if (dbExp && dbExp.length > 0) {
+            realPropertyExpenses = dbExp;
+          }
+        } catch {}
+      }
 
-      try {
-        const { data: dbComp } = await supabase
-          .from('rent_compensations')
-          .select('*');
-        if (dbComp && dbComp.length > 0) {
-          realCompensations = dbComp;
-        }
-      } catch {}
+      if (realCompensations.length === 0) {
+        try {
+          const { data: dbComp } = await supabase
+            .from('rent_compensations')
+            .select('*');
+          if (dbComp && dbComp.length > 0) {
+            realCompensations = dbComp;
+          }
+        } catch {}
+      }
     }
 
     if (typeof window !== 'undefined') {
@@ -975,16 +1010,26 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
             realCompensations = Array.from(compMap.values());
           }
         }
+        const storedTickets = localStorage.getItem('locatrust_maintenance_tickets');
+        if (storedTickets) {
+          const parsed = JSON.parse(storedTickets);
+          if (Array.isArray(parsed)) {
+            const ticketMap = new Map<string, any>();
+            parsed.forEach((t: any) => ticketMap.set(t.id || t.ticketNumber, t));
+            realTickets.forEach((t: any) => ticketMap.set(t.id || t.ticketNumber, t));
+            realTickets = Array.from(ticketMap.values());
+          }
+        }
       } catch {}
     }
 
     const totalPropertyExpensesPaid = realPropertyExpenses
-      .filter((e: any) => e.scenario === 'A' || e.payer === 'proprietaire')
+      .filter((e: any) => e.scenario === 'A' || e.payer === 'proprietaire' || e.validation_status === 'APPROUVEE')
       .reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
 
     const depensesMaintenance = Math.max(
       realTickets.reduce(
-        (s: number, t: any) => s + (Number(t.cost || t.amount || t.final_cost || t.estimated_cost) || 0),
+        (s: number, t: any) => s + (Number(t.scenarioAmount || t.cost || t.amount || t.final_cost || t.estimated_cost) || 0),
         0
       ),
       totalPropertyExpensesPaid
@@ -1036,12 +1081,33 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
         return s + (matchesMonth ? (Number(c.amount_paid) || Number(c.amount_requested) || 0) : 0);
       }, 0);
 
-      // Maintenance ce mois
+      // Maintenance et interventions de ce mois
       const monthTickets = realTickets.filter((t: any) => {
-        const d = t.created_at;
+        const d = t.created_at || t.createdAt;
         return d && String(d).includes(`-${monthNum}-`);
       });
-      const monthMaint = monthTickets.reduce((s: number, t: any) => s + (Number(t.cost || t.amount || t.final_cost) || 0), 0);
+
+      const monthExpenses = realPropertyExpenses.filter((e: any) => {
+        const d = e.expense_date || e.created_at;
+        return d && String(d).includes(`-${monthNum}-`);
+      });
+
+      let monthMaint = 0;
+      const seenExpTicketNums = new Set<string>();
+
+      monthExpenses.forEach((e: any) => {
+        monthMaint += Number(e.amount) || 0;
+        const tNum = (e.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+        if (tNum) seenExpTicketNums.add(tNum.toUpperCase());
+        if (e.ticket_id) seenExpTicketNums.add(String(e.ticket_id).toUpperCase());
+      });
+
+      monthTickets.forEach((t: any) => {
+        const tNum = String(t.ticketNumber || t.id || '').toUpperCase();
+        if (!seenExpTicketNums.has(tNum)) {
+          monthMaint += Number(t.scenarioAmount || t.cost || t.amount || t.final_cost || t.estimated_cost) || 0;
+        }
+      });
 
       // Spécificités d'Agence Immobilière Agréée (commissions de gestion & reversements mandants)
       const monthAgencyCommission = isAgency ? Math.round(monthCollected * 0.10) : 0;
@@ -1192,19 +1258,45 @@ export async function fetchRealAccountingData(userId?: string, targetYear: strin
       };
     });
 
-    // 12. Mappage structuré des Dépenses de Maintenance
-    const mappedMaintenance = realTickets.map((t: any) => {
+    // 12. Mappage structuré des Dépenses de Maintenance & Travaux (Export & Tableaux)
+    const mappedMaintenance: any[] = [];
+    const seenMaintKeys = new Set<string>();
+
+    realPropertyExpenses.forEach((e: any) => {
+      const pr = propertyMap.get(e.property_id);
+      const k = String(e.expense_number || e.id || '').toUpperCase();
+      if (k) seenMaintKeys.add(k);
+      const tNum = (e.title || '').match(/TCK-[A-Z0-9-]+/i)?.[0];
+      if (tNum) seenMaintKeys.add(tNum.toUpperCase());
+      if (e.ticket_id) seenMaintKeys.add(String(e.ticket_id).toUpperCase());
+
+      mappedMaintenance.push({
+        date: e.expense_date ? new Date(e.expense_date).toLocaleDateString('fr-FR') : (e.created_at ? new Date(e.created_at).toLocaleDateString('fr-FR') : '—'),
+        property: pr?.title || e.property_title || 'Bien immobilier',
+        tenant: e.tenant_name || 'Locataire',
+        description: e.title || e.description || 'Intervention technique',
+        category: e.category || 'Maintenance',
+        contractor: e.responsible === 'locataire' ? 'À charge locative' : 'Prestataire agréé',
+        amount: Number(e.amount) || 0,
+        status: e.validation_status === 'APPROUVEE' ? 'Approuvé' : (e.validation_status === 'REFUSEE' ? 'Refusé' : 'En attente')
+      });
+    });
+
+    realTickets.forEach((t: any) => {
+      const tNum = String(t.ticketNumber || t.id || '').toUpperCase();
+      const tId = String(t.id || '').toUpperCase();
+      if (seenMaintKeys.has(tNum) || seenMaintKeys.has(tId)) return;
       const pr = propertyMap.get(t.property_id) || t.property;
-      return {
+      mappedMaintenance.push({
         date: t.created_at ? new Date(t.created_at).toLocaleDateString('fr-FR') : '—',
-        property: pr?.title || 'Bien immobilier',
-        tenant: 'Locataire',
+        property: pr?.title || t.propertyTitle || 'Bien immobilier',
+        tenant: t.tenantName || 'Locataire',
         description: t.title || t.description || 'Intervention technique',
         category: t.category || 'Maintenance',
         contractor: t.artisan_name || 'Prestataire agréé',
-        amount: Number(t.cost || t.amount || t.final_cost || t.estimated_cost) || 0,
-        status: t.status === 'resolu' || t.status === 'cloture' || t.status === 'termine' ? 'Résolu & Payé' : 'En cours'
-      };
+        amount: Number(t.scenarioAmount || t.cost || t.amount || t.final_cost || t.estimated_cost) || 0,
+        status: t.status === 'resolu' || t.status === 'cloture' || t.status === 'termine' || t.status === 'Validé & Clôturé' ? 'Résolu & Payé' : (t.status === 'Contesté' ? 'Contesté' : 'En cours')
+      });
     });
 
     // 13. Mappage structuré de l'État des Contrats de Bail
