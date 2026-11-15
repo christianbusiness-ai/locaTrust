@@ -781,13 +781,6 @@ export default async function handler(req, res) {
             tenant_signed: true,
             tenant_signature_url: tenantSignatureUrl,
             owner_signature_url: targetPayment.owner_signature_url,
-          };
-            payment_method: targetPayment.payment_method || 'Espèces',
-            payment_date: targetPayment.payment_date || new Date().toISOString().split('T')[0],
-            status: 'certifie',
-            tenant_signed: true,
-            tenant_signature_url: tenantSignatureUrl,
-            owner_signature_url: targetPayment.owner_signature_url,
             created_at: new Date().toISOString()
           };
           SERVER_STORE.receipts.unshift(targetReceipt);
