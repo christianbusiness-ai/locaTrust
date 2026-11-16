@@ -50,6 +50,7 @@ import { TenantReceiptReviewAndSignModal } from '@/components/locataire/TenantRe
 import { formatRealPaymentMethod } from '@/lib/verificationRegistry';
 import { getUnifiedReceipts, saveUnifiedReceipts } from '@/lib/receiptsStore';
 import { isFictitiousOrTestReference, FICTITIOUS_TEST_REFS } from '@/lib/reports/accountingRealDataStore';
+import { compressDocumentImage } from '@/lib/avatarHelper';
 
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 3500) => {
   const controller = new AbortController();
@@ -205,7 +206,7 @@ export const LocatairePaiementsView: React.FC = () => {
     setShowDeclareModal(true);
   };
 
-  const handleCautionProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCautionProofFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setCautionProofFileName(file.name);
@@ -213,11 +214,16 @@ export const LocatairePaiementsView: React.FC = () => {
     const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} Mo` : `${sizeKb} Ko`;
     setCautionProofFileSize(sizeStr);
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setCautionProofUrl(ev.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await compressDocumentImage(file);
+      setCautionProofUrl(compressedDataUrl);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setCautionProofUrl(ev.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const fetchPaymentsData = async (isBackground = false) => {
@@ -903,7 +909,7 @@ export const LocatairePaiementsView: React.FC = () => {
       if (document.visibilityState === 'visible') {
         fetchPaymentsData(true);
       }
-    }, 30000);
+    }, 120000);
 
     const handleOpenSignReceipt = (e: any) => {
       const pId = e.detail?.paymentId || e.detail?.payment_id;
@@ -3044,14 +3050,19 @@ export const LocatairePaiementsView: React.FC = () => {
                     id="payment-proof-upload"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = (event) => {
-                        setProofUrl(event.target?.result as string);
-                      };
-                      reader.readAsDataURL(file);
+                      try {
+                        const compressed = await compressDocumentImage(file);
+                        setProofUrl(compressed);
+                      } catch {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          setProofUrl(event.target?.result as string);
+                        };
+                        reader.readAsDataURL(file);
+                      }
                     }}
                   />
                   {!proofUrl ? (

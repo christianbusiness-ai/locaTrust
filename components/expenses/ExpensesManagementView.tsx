@@ -29,6 +29,7 @@ import {
 import { formatFCFA } from '@/lib/utils';
 import { useAuth } from '@/src/context/AuthContext';
 import { supabase } from '@/src/lib/supabase';
+import { compressDocumentImage } from '@/lib/avatarHelper';
 import {
   PropertyExpense,
   ExpenseScenario,
@@ -107,17 +108,22 @@ export const ExpensesManagementView: React.FC<ExpensesManagementViewProps> = ({
   // Formulaire de refus
   const [refusalReason, setRefusalReason] = useState<string>('');
 
-  // Gestionnaire de téléversement du justificatif (Cliquable et optionnel)
-  const handleInvoiceFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Gestionnaire de téléversement du justificatif (Cliquable et optionnel avec compression optimisée)
+  const handleInvoiceFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setNewInvoiceFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setNewInvoiceUrl(result);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedUrl = await compressDocumentImage(file);
+      setNewInvoiceUrl(compressedUrl);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        setNewInvoiceUrl(result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleRemoveInvoiceFile = () => {

@@ -29,20 +29,26 @@ export const ensureUuid = (id?: string): string => {
 
 let isSyncing = false;
 let lastSyncTimestamp = 0;
+let quotaExceededBackoffUntil = 0;
 
 /**
  * MOTEUR CENTRALISÉ DE SYNCHRONISATION MULTI-APPAREILS (PC ↔ MOBILE ↔ TABLETTE)
  * Source unique de vérité : Serveur PostgreSQL Supabase.
  * Cache local : LocalStorage + Événements DOM CustomEvent pour réactivité instantanée.
  */
-export async function syncUserData(userId: string, role?: string): Promise<{ success: boolean; error?: string }> {
+export async function syncUserData(userId: string, role?: string, force = false): Promise<{ success: boolean; error?: string }> {
   if (!userId || !isValidUuid(userId) || isLoggingOutInProgress()) {
     return { success: false, error: 'UUID utilisateur invalide ou déconnexion en cours.' };
   }
 
-  // Éviter les requêtes concurrentes en boucle
   const now = Date.now();
-  if (isSyncing && now - lastSyncTimestamp < 3000) {
+  // Protection quota : Si Supabase a signalé un dépassement, on patiente pour ne pas saturer
+  if (!force && now < quotaExceededBackoffUntil) {
+    return { success: false, error: 'Pause temporaire due au quota de bande passante.' };
+  }
+
+  // Éviter les requêtes concurrentes en boucle et limiter à un intervalle raisonnable (30s minimum)
+  if (!force && (isSyncing || now - lastSyncTimestamp < 30000)) {
     return { success: true };
   }
 
@@ -233,7 +239,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     // 4. SYNCHRONISATION DES CAUTIONS (CAUTIONS / DEPOSITS)
     let cauQuery = supabase
       .from('cautions')
-      .select('*, contract:contract_id(*)')
+      .select('*, contract:contract_id(id, contract_number, property_id, rent_amount, property:property_id(id, title, address, city))')
       .order('created_at', { ascending: false });
 
     if (role === 'locataire') {
@@ -271,7 +277,7 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     // 5. SYNCHRONISATION DES PAIEMENTS DE LOYERS (RENT PAYMENTS)
     let pmQuery = supabase
       .from('rent_payments')
-      .select('*, contract:contract_id(*)')
+      .select('*, contract:contract_id(id, contract_number, property_id, rent_amount, property:property_id(id, title, address, city))')
       .order('created_at', { ascending: false });
 
     if (role === 'locataire') {
@@ -466,7 +472,8 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
         .from('messages')
         .select('*')
         .in('conversation_id', convIds)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: true })
+        .limit(100);
 
       if (!msgErr && Array.isArray(serverMessages)) {
         if (typeof window !== 'undefined') {
@@ -653,6 +660,9 @@ export async function syncUserData(userId: string, role?: string): Promise<{ suc
     return { success: true };
   } catch (err: any) {
     console.warn('unifiedSyncEngine error:', err);
+    if (err?.message?.includes('exceed_egress_quota') || String(err).includes('restricted') || err?.code === '402') {
+      quotaExceededBackoffUntil = Date.now() + 10 * 60 * 1000;
+    }
     return { success: false, error: err?.message };
   } finally {
     isSyncing = false;
@@ -1054,14 +1064,14 @@ export function startLiveBackgroundSync(userId: string, role?: string): void {
     }
   };
 
-  // 5. Synchronisation douce et silencieuse en arrière-plan (toutes les 30s) pour garantir que les données
-  // fraîches arrivent sans jamais forcer l'utilisateur à actualiser manuellement la page (même si WebSocket dort sur mobile)
+  // 5. Synchronisation douce et silencieuse en arrière-plan (toutes les 2 min) pour garantir que les données
+  // fraîches arrivent sans jamais forcer l'utilisateur à actualiser manuellement la page tout en préservant le quota
   if (!bgSyncInterval) {
     bgSyncInterval = setInterval(() => {
       if (document.visibilityState === 'visible' && bgSyncActiveUserId && !isLoggingOutInProgress()) {
         syncUserData(bgSyncActiveUserId, bgSyncActiveRole).catch(() => {});
       }
-    }, 30000);
+    }, 120000);
   }
 }
 

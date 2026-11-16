@@ -891,7 +891,7 @@ export const PaiementsView: React.FC<PaiementsViewProps> = ({
       if (document.visibilityState === 'visible') {
         loadPayments(true);
       }
-    }, 30000);
+    }, 120000);
 
     return () => {
       window.removeEventListener('locatrust:payments-updated', handleUpdate);

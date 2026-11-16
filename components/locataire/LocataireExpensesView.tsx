@@ -31,6 +31,7 @@ import {
   generateExpenseNumber
 } from '@/lib/financial/expensesService';
 import { getContracts, resolvePropertyCity } from '@/src/lib/db';
+import { compressDocumentImage } from '@/lib/avatarHelper';
 
 export const LocataireExpensesView: React.FC = () => {
   const { user } = useAuth();
@@ -52,16 +53,21 @@ export const LocataireExpensesView: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setInvoiceFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setInvoiceUrl(result);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedUrl = await compressDocumentImage(file);
+      setInvoiceUrl(compressedUrl);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        setInvoiceUrl(result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleRemoveFile = () => {

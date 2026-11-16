@@ -49,6 +49,7 @@ import {
   getCautionAuditTrail,
   resolveDepositContractDetails
 } from '@/lib/cautionsStore';
+import { compressDocumentImage } from '@/lib/avatarHelper';
 import { generateRestitutionReceiptPDF } from '@/lib/payments/restitutionReceiptPdfGenerator';
 import { updateDeclarationMessageStatus, sendChatMessage, isValidUuid } from '@/lib/messagingStore';
 import { PaymentStatusBadge } from '@/components/common/PaymentStatusBadge';
@@ -216,7 +217,7 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
   const [previewProofModalUrl, setPreviewProofModalUrl] = useState<string | null>(null);
   const proofFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProofFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setDeclareProofFileName(file.name);
@@ -224,12 +225,17 @@ export const CautionsView: React.FC<CautionsViewProps> = ({ isAgency = false, us
     const sizeStr = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} Mo` : `${sizeKb} Ko`;
     setDeclareProofFileSize(sizeStr);
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      setDeclareProofUrl(dataUrl);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressedUrl = await compressDocumentImage(file);
+      setDeclareProofUrl(compressedUrl);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        setDeclareProofUrl(dataUrl);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Étape 2 : Modal vérification preuve par le propriétaire
